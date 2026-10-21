@@ -294,7 +294,10 @@ older version, after that daemon finishes the requests it has open.
   `~/.claude/.credentials.json`. A Keychain or Credential Manager answer is kept for a minute;
   an old Credential Manager answer, and one after a usage probe, is read again in the
   background while it goes on being used, since starting PowerShell takes a second or two, and
-  after a renewal the next request waits for the new read. The file is read again when its size
+  after a renewal the next request waits for the new read. A login whose file exists and for
+  which Credential Manager had no record is not looked up there again until its token is
+  refused or renewed, because the CLI deletes the file when it moves the record; so a machine
+  whose logins all use the file runs PowerShell once per login, not every minute. The file is read again when its size
   or modification time changes. Tokens are never written anywhere. Only whether a record has a
   refresh token is kept, never the refresh token itself.
 - **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when

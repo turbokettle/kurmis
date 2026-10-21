@@ -8,7 +8,9 @@
 // second or two, so `prime` waits only for a login without a file that was not read yet (or
 // since `invalidate`); a login with a file is answered from the file until that run has ended,
 // and an answer that is merely old (or marked so with `markStale`) is read again in the
-// background while `read` goes on answering it. A failed read of a login without a file is
+// background while `read` goes on answering it. A login whose file exists and that had no
+// record here is not read here again until `invalidate`, so a machine whose logins all use
+// files runs PowerShell once per login, not once a minute. A failed read of a login without a file is
 // reported once through `onFailure` until a read of it works; the record itself is kept in
 // memory only.
 import { parseCredentials, type ClaudeCredentials } from '../core/credentials.ts'
@@ -62,7 +64,13 @@ export class CredentialManagerReader implements CredentialsSource {
       }
       const due = wanted.filter((id) => {
         const cached = this.cache.get(id)
-        return cached === undefined || this.now() - cached.readAt >= KEYCHAIN_CACHE_MS
+        if (cached === undefined) return true
+        // A login that has its file and had no record here stays on the file without more
+        // PowerShell runs: Claude Code deletes the file when it first writes a record here, so
+        // a record does not appear while the file is there. It is read here again only after
+        // `invalidate` (a refused token, a renewal).
+        if (cached.value === null && this.options.fileExists(id)) return false
+        return this.now() - cached.readAt >= KEYCHAIN_CACHE_MS
       })
       if (due.length === 0) return
       const run = this.load(due).finally(() => { if (this.running === run) this.running = null })

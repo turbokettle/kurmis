@@ -88,6 +88,21 @@ describe('CredentialManagerReader', () => {
     expect(reader.holds('claude:default')).toBe(true)
   })
 
+  it('does not read a login that has its file and no record here again until it is invalidated', async () => {
+    const store = credentials({})
+    const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => true, read: store.read, now: () => now })
+    await reader.prime(['claude:default'])
+    await expect.poll(() => store.calls).toBe(1)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    now += 61_000
+    reader.markStale('claude:default')
+    await reader.prime(['claude:default'])
+    expect(store.calls).toBe(1)
+    reader.invalidate('claude:default')
+    await reader.prime(['claude:default'])
+    await expect.poll(() => store.calls).toBe(2)
+  })
+
   it('waits until every login it was asked about has been read, also when runs for other logins are going on', async () => {
     const store = credentials({
       [credentialName('C:\\a')]: record('sk-ant-oat01-a'),
