@@ -242,6 +242,26 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   which works while you are logged in at the Mac. If nobody is logged
   in at the Mac, start the daemon there once, or run `kurmis setup` there so it starts at login;
   `kurmis claude` over ssh then uses that daemon.
+- **"The daemon could not be started through launchd (its job exited with code 78 …)" or "(no
+  daemon answered within 5 seconds …)".** A launchd job may be unable to reach a program or a
+  folder on an external volume: launchd then answers exit 78, or the job hangs. This happens when
+  Node, the kurmis install or the kurmis data folder (`KURMIS_HOME`) is on such a volume. Kurmis
+  then starts the daemon from the ssh session, which cannot read the Keychain. Give the program
+  that runs the job access to the volume (System Settings, Privacy & Security, Files and Folders
+  or Full Disk Access), or keep Node, kurmis and its data folder on the internal disk.
+- **Windows: PowerShell says running `kurmis.ps1` is disabled on this system.** PowerShell's
+  default execution policy blocks the `kurmis.ps1` script npm installs next to `kurmis.cmd`.
+  Run `kurmis.cmd` instead (it takes the same arguments), or allow local scripts for your user
+  with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. This is how every program installed
+  with npm behaves on Windows.
+- **Windows: "Terminate batch job (Y/N)?" after Ctrl-C.** In `cmd.exe`, `kurmis` runs through
+  npm's `kurmis.cmd`, and `cmd.exe` asks this whenever a batch file was interrupted. It asks
+  once kurmis has finished, so either answer just ends the batch file. This is standard for
+  programs installed with npm.
+- **Windows: setup says the logon entry was not written because of Windows Script Host.** The
+  logon entry starts the daemon without a console window through `wscript.exe`. When Windows
+  Script Host is missing or turned off, setup writes no entry; the next kurmis command starts the
+  daemon anyway.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
   now; try again. If no kurmis command is running, delete `~/.kurmis/config.json.lock`.
 - **A command says the daemon could not be reached.** Look at the end of `daemon.log`, or run
