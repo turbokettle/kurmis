@@ -266,8 +266,9 @@ kurmis daemon start|stop|restart|status|run
 You seldom need these: the other commands start the daemon when they need it, and a newer
 kurmis replaces an older daemon by itself. `kurmis daemon status` shows whether it runs, its pid
 and port; `stop` stops it after it finishes the requests it has open, waiting at most 30
-seconds for them; `restart` stops it and starts a new one; `run` runs it in the terminal, which
-helps when looking into a problem.
+seconds for them; `stop --now` stops it at once and cuts those requests, and an open Claude
+session then sees a dropped connection and retries the request; `restart` stops it and starts a
+new one; `run` runs it in the terminal, which helps when looking into a problem.
 
 ## Uninstall
 

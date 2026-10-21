@@ -431,6 +431,12 @@ When the signal is refused with EPERM (a daemon of another user, or on Windows o
 administrator while this command is not), the stop is an error that names the pid and says to
 end it from there; only ESRCH (no such process) counts as stopped.
 
+`kurmis daemon stop --now` sends `{ "maxWaitMs": 0 }`, so the daemon skips step 3 and closes the
+connections of its open requests in step 4. A Claude CLI whose request was cut sees a dropped
+connection and retries it. The CLI waits up to 15 seconds for the pid to exit, since step 4
+gives the probes and `state.json` at most 10 seconds, and then signals it as above, on Windows
+without the extra 10 seconds.
+
 Only a pid that answered the keyed status request as the daemon's own is ever signalled.
 `kurmis daemon restart` sends `stop` without a body, waits until the port is free, and starts a
 new daemon at once, so the old one finishes its requests in the background. It refuses to

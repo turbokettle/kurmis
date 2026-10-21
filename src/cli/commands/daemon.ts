@@ -80,15 +80,16 @@ const restart: Handler = async (args, context) => {
 }
 
 const stop: Handler = async (args, context) => {
-  const parsed = parseCommandArgs('daemon stop', args, {}, context)
+  const parsed = parseCommandArgs('daemon stop', args, { now: { type: 'boolean' } }, context)
   if (typeof parsed === 'number') return parsed
+  const now = parsed.values.now === true
   try {
     const found = await findDaemon(clientOptions(context))
     if (found === null) {
       const problem = await keyRefusedProblem(clientOptions(context))
       if (problem !== null) throw new DaemonError(problem)
     }
-    if (found === null || !(await stopDaemon(clientOptions(context)))) {
+    if (found === null || !(await stopDaemon({ ...clientOptions(context), now }))) {
       writeLine(context.stdout, 'The kurmis daemon is not running.')
       const silent = found === null ? silentDaemon() : null
       if (silent !== null) {
@@ -96,7 +97,9 @@ const stop: Handler = async (args, context) => {
           'it was not asked to stop. It may be finishing its open requests before it stops.')
       }
     } else {
-      writeLine(context.stdout, `Stopped the kurmis daemon (pid ${String(found.pid)}).`)
+      writeLine(context.stdout, now
+        ? `Stopped the kurmis daemon (pid ${String(found.pid)}) without waiting for its open requests.`
+        : `Stopped the kurmis daemon (pid ${String(found.pid)}).`)
     }
     return EXIT_OK
   } catch (error) {
@@ -195,8 +198,10 @@ when it is not running, so it seldom needs starting by hand.
   start                   Start it in the background, replacing one of an older version.
                           --env NAME=VALUE sets a kurmis variable in the daemon's
                           environment; the Windows logon entry uses it.
-  stop                    Stop it after it finishes the requests it has open, waiting at most
-                          30 seconds for them.
+  stop [--now]            Stop it after it finishes the requests it has open, waiting at most
+                          30 seconds for them. With --now it stops at once and cuts the
+                          requests it has open. An open Claude session then sees a dropped
+                          connection and retries the request.
   restart                 Start a new one now; the old one finishes its open requests first.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.

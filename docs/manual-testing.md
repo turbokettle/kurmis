@@ -104,6 +104,10 @@ because a renewal replaces the refresh token.
    `daemon_replacing_older` in `daemon.log`, and an interactive session that was open keeps
    working.
 3. Close the terminal that started the daemon. The daemon keeps running.
+4. Start `kurmis claude -p --model haiku "Write the numbers from 1 to 400 as words"` and, while
+   it streams, run `kurmis daemon stop --now` in another terminal. The stop should return
+   within a few seconds and `daemon.log` should show `drain_cut_short`. Run
+   `kurmis daemon start` right after: the session should retry its request and carry on.
 
 ## macOS only
 
