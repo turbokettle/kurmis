@@ -2,7 +2,8 @@
 //
 // The order:
 // 1. `KURMIS_CLAUDE_BIN` / `KURMIS_CODEX_BIN` name the program explicitly. This is also how tests
-//    point kurmis at the fakes on every OS. A `.js` path runs through Node.
+//    point kurmis at the fakes on every OS. A `.js` path runs through Node. In the tests, an
+//    environment without them gets the ones of this process (`namedProgram`).
 // 2. PATH. On macOS and Linux the first executable file named `claude` or `codex`. It is started
 //    as found (a symlink is fine), except that a symlink to a `.js` file runs that file through
 //    Node, so a launchd or systemd PATH without `node` on it still works.
@@ -43,6 +44,7 @@ import { posix, win32 } from 'node:path'
 import { kurmisEntry } from './detach.ts'
 import { cmdShimInvocation, decodeCmdShim, isAbsoluteWindowsPath, parseCmdShim } from './npm-shim.ts'
 import { invocationFor } from './run.ts'
+import { guardOn, hasVariable } from './system-program-guard.ts'
 
 export type ToolName = 'claude' | 'codex'
 
@@ -112,8 +114,8 @@ export function findProgram(tool: ToolName, options: FindProgramOptions = {}): R
   const files = options.files ?? realFiles
 
   const variable = PROGRAM_VARIABLES[tool]
-  const named = platform === 'win32' ? windowsEnv(env, variable) : env[variable]
-  if (named !== undefined && named !== '') {
+  const named = namedProgram(env, variable, platform)
+  if (named !== undefined) {
     const invocation = invocationFor(named, [], nodePath)
     if ('refused' in invocation) throw new ProgramNotFoundError(tool, `${variable}: ${invocation.refused}`)
     return { command: invocation.command, args: invocation.args, source: 'env' }
@@ -123,6 +125,21 @@ export function findProgram(tool: ToolName, options: FindProgramOptions = {}): R
   return platform === 'win32'
     ? findOnWindows(tool, env, nodePath, files, own)
     : findOnPosix(tool, env, nodePath, files, own)
+}
+
+/**
+ * The program `variable` names in `env`. While the test guard is on (`system-program-guard.ts`),
+ * an `env` without the variable gets the one of this process's environment, so a test that
+ * hands kurmis an environment of its own gets the fake or failing program `test/setup.ts` names
+ * rather than a search of PATH that could find the real one. An empty value in `env` still means
+ * that PATH is searched; the tests of the search use that.
+ */
+function namedProgram(env: NodeJS.ProcessEnv, variable: string, platform: NodeJS.Platform): string | undefined {
+  const own = platform === 'win32' ? windowsEnv(env, variable) : env[variable]
+  if (own !== undefined && own !== '') return own
+  if (!guardOn(env) || hasVariable(env, variable)) return undefined
+  const inherited = process.env[variable]
+  return inherited === undefined || inherited === '' ? undefined : inherited
 }
 
 const OWN_BUNDLE = 'it is kurmis itself, not the real program'

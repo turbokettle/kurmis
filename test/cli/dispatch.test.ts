@@ -11,7 +11,8 @@ async function run(...argv: string[]): Promise<{ code: number; stdout: string; s
   const code = await runCli(argv, {
     stdout: { write: (text: string) => (stdout += text) },
     stderr: { write: (text: string) => (stderr += text) },
-    env: {}
+    // An empty KURMIS_CLAUDE_BIN and KURMIS_CODEX_BIN with no PATH: no claude or codex is found.
+    env: { KURMIS_CLAUDE_BIN: '', KURMIS_CODEX_BIN: '' }
   })
   return { code, stdout, stderr }
 }

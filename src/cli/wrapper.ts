@@ -163,7 +163,7 @@ export async function runInteractive(spec: ChildSpec, options: RunInteractiveOpt
       proc.on(signal, listener)
     }
 
-    const guarded = refusedByGuard(spec.command, spec.env)
+    const guarded = refusedByGuard(spec.command, spec.env, spec.args)
     if (guarded !== null) {
       finish(notStarted(spec.command, Object.assign(new Error(guarded), { code: 'EACCES' })))
       return

@@ -162,7 +162,7 @@ export interface DetachedChild {
  */
 export function spawnDetached(start: DetachedStart): Promise<DetachedChild> {
   return new Promise((resolve, reject) => {
-    const guarded = refusedByGuard(start.command, start.env)
+    const guarded = refusedByGuard(start.command, start.env, start.args)
     if (guarded !== null) {
       reject(new Error(guarded))
       return

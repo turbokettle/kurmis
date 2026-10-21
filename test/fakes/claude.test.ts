@@ -354,7 +354,9 @@ it.skipIf(process.platform === 'win32')('runs as `claude` from PATH through the 
   const installed = installFakeClaude(bin)
   expect(installed.path).toBe(join(bin, 'claude'))
   const result = await new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
-    const child = spawn('claude', ['--version'], { env: { ...envOf(), PATH: `${bin}:/usr/bin:/bin` } })
+    // PATH holds only the launcher's folder, so no other `claude` can be found; the launcher
+    // names its shell and Node by full path.
+    const child = spawn('claude', ['--version'], { env: { ...envOf(), PATH: bin } })
     let stdout = ''
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
     child.on('error', reject)

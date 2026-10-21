@@ -10,7 +10,7 @@
 //
 // Every test also runs with `KURMIS_REFUSE_SYSTEM_PROGRAMS=1` (`system-program-guard.ts`), which
 // refuses the real programs if a path here is ever missed.
-import { GUARD_VARIABLE, REFUSAL_LOG_VARIABLE } from './system-program-guard.ts'
+import { GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, TEST_HOME_VARIABLES } from './system-program-guard.ts'
 
 /** The system programs kurmis runs, or names in a logon entry. */
 export type SystemProgram = 'launchctl' | 'security' | 'powershell' | 'reg' | 'taskkill' | 'wscript'
@@ -75,13 +75,17 @@ export function systemProgram(
 
 /**
  * The stand-in variables, the guard and its refusal log (`system-program-guard.ts`) that are set
- * in `processEnv` but missing from `env`. Kurmis adds these to the environment of a daemon it
- * starts (directly, through launchd or through WMI), so a daemon a test starts with an
- * environment of its own still uses the stand-ins. Empty outside the tests.
+ * in `processEnv` but missing from `env`, and while the guard is on also the test's home and
+ * the `claude` and `codex` it names (`TEST_HOME_VARIABLES`). Kurmis adds these to the environment
+ * of a daemon it starts (directly, through launchd or through WMI), so a daemon a test starts
+ * with an environment of its own still uses the stand-ins and the temporary home. Empty outside
+ * the tests.
  */
 export function inheritedTestHooks(env: NodeJS.ProcessEnv, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const name of [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE]) {
+  const guarded = lookup(env, GUARD_VARIABLE) === '1' || lookup(processEnv, GUARD_VARIABLE) === '1'
+  const names = [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, ...(guarded ? TEST_HOME_VARIABLES : [])]
+  for (const name of names) {
     if (lookup(env, name) !== undefined) continue
     const value = lookup(processEnv, name)
     if (value !== undefined) out[name] = value

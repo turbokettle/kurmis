@@ -152,7 +152,8 @@ test('an extra login runs in the probe folder with its own CODEX_HOME even when 
 test('a codex that cannot be found is an error with a fixed sentence', async () => {
   const empty = mkdtempSync(join(homedir(), 'empty-path-'))
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: empty, Path: empty }
-  delete env.KURMIS_CODEX_BIN
+  // Empty rather than removed: in the tests a missing variable is taken from test/setup.ts.
+  env.KURMIS_CODEX_BIN = ''
   const result = await probeCodexUsage('codex:missing', { env })
   expect(result).toMatchObject({ ok: false, signedIn: null, reason: 'missing' })
   expectFixedError(result)
