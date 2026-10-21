@@ -1,13 +1,18 @@
-// `kurmis setup [--undo]`: global mode. Setup puts kurmis' routing variables in the `env` of the
-// user's Claude Code settings file (`global-settings.ts`), registers the daemon to start at
-// login, and starts the daemon. Undo takes the variables out and removes the autostart entry.
+// `kurmis setup [--undo]`: global mode. Setup starts the daemon, puts kurmis' routing variables
+// in the `env` of the user's Claude Code settings file (`global-settings.ts`), and registers the
+// daemon to start at login. Undo takes the variables out and removes the autostart entry.
 //
 // Undo leaves the daemon running: `kurmis claude` still uses it, and every Claude Code session
 // that was started while global mode was on keeps sending its requests to it until it ends.
 //
-// The settings change is made first and stands on its own. When autostart or the daemon then
-// fails, the command says so and exits with 1; running it again is safe, since every step does
-// nothing when it is already done.
+// The daemon comes first: once `settings.json` names it, every Claude Code on the machine sends
+// its requests there, so the file is written only when a daemon answers on the port it names.
+// The file is checked before the daemon is started, so a file setup would refuse starts nothing.
+// When the daemon cannot be started, nothing is written. When autostart then fails, the command
+// says so and exits with 1; running it again is safe, since every step does nothing when it is
+// already done. An autostart entry that loads only at the next login (macOS with nobody at the
+// screen) and a platform without autostart are warnings: the daemon runs, and the next kurmis
+// command starts it again after a restart.
 import { ConfigError, loadConfig } from '../../data/config.ts'
 import { readOrCreateKey } from '../../data/daemon-file.ts'
 import {
@@ -20,6 +25,7 @@ import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, writeLine, type CliContext, ty
 import { realDaemonClient, type DaemonClient } from '../command-deps.ts'
 import {
   backupPathFor,
+  checkSetupSettingsFile,
   claudeSettingsPath,
   setupSettingsFile,
   SettingsFileError,
@@ -40,14 +46,14 @@ const USAGE = `Usage: kurmis setup [--undo]
 Routes every Claude Code on this machine through kurmis, not only the ones started with
 "kurmis claude":
 
+- starts the daemon now, and goes no further when it cannot;
 - puts kurmis' address and key in the "env" block of your Claude Code settings file,
   ~/.claude/settings.json (or settings.json in CLAUDE_CONFIG_DIR when that is set), so a plain
   "claude" and the IDE extensions use your kurmis logins too. Nothing else in the file changes,
-  and the file is copied to settings.json.kurmis-backup before kurmis first changes it.
+  and the file is copied to settings.json.kurmis-backup before kurmis adds its settings.
   Because the file then holds kurmis' key, on macOS and Linux setup makes it and the copy
   readable only by you;
-- makes the kurmis daemon start when you log in;
-- starts the daemon now.
+- makes the kurmis daemon start when you log in.
 
 Claude Code sessions that are already open keep their settings; start them again.
 
@@ -117,6 +123,12 @@ async function autostartStep(
   } catch (error) {
     result = { changed: false, where: null, warning: errorText(error) }
   }
+  const supported = deps.platform === 'darwin' || deps.platform === 'win32'
+  if (!undo && result.warning !== undefined && (result.loadsAtNextLogin === true || !supported)) {
+    // The daemon runs now, and the entry, or the next kurmis command, starts it after a restart.
+    writeLine(context.stderr, `Warning: ${result.warning}`)
+    return true
+  }
   if (result.warning !== undefined) {
     writeLine(context.stderr, undo
       ? `Could not remove the daemon's start at login: ${result.warning}`
@@ -136,21 +148,24 @@ async function autostartStep(
   return true
 }
 
-async function daemonStep(port: number, deps: SetupDeps, context: CliContext): Promise<boolean> {
+/** Starts the daemon. Answers its key when it runs on `port`, or null after saying what went wrong. */
+async function daemonStep(port: number, path: string, deps: SetupDeps, context: CliContext): Promise<string | null> {
+  const unchanged = `${path} was not changed, so Claude Code does not use kurmis yet. Run "kurmis setup" again once the daemon runs.`
   try {
     const connection = await deps.daemon.ensureDaemon({ env: context.env })
-    writeLine(context.stdout, `The daemon is running on port ${String(connection.port)}.`)
     if (connection.port !== port) {
       writeLine(context.stderr,
-        `The daemon runs on port ${String(connection.port)}, but config.json and the settings file name port ${String(port)}. ` +
+        `The daemon runs on port ${String(connection.port)}, but config.json names port ${String(port)}. ` +
           'Stop it with "kurmis daemon stop" and run "kurmis setup" again, so it starts on that port.')
-      return false
+      writeLine(context.stderr, unchanged)
+      return null
     }
-    return true
+    writeLine(context.stdout, `The daemon is running on port ${String(connection.port)}.`)
+    return connection.key
   } catch (error) {
     writeLine(context.stderr, `The daemon could not be started: ${errorText(error)}`)
-    writeLine(context.stderr, 'Claude Code cannot reach kurmis until it runs; try "kurmis daemon start".')
-    return false
+    writeLine(context.stderr, `${unchanged} "kurmis daemon start" starts it and says what is wrong.`)
+    return null
   }
 }
 
@@ -184,9 +199,22 @@ async function runSetup(undo: boolean, deps: SetupDeps, context: CliContext): Pr
     port = null
   }
 
+  let key: string | null = null
+  if (!undo) {
+    try {
+      checkSetupSettingsFile(path, { port: port!, key: readOrCreateKey() })
+    } catch (error) {
+      if (!(error instanceof SettingsFileError)) throw error
+      writeLine(context.stderr, `kurmis setup: ${error.message}`)
+      return EXIT_FAILURE
+    }
+    key = await daemonStep(port!, path, deps, context)
+    if (key === null) return EXIT_FAILURE
+  }
+
   let result: SettingsFileResult
   try {
-    result = undo ? undoSettingsFile(path, { port }) : setupSettingsFile(path, { port: port!, key: readOrCreateKey() })
+    result = undo ? undoSettingsFile(path, { port }) : setupSettingsFile(path, { port: port!, key: key! })
   } catch (error) {
     if (!(error instanceof SettingsFileError)) throw error
     writeLine(context.stderr, `kurmis setup: ${error.message}`)
@@ -194,14 +222,13 @@ async function runSetup(undo: boolean, deps: SetupDeps, context: CliContext): Pr
   }
   reportFile(result, undo, context)
 
-  let ok = await autostartStep(undo, deps, context)
+  const ok = await autostartStep(undo, deps, context)
   if (undo) {
     if (await daemonRuns(deps, context)) {
       writeLine(context.stdout, 'The daemon keeps running for "kurmis claude" and for sessions already open; "kurmis daemon stop" stops it.')
     }
-  } else {
-    ok = (await daemonStep(port!, deps, context)) && ok
-    if (result.changed) writeLine(context.stdout, 'Claude Code sessions that are already open keep their old settings; start them again.')
+  } else if (result.changed) {
+    writeLine(context.stdout, 'Claude Code sessions that are already open keep their old settings; start them again.')
   }
   if (!ok) {
     writeLine(context.stderr, undo

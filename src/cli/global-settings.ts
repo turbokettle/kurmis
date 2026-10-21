@@ -793,6 +793,22 @@ export function setupSettingsFile(path: string, values: SetupValues, platform: N
   }
 }
 
+/**
+ * Throws the `SettingsFileError` `setupSettingsFile` would throw for the file as it is now, and
+ * writes nothing. Setup asks this before it starts the daemon.
+ */
+export function checkSetupSettingsFile(path: string, values: SetupValues, platform: NodeJS.Platform = process.platform): void {
+  try {
+    const text = readText(path)
+    applySetupToText(text, values)
+    if (platform === 'win32' && text !== null && isReadOnly(statSync(writeTarget(path)).mode)) {
+      throw new SettingsFileError(`it is read-only. Clear that with "attrib -R ${writeTarget(path)}" and run the command again`)
+    }
+  } catch (error) {
+    failWith(path, error)
+  }
+}
+
 /** Takes kurmis' routing variables out of the settings file again. A missing file is left missing. */
 export function undoSettingsFile(path: string, values: Omit<UndoValues, 'backupText'>,
   platform: NodeJS.Platform = process.platform): SettingsFileResult {

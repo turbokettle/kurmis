@@ -183,6 +183,7 @@ kurmis setup --undo
 Without setup, only Claude Code started through `kurmis claude` is routed. `kurmis setup` makes
 a plain `claude`, and the Claude Code extensions in your editor, use kurmis too:
 
+- it starts the daemon, and changes nothing when it cannot;
 - it adds kurmis' four settings (`ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`,
   `ENABLE_TOOL_SEARCH`, `CLAUDE_CODE_MAX_RETRIES`) to the `env` block of
   `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` when you set that variable),
@@ -190,8 +191,8 @@ a plain `claude`, and the Claude Code extensions in your editor, use kurmis too:
   makes it readable only by you (on macOS and Linux);
 - it saves a copy of the file as `settings.json.kurmis-backup` before it adds kurmis' settings
   (a later setup that only updates them keeps that copy);
-- it makes the daemon start when you log in (a launch agent on macOS, a logon entry on Windows)
-  and starts it now.
+- it makes the daemon start when you log in (a launch agent on macOS, a logon entry on
+  Windows). On Linux there is no start at login; the next kurmis command starts the daemon.
 
 A plain `claude` then runs on Auto. Restart Claude Code sessions and editors that were already
 open. If the file already points `ANTHROPIC_BASE_URL` at another proxy, setup stops and changes

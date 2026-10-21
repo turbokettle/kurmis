@@ -54,6 +54,11 @@ export interface AutostartResult {
   where: string | null
   /** A sentence when it could not be done; the rest of `setup` goes on. */
   warning?: string
+  /**
+   * The entry is written and starts the daemon at the next login, but could not be loaded now
+   * (macOS with nobody at the screen). `warning` says why. Setup counts this as done.
+   */
+  loadsAtNextLogin?: boolean
 }
 
 const UNSUPPORTED = 'Starting the daemon at login is not supported on this platform; the next kurmis command starts it.'
@@ -124,7 +129,8 @@ async function registerLaunchAgent(options: AutostartOptions, programArguments: 
     return {
       changed: true,
       where: path,
-      warning: `The login item is written and starts the daemon at your next login, but it could not be loaded now: ${(error as Error).message}`
+      warning: `The login item is written and starts the daemon at your next login, but it could not be loaded now: ${(error as Error).message}`,
+      loadsAtNextLogin: true
     }
   }
   return { changed: true, where: path }

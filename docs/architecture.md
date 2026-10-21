@@ -407,7 +407,8 @@ since `process.execPath` names a versioned folder that a Homebrew upgrade remove
   absolute path, and the test hooks that are set) and the start folder and
   starts node hidden without waiting (`WScript.Shell.Run "<command line>", 0, False`). `//B`
   stops error dialogs at logon.
-- **Other platforms:** a warning; the next kurmis command starts the daemon.
+- **Other platforms:** a warning (setup still exits 0); the next kurmis command starts the
+  daemon.
 
 ## How a Claude CLI reaches the daemon
 
@@ -485,6 +486,11 @@ the IDE extensions are routed too. The values are those of an Auto CLI with no s
 header, so a plain `claude` runs on `claude:default`. It also registers the daemon to start at
 login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon.
 
+The daemon is started first. Once the file names the daemon, every Claude Code on the machine
+sends its requests there, so the file is written only after a daemon answers on the port
+`config.json` names, with the key that daemon accepted. Setup checks first that it could edit
+the file, so a file it would refuse starts no daemon. Autostart is registered last.
+
 - The file is `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set and not empty, as the
   CLI reads it, else `~/.claude/settings.json`; the path used is printed. A `CLAUDE_CONFIG_DIR`
   inside kurmis' data folder is refused.
@@ -517,8 +523,11 @@ login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon
   proxy is not cut off silently. A value of the person's own for `ENABLE_TOOL_SEARCH` or
   `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept exactly
   as written, ahead of kurmis' lines.
-- When autostart or the daemon fails, the settings change stands and setup exits 1; running it
-  again is safe.
+- When the daemon cannot be started, or runs on another port than `config.json` names, nothing
+  is written and setup exits 1. When autostart then fails, the settings change stands and setup
+  exits 1; running it again is safe. A launchd agent that is written but can be loaded only at
+  the next login, and a platform without autostart (Linux), are warnings with exit 0: the
+  daemon runs now, and the next kurmis command starts it after a restart.
 
 `kurmis setup --undo` removes only the values that are still kurmis': a key the person changed is
 left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the
