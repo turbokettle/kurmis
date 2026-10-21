@@ -26,22 +26,51 @@ never holds tokens or request bodies, so it can be shared.
 ## On every platform
 
 ### Logins
-1. `kurmis login claude --name t1` opens the browser. Sign in with a second subscription.
-   Expect `claude:t1` in `kurmis list` with credentials `yes`, and `kurmis status` showing its
-   plan and usage within a minute.
-2. Run `kurmis login claude:t1` (signing it in again) in two terminals at once. The second
-   should stop with a message that another `kurmis login` or `logout` of it is running, and
-   the first should succeed.
-3. `kurmis login codex --name t2` with a second ChatGPT account, if there is one. Expect
-   `codex:t2` in `kurmis status` with its usage.
-4. `kurmis set claude:t1 --label test --weekly 90`, then `kurmis list`. Expect the new label and
-   limit, and `daemon.log` showing `config_loaded`.
+The checks below call the extra Claude login `<t1>`: use the alias `kurmis list` shows for it.
+
+1. **The machine's own logins get their alias.** Start from an empty data folder. Run
+   `kurmis list` first: the machine's own Claude and Codex logins are there, each with its id
+   as its alias and a line under the table that marks it as the machine's own. Then run
+   `kurmis status`, which waits for the daemon's first usage probe. After it, `kurmis list`
+   should show each of them with the alias made from its email (`me@example.com` gives
+   `me-example`).
+2. **A new login gets its alias from the email.** `kurmis login claude` opens the browser. Sign
+   in with a second subscription. Expect the email printed, then `Added <alias> (id <id>)`, with
+   the alias made from the email. `kurmis list` should show it with credentials `yes`, and
+   `kurmis status` should show its email, plan and usage within a minute.
+3. **The same account twice.** Run `kurmis login claude` again and sign in to the account of
+   `<t1>`. Expect a message that the email is already `<t1>`, exit code 0, no new row in
+   `kurmis list`, and no new folder in the data folder's `claude/`. Do the same with the account
+   of the machine's own Claude login: the message should name the machine's own login. On macOS,
+   check that no new `Claude Code-credentials-<8 hex digits>` Keychain item is left.
+4. **An extra login of the machine's own account.** This needs a spare Claude account B
+   besides the account A of the machine's own login. Sign plain `claude` in to B with
+   `claude auth login`, and run `kurmis daemon restart` and `kurmis status` until the machine's
+   own login shows B's email. Add A with `kurmis login claude`. Sign plain `claude` in to A
+   again, and run `kurmis daemon restart` and `kurmis status` until the machine's own login
+   shows A's email. Expect a warning at the top that the extra login and the machine's own
+   login are the same account, and the machine's own login's alias with `-2` at the end,
+   because the extra login has the plain one.
+5. Run `kurmis login <t1>` (signing it in again) in two terminals at once. The second should
+   stop with a message that another `kurmis login` or `logout` of it is running, and the first
+   should succeed.
+6. **One email for Claude and Codex.** `kurmis login codex` with a ChatGPT account whose email
+   is the same as the email of an extra Claude login, if there is one. Expect the Codex login to
+   get the same alias as the Claude login. `kurmis set <alias> --weekly 90` should refuse and ask
+   for `claude:<alias>` or `codex:<alias>`. `kurmis claude --login <alias>` and
+   `kurmis codex --login <alias>` should each start on their own provider's login without the
+   prefix.
+7. `kurmis set <t1> --alias test-t1 --weekly 90`, then `kurmis list`. Expect the alias `test-t1`
+   and the limit, and `daemon.log` showing `config_loaded`. Run `kurmis login test-t1`: the
+   alias should stay `test-t1`.
+8. `daemon.log` should hold login ids only: search it for the aliases and the emails of the
+   logins, which should not appear.
 
 ### Routing Claude
 1. `kurmis claude -p --model haiku "Reply ok"` answers `ok`. `daemon.log` shows
    `session_placed` on the login whose weekly window resets soonest (`kurmis status` shows the
    reset times), then `request_forwarded ... status=200`.
-2. `kurmis claude --login claude:t1 -p --model haiku "Reply ok"` lands on `claude:t1`.
+2. `kurmis claude --login <t1> -p --model haiku "Reply ok"` lands on `<t1>`.
 3. An interactive `kurmis claude --model haiku`: ask a question that makes it read a file, so a
    tool call runs. Then run `kurmis set <that login> --auto off` in another terminal and ask
    again. Expect `session_moved` to another login, and the conversation keeps its context.
@@ -80,7 +109,7 @@ because a renewal replaces the refresh token.
    `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
 2. A plain `claude -p --model haiku "Reply ok"` now shows in `daemon.log` as
    `session_placed`.
-3. `kurmis claude --login claude:t1 -p ...` still lands on `claude:t1` in global mode.
+3. `kurmis claude --login <t1> -p ...` still lands on `<t1>` in global mode.
 4. Open the IDE extension (VS Code or JetBrains) and send one message. It should be routed too.
 5. Log out of the computer and in again, without running kurmis. `kurmis daemon status` should
    show a daemon started at the new login.
@@ -91,11 +120,11 @@ because a renewal replaces the refresh token.
 
 ### Codex
 1. `kurmis codex exec "Reply ok"` answers, on the login `kurmis status` named in its last line.
-2. On an extra Codex login, change the model with `/model` inside `kurmis codex --login <id>`,
+2. On an extra Codex login, change the model with `/model` inside `kurmis codex --login <login>`,
    exit, and start it again. The model choice should still be there.
-3. Add a line to `~/.codex/AGENTS.md` and start `kurmis codex --login <id>`. The login's copy
+3. Add a line to `~/.codex/AGENTS.md` and start `kurmis codex --login <login>`. The login's copy
    should have it.
-4. `kurmis logout codex:<id>`. Its folder goes; every file in `~/.codex` stays (compare a file
+4. `kurmis logout <login>`. Its folder goes; every file in `~/.codex` stays (compare a file
    count before and after).
 
 ### Daemon
@@ -119,7 +148,7 @@ because a renewal replaces the refresh token.
   without a token. Then run `kurmis setup` at the screen and log out and in again. Over ssh,
   `kurmis daemon status` should show the daemon started at that login, and `kurmis claude -p
   --model haiku "Reply ok"` should be routed on a Keychain login.
-- **Signed-out default login.** When `claude` itself is signed out, `kurmis claude` says it
+- **Signed-out machine's own login.** When `claude` itself is signed out, `kurmis claude` says it
   starts on another login's credentials and still routes.
 
 ## Windows only
@@ -133,9 +162,9 @@ because a renewal replaces the refresh token.
   or Credential Manager (`cmdkey /list | findstr Claude`, or the Credential Manager control
   panel). Test both:
   - the default, with no extra variables;
-  - with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` set for the user, then `kurmis login claude
-    --name t3`. kurmis should route `claude:t3`, `kurmis status` should show its usage, and
-    `kurmis logout claude:t3` should remove its Credential Manager records.
+  - with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` set for the user, then `kurmis login claude`
+    with another account. kurmis should route the new login, `kurmis status` should show its
+    usage, and `kurmis logout <its alias>` should remove its Credential Manager records.
   - Repeat one read with PowerShell in Constrained Language Mode, if the machine can be set up
     that way.
 - **Ctrl-C.** In cmd.exe, Ctrl-C in `kurmis.cmd claude` ends with "Terminate batch job (Y/N)?",

@@ -9,6 +9,17 @@ machine after each larger change. Linux works where it costs nothing extra.
 
 ## Logins
 
+- **The machine's own logins.** The account a plain `claude` is signed in to and the account a
+  plain `codex` is signed in to are always logins of kurmis. They follow whatever those CLIs are
+  signed in to, and kurmis never signs them out. Every other login is an extra login, added with
+  `kurmis login`.
+- **Names.** Each login has a random id that never changes, and an alias that the person sees
+  and types. Kurmis makes the alias from the account's email, as soon as it knows the email, so
+  `work@example.com` becomes `work-example`. The person can set an alias of their own instead.
+  A Claude login and a Codex login of the same account can have the same alias.
+- **One login per account.** Signing in to an account that is already a login of the same
+  provider adds nothing, and kurmis says which login it is. `kurmis status` warns when an extra
+  login is the same account as the machine's own login, because both then use one subscription.
 - **Claude:** each extra login keeps only its credentials in a folder of its own. A CLI started
   on it gets `CLAUDE_SECURESTORAGE_CONFIG_DIR` and nothing else, so settings, CLAUDE.md, skills,
   plugins and transcripts stay the machine's own. The only thing a login changes is which
@@ -68,7 +79,7 @@ signs the request with that login's token.
   on, and exit with the CLI's exit code.
 - `kurmis status`, with `--json`, shows each login's usage.
 - `kurmis login`, `logout` and `list` manage logins, and `kurmis set` changes a login's routing
-  opt-in, limits, use-first and label.
+  opt-in, limits, use-first and alias. Every command takes a login by its alias or its id.
 - `kurmis setup` routes every Claude Code on the machine through kurmis by editing the user's
   `settings.json`, and `kurmis setup --undo` takes that back.
 - There are also commands to start and stop the background process and show its state.
