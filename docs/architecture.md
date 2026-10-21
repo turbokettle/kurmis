@@ -829,7 +829,11 @@ ignored and `~/.codex` is used. The decisions are the pure functions of `src/cor
   instead of `AGENTS.md`) stops overriding; a file kurmis did not put there stays.
 - `config.toml` is merged without its secrets (below). Both it and the copied files are read
   through a link, so a file that is a symlink into a dotfiles folder still counts.
-- `auth.json` and every other file stay out, so each login keeps its own sign-in.
+- `auth.json` and every other file stay out, so each login keeps its own sign-in. A
+  `cli_auth_credentials_store` in the default home's `config.toml` is merged in like any other
+  setting, so with `"keyring"` or `"auto"` Codex keeps each login's sign-in in the Keychain or
+  Credential Manager instead, in an entry of each Codex home's own, and the login's home has no
+  `auth.json`. `kurmis login` and `kurmis list` then ask `codex login status` (below).
 
 An empty real folder where a link should go (Codex made it before the default home had that
 folder) is replaced by the link. A folder with something in it, or a link to somewhere else, is
