@@ -22,7 +22,7 @@ test('the file is .credentials.json in the login folder', () => {
   const folders: string[] = []
   const tracking = new CredentialsFileReader({ credentialsDir: (id) => { folders.push(id); return dir } })
   write('one')
-  expect(tracking.read('claude:work')).toEqual({ accessToken: 'one', expiresAt: 123 })
+  expect(tracking.read('claude:work')).toEqual({ accessToken: 'one', expiresAt: 123, hasRefreshToken: false })
   expect(folders).toEqual(['claude:work'])
 })
 
@@ -31,7 +31,7 @@ test('caches by mtime and size and reloads a changed file', () => {
   write('one')
   utimesSync(path, 1000, 1000)
   const first = credentials.read('claude:work')
-  expect(first).toEqual({ accessToken: 'one', expiresAt: 123 })
+  expect(first).toEqual({ accessToken: 'one', expiresAt: 123, hasRefreshToken: false })
   write('two')
   utimesSync(path, 1000, 1000)
   expect(credentials.read('claude:work')).toBe(first)

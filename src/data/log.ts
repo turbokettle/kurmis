@@ -60,6 +60,8 @@ export const LOG_REASONS = [
   'no_credentials',
   'token_expired',
   'timeout',
+  /** A program the daemon started (a usage probe's CLI) ended before it answered. */
+  'exited',
   'network',
   'upstream_error',
   'invalid',
@@ -73,6 +75,8 @@ export const LOG_REASONS = [
   'config_changed',
   'pinned',
   'out_of_pool',
+  // The macOS Keychain refused the read: it is locked, or the daemon runs in an ssh session.
+  'not_allowed',
   'other'
 ] as const
 

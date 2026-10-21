@@ -13,10 +13,15 @@ import { claudeDefaultProbeFolder, loginFolder } from './paths.ts'
 
 export type EnvPatch = Record<string, string | undefined>
 
-/** Variables no CLI kurmis runs for itself may inherit. */
+/**
+ * Variables no CLI kurmis runs for itself may inherit: the routing variables, and every variable
+ * that would make the CLI sign with something other than the login's own stored credentials.
+ */
 const NOT_INHERITED: EnvPatch = {
   ANTHROPIC_API_KEY: undefined,
   ANTHROPIC_AUTH_TOKEN: undefined,
+  CLAUDE_CODE_OAUTH_TOKEN: undefined,
+  CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: undefined,
   ANTHROPIC_BASE_URL: undefined,
   ANTHROPIC_CUSTOM_HEADERS: undefined
 }
