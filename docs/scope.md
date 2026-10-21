@@ -21,7 +21,10 @@ machine after each larger change. Linux works where it costs nothing extra.
   `~/.codex/config.toml` are not carried over. `AGENTS.md` is copied in, and the folders of
   `~/.codex` are linked in: a symlink on macOS, a directory junction on Windows. Scratch folders
   (`tmp`, `.tmp`), links and anything whose name says it holds a credential or a database are
-  not linked. `auth.json` is never copied or linked.
+  not linked. `auth.json` is never copied or linked. Hook and folder trust that a session on
+  the login gave stays in the login's `config.toml` across refreshes; the default home's trust
+  fills in what the login has not set, and where both set a value the more restrictive one
+  wins (a folder marked untrusted, a hook switched off).
 
 ## Claude routing
 
@@ -48,8 +51,8 @@ signs the request with that login's token.
 
 ## Tokens and usage
 
-- **Tokens** are read from the macOS Keychain or from `.credentials.json` on Windows. They are
-  never stored anywhere else. When a token is about to expire, kurmis starts a short-lived
+- **Tokens** are read from the macOS Keychain, or from the login's `.credentials.json` on
+  Windows and on a Mac whose Keychain has none for it. They are never stored anywhere else. When a token is about to expire, kurmis starts a short-lived
   `claude` on that login and lets the CLI renew it, rather than calling the OAuth endpoint
   itself.
 - **Claude usage** comes from a `get_usage` request to a short-lived `claude`, and from the

@@ -21,7 +21,8 @@
 // standard input closed and is killed at its deadline, and an item whose read was killed is
 // never read again by this process. Each such item can then put up one dialog per daemon run,
 // not one a minute. A locked Keychain, an item that waits, a missing item and a missing
-// `security` all end the same way: no token for that login.
+// `security` all end the same way: no token from the Keychain for that login. The daemon then
+// reads the login's `.credentials.json` instead (`createTokenSource` in `tokens.ts`).
 import { keychainService } from '../core/keychain-service.ts'
 import { parseCredentials, type ClaudeCredentials } from '../core/credentials.ts'
 import { runProgram, type RunResult } from '../platform/run.ts'
@@ -43,9 +44,9 @@ const MAX_OUTPUT_BYTES = 256 * 1024
 const MAX_REASON_CHARS = 500
 
 /**
- * Whether the Claude CLI keeps its credentials in the macOS Keychain on this platform rather
- * than in `.credentials.json`. The daemon picks `KeychainCredentialsReader` when it does, and
- * `CredentialsFileReader` otherwise.
+ * Whether the Claude CLI keeps its credentials in the macOS Keychain on this platform. Where it
+ * does, the daemon reads the Keychain item first and the login's `.credentials.json` when the
+ * item gives no token; elsewhere it reads only the file (`createTokenSource` in `tokens.ts`).
  */
 export function keychainHoldsSecret(platform: NodeJS.Platform = process.platform): boolean {
   return platform === 'darwin'
@@ -53,19 +54,32 @@ export function keychainHoldsSecret(platform: NodeJS.Platform = process.platform
 
 /**
  * A `security` call that failed. `code` is its exit code, or null when it was killed or never
- * ran. `timedOut` is true when it was killed at its deadline. `reason` never holds the item's
+ * ran. `timedOut` is true when it was killed at its deadline, and `outputTooLarge` when it was
+ * killed for printing more than a credentials record can be. `reason` never holds the item's
  * contents.
  */
 export class KeychainReadError extends Error {
-  constructor(readonly reason: string, readonly code: number | null, readonly timedOut = false) {
+  constructor(
+    readonly reason: string,
+    readonly code: number | null,
+    readonly timedOut = false,
+    readonly outputTooLarge = false
+  ) {
     super(reason)
   }
 }
 
+/** `security`'s exit code for an item that is not in the Keychain. */
+export const NO_SUCH_ITEM_EXIT_CODE = 44
+
+/** `security`'s exit code for a Keychain this process may not use: locked, or an ssh session. */
+export const KEYCHAIN_NOT_ALLOWED_EXIT_CODE = 36
+
 /**
  * Runs `security find-generic-password -w -s <service>`: the item's contents, or null when the
- * item is empty. Throws a `KeychainReadError` when `security` failed. Exit 44 is an item that is
- * not there, and 36 a Keychain this process may not use.
+ * item is empty. Throws a `KeychainReadError` when `security` failed. Exit 44
+ * (`NO_SUCH_ITEM_EXIT_CODE`) is an item that is not there, and 36
+ * (`KEYCHAIN_NOT_ALLOWED_EXIT_CODE`) a Keychain this process may not use.
  */
 export async function readKeychainItem(
   securityProgram: string,
@@ -75,7 +89,7 @@ export async function readKeychainItem(
   const result = await runProgram(securityProgram, ['find-generic-password', '-w', '-s', service],
     { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES })
   const failure = failureOf(result, timeoutMs)
-  if (failure !== null) throw new KeychainReadError(failure, result.code, result.timedOut)
+  if (failure !== null) throw new KeychainReadError(failure, result.code, result.timedOut, result.outputTooLarge)
   return result.stdout.trim().length === 0 ? null : result.stdout
 }
 
@@ -113,9 +127,37 @@ export interface KeychainReaderOptions {
   run?: KeychainRun
   /**
    * Told once per login when its read fails, and again only after a read of it has worked. A
-   * line names the login, the item and why, and never the item's contents.
+   * line names the login, the item and why, and never the item's contents. It is free text, so
+   * it is for a person reading a terminal, never for the daemon log; the daemon uses `onFailure`.
    */
   log?: (line: string) => void
+  /** Called at the same times as `log`, with the failure as fixed values instead of text. */
+  onFailure?: (failure: KeychainReadFailure) => void
+}
+
+/**
+ * Why a Keychain read gave no token:
+ *
+ * - `timeout`: `security` did not answer by its deadline and was killed (most likely a dialog);
+ * - `not_allowed`: exit 36, the Keychain is locked or this process may not use it (an ssh session);
+ * - `empty`: the item exists and is empty;
+ * - `not_credentials`: the item holds something that is not a credentials record with a token;
+ * - `too_large`: `security` printed more than a credentials record can be and was killed;
+ * - `not_run`: `security` could not be started, or was ended by a signal;
+ * - `failed`: any other non-zero exit, or the read threw.
+ *
+ * An item that is not there (exit 44) is not a failure: on macOS a login whose CLI keeps its
+ * record in `.credentials.json`, or that is signed out, has no item.
+ */
+export type KeychainFailureKind = 'timeout' | 'not_allowed' | 'empty' | 'not_credentials' | 'too_large' | 'not_run' | 'failed'
+
+/** A failed Keychain read, as fixed values only. Holds no text from `security` and nothing of the item. */
+export interface KeychainReadFailure {
+  /** The login id the read was for. */
+  id: string
+  kind: KeychainFailureKind
+  /** `security`'s exit code, or null when it exited 0, was killed, never ran, or the read threw. */
+  code: number | null
 }
 
 /**
@@ -171,12 +213,12 @@ export class KeychainCredentialsReader implements CredentialsSource {
       return
     }
     let value: ClaudeCredentials | null = null
-    let failure: string | null = null
+    let failure: { text: string; kind: KeychainFailureKind; code: number | null } | null = null
     try {
       const secret = await run(service)
       value = secret === null ? null : parseCredentials(secret)
-      if (secret === null) failure = 'the item is empty'
-      else if (value === null) failure = 'the item holds no OAuth token'
+      if (secret === null) failure = { text: 'the item is empty', kind: 'empty', code: null }
+      else if (value === null) failure = { text: 'the item holds no OAuth token', kind: 'not_credentials', code: null }
     } catch (error) {
       if (error instanceof KeychainReadError && error.timedOut) {
         this.unanswered.add(service)
@@ -186,11 +228,20 @@ export class KeychainCredentialsReader implements CredentialsSource {
           'again until it restarts. A read that waits is usually a Keychain dialog: either a program other than the ' +
           'Claude CLI created the item or changed its access list, so /usr/bin/security may read it only after somebody ' +
           'allows it, or the login Keychain is locked. Reading again would put up another dialog.')
+        this.options.onFailure?.({ id, kind: 'timeout', code: null })
         return
       }
-      failure = error instanceof KeychainReadError
-        ? `${error.code === null ? 'no exit code' : `exit ${String(error.code)}`}: ${error.reason}`
-        : `it threw: ${error instanceof Error ? error.message : String(error)}`
+      // No item is an answer, not a failure: the login keeps its record in `.credentials.json`
+      // or is signed out. It counts as a read that worked.
+      if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
+        failure = error instanceof KeychainReadError
+          ? {
+              text: `${error.code === null ? 'no exit code' : `exit ${String(error.code)}`}: ${error.reason}`,
+              kind: failureKindOf(error),
+              code: error.code
+            }
+          : { text: `it threw: ${error instanceof Error ? error.message : String(error)}`, kind: 'failed', code: null }
+      }
     }
     this.cache.set(id, { readAt: this.now(), value })
     if (failure === null) {
@@ -199,11 +250,20 @@ export class KeychainCredentialsReader implements CredentialsSource {
       // Once per login, or the log would get a line a minute for as long as the failure lasts.
       this.failureLogged.add(id)
       this.options.log?.(`reading login ${id} from the Keychain item "${service}" failed, so the proxy holds no token ` +
-        `for it (${failure})`)
+        `for it (${failure.text})`)
+      this.options.onFailure?.({ id, kind: failure.kind, code: failure.code })
     }
   }
 
   private now(): number { return this.options.now?.() ?? Date.now() }
+}
+
+/** The kind of a failed `security` call that was not a timeout and not a missing item. */
+function failureKindOf(error: KeychainReadError): KeychainFailureKind {
+  if (error.outputTooLarge) return 'too_large'
+  if (error.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE) return 'not_allowed'
+  if (error.code === null) return 'not_run'
+  return 'failed'
 }
 
 /**

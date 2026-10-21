@@ -2,8 +2,9 @@
 // `.credentials.json` file the CLI writes on Windows and Linux. Copied from the original router's
 // `src/tools/claude/main/accounts/router/credentials.ts`.
 //
-// The macOS reader is `KeychainCredentialsReader` in `keychain.ts`. `keychainHoldsSecret` there
-// says which of the two a platform uses.
+// The macOS Keychain reader is `KeychainCredentialsReader` in `keychain.ts`. `createTokenSource`
+// in `tokens.ts` puts the two together: on macOS the Keychain item first and this file when the
+// item gives no token, elsewhere this file only.
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseCredentials, type ClaudeCredentials } from '../core/credentials.ts'

@@ -4,7 +4,7 @@ import { describe, expect, test } from 'vitest'
 import { applyEnvPatch, claudeLoginEnv, claudeProbeEnv, codexLoginEnv } from '../../src/data/login-env.ts'
 import { claudeDefaultProbeFolder, kurmisHome } from '../../src/data/paths.ts'
 
-const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
+const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
 
 describe('claude', () => {
   test('an extra login runs with its folder as the config folder', () => {
