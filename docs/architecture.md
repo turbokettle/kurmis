@@ -30,8 +30,13 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   under a name derived from this folder's path (`keychainService` in
   `src/core/keychain-service.ts`).
 - `codex/<name>/` is the `CODEX_HOME` of the extra Codex login `codex:<name>`.
-- `daemon.json` holds the running daemon's pid, port and version. The daemon writes it when it
-  has its port and removes it when it stops.
+- `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
+  it once it has its port and removes it as the last step of stopping, only while the file still
+  names its own pid, so a replaced daemon never removes its successor's file. The CLI removes a
+  `daemon.json` whose pid no longer exists, and one that is damaged.
+- `launchd/` holds the plists of the short-lived launchd jobs that start the daemon from an ssh
+  login on macOS. Each is removed once its job has run.
+- `autostart.vbs` is the script the Windows logon entry runs (see "Starting at login").
 - `key` holds the secret every proxied and control request carries. It is created once and
   kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
   of it and must keep working after the daemon restarts. Only the user can read it.
@@ -191,10 +196,133 @@ older version, after that daemon finishes the requests it has open.
   (`/usr/bin/security`). They exist so the tests can use the fakes in `test/fakes/` and
   `test/daemon/fake-security/`. `createDaemonApp`'s `tuning` option shortens the daemon's
   timings for tests in the same way.
-- **Starting.** The CLI starts the daemon when it is not running, detached from the terminal. On
-  macOS a daemon started from an ssh login cannot read the login Keychain, so where that matters
-  it is started through launchd. On Windows the daemon must survive the terminal closing even
-  when the terminal runs its children in a job that is killed on close.
+
+### Starting and stopping
+
+The code is `src/daemon/main.ts` (the process), `src/daemon/lifecycle.ts` (what the CLI and the
+daemon both need: a keyed control request, who holds a port, version comparison),
+`src/cli/daemon-client.ts` (finding, starting and stopping it from the CLI) and
+`src/platform/detach.ts`, `launchd.ts`, `autostart.ts`, `windows-autostart.ts`.
+
+**`kurmis daemon run`** reads or creates `key`, reads `port` from `config.json` and opens
+`daemon.log`. Then it listens on `127.0.0.1:<port>`. The port is the lock that keeps one daemon
+per user. When the port is busy, the daemon asks the holder for its status with the key:
+
+- a kurmis daemon of an older version is replaced (below);
+- a kurmis daemon of the same or a newer version, or of a version that cannot be compared
+  (`dev`, which code run from the source tree reports), keeps the port, and the new process
+  prints that it already runs and exits 0. Two CLIs that start a daemon at the same moment rely
+  on this: the bind decides, and both CLIs connect to the one that won;
+- any other program is an error, exit 1, that says to set `"port"` in `config.json` (1024 to
+  65535).
+
+Only after the bind does the daemon write `daemon.json` and start the request handling, which
+reads `state.json`, so a daemon that loses the bind never touches the state. Requests that
+arrive while the request handling starts wait for it.
+
+**Stopping.** On SIGTERM, SIGINT, SIGHUP or a control `stop`, the daemon:
+
+1. stops accepting at once, which frees the port;
+2. closes idle keep-alive connections, again every second, and marks its answers
+   `connection: close`, so a CLI's next request opens a connection to whatever holds the port
+   next;
+3. waits for its open proxied requests, for at most 15 minutes. A Claude CLI waits at most
+   `API_TIMEOUT_MS` (600 s by default) for the headers of an answer; that a streamed answer
+   that has started ends within the rest of the 15 minutes is an assumption. A second stop
+   signal ends the wait;
+4. writes `state.json`, closes the remaining connections, removes `daemon.json` and exits 0.
+
+An uncaught error is logged by its error code only, and the daemon stops without waiting for its
+requests and exits 1. The next kurmis command starts a new one.
+
+**Version handover.** A CLI that finds a daemon of an older version starts a new daemon, and the
+new daemon does the handover: it sends the old one a control `stop` and tries the bind every
+100 ms for up to 10 seconds. The old daemon frees the port as soon as it has answered, and
+finishes its open requests in the background while the new one serves. A routed Claude CLI
+retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
+in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older
+kurmis never replaces a newer daemon. A daemon on another port than `config.json` names is asked
+to stop by the CLI before the new one starts.
+
+**Finding it.** The CLI reads `daemon.json` and counts the daemon as running only when it
+answers a status request with the key. A `daemon.json` whose pid exists but that does not answer
+is left alone, since that daemon may be finishing its requests before it stops. When
+`daemon.json` finds nothing, the CLI also asks the configured port, since a daemon that has just
+bound may not have written `daemon.json` yet.
+
+**Starting it from the CLI** (`ensureDaemon`, `kurmis daemon start`): when none answers, the CLI
+starts `<node> <bundle> daemon run` and waits up to 15 seconds for a daemon of its version or a
+newer one to answer (30 seconds through launchd or WMI). The bundle is the one running now, with
+symlinks resolved. The daemon does not inherit `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` or `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which a
+CLI started inside a routed session has. It runs in the home folder, so it holds no project
+folder open. How it is started:
+
+- **Directly, detached**, everywhere except the two cases below. On macOS and Linux
+  `detached: true` puts it in a new session, so the terminal's hangup does not reach it, and its
+  standard streams go to `/dev/null`; the daemon writes its own log. On Windows
+  `detached: true` gives it no console and a process group of its own, and `windowsHide` keeps
+  any window hidden.
+- **Through launchd, on macOS from an ssh login** (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY`
+  set) or wherever `security show-keychain-info login.keychain` fails. A process started from
+  an ssh login is in the ssh session's audit session and cannot read the login Keychain, and
+  neither can its children, so such a daemon would sign nothing. The design follows TK
+  the original router's one-shot job. The CLI writes `launchd/kurmis.start.<random>.plist` (mode 0600)
+  whose program is `<node> <bundle> daemon start --no-launchd`, with `RunAtLoad` and
+  `AbandonProcessGroup`, no `KeepAlive`, and output to `/dev/null`, and loads it with
+  `launchctl bootstrap gui/<uid> <plist>`. That `daemon start` runs in the user's GUI session,
+  starts the daemon detached in its own session and process group, and exits. Once the daemon
+  answers, the CLI runs `launchctl bootout gui/<uid>/<label>` and deletes the plist; unloading
+  the job does not end the daemon. The job's environment is only `HOME`, the caller's `PATH` (so
+  the daemon finds `claude` and `codex`), `KURMIS_HOME` as an absolute path, and the program
+  variables and test hooks when they are set; never an `ANTHROPIC_*`, `SSH_*` or `CLAUDE_*`
+  variable. The GUI domain exists only while the user is logged in at the screen (or through
+  Screen Sharing). Without it `bootstrap` fails, and the CLI starts the daemon directly with a
+  warning that Keychain logins will not be routed. Plists older than 10 minutes that a killed
+  CLI left behind are removed at the next start. `--no-launchd` starts the daemon directly.
+- **Through WMI, on Windows from an ssh login.** Windows' OpenSSH server puts each session in a
+  job object and ends every process in it when the session closes, detached ones included, and
+  Node cannot ask for `CREATE_BREAKAWAY_FROM_JOB`. So the CLI runs PowerShell with
+  `Invoke-CimMethod Win32_Process Create`, every value in a single-quoted PowerShell string. WMI's
+  own host process becomes the daemon's parent, outside the session's job. Measured with TK
+  the original router on Windows 10: such a process outlives the ssh session. The process gets the user's
+  own environment from Windows, not the CLI's, so a `KURMIS_HOME` set only in the ssh session
+  does not reach it. When WMI refuses, the daemon is started directly with a warning that it
+  ends with the session.
+
+Terminals that put their children in a kill-on-close job (some IDE terminals) are not detected;
+a daemon started from one ends with it, and the next kurmis command starts it again.
+
+**Stopping it from the CLI** (`kurmis daemon stop`) sends the control `stop` and waits up to 30
+seconds for the pid to exit. Then it sends SIGTERM, which, as the second stop signal, ends the
+daemon's wait for its open requests. Only a pid that answered the keyed status request as the
+daemon's own is ever signalled. `kurmis daemon restart` sends `stop`, waits until the port is
+free, and starts a new daemon at once, so the old one finishes its requests in the background.
+It refuses to replace a daemon of a newer version.
+
+### Starting at login
+
+`kurmis setup` registers `<node> <bundle> daemon start --no-launchd` to run when the user logs
+in, and `setup --undo` removes it. That command starts the daemon detached and exits, so
+removing the entry never ends a running daemon. Both are idempotent: what is already there is
+compared first. The Node is the first `node` on PATH when it is the same file as the running one,
+since `process.execPath` names a versioned folder that a Homebrew upgrade removes.
+
+- **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist`, the same shape as the one-shot job
+  (mode 0644; it holds no secret). It is written only when its content differs, then loaded
+  with `launchctl bootstrap`, which also runs it once; one loaded with old content is unloaded
+  first, since launchd keeps what it read at load time. When loading fails (nobody at the
+  screen), the plist stays and a warning says it starts at the next login. `setup --undo` runs
+  `bootout`, ignoring "not loaded", and deletes the plist.
+- **Windows:** the `REG_SZ` value `kurmis` under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, set, read and removed with `reg.exe`
+  through `runProgram` (no shell). It needs no admin rights and shows in Task Manager's Startup
+  tab. Its data is `<SystemRoot>\System32\wscript.exe //B //Nologo "<data folder>\autostart.vbs"`
+  with full paths. node.exe is a console program and would flash a console window at logon, so
+  the script, UTF-16 with a byte order mark, sets the kurmis variables and the start folder and
+  starts node hidden without waiting (`WScript.Shell.Run "<command line>", 0, False`). `//B`
+  stops error dialogs at logon.
+- **Other platforms:** a warning; the next kurmis command starts the daemon.
 
 ## How a Claude CLI reaches the daemon
 
@@ -300,6 +428,8 @@ would delete the folder of `~/.codex` it points to.
   On macOS and Linux links are directory symlinks and paths are compared exactly.
 - **Ctrl-C** goes to every process on the console. The wrapper ignores it and waits for the
   child to exit.
+- **The daemon** is started detached with no console, through WMI from an ssh login, and at
+  logon through a hidden `wscript` script ("Starting and stopping", "Starting at login").
 
 **Finding `claude` and `codex`** (`src/platform/programs.ts`). `KURMIS_CLAUDE_BIN` /
 `KURMIS_CODEX_BIN` name the program explicitly (a `.js` path runs through Node). Otherwise
@@ -331,6 +461,37 @@ through Node instead. Older versions had `cli.js`, which runs through Node. `@op
 bin is `bin/codex.js`, which kurmis runs through Node, so the launcher still sets its
 `CODEX_MANAGED_BY_*` variables. Kurmis does not take over the `NODE_PATH` that pnpm's shims
 set, because Node finds a package's dependencies from its real folder.
+
+## Test hooks
+
+Environment variables that exist only so tests can point kurmis at stand-ins. A person never
+needs them.
+
+- `KURMIS_HOME` moves the data folder; every test sets it to a temporary folder.
+- `KURMIS_CLAUDE_BIN`, `KURMIS_CODEX_BIN` name the programs (also usable by a person).
+  `test/setup.ts` points both at `test/no-real-program.mjs`, which only fails, so no test can
+  start the real CLIs from PATH by accident; a test that needs a CLI names a fake, and a test of
+  the PATH search removes them from the environment it passes.
+- `KURMIS_UPSTREAM_URL` is Anthropic's API base URL, `https://api.anthropic.com` by default.
+- `KURMIS_SECURITY_PROGRAM` is macOS's `security`, `/usr/bin/security` by default.
+- `KURMIS_ENTRY` names the bundle a daemon is started from, for tests that run the CLI from the
+  source tree, where there is no bundle to start.
+- `KURMIS_LAUNCHCTL_PROGRAM` is `launchctl`, `/bin/launchctl` by default. `test/setup.ts` points
+  it at `test/platform/fake-launchctl/launchctl.mjs`, which records its calls in
+  `$FAKE_LAUNCHCTL_DIR` and answers bootstrap, bootout, print and kickstart with launchctl's exit
+  codes. `FAKE_LAUNCHCTL_RUN=1` makes it run a loaded job's program with only the plist's
+  environment, as launchd would; `FAKE_LAUNCHCTL_FAIL_BOOTSTRAP=<code>` makes every bootstrap
+  fail.
+- `KURMIS_REG_PROGRAM` is `reg.exe`, `<SystemRoot>\System32\reg.exe` by default. `test/setup.ts`
+  points it at `test/platform/fake-reg/reg.mjs`, which keeps values in `$FAKE_REG_DIR`;
+  `FAKE_REG_FAIL=1` makes every call fail.
+
+**Testing the daemon process.** `test/daemon/bundle.ts` bundles kurmis into a temporary folder as
+`scripts/build.mjs` does, with a version the test chooses. `entry: 'real'` is the real CLI;
+`entry: 'fake'` runs `daemon run` around a small fake request handler
+(`test/daemon/fake-app.ts`) and the real CLI for every other command. An older daemon is a
+bundle built with an older version, so no variable is needed to fake one. In-process tests pass
+`runDaemon` a fake app, an EventEmitter in place of `process`, and a `version`.
 
 ## Code layout
 
@@ -364,11 +525,13 @@ set, because Node finds a package's dependencies from its real folder.
   summary, its help text and `run(args, context)`, which returns the exit code (0 done, 1
   failed, 2 wrong command line). The commands are `claude`, `codex`, `status [--json]`,
   `list [--json]`, `login <id>`, `logout <id>`, `setup [--undo]` and
-  `daemon start|stop|status|run`, where `daemon run` runs the daemon in the foreground and is
-  what `daemon start` launches in the background.
+  `daemon start|stop|restart|status|run`, where `daemon run` runs the daemon in the foreground
+  and is what `daemon start` launches in the background. `daemon status` exits 1 when no daemon
+  runs.
 - `src/version.ts` holds the version, which the build takes from `package.json`.
 - `src/platform/` holds what differs per OS: finding programs and reading npm shims (`programs.ts`,
-  `npm-shim.ts`), folder links (`links.ts`), detaching, autostart, and the file rename retry and
+  `npm-shim.ts`), folder links (`links.ts`), detaching and WMI starts (`detach.ts`), launchd jobs
+  (`launchd.ts`), autostart (`autostart.ts`, `windows-autostart.ts`), and the file rename retry and
   file modes (`files.ts`). Every short-lived program kurmis starts goes through `runProgram` in
   `run.ts`: no shell, stdin closed, a deadline and a cap on the output. The usage probes, whose
   stdin carries JSON frames, go through `startFrameProcess` in `frame-process.ts`: no shell, a
