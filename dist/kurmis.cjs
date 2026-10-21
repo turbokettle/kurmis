@@ -8125,6 +8125,7 @@ function parseWrapperArgs(args) {
 }
 
 // src/cli/commands/claude.ts
+var START_PROBE_WAIT_MS = 15e3;
 var USAGE = `Usage: kurmis claude [--login <login>] [--] [claude arguments...]
 
 Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
@@ -8141,6 +8142,10 @@ Options (only before the first argument kurmis does not know):
   -h, --help        Show this help.
   --                Pass everything after it to claude, even arguments kurmis knows.
 
+On Auto, claude starts on the credentials of the login plain claude uses, or, when that login
+is signed out, on those of a signed-in login of the pool. Right after the daemon starts, kurmis
+waits up to 15 seconds for its first usage probe to tell which.
+
 Everything from the first argument kurmis does not know is passed to claude unchanged, except
 claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
 give one (your file is not changed).
@@ -8156,6 +8161,7 @@ function createClaudeCommand(overrides = {}) {
     homeDir: () => (0, import_node_os8.homedir)(),
     folderExists: (path) => (0, import_node_fs12.existsSync)(path) && (0, import_node_fs12.statSync)(path).isDirectory(),
     storeSettings: (text2, holdsUserSettings) => storeSettings(text2, holdsUserSettings),
+    probeWaitMs: START_PROBE_WAIT_MS,
     ...overrides
   };
   return {
@@ -8225,6 +8231,7 @@ async function runClaude(args, context, deps) {
     if (config === null) {
       startedOn = ownRow ?? { id: null, alias: plainCliLoginText("claude"), usedByPlainCli: true };
     } else {
+      status2 = await withFirstProbe(connection, status2, context, deps);
       const startId = autoStartLogin(startableLogins(status2));
       startedOn = status2.logins.find((login) => login.id === startId) ?? plainCliLogin(config, "claude");
       if (!startedOn.usedByPlainCli) {
@@ -8274,6 +8281,15 @@ async function runClaude(args, context, deps) {
     claudeArgs.remove();
   }
   return deps.child.finishLikeChild(end, { stderr: context.stderr, name: "claude", platform: deps.platform });
+}
+async function withFirstProbe(connection, status2, context, deps) {
+  const unknown = status2.logins.filter((login) => login.provider === "claude" && login.signedIn === null);
+  if (!unknown.some((login) => login.usedByPlainCli)) return status2;
+  const ids = unknown.map((login) => login.id);
+  const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, ids, signal), deps.probeWaitMs);
+  if (probed.kind === "done") return probed.value;
+  writeLine(context.stderr, probed.kind === "timeout" ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1e3)} s, so it is not known yet whether ${plainCliLoginText("claude")} is signed in; claude starts on it.` : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ${plainCliLoginText("claude")} is signed in; claude starts on it.`);
+  return status2;
 }
 function startableLogins(status2) {
   return status2.logins.filter((login) => login.provider === "claude").map((login) => ({

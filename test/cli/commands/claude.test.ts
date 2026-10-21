@@ -202,11 +202,63 @@ describe('kurmis claude on Auto', () => {
     expect(out.stderr()).toContain('CLAUDE_CONFIG_DIR is set, but kurmis starts claude on the login plain claude uses, the one in ~/.claude')
   })
 
-  test('an unknown sign-in state of the login plain claude uses counts as signed in', async () => {
+  test('a sign-in state of the login plain claude uses that the daemon does not know yet is probed first', async () => {
+    // Right after a daemon start: no token for the login plain claude uses and no probe answer yet.
+    const h = harness({
+      status: statusAnswer([
+        loginStatus(OWN_CLAUDE_REF, { signedIn: null }),
+        loginStatus(SPARE, { signedIn: null }),
+        loginStatus(WORK),
+        loginStatus(OWN_CODEX_REF, { signedIn: null })
+      ]),
+      probed: statusAnswer([
+        loginStatus(OWN_CLAUDE_REF, { signedIn: false }),
+        loginStatus(SPARE, { signedIn: false }),
+        loginStatus(WORK),
+        loginStatus(OWN_CODEX_REF, { signedIn: null })
+      ])
+    })
+    const out = collect()
+    await createClaudeCommand(h.deps).run([], out.context)
+    expect(h.daemon.calls).toContain(`requestProbe:${OWN_CLAUDE},spareclaude`)
+    expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain('x-kurmis-started-on: workclaude')
+    expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(WORK_FOLDER())
+    expect(out.stderr()).toContain('is not signed in, so claude starts on work-example\'s credentials')
+  })
+
+  test('a known sign-in state of the login plain claude uses needs no probe, whatever the extra logins say', async () => {
+    for (const signedIn of [true, false]) {
+      const h = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn }), loginStatus(SPARE, { signedIn: null }), loginStatus(WORK)]) })
+      await createClaudeCommand(h.deps).run([], collect().context)
+      expect(h.daemon.calls.filter((call) => call.startsWith('requestProbe'))).toEqual([])
+    }
+  })
+
+  test('a sign-in state of the login plain claude uses that the probe leaves unknown counts as signed in', async () => {
     const h = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: null }), loginStatus(WORK)]) })
     await createClaudeCommand(h.deps).run([], collect().context)
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain(`x-kurmis-started-on: ${OWN_CLAUDE}`)
     expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
+  })
+
+  test('a first probe that takes longer than the wait, or fails, starts claude on the login plain claude uses with a note', async () => {
+    const h = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: null }), loginStatus(WORK)]) }, { probeWaitMs: 20 })
+    let aborted = false
+    h.daemon.requestProbe = (_connection, _logins, signal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')) })
+    })
+    const out = collect()
+    expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(3)
+    expect(aborted).toBe(true)
+    expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain(`x-kurmis-started-on: ${OWN_CLAUDE}`)
+    expect(out.stderr()).toContain('the daemon did not finish its first usage probe within 0.02 s')
+
+    const failing = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: null }), loginStatus(WORK)]) })
+    failing.daemon.requestProbe = () => Promise.reject(new Error('connection reset'))
+    const failed = collect()
+    expect(await createClaudeCommand(failing.deps).run([], failed.context)).toBe(3)
+    expect(failing.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain(`x-kurmis-started-on: ${OWN_CLAUDE}`)
+    expect(failed.stderr()).toContain('the usage probe failed (connection reset)')
   })
 
   test('with the login plain claude uses signed out, claude starts on a signed-in pool login, whose folder stays out of --settings', async () => {

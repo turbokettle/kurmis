@@ -2,7 +2,11 @@
 // (docs/architecture.md, "How a Claude CLI reaches the daemon").
 //
 // The CLI is started on one login's credentials: the pinned one with `--login`, otherwise the
-// one `autoStartLogin` picks from the daemon's status (normally plain claude's login). When
+// one `autoStartLogin` picks from the daemon's status (normally plain claude's login). While the
+// daemon has neither a token nor a probe answer for plain claude's login, as right after it
+// starts, the wrapper first waits up to `START_PROBE_WAIT_MS` for the probes of the Claude logins
+// the daemon knows nothing about (`withFirstProbe`), so the first start after a daemon start
+// picks the same login as the later ones. When
 // config.json cannot be read, a CLI without `--login` starts on plain claude's login, with the id
 // the daemon's status gives it, and a warning. The proxy signs each request with the login it
 // picks, so on Auto this only has to be a login the CLI can send with at all. The routing
@@ -28,7 +32,9 @@ import type { LoginId } from '../../data/login-id.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
 import { EXIT_FAILURE, EXIT_OK, usageError, writeLine, type CliContext, type Command } from '../command.ts'
-import { realChildRunner, realDaemonClient, realFindProgram, type ChildRunner, type DaemonClient } from '../command-deps.ts'
+import {
+  realChildRunner, realDaemonClient, realFindProgram, settleWithin, type ChildRunner, type DaemonClient
+} from '../command-deps.ts'
 import { DaemonNotUsableError, type DaemonConnection } from '../daemon-client.ts'
 import {
   claudeArgsWithSettings,
@@ -63,7 +69,16 @@ export interface ClaudeDeps {
   folderExists: (path: string) => boolean
   /** Writes the merged `--settings` (`storeSettings` in `settings-arg.ts`). */
   storeSettings: SettingsStore
+  /** How long to wait for the daemon's first probes before picking the login to start on. */
+  probeWaitMs: number
 }
+
+/**
+ * How long `kurmis claude` on Auto waits for the daemon to probe the Claude logins it knows
+ * nothing about yet, when one of them is plain claude's login. A Claude probe starts one
+ * short-lived `claude`, and the probes run side by side.
+ */
+export const START_PROBE_WAIT_MS = 15_000
 
 const USAGE = `Usage: kurmis claude [--login <login>] [--] [claude arguments...]
 
@@ -81,6 +96,10 @@ Options (only before the first argument kurmis does not know):
   -h, --help        Show this help.
   --                Pass everything after it to claude, even arguments kurmis knows.
 
+On Auto, claude starts on the credentials of the login plain claude uses, or, when that login
+is signed out, on those of a signed-in login of the pool. Right after the daemon starts, kurmis
+waits up to 15 seconds for its first usage probe to tell which.
+
 Everything from the first argument kurmis does not know is passed to claude unchanged, except
 claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
 give one (your file is not changed).
@@ -97,6 +116,7 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
     homeDir: () => homedir(),
     folderExists: (path) => existsSync(path) && statSync(path).isDirectory(),
     storeSettings: (text, holdsUserSettings) => storeSettings(text, holdsUserSettings),
+    probeWaitMs: START_PROBE_WAIT_MS,
     ...overrides
   }
   return {
@@ -192,6 +212,7 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
       // sent, which the daemon reads as that login too.
       startedOn = ownRow ?? { id: null, alias: plainCliLoginText('claude'), usedByPlainCli: true }
     } else {
+      status = await withFirstProbe(connection, status, context, deps)
       const startId = autoStartLogin(startableLogins(status))
       startedOn = status.logins.find((login) => login.id === startId) ?? plainCliLogin(config, 'claude')
       if (!startedOn.usedByPlainCli) {
@@ -250,6 +271,28 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     claudeArgs.remove()
   }
   return deps.child.finishLikeChild(end, { stderr: context.stderr, name: 'claude', platform: deps.platform })
+}
+
+/**
+ * `status`, or, when the daemon knows nothing yet about whether plain claude's login is signed in
+ * (no token read and no probe answer, as right after the daemon starts), the status after the
+ * daemon has probed every Claude login it knows nothing about. The wait is at most
+ * `probeWaitMs`; when it is over or the probe request fails, `status` is used as it is, with a
+ * note.
+ */
+async function withFirstProbe(connection: DaemonConnection, status: StatusAnswer, context: CliContext,
+  deps: ClaudeDeps): Promise<StatusAnswer> {
+  const unknown = status.logins.filter((login) => login.provider === 'claude' && login.signedIn === null)
+  if (!unknown.some((login) => login.usedByPlainCli)) return status
+  const ids = unknown.map((login) => login.id)
+  const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, ids, signal), deps.probeWaitMs)
+  if (probed.kind === 'done') return probed.value
+  writeLine(context.stderr, probed.kind === 'timeout'
+    ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1000)} s, so it is not ` +
+      `known yet whether ${plainCliLoginText('claude')} is signed in; claude starts on it.`
+    : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ` +
+      `${plainCliLoginText('claude')} is signed in; claude starts on it.`)
+  return status
 }
 
 /**

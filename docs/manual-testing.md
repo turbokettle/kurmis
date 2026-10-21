@@ -186,7 +186,9 @@ Run this last, since it removes the logins added above.
   `kurmis daemon status` should show the daemon started at that login, and `kurmis claude -p
   --model haiku "Reply ok"` should be routed on a Keychain login.
 - **The login plain claude uses, signed out.** When `claude` itself is signed out, `kurmis claude`
-  says it starts on another login's credentials and still routes.
+  says it starts on another login's credentials and still routes. Check it right after
+  `kurmis daemon stop; kurmis daemon start` too: the first `kurmis claude -p "Reply ok"` waits for
+  the daemon's first probe and starts on the other login as well.
 
 ## Windows only
 

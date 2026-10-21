@@ -138,6 +138,12 @@ kurmis' own options goes to `claude` unchanged, so `kurmis claude --resume` or
 - **`--login <login>`** keeps the session on one Claude login whatever its limits say, for
   example `--login work-example`.
 
+On Auto, claude starts on the credentials of the login plain `claude` uses, so it has a sign-in
+to send requests with. When that login is signed out, it starts on a signed-in login of the
+pool instead, and kurmis says so. Right after the daemon starts, it may not know yet whether the
+login plain `claude` uses is signed in; then `kurmis claude` waits up to 15 seconds for the
+daemon's first usage probe before it decides.
+
 When `~/.kurmis/config.json` cannot be read, `--login` is an error. Without `--login`, kurmis
 says why and starts claude on the login plain `claude` uses, as `kurmis codex` starts on the
 login plain `codex` uses.

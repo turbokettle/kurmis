@@ -675,8 +675,14 @@ is `src/cli/wrapper-args.ts`.
 when it is not running and reads its status. With `--login`, the CLI starts on that login, which
 must be a Claude login in `config.json` and, unless it is the login plain claude uses, must have
 its folder. On Auto, `autoStartLogin` picks the login: plain claude's login while it is
-signed in (an unknown sign-in state counts as signed in for it, and only for it), otherwise a
-signed-in login of the pool, with a note on stderr. The proxy signs each request with the login
+signed in, otherwise a signed-in login of the pool, with a note on stderr. The daemon's status
+says whether a Claude login is signed in once it has read a token for it or a probe has
+answered. Right after the daemon starts, it may have neither for plain claude's login. Then the
+wrapper first asks the daemon to probe the Claude logins whose state is unknown and waits for
+the answer, at most 15 seconds (`START_PROBE_WAIT_MS`, `withFirstProbe`); the probes the daemon
+started on its own are already running, so this waits for them. When the wait ends without an
+answer, an unknown state counts as signed in for plain claude's login, and only for it, with a
+note on stderr. The proxy signs each request with the login
 it picks. When that is the login the CLI was started on, the proxy forwards the CLI's own
 `Authorization` header. The wrapper sends `x-kurmis-started-on` with that login's id, and with
 `--login` also `x-kurmis-login` with the same id. When the daemon cannot be reached, the
