@@ -353,19 +353,19 @@ describe("an extra Codex login's config.toml", () => {
   // number, and rounds an integer past 2^53. The merge compares and writes TOML's own types.
   describe('values JavaScript numbers and objects cannot hold exactly', () => {
     it('keeps a date inside an inline table when another value there changes', () => {
-      const result = mergeAccountConfig('x = { date = 2026-10-01, n = 2 }\n', 'x = { date = 2026-10-01, n = 1 }\n')
-      expect(result.content).toBe('x = { date = 2026-10-01, n = 2 }\n')
+      const result = mergeAccountConfig('x = { date = 2030-01-01, n = 2 }\n', 'x = { date = 2030-01-01, n = 1 }\n')
+      expect(result.content).toBe('x = { date = 2030-01-01, n = 2 }\n')
     })
 
     it('copies dates of every kind', () => {
-      const source = 'a = 2026-10-01\nb = 2026-10-01 10:00:00z\nc = 10:00:00\nd = 2026-10-01T10:00:00\n'
+      const source = 'a = 2030-01-01\nb = 2030-01-01 10:00:00z\nc = 10:00:00\nd = 2030-01-01T10:00:00\n'
       expect(sameTomlSettings(publicAccountConfig(source), source)).toBe(true)
       expect(sameTomlSettings(mergeAccountConfig(source, '').content, source)).toBe(true)
     })
 
     it('replaces a date with a different date', () => {
-      expect(mergeAccountConfig('d = 2026-10-01\n', 'd = 2026-10-02\n').content).toBe('d = 2026-10-01\n')
-      expect(sameTomlSettings('d = 2026-10-01\n', 'd = 2026-10-01T00:00:00\n')).toBe(false)
+      expect(mergeAccountConfig('d = 2030-01-01\n', 'd = 2030-01-02\n').content).toBe('d = 2030-01-01\n')
+      expect(sameTomlSettings('d = 2030-01-01\n', 'd = 2030-01-01T00:00:00\n')).toBe(false)
     })
 
     it('copies an integer past 2^53 exactly', () => {
