@@ -72,7 +72,7 @@ export function controlRequest(options: ControlRequest): Promise<ControlResult> 
         incoming.on('error', (error) => finish({ kind: 'failed', reason: error.message }))
         incoming.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8')
-          let body: unknown = null
+          let body: unknown
           try {
             body = text === '' ? null : JSON.parse(text)
           } catch {
