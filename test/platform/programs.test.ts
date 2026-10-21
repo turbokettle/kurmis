@@ -113,6 +113,21 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
     expect(readFileSync(found.args[0] as string, 'utf8')).toBe(readFileSync(entry, 'utf8'))
   })
 
+  test('a PATH hit that is kurmis\' own bundle is skipped, and the search goes on', () => {
+    const bundle = program(join(folder('kurmis/dist'), 'kurmis.cjs'))
+    const linked = folder('linked-bin')
+    symlinkSync(bundle, join(linked, 'claude'))
+    const real = program(join(folder('real-bin'), 'claude'))
+    const env = { PATH: [linked, join(root, 'real-bin')].join(':') }
+    expect(findProgram('claude', { env, platform: 'darwin', nodePath: '/node', ownEntry: bundle }))
+      .toEqual({ command: real, args: [], source: 'path' })
+    // Without anything else on PATH the skipped hit is named in the message.
+    const error = notFound('claude', { env: { PATH: linked }, platform: 'darwin', nodePath: '/node', ownEntry: bundle })
+    expect(error.message).toContain(`${join(linked, 'claude')}: it is kurmis itself, not the real program`)
+    // Not knowing its own bundle, kurmis would run it through Node.
+    expect(findProgram('claude', { env: { PATH: linked }, platform: 'darwin', nodePath: '/node', ownEntry: null }).command).toBe('/node')
+  })
+
   test('Claude Code from its native installer when it is not on PATH', () => {
     const home = folder('home')
     const native = program(join(folder('home/.local/bin'), 'claude'))
@@ -172,6 +187,16 @@ describe('PATH on Windows', () => {
   test('npm shim for Codex: node bin\\codex.js, through the Node kurmis runs on', () => {
     const files = { [`${NPM}\\codex.cmd`]: fixture('npm-global-codex.cmd'), [CODEX_ENTRY]: '#!/usr/bin/env node\n' }
     expect(find('codex', { PATH: NPM }, files)).toEqual({ command: NODE, args: [CODEX_ENTRY], source: 'npm-shim' })
+  })
+
+  test('a shim that starts kurmis\' own bundle is skipped, and the search goes on', () => {
+    const files = {
+      [`${NPM}\\codex.cmd`]: fixture('npm-global-codex.cmd'),
+      [CODEX_ENTRY]: '',
+      'C:\\tools\\codex.exe': NATIVE
+    }
+    expect(findProgram('codex', { env: { PATH: `${NPM};C:\\tools` }, platform: 'win32', nodePath: NODE, files: windowsFiles(files),
+      ownEntry: CODEX_ENTRY.toUpperCase() })).toEqual({ command: 'C:\\tools\\codex.exe', args: [], source: 'path' })
   })
 
   test('npm shim for Codex with a node.exe next to it, as with nvm-windows', () => {

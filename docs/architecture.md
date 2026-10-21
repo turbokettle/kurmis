@@ -520,8 +520,12 @@ headers. The proxy answers that path itself.
 
 - **macOS and Linux.** Ctrl-C (SIGINT) and Ctrl-\ (SIGQUIT) reach every process in the
   terminal's foreground process group, so the child gets them itself; the wrapper ignores them
-  while the child runs, as `system(3)` does. SIGTERM and SIGHUP are usually sent to the wrapper
-  alone, so it forwards them to the child and keeps waiting.
+  while the child runs, as `system(3)` does. That is so only when stdin is a terminal. When it
+  is not (a script or a program runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
+  sent to the wrapper's pid alone, so the wrapper forwards them like SIGTERM. A child whose input
+  is piped but that runs in a terminal's foreground process group then gets Ctrl-C twice, which
+  a CLI that is not interactive does not mind: it ends at the first. SIGTERM and SIGHUP are
+  usually sent to the wrapper alone, so it forwards them to the child and keeps waiting.
 - **Windows.** Ctrl-C, Ctrl-Break and closing the console reach every process on the console
   (Node reports closing as SIGHUP). The wrapper ignores all three and forwards nothing, because
   `child.kill()` there ends the child at once with TerminateProcess.
@@ -531,6 +535,16 @@ headers. The proxy answers that path itself.
   128 + the signal number instead. A child that cannot be started gives a message and the code a
   shell would give: 127 when there is no such program (also when `findProgram` finds none), 126
   when it cannot be run (EACCES, EPERM, ENOEXEC, EISDIR), 1 otherwise.
+
+- **Starting itself again.** A `claude` or `codex` on PATH may be a script of the person's that
+  runs `kurmis claude` or `kurmis codex`, and kurmis would start it, which starts kurmis, without
+  end. The wrapper adds its pid to `KURMIS_WRAPPER_PIDS` in the child's environment, and refuses
+  to start its child (exit 1, with a message that says to take the program off PATH or to set
+  `KURMIS_CLAUDE_BIN` or `KURMIS_CODEX_BIN`) when its own parent is one of those pids, which is
+  what a script that `exec`s kurmis gives, or when eight wrappers already run inside each other,
+  which catches a script that starts kurmis without `exec`. A `kurmis claude` run from the shell
+  of a session has the CLI or a shell as its parent, never a wrapper, so it is not refused. A
+  PATH hit that is kurmis' own bundle is skipped when the program is looked up (below).
 
 `test/cli/wrapper-pty.test.ts` checks this under a pseudo-terminal: `test/cli/pty-driver.py`
 (run with `python3 -I`) starts a bundled wrapper on the fake claude, sends Ctrl-C and SIGTERM, and
@@ -631,7 +645,8 @@ directly. A `.cmd` or `.bat` is read as a package manager's shim and its target 
 where its native installer puts it: `%USERPROFILE%\.local\bin\claude.exe`
 (`~/.local/bin/claude` on macOS and Linux). On macOS and Linux a PATH hit that is a symlink to a
 `.js` file (Homebrew's `codex`) runs that file through Node, so a PATH without `node` on it
-still works.
+still works. A PATH hit that resolves to kurmis' own bundle (a link to it, or a shim that starts
+it) is skipped and named in the not-found message, because it is not the real program.
 
 **Reading npm, pnpm and yarn shims** (`src/platform/npm-shim.ts`). Each generator writes a line
 that ends in the quoted target path, relative to `%~dp0` or `%dp0%` (the shim's own folder),

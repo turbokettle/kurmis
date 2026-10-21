@@ -246,6 +246,9 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   which works while you are logged in at the Mac. If nobody is logged
   in at the Mac, start the daemon there once, or run `kurmis setup` there so it starts at login;
   `kurmis claude` over ssh then uses that daemon.
+- **"kurmis was started by the program it started".** The `claude` or `codex` that kurmis found
+  on your `PATH` is a script or alias that runs kurmis again. Take it off `PATH`, or set
+  `KURMIS_CLAUDE_BIN` (or `KURMIS_CODEX_BIN`) to the full path of the real program.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
   now; try again. If no kurmis command is running, delete `~/.kurmis/config.json.lock`.
 - **A command says the daemon could not be reached.** Look at the end of `daemon.log`, or run
