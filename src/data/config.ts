@@ -6,6 +6,7 @@
 // settings for them.
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { DEFAULT_AUTO_ROUTE, DEFAULT_FIVE_HOUR_LIMIT_PERCENT, DEFAULT_WEEKLY_LIMIT_PERCENT } from '../core/accounts.ts'
 import { readJsonFileSync, writeJsonFileSync } from './json-file.ts'
 import {
   DEFAULT_LOGIN_IDS,
@@ -46,10 +47,6 @@ export const DEFAULT_PORT = 28411
 export const MIN_PORT = 1024
 export const MAX_PORT = 65535
 
-/** TODO(merge): use the core constants for the default limits and the default opt-in. */
-export const DEFAULT_FIVE_HOUR_LIMIT = 100
-export const DEFAULT_WEEKLY_LIMIT = 100
-export const DEFAULT_ROUTING = true
 
 /** A login's settings. Everything kurmis keeps about a login is here; its secret is not. */
 export interface LoginSettings {
@@ -91,9 +88,9 @@ export function newLoginSettings(id: LoginId, patch: LoginSettingsPatch = {}): L
     id,
     provider: providerOfLoginId(id),
     label: nameOfLoginId(id),
-    routing: DEFAULT_ROUTING,
-    fiveHourLimit: DEFAULT_FIVE_HOUR_LIMIT,
-    weeklyLimit: DEFAULT_WEEKLY_LIMIT,
+    routing: DEFAULT_AUTO_ROUTE,
+    fiveHourLimit: DEFAULT_FIVE_HOUR_LIMIT_PERCENT,
+    weeklyLimit: DEFAULT_WEEKLY_LIMIT_PERCENT,
     useFirst: false
   }
   return withConfigErrors(() => applyPatch(login, patch, topOf(`settings of ${id}`)))

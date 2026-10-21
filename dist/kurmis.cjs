@@ -34,14 +34,21 @@ function parseCommandArgs(command, args, options, context, allowPositionals = fa
   }
 }
 
-// src/data/login-id.ts
-var LOGIN_PROVIDERS = ["claude", "codex"];
-var LOGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-var WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/;
+// src/core/accounts.ts
+var ACCOUNT_PROVIDERS = ["claude", "codex"];
 var DEFAULT_LOGIN_NAME = "default";
-function isValidLoginName(name) {
-  return LOGIN_NAME_PATTERN.test(name) && !WINDOWS_RESERVED_NAMES.test(name);
+var DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100;
+var DEFAULT_WEEKLY_LIMIT_PERCENT = 100;
+var DEFAULT_AUTO_ROUTE = true;
+var LOGIN_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+var WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/;
+function isLoginName(name) {
+  return LOGIN_NAME.test(name) && !WINDOWS_RESERVED.test(name);
 }
+
+// src/data/login-id.ts
+var LOGIN_PROVIDERS = ACCOUNT_PROVIDERS;
+var isValidLoginName = isLoginName;
 function isLoginProvider(value) {
   return value === "claude" || value === "codex";
 }
@@ -319,9 +326,6 @@ var CONFIG_VERSION = 1;
 var DEFAULT_PORT = 28411;
 var MIN_PORT = 1024;
 var MAX_PORT = 65535;
-var DEFAULT_FIVE_HOUR_LIMIT = 100;
-var DEFAULT_WEEKLY_LIMIT = 100;
-var DEFAULT_ROUTING = true;
 var ConfigError = class extends Error {
   constructor(message) {
     super(message);
@@ -333,9 +337,9 @@ function newLoginSettings(id, patch = {}) {
     id,
     provider: providerOfLoginId(id),
     label: nameOfLoginId(id),
-    routing: DEFAULT_ROUTING,
-    fiveHourLimit: DEFAULT_FIVE_HOUR_LIMIT,
-    weeklyLimit: DEFAULT_WEEKLY_LIMIT,
+    routing: DEFAULT_AUTO_ROUTE,
+    fiveHourLimit: DEFAULT_FIVE_HOUR_LIMIT_PERCENT,
+    weeklyLimit: DEFAULT_WEEKLY_LIMIT_PERCENT,
     useFirst: false
   };
   return withConfigErrors(() => applyPatch(login, patch, topOf(`settings of ${id}`)));

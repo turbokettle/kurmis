@@ -167,13 +167,10 @@ export function pruneState(
   }
 }
 
-/** The file's JSON form. `backendId` is dropped from snapshots; it is never stored. */
+/** The file's JSON form. */
 export function serializeState(state: DaemonState): unknown {
   const usage: Record<string, AccountUsage> = {}
-  for (const [login, snapshot] of state.usage) {
-    const { backendId: _backendId, ...stored } = snapshot
-    usage[login] = stored
-  }
+  for (const [login, snapshot] of state.usage) usage[login] = snapshot
   const cooldowns: Record<string, number | null> = {}
   for (const [login, until] of state.cooldowns) cooldowns[login] = Number.isFinite(until) ? until : null
   // No prototype, so a session id such as `__proto__` is stored as an ordinary key.

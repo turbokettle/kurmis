@@ -1,13 +1,13 @@
-// Login ids: `claude:<name>` and `codex:<name>`. The name half is also the name of the login's
-// folder in the data folder, so it is restricted to characters that are safe in a path on
-// every OS.
-//
-// TODO(merge): src/core will define the login id helpers. Use those here once both are merged,
-// and keep only the name check and the `LoginId` type if core does not have them.
+// Login ids as a checked type. The id rules themselves (`claude:<name>`, `codex:<name>`, and
+// which names are safe folder names) are in `src/core/accounts.ts`; this file adds the
+// `LoginId` type that the stores and the log accept.
+import { ACCOUNT_PROVIDERS, DEFAULT_LOGIN_NAME, isLoginName, type AccountProvider } from '../core/accounts.ts'
 
-export type LoginProvider = 'claude' | 'codex'
+export { DEFAULT_LOGIN_NAME }
 
-export const LOGIN_PROVIDERS: readonly LoginProvider[] = ['claude', 'codex']
+export type LoginProvider = AccountProvider
+
+export const LOGIN_PROVIDERS: readonly LoginProvider[] = ACCOUNT_PROVIDERS
 
 /**
  * A string that has been checked to be a valid login id. Only `parseLoginId`, `toLoginId`,
@@ -16,21 +16,8 @@ export const LOGIN_PROVIDERS: readonly LoginProvider[] = ['claude', 'codex']
  */
 export type LoginId = string & { readonly __loginId: true }
 
-/**
- * A login name: 1 to 32 characters, lowercase letters, digits, `-` and `_`, starting with a
- * letter or a digit. No dots or slashes, so a name can never leave its folder.
- */
-export const LOGIN_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/
-
-/** Names Windows will not use for a file or folder, whatever the extension. */
-const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/
-
-/** The name every machine's own login has. */
-export const DEFAULT_LOGIN_NAME = 'default'
-
-export function isValidLoginName(name: string): boolean {
-  return LOGIN_NAME_PATTERN.test(name) && !WINDOWS_RESERVED_NAMES.test(name)
-}
+/** Whether `name` can be the name half of a login id, and so a folder name on every OS. */
+export const isValidLoginName = isLoginName
 
 export function isLoginProvider(value: unknown): value is LoginProvider {
   return value === 'claude' || value === 'codex'

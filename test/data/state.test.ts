@@ -46,7 +46,7 @@ beforeEach(() => {
 describe('saving and loading', () => {
   it('round-trips usage, cooldowns (Infinity too) and sessions', async () => {
     const state = emptyState()
-    state.usage.set(WORK, usage('claude:work', { backendId: 'other' }))
+    state.usage.set(WORK, usage('claude:work'))
     state.cooldowns.set(WORK, NOW + 60_000)
     state.cooldowns.set(toLoginId('claude:default'), Infinity)
     state.sessions.set('0b7c0a52-1111-4222-8333-944445555666', { login: WORK, lastUsed: NOW - 5000 })
@@ -54,7 +54,6 @@ describe('saving and loading', () => {
 
     const file = JSON.parse(readFileSync(statePath(), 'utf8')) as Record<string, Record<string, unknown>>
     expect(file.cooldowns).toEqual({ 'claude:work': NOW + 60_000, 'claude:default': null })
-    expect(file.usage!['claude:work']).not.toHaveProperty('backendId')
 
     const read = loadState(NOW)
     expect(read.problem).toBeNull()

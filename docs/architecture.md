@@ -1,15 +1,15 @@
 # Architecture
 
 Kurmis is TypeScript on Node. It is installed with `npm i -g` from git, and the built bundle is
-committed so the install runs no build step.
+committed so the install runs no build step. [scope.md](scope.md) says what it does. This file
+says how the parts fit together.
 
 `package.json` must have no `build`, `prepare`, `prepack`, `preinstall`, `install` or
 `postinstall` script. When a git dependency has one of those, npm first runs `npm install` with
 the dev dependencies in a temporary clone. In a global install that nested run inherits the
 global flag and links the package to the temporary clone, which npm then deletes, so `kurmis`
 ends up a broken link (seen with npm 11.9). This is why the script that writes the bundle is
-called `bundle`. [scope.md](scope.md) says what it does. This file
-says how the parts fit together.
+called `bundle`.
 
 Much of the routing logic is copied from the original router together with its tests. A copied module
 keeps the original router's behaviour unless this file or `scope.md` says otherwise. Code that exists only
@@ -25,10 +25,11 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 - `config.json` holds the daemon's port and the logins with their settings: id, provider, label,
   opt-in, the two limits and use-first. The CLI writes it, and the daemon reloads it when its
   contents change (`configStamp`, a hash of the file).
-- `claude/<name>/` is the config folder of an extra Claude login, where `<name>` is the part
-  of the id after `claude:`. On Windows it holds the login's `.credentials.json`. On macOS the
-  CLI keeps the secret in the Keychain, under a name derived from this folder's path.
-- `codex/<name>/` is the `CODEX_HOME` of an extra Codex login.
+- `claude/<name>/` is the config folder of the extra Claude login `claude:<name>`. On Windows
+  it holds the login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain,
+  under a name derived from this folder's path (`keychainService` in
+  `src/core/keychain-service.ts`).
+- `codex/<name>/` is the `CODEX_HOME` of the extra Codex login `codex:<name>`.
 - `daemon.json` holds the running daemon's pid, port, version and the secret clients send.
   Only the user can read it.
 - `state.json` holds the daemon's usage snapshots, cooldowns and which login each session is on,
@@ -100,13 +101,19 @@ older version, after that daemon finishes the requests it has open.
   `daemon.json`.
 - **The proxy** is every other path. A request needs the header `x-kurmis-key: <secret>`, which
   reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`. A request may also carry
-  `x-kurmis-login: <id>`, which pins it to that login. Neither header is forwarded upstream.
+  `x-kurmis-login: claude:<name>`, which pins it to that login. Neither header is forwarded
+  upstream.
 - **Sessions** are told apart by the `X-Claude-Code-Session-Id` header the CLI sends. That is
   what a session stays on its login by. The CLI's subagents and small-model requests share it.
+- **Moving a session back.** When an Auto session has just moved to another login and that login
+  answers 400, the request is sent again on the login that served the session before, and the
+  session stays on that login from then on. Some conversations cannot be continued on another
+  login.
 - **Usage** is probed every 15 minutes for each signed-in login, and on demand. The daemon also
   updates it from the rate-limit headers of every answer it forwards.
 - **Tokens** come from the Keychain (`/usr/bin/security`, with stdin closed and a deadline) or
-  from `.credentials.json`. They are cached for a minute and never written anywhere. A token
+  from `.credentials.json`. A Keychain answer is kept for a minute; the file is read again when
+  its size or modification time changes. Tokens are never written anywhere. A token
   that is about to expire is renewed by running a usage probe on that login, because the probe's
   CLI renews it.
 - **Starting.** The CLI starts the daemon when it is not running, detached from the terminal. On
@@ -175,8 +182,24 @@ the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it 
   use it.
 - `src/core/` holds pure logic with no I/O: routing, usage parsing, limits, the TOML merge. It
   holds most of the code copied from the original router.
-- `src/daemon/` holds the proxy, the control API, the token readers, the usage probes and the
-  daemon's lifecycle.
+  - `accounts.ts`: login ids and the defaults for a new login (both limits 100%, opted in).
+  - `account-router.ts`: which login serves a request, the 429 and 400 handling, and when the
+    pool can serve again.
+  - `proxy-rules.ts`: the proxy's pure decisions: which paths it routes, the headers it sends
+    and drops, the account uuid in the body, and the answers it gives when no login can serve.
+  - `capacity-hold.ts`: how long a request waits when Anthropic has no capacity (529).
+  - `route-headers.ts`: the `x-kurmis-*` headers and `ANTHROPIC_CUSTOM_HEADERS`.
+  - `routed-env.ts`: the environment a routed Claude CLI is started with.
+  - `claude-usage.ts`, `usage.ts`, `usage-rules.ts`, `countdown.ts`: the usage snapshot, the
+    `get_usage` parser and the rules over the windows.
+  - `codex-protocol.ts`, `codex-usage.ts`, `codex-account.ts`: the Codex app-server's
+    `account/rateLimits/read` and `account/read` answers.
+  - `codex-account-config.ts`, `codex-home.ts`: the `config.toml` merge and what preparing an
+    extra Codex home has to do.
+  - `credentials.ts`, `keychain-service.ts`: the `.credentials.json` format and the Keychain
+    item name.
+- `src/daemon/` holds the proxy, the control API, the token readers (`credentials.ts` for the
+  file, `keychain.ts` for the macOS Keychain), the usage probes and the daemon's lifecycle.
 - `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and
   `dispatch.ts` picks the command and handles `--help`, `--version` and `help <command>`. Each
   command is one module in `src/cli/commands/` exporting a `Command`: its name, a one-line
@@ -187,7 +210,9 @@ the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it 
   what `daemon start` launches in the background.
 - `src/version.ts` holds the version, which the build takes from `package.json`.
 - `src/platform/` holds what differs per OS: finding programs, junctions, detaching, autostart,
-  and the file rename retry and file modes.
+  and the file rename retry and file modes (`files.ts`). Every program kurmis starts goes
+  through `runProgram` in `run.ts`: no shell, stdin closed, a deadline and a cap on the output.
 - `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude`, `codex app-server` and
-  Anthropic's API. No test reaches the network or the user's real `~/.claude`, `~/.codex` or
-  Keychain.
+  Anthropic's API. `test/daemon/fake-security/` stands in for macOS's `security` program, with
+  its Keychain items in a temporary folder. No test reaches the network or the user's real
+  `~/.claude`, `~/.codex` or Keychain.
