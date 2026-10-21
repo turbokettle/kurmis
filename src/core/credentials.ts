@@ -1,9 +1,9 @@
 // Parsing a Claude login's OAuth credentials record. Copied from the original router's
 // `src/tools/claude/main/accounts/router/credentials.ts`.
 //
-// The Claude CLI keeps one JSON record per login: in `.credentials.json` on Windows and Linux,
-// and on macOS in a Keychain item, or in `.credentials.json` when there is no item. Both hold
-// the same document, of which only the `claudeAiOauth` block matters here:
+// The Claude CLI keeps one JSON record per login: in `.credentials.json` on Linux, on Windows
+// there or (newer versions) in Windows Credential Manager, and on macOS in a Keychain item, or in
+// `.credentials.json` when there is no item. All hold the same document, of which only the `claudeAiOauth` block matters here:
 //
 //   { "claudeAiOauth": { "accessToken", "refreshToken", "expiresAt", "scopes", ... } }
 //
