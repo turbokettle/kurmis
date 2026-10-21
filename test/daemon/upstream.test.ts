@@ -1,7 +1,7 @@
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { createServer as createNetServer, type AddressInfo, type Socket } from 'node:net'
 import { gzipSync } from 'node:zlib'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   ANTHROPIC_API_URL, createUpstream, forwardBody, UPSTREAM_CONNECT_TIMEOUT_MS, UPSTREAM_IDLE_TIMEOUT_MS,
   upstreamOrigin, UpstreamError, type Upstream, type UpstreamAnswer, type UpstreamRequest
@@ -76,6 +76,11 @@ function bodyFailure(answer: UpstreamAnswer): Promise<UpstreamError | null> {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Resolves once `condition` holds, checking it every 10 ms. */
+async function until(condition: () => boolean): Promise<void> {
+  while (!condition()) await wait(10)
 }
 
 function closed(socket: Socket): Promise<void> {
@@ -453,12 +458,16 @@ describe('forwardBody', () => {
     const total = 32 * 1024 * 1024
     const piece = Buffer.alloc(64 * 1024, 'x')
     let written = 0
+    /** Whether the upstream server's last write was refused and it waits for `drain`. */
+    let serverWaits = false
     const server = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/octet-stream' })
       const pump = (): void => {
+        serverWaits = false
         while (written < total) {
           written += piece.length
           if (!res.write(piece)) {
+            serverWaits = true
             res.once('drain', pump)
             return
           }
@@ -471,17 +480,25 @@ describe('forwardBody', () => {
     const response = await fetchDownstream(forwarder.url)
     response.pause()
     const downstream = forwarder.responses[0] as ServerResponse
-    const writes = vi.spyOn(downstream, 'write')
-    await wait(300)
-    const stalled = written
-    await wait(200)
-    expect(written).toBe(stalled)
-    expect(stalled).toBeLessThan(total / 2)
-    expect(writes.mock.results.some((result) => result.value === false)).toBe(true)
+    // Stalled: the forwarder's write to the client was refused (it waits for `drain`) and it
+    // paused the upstream body, the upstream server waits for `drain` too, and nothing more is
+    // written for a while. Filling every buffer on the way can take several rounds of drain on
+    // a loaded machine, so this waits for that state rather than for a fixed time.
+    const stalled = (): boolean => serverWaits && downstream.writableNeedDrain && forwarder.answers[0]?.body.isPaused() === true
+    let stalledAt: number | null = null
+    const deadline = Date.now() + 20_000
+    while (stalledAt === null && written < total && Date.now() < deadline) {
+      await until(() => stalled() || written >= total || Date.now() >= deadline)
+      const before = written
+      await wait(200)
+      if (written === before && stalled()) stalledAt = before
+    }
+    expect(stalledAt).not.toBeNull()
+    expect(stalledAt).toBeLessThan(total / 2)
     const received = await readAll(response)
     expect(received.length).toBe(total)
     expect(await forwarder.outcomes[0]).toBe('done')
-  })
+  }, 30_000)
 
   it('breaks the response off when the upstream connection drops in the middle of the body', async () => {
     const server = await startServer((_req, res) => {
