@@ -138,7 +138,7 @@ posixTest('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the c
   // runs on macOS and Linux only.
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
-  const child = { kills: [] as string[] }
+  const child = { kills: [] as string[], end: (): void => {} }
   const running = runInteractive({ command: process.execPath, args: [CHILD, 'hold', ready], env: env() }, {
     process: proc,
     platform: 'win32',
@@ -149,7 +149,7 @@ posixTest('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the c
         child.kills.push(String(signal))
         return kill(signal)
       }
-      setTimeout(() => kill('SIGTERM'), 400)
+      child.end = () => kill('SIGTERM')
       return real
     }
   })
@@ -159,6 +159,9 @@ posixTest('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the c
   proc.emit('SIGHUP')
   proc.emit('SIGINT')
   proc.emit('SIGBREAK')
+  // The emitted signals were handled synchronously; had any reached the child, it would be gone.
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  child.end()
   expect(await running).toEqual({ kind: 'exit', code: 143 })
   expect(child.kills).toEqual([])
   expect(proc.signalCount()).toBe(0)
