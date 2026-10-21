@@ -1,7 +1,8 @@
 /**
  * The `config.toml` an extra Codex login's home gets: the default home's settings without
  * anything that looks like a secret, with the secrets that login's own copy already has
- * kept in place. Copied from the original router's `src/tools/claude/core/codex-account-config.ts`.
+ * kept in place. Copied from the original router's `src/tools/claude/core/codex-account-config.ts`; the
+ * trust rules below differ from the original router's.
  *
  * An extra Codex login runs with its own `CODEX_HOME` (`codex/<name>/` in the data folder).
  * Before every start its `config.toml` is made again from `~/.codex/config.toml` with
@@ -11,16 +12,28 @@
  *
  * Codex keeps trust in the `config.toml` of the home it runs with: `hooks.state."<hook key>"`
  * for a hook (`trusted_hash`, `enabled`) and `projects."<folder>"` for a folder
- * (`trust_level`). The default home's trust is copied like any other setting. Of the
- * login's own trust values, only the two that narrow stay:
+ * (`trust_level`). A session asks for this trust and writes it into the login's own file, so
+ * those values are kept across refreshes, and the default home's values fill in the trust
+ * fields the login's file does not have. Where both files have a value for the same field of
+ * the same hook or folder (`mergedTrust`):
  *
- * - `enabled = false`, which switches a hook off;
- * - `trust_level = "untrusted"`.
+ * - `enabled`: `false` wins, so a hook switched off in either home stays off;
+ * - `trust_level`: `"untrusted"` wins over any other value;
+ * - `trusted_hash`: the login's own hash stays. A hash trusts one version of a hook, the one
+ *   that hashes to it, so neither hash trusts more than the other. The login's hash is the
+ *   one a session on that login asked for. Taking the default home's would undo that on
+ *   every refresh, and dropping both would only last until the next refresh filled the
+ *   default home's hash in.
  *
- * Every other trust value in the login's file is dropped. A Codex session can write that
- * file, so a value there may have been written by a model, and keeping it would widen every
- * later session on the login. The two narrowing values can only stop something from running,
- * so they stay whoever wrote them. Trust given in the default home reaches every login.
+ * the original router drops the trust a login's own file gave, because a model in a session could have
+ * written it there. Kurmis keeps it: kurmis has no window in which a person gives trust, and
+ * a model that can write the login's file can as well write `~/.codex/config.toml`, whose
+ * trust reaches every login.
+ *
+ * Because the login's own values are kept, the restrictive values ratchet: once a folder is
+ * `"untrusted"` or a hook `enabled = false` in the login's file, trusting it again in the
+ * default home does not reach the login. It has to be trusted again in a session on that
+ * login, or the line removed from the login's file.
  */
 import { parseTOML, type AST } from 'toml-eslint-parser'
 
@@ -124,14 +137,16 @@ function trustValue(path: readonly PathKey[]): boolean {
 }
 
 /**
- * Whether a trust value of the login's own file stays: only a value that narrows does.
- * `path` is one trust field, as `trustValue` accepts it.
+ * The value one trust field ends up with, given the login's own value and the default
+ * home's (`undefined` when the default home has none). `path` is one trust field, as
+ * `trustValue` accepts it. The header comment explains the rules.
  */
-function keepsOwnTrust(path: readonly PathKey[], value: unknown): boolean {
+function mergedTrust(path: readonly PathKey[], own: unknown, fromDefault: unknown): unknown {
+  if (fromDefault === undefined) return own
   const field = path.at(-1)
-  if (field === 'trusted_hash') return false
-  if (field === 'enabled') return value === false
-  return value === 'untrusted'
+  if (field === 'enabled') return own === false || fromDefault === false ? false : own
+  if (field === 'trust_level') return fromDefault === 'untrusted' ? fromDefault : own
+  return own
 }
 
 /** An argument list that passes a header, a token or an environment value on the command line. */
@@ -556,8 +571,8 @@ export function publicAccountConfig(text: string): string {
 /**
  * The login's `config.toml` made to hold the default home's settings: every public value
  * set, every public value the default no longer has removed, and every secret the login
- * already had kept. The login's narrowing trust values are kept as well, and win over the
- * default home's for the same hook or folder; the rest of its trust is dropped.
+ * already had kept. The login's own trust values are kept as well, merged with the default
+ * home's by `mergedTrust`.
  * `missingSecrets` says the default home has a secret the login lacks, such as an MCP
  * server's `env` table.
  *
@@ -571,10 +586,11 @@ export function mergeAccountConfig(source: string, target: string): { content: s
   const targetEntries = settings(parseToml(target))
   const opaque = targetEntries.filter(kept)
   let publicSource = publicAccountConfig(source)
+  const publicValues = typedToml(publicSource)
   for (const entry of targetEntries) {
     if (inlineEntry(entry) || !trustValue(entry.path) || kept(entry)) continue
-    const value = at(targetValues, entry.path)
-    if (keepsOwnTrust(entry.path, value)) publicSource = patchToml(publicSource, entry.path, value)
+    const merged = mergedTrust(entry.path, at(targetValues, entry.path), at(publicValues, entry.path))
+    publicSource = patchToml(publicSource, entry.path, merged)
   }
   const values = typedToml(publicSource)
   const preserve = (current: unknown, incoming: unknown, path: string[]): unknown => {
@@ -614,29 +630,17 @@ export function mergeAccountConfig(source: string, target: string): { content: s
   return { content, missingSecrets }
 }
 
-/**
- * The login's `config.toml` with only its trust checked: every trust value that does not
- * narrow is taken out, and everything else stays byte for byte. Used when the default
- * home's `config.toml` is missing or cannot be merged, so the login still never starts with
- * trust its own file gave it. Throws when `text` is not valid TOML.
- */
-export function filterAccountTrust(text: string): string {
-  const values = typedToml(text)
-  let content = text
-  // Last in the file first, for the same reason as in `mergeAccountConfig`.
-  for (;;) {
-    const drop = settings(parseToml(content)).filter((entry) => {
-      if (inlineEntry(entry) || !trustValue(entry.path)) return false
-      const value = at(values, entry.path)
-      return !protectedValue(value) && !keepsOwnTrust(entry.path, value)
-    })
-    const last = drop.sort((a, b) => entryStart(b) - entryStart(a))[0]
-    if (last === undefined) return content
-    content = removeEntry(content, last)
-  }
-}
-
-/** Whether two `config.toml` texts hold the same settings, whatever their layout. */
+/** Whether two `config.toml` texts hold the same settings, whatever their layout. Throws when either is not valid TOML. */
 export function sameTomlSettings(a: string, b: string): boolean {
   return stableJson(typedToml(a)) === stableJson(typedToml(b))
+}
+
+/** Whether a text is valid TOML. */
+export function validToml(text: string): boolean {
+  try {
+    parseToml(text)
+    return true
+  } catch {
+    return false
+  }
 }

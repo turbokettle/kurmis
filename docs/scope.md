@@ -21,7 +21,10 @@ machine after each larger change. Linux works where it costs nothing extra.
   `~/.codex/config.toml` are not carried over. `AGENTS.md` is copied in, and the folders of
   `~/.codex` are linked in: a symlink on macOS, a directory junction on Windows. Scratch folders
   (`tmp`, `.tmp`), links and anything whose name says it holds a credential or a database are
-  not linked. `auth.json` is never copied or linked.
+  not linked. `auth.json` is never copied or linked. Hook and folder trust that a session on
+  the login gave stays in the login's `config.toml` across refreshes; the default home's trust
+  fills in what the login has not set, and where both set a value the more restrictive one
+  wins (a folder marked untrusted, a hook switched off).
 
 ## Claude routing
 

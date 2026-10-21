@@ -2,7 +2,7 @@
 // secrets, and the login's own secrets kept where they were. Copied from the original router's
 // `test/unit/claude/codex-account-config.test.ts`.
 import { describe, expect, it } from 'vitest'
-import { filterAccountTrust, mergeAccountConfig, publicAccountConfig, sameTomlSettings, tomlValue } from '../../src/core/codex-account-config.ts'
+import { mergeAccountConfig, publicAccountConfig, sameTomlSettings, tomlValue, validToml } from '../../src/core/codex-account-config.ts'
 
 /**
  * The settings of a file, with tables that hold nothing left out. A dropped value can leave
@@ -62,18 +62,19 @@ describe("an extra Codex login's config.toml", () => {
       ''
     ].join('\n')
 
-    it("keeps a folder marked untrusted from the login's own home, and drops its own hook hash", () => {
+    it("keeps the login's own folder and hook trust when the default home has none", () => {
       const result = mergeAccountConfig('model = "next"\n', loginOwn)
       expect(settingsOf(result.content)).toEqual({
         model: 'next',
+        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:login' } } },
         projects: { 'e:\\login-only': { trust_level: 'untrusted' } }
       })
       expect(result.missingSecrets).toBe(false)
     })
 
-    // A session can write its login's home, so trust there may have been written by a model.
-    // Only what narrows stays.
-    it("drops trust in the login's own file that widens what may run", () => {
+    // A session on the login asks for trust and writes it into the login's own file. Kurmis
+    // keeps it, unlike the original router, which drops whatever widens.
+    it("keeps trust in the login's own file that widens what may run", () => {
       const own = [
         `[hooks.state.${JSON.stringify(hookKey)}]`,
         'trusted_hash = "sha256:own"',
@@ -89,9 +90,17 @@ describe("an extra Codex login's config.toml", () => {
       const result = mergeAccountConfig('model = "next"\n', own)
       expect(settingsOf(result.content)).toEqual({
         model: 'next',
-        hooks: { state: { 'file:/repo/.codex/hooks.json:stop:1:0': { enabled: false } } }
+        hooks: {
+          state: {
+            [hookKey]: { trusted_hash: 'sha256:own' },
+            'file:/repo/.codex/hooks.json:stop:0:0': { trusted_hash: 'sha256:other', enabled: true },
+            'file:/repo/.codex/hooks.json:stop:1:0': { enabled: false }
+          }
+        },
+        projects: { 'e:\\own': { trust_level: 'trusted' } }
       })
-      expect(settingsOf(mergeAccountConfig('', loginOwn).content)).toEqual({ projects: { 'e:\\login-only': { trust_level: 'untrusted' } } })
+      // A second refresh changes nothing.
+      expect(mergeAccountConfig('model = "next"\n', result.content).content).toBe(result.content)
     })
 
     it("lets the default home's hook switched off win over the login's enabled = true", () => {
@@ -101,6 +110,31 @@ describe("an extra Codex login's config.toml", () => {
         `[hooks.state.${JSON.stringify(key)}]\nenabled = true\n`
       )
       expect(tomlValue(result.content)).toEqual({ hooks: { state: { [key]: { enabled: false } } } })
+    })
+
+    it("lets the login's hook switched off win over the default home's enabled = true", () => {
+      const key = 'file:/repo/.codex/hooks.json:stop:0:0'
+      const result = mergeAccountConfig(
+        `[hooks.state.${JSON.stringify(key)}]\nenabled = true\n`,
+        `[hooks.state.${JSON.stringify(key)}]\nenabled = false\n`
+      )
+      expect(tomlValue(result.content)).toEqual({ hooks: { state: { [key]: { enabled: false } } } })
+    })
+
+    it("lets a folder the default home marks untrusted win over the login's trusted", () => {
+      const result = mergeAccountConfig(
+        "[projects.'e:\\shared']\ntrust_level = \"untrusted\"\n",
+        "[projects.'e:\\shared']\ntrust_level = \"trusted\"\n"
+      )
+      expect(tomlValue(result.content)).toEqual({ projects: { 'e:\\shared': { trust_level: 'untrusted' } } })
+    })
+
+    it("keeps the login's own hash where the two homes trust different versions of a hook", () => {
+      const result = mergeAccountConfig(
+        `[hooks.state.${JSON.stringify(hookKey)}]\ntrusted_hash = "sha256:default"\n`,
+        `[hooks.state.${JSON.stringify(hookKey)}]\ntrusted_hash = "sha256:login"\n`
+      )
+      expect(tomlValue(result.content)).toEqual({ hooks: { state: { [hookKey]: { trusted_hash: 'sha256:login' } } } })
     })
 
     it("copies the default home's trust in beside the login's own", () => {
@@ -116,6 +150,7 @@ describe("an extra Codex login's config.toml", () => {
       expect(settingsOf(result.content)).toEqual({
         hooks: {
           state: {
+            [hookKey]: { trusted_hash: 'sha256:login' },
             'file:/repo/.codex/hooks.json:stop:0:0': { trusted_hash: 'sha256:default', enabled: false }
           }
         },
@@ -123,7 +158,15 @@ describe("an extra Codex login's config.toml", () => {
       })
     })
 
-    it("keeps the login's own narrowing value where both homes name the same hook or folder", () => {
+    it("fills in a trust field of the default home that the login's entry for the same hook lacks", () => {
+      const result = mergeAccountConfig(
+        `[hooks.state.${JSON.stringify(hookKey)}]\ntrusted_hash = "sha256:default"\nenabled = true\n`,
+        `[hooks.state.${JSON.stringify(hookKey)}]\nenabled = false\n`
+      )
+      expect(tomlValue(result.content)).toEqual({ hooks: { state: { [hookKey]: { trusted_hash: 'sha256:default', enabled: false } } } })
+    })
+
+    it('takes the more restrictive value where both homes name the same hook or folder', () => {
       const source = [
         `[hooks.state.${JSON.stringify(hookKey)}]`,
         'trusted_hash = "sha256:default"',
@@ -144,11 +187,19 @@ describe("an extra Codex login's config.toml", () => {
       ].join('\n')
       const result = mergeAccountConfig(source, target)
       expect(tomlValue(result.content)).toEqual({
-        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:default', enabled: false } } },
+        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:login', enabled: false } } },
         projects: { 'e:\\login-only': { trust_level: 'untrusted' } }
       })
       // A second refresh changes nothing.
       expect(mergeAccountConfig(source, result.content).content).toBe(result.content)
+    })
+
+    // The login's own values are kept, so a restrictive value stays even after the default
+    // home trusts the folder again.
+    it("keeps the login's untrusted folder after the default home trusts it again", () => {
+      const first = mergeAccountConfig("[projects.'e:\\a']\ntrust_level = \"untrusted\"\n", '').content
+      const second = mergeAccountConfig("[projects.'e:\\a']\ntrust_level = \"trusted\"\n", first).content
+      expect(tomlValue(second)).toEqual({ projects: { 'e:\\a': { trust_level: 'untrusted' } } })
     })
 
     it('still removes a setting of the login that the default home dropped', () => {
@@ -199,42 +250,6 @@ describe("an extra Codex login's config.toml", () => {
       const result = mergeAccountConfig('model = "next"\n', '[projects]\npassword = "LOGIN_CANARY"\n')
       expect(tomlValue(result.content)).toEqual({ model: 'next', projects: { password: 'LOGIN_CANARY' } })
       expect(result.missingSecrets).toBe(false)
-    })
-  })
-
-  // Used when the default home has no config.toml to merge: the login keeps its settings and
-  // loses only the trust that widens.
-  describe("checking only the login's own trust", () => {
-    it('drops widening trust and keeps everything else as it was written', () => {
-      const text = [
-        '# the login\'s own file',
-        'model = "gpt-old"',
-        '[hooks.state."k"]',
-        'trusted_hash = "sha256:own" # trusted in a terminal',
-        'enabled = false',
-        "[projects.'e:\\a']",
-        'trust_level = "trusted"',
-        "[projects.'e:\\b']",
-        'trust_level = "untrusted"',
-        ''
-      ].join('\n')
-      const filtered = filterAccountTrust(text)
-      expect(settingsOf(filtered)).toEqual({
-        model: 'gpt-old',
-        hooks: { state: { k: { enabled: false } } },
-        projects: { 'e:\\b': { trust_level: 'untrusted' } }
-      })
-      expect(filtered.startsWith('# the login\'s own file\nmodel = "gpt-old"\n')).toBe(true)
-      expect(filterAccountTrust(filtered)).toBe(filtered)
-    })
-
-    it('leaves a file without trust byte for byte', () => {
-      const text = 'model = "m" # mine\n[mcp_servers.demo.env]\nTOKEN = "LOGIN_CANARY"\n'
-      expect(filterAccountTrust(text)).toBe(text)
-    })
-
-    it('throws on a file that is not TOML, without repeating it', () => {
-      expect(() => filterAccountTrust('hooks = [\nSECRET_CANARY')).toThrow(/^config\.toml is not valid TOML$/)
     })
   })
 
@@ -327,6 +342,12 @@ describe("an extra Codex login's config.toml", () => {
       expect((Object as unknown as Record<string, unknown>)['prototype']).toBe(Object.prototype)
       expect(Object.keys(Object.prototype)).toEqual([])
     })
+  })
+
+  it('tells valid TOML from text that is not', () => {
+    expect(validToml('model = "m"\n')).toBe(true)
+    expect(validToml('')).toBe(true)
+    expect(validToml('hooks = [\n')).toBe(false)
   })
 
   it('compares settings, not how the file is written', () => {
