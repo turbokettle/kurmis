@@ -403,7 +403,8 @@ function displayValue(value: unknown): string {
 
 function keyVariableWarnings(env: Record<string, unknown> | undefined): string[] {
   if (env === undefined) return []
-  return KEY_VARIABLES.filter((name) => env[name] !== undefined).map((name) => OAUTH_TOKEN_VARIABLES.includes(name)
+  // An empty value is read as unset by Claude Code, so it signs nothing.
+  return KEY_VARIABLES.filter((name) => env[name] !== undefined && env[name] !== '').map((name) => OAUTH_TOKEN_VARIABLES.includes(name)
     ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of ` +
       'claude:default\'s credentials, and a request kurmis sends on claude:default may be billed to the token\'s account. ' +
       'Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.'

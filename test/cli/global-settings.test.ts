@@ -191,6 +191,11 @@ describe('applySetupToText', () => {
     expect(envOf(edit.text)!.CLAUDE_CODE_OAUTH_TOKEN).toBe('fake-token')
   })
 
+  it('does not warn about a key or token variable set to the empty string, which Claude Code reads as unset', () => {
+    const text = JSON.stringify({ env: { ANTHROPIC_API_KEY: '', CLAUDE_CODE_OAUTH_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '' } })
+    expect(applySetupToText(text, VALUES).warnings).toEqual([])
+  })
+
   it('handles strings with escapes, nested objects and a byte order mark', () => {
     const bom = String.fromCharCode(0xfeff)
     const text = `${bom}{\n  "a": "quote \\" and brace }",\n  "b": { "env": { "x": [1, {"y": "}"}] } }\n}\n`

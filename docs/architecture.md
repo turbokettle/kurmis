@@ -579,9 +579,11 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
   sets both to the empty string, which Claude Code 2.1.306 reads as unset: it tests
   `CLAUDE_CODE_OAUTH_TOKEN` for a value that is not empty wherever it reads it, and takes the
   same path for an empty `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` as for an unset one (read
-  from its bundled source). The wrapper prints one line on stderr for each place that set either:
-  the environment, the user settings file, the person's `--settings` (`settingsEnv` in
-  `src/cli/settings-arg.ts`).
+  from its bundled source). The wrapper prints one line on stderr for each place that set either
+  to a value that is not empty: the environment, the user settings file, the person's
+  `--settings` (`settingsEnv` in `src/cli/settings-arg.ts`). Claude Code puts the `env` of its
+  settings into its own environment, so a shell in a routed session has both set to the empty
+  string, and a `kurmis claude` run there says nothing about them.
 
 **Kurmis' own options come first.** `kurmis claude` and `kurmis codex` read their options
 (`--login <id>`, `--help`) from the front of the argument list and stop at the first argument
@@ -689,8 +691,8 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept exactly
   as written, ahead of kurmis' lines. An `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
   `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` in the same `env` is
-  kept with a warning, since a plain `claude` then signs with that key or token
-  (`KEY_VARIABLES` in `src/cli/global-settings.ts`).
+  kept, with a warning when its value is not empty, since a plain `claude` then signs with that
+  key or token (`KEY_VARIABLES` in `src/cli/global-settings.ts`).
 - When the daemon cannot be started, or runs on another port than `config.json` names, nothing
   is written and setup exits 1. When autostart then fails, the settings change stands and setup
   exits 1; running it again is safe. A launchd agent that is written but can be loaded only at
