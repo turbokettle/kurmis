@@ -127,8 +127,10 @@ says when. Each extra Codex login has its own Codex home folder, which kurmis fi
 copied, and the Windows sandbox's `.sandbox` folders stay separate for each login.
 
 What Codex writes into a login's own `config.toml`, such as a `/model` choice, a dismissed
-notice or a folder you trusted, stays there. A setting you change or remove in
-`~/.codex/config.toml` is changed or removed in every login at its next start. Secrets
+notice or a folder you trusted, stays there, and so does a setting removed from it: it stays
+removed until `~/.codex/config.toml` changes that setting. A setting you change or remove in
+`~/.codex/config.toml` is changed or removed in every login at its next start, and an MCP server
+you remove there goes from every login whole, with what the login added to it. Secrets
 (environment and header tables, tokens, passwords, API keys) are never copied; a login that
 needs one keeps its own in its `config.toml`, and kurmis says when the default home has one the
 login lacks.
