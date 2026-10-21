@@ -2,6 +2,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { ClaudeCredentials } from '../../src/core/credentials.ts'
 import { configPath, statePath } from '../../src/data/paths.ts'
+import { MAX_SESSIONS, SESSION_MAX_AGE_MS } from '../../src/data/state.ts'
 import { LoginTable, NO_SESSION_KEY } from '../../src/daemon/logins.ts'
 import type { TokenSource } from '../../src/daemon/tokens.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
@@ -117,6 +118,23 @@ describe('sessions', () => {
     expect(logins.heldLogin('s-1')).toBe('claude:default')
     logins.releaseSession('s-1')
     expect(logins.heldLogin('s-1')).toBeNull()
+  })
+
+  test('holds are dropped after a week unused, and beyond the 2000 most recently used', () => {
+    writeLogins({})
+    const logins = table()
+    logins.holdSession('old', 'claude:default')
+    logins.holdSession('used', 'claude:default')
+    clock += SESSION_MAX_AGE_MS - 1_000
+    expect(logins.heldLogin('used')).toBe('claude:default')
+    clock += 2_000
+    for (let index = 0; index < MAX_SESSIONS + 5; index++) logins.holdSession(`s-${String(index)}`, 'claude:default')
+    expect(logins.heldCount()).toBe(MAX_SESSIONS)
+    expect(logins.heldLogin('old')).toBeNull()
+    // The least recently used went first: the one used a moment ago, then the first five new ones.
+    expect(logins.heldLogin('used')).toBeNull()
+    expect(logins.heldLogin('s-4')).toBeNull()
+    expect(logins.heldLogin('s-5')).toBe('claude:default')
   })
 })
 

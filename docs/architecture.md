@@ -202,7 +202,8 @@ older version, after that daemon finishes the requests it has open.
   after a usage limit, or has a window at 100% (the held login is measured like a pinned one,
   not to its own limits), or when it answers a usage-limit 429, which is then sent again on
   another login as on Auto. The hold is kept in memory only, so a daemon restart ends it too:
-  `state.json` keeps only the login each session was last on.
+  `state.json` keeps only the login each session was last on. A hold unused for 7 days, and any
+  beyond the 2000 most recently used, is dropped, the same bounds as session placements.
 - **No login can sign** (none signed in, no token readable and no header of the CLI's own for
   the login it was started on): the proxy's own 599 (`noSignerAnswer`), which the CLI retries.
 - **The upstream connection** (`src/daemon/upstream.ts`) uses `node:https`, not `fetch`, because

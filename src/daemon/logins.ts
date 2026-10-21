@@ -13,7 +13,10 @@ import { configStamp, defaultConfig, loadConfig, type KurmisConfig, type LoginSe
 import { isLoginId, type LoginId } from '../data/login-id.ts'
 import { errorCodeOf, type DaemonLog } from '../data/log.ts'
 import { configPath, statePath } from '../data/paths.ts'
-import { createCoalescedWriter, emptyState, isSessionId, loadState, pruneState, saveState, type CoalescedWriter, type DaemonState } from '../data/state.ts'
+import {
+  createCoalescedWriter, emptyState, isSessionId, loadState, MAX_SESSIONS, pruneState, saveState, SESSION_MAX_AGE_MS,
+  type CoalescedWriter, type DaemonState
+} from '../data/state.ts'
 import type { TokenSource } from './tokens.ts'
 
 /**
@@ -57,9 +60,10 @@ export class LoginTable {
    * Sessions held to one login after a 400 on the login they had just moved to
    * (`replayDecision`'s `pin-back`). The proxy lets go of a hold when the held login cannot
    * serve (`releaseSession`). In memory only: `state.json` has no field for it, and a daemon
-   * restart lets such a session be placed again.
+   * restart lets such a session be placed again. Kept within the same bounds as the session
+   * placements (`pruneHolds`).
    */
-  private readonly held = new Map<string, LoginId>()
+  private readonly held = new Map<string, { login: LoginId; lastUsed: number }>()
   /**
    * Logins whose token Anthropic refused with a 401 on a request of a CLI that was started on
    * another login, after the one renewal the proxy tries (`markRefused`). Routing treats them
@@ -269,11 +273,22 @@ export class LoginTable {
 
   /** The login a session is held to after a pin-back, or null. */
   heldLogin(key: string): LoginId | null {
-    return this.held.get(key) ?? null
+    const hold = this.held.get(key)
+    if (hold === undefined) return null
+    hold.lastUsed = this.options.now()
+    return hold.login
   }
 
   holdSession(key: string, id: string): void {
-    if (isLoginId(id)) this.held.set(key, id)
+    if (!isLoginId(id)) return
+    this.held.delete(key)
+    this.held.set(key, { login: id, lastUsed: this.options.now() })
+    this.pruneHolds()
+  }
+
+  /** How many sessions are held after a pin-back. */
+  heldCount(): number {
+    return this.held.size
   }
 
   /** Ends a session's hold, so its requests are routed on Auto again. */
@@ -298,6 +313,18 @@ export class LoginTable {
 
   private save(): void {
     this.writer.schedule()
+  }
+
+  /**
+   * Drops holds unused for `SESSION_MAX_AGE_MS`, and beyond the `MAX_SESSIONS` most recently
+   * used, the same bounds `state.json` keeps session placements in.
+   */
+  private pruneHolds(): void {
+    const oldest = this.options.now() - SESSION_MAX_AGE_MS
+    for (const [key, hold] of this.held) if (hold.lastUsed < oldest) this.held.delete(key)
+    if (this.held.size <= MAX_SESSIONS) return
+    const byUse = [...this.held].sort((a, b) => a[1].lastUsed - b[1].lastUsed)
+    for (const [key] of byUse.slice(0, this.held.size - MAX_SESSIONS)) this.held.delete(key)
   }
 }
 
