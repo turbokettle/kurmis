@@ -6,6 +6,7 @@ import { createServer, request, type IncomingHttpHeaders, type Server } from 'no
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { StopRequest } from '../../src/core/control-api.ts'
 import { createDaemonApp, type DaemonApp, type DaemonTuning } from '../../src/daemon/app.ts'
 import { addLogin, defaultConfig, saveConfig, updateLogin, type KurmisConfig, type LoginSettingsPatch } from '../../src/data/config.ts'
 import type { LogEvent, LogFields } from '../../src/data/log.ts'
@@ -28,6 +29,8 @@ export interface Harness {
   env: NodeJS.ProcessEnv
   log: LoggedLine[]
   stopRequested: () => number
+  /** What each control `stop` asked for, in order. */
+  stopRequests: StopRequest[]
   close(): Promise<void>
 }
 
@@ -70,6 +73,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   }
   const log: LoggedLine[] = []
   let stops = 0
+  const stopRequests: StopRequest[] = []
   const app = createDaemonApp({
     env,
     log: { write: (event, fields = {}) => { log.push({ event, fields }) } },
@@ -77,7 +81,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     port: 0,
     pid: process.pid,
     startedAt: Date.now(),
-    onStopRequested: () => { stops++ },
+    onStopRequested: (request) => { stops++; stopRequests.push(request) },
     tuning: { poll: false, configCheckMs: 0, stateWriteMs: 0, random: () => 0, ...options.tuning }
   })
   await app.start()
@@ -87,6 +91,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
   return {
     api, app, url: `http://127.0.0.1:${String(port)}`, port, home, env, log,
     stopRequested: () => stops,
+    stopRequests,
     async close() {
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))

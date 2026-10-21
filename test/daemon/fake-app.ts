@@ -3,7 +3,8 @@
 //
 // - `HEAD` / `GET /api/hello`: 200, no key needed.
 // - `GET /_kurmis/status`: a `StatusAnswer` with no logins.
-// - `POST /_kurmis/stop`: `{ ok: true }`, then calls `onStopRequested`.
+// - `POST /_kurmis/stop`: `{ ok: true }`, then calls `onStopRequested` with the body's
+//   `maxWaitMs`, as `control.ts` does.
 // - `GET /_test/hold?ms=<n>`: counts as an open proxied request and answers
 //   `{ ok: true, pid }` after n milliseconds.
 // - anything else: 404.
@@ -79,6 +80,17 @@ export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAp
     handle(request: IncomingMessage, response: ServerResponse) {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
       const method = request.method ?? 'GET'
+      if (url.pathname === CONTROL_PATHS.stop && method === 'POST' && request.headers[KEY_HEADER] === options.key) {
+        const chunks: Buffer[] = []
+        request.on('data', (chunk: Buffer) => chunks.push(chunk))
+        request.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8')
+          const body = (text === '' ? {} : JSON.parse(text)) as { maxWaitMs?: number }
+          response.on('finish', () => options.onStopRequested(body.maxWaitMs === undefined ? {} : { maxWaitMs: body.maxWaitMs }))
+          answerJson(response, 200, { ok: true })
+        })
+        return
+      }
       // The body, if any, is not needed; reading it lets the request end.
       request.resume()
       if (url.pathname === '/api/hello' && (method === 'GET' || method === 'HEAD')) {
@@ -102,11 +114,6 @@ export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAp
           logins: []
         }
         answerJson(response, 200, status)
-        return
-      }
-      if (url.pathname === CONTROL_PATHS.stop && method === 'POST') {
-        response.on('finish', () => options.onStopRequested())
-        answerJson(response, 200, { ok: true })
         return
       }
       if (url.pathname === HOLD_PATH && method === 'GET') {

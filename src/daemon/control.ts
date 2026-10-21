@@ -5,11 +5,17 @@
 // `status` shows each Claude login's email from its identity file, for `kurmis status` and
 // `kurmis list` on the person's own terminal. The control API answers only on 127.0.0.1 and only
 // with the key, which only the user can read. The email is never logged.
+//
+// A request body larger than `MAX_CONTROL_BODY_BYTES` is answered 413 with an `ErrorAnswer`.
+// The answer is sent at once, and the rest of the body is still read and thrown away (for at
+// most `DISCARD_BODY_MS`): a connection closed while the client is still sending is reset, and a
+// reset can lose the answer before the client has read it.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { routeBlock } from '../core/account-router.ts'
 import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import {
-  CONTROL_API_VERSION, CONTROL_PATHS, type ErrorAnswer, type LoginStatus, type OkAnswer, type ProbeRequest, type StatusAnswer
+  CONTROL_API_VERSION, CONTROL_PATHS, MAX_CONTROL_BODY_BYTES, type ErrorAnswer, type LoginStatus, type OkAnswer, type ProbeRequest,
+  type StatusAnswer, type StopRequest
 } from '../core/control-api.ts'
 import { KEY_HEADER, routeKeyMatches } from '../core/route-headers.ts'
 import type { ClaudeIdentityReader } from '../data/identity.ts'
@@ -19,8 +25,8 @@ import type { LoginTable } from './logins.ts'
 import type { TokenSource } from './tokens.ts'
 import type { UsagePoller } from './usage-poller.ts'
 
-/** The largest control request body: a probe request names a few login ids. */
-const MAX_CONTROL_BODY_BYTES = 64 * 1024
+/** How long the rest of a too-large body is read and thrown away before the connection is closed. */
+const DISCARD_BODY_MS = 30_000
 
 export interface ControlOptions {
   key: string
@@ -33,7 +39,8 @@ export interface ControlOptions {
   pid: number
   port: number
   startedAt: number
-  onStopRequested(): void
+  /** Called once a `stop` request has been answered, with what the request asked for. */
+  onStopRequested(request: StopRequest): void
 }
 
 export interface Control {
@@ -103,6 +110,10 @@ export function createControl(options: ControlOptions): Control {
         case CONTROL_PATHS.probe: {
           if (!allow(req, res, 'POST')) return
           const asked = await readProbeRequest(req)
+          if (asked === TOO_LARGE) {
+            refuseTooLarge(req, res)
+            return
+          }
           if (typeof asked === 'string') {
             answer(res, 400, failure(asked))
             return
@@ -130,12 +141,21 @@ export function createControl(options: ControlOptions): Control {
           answer(res, 200, ok())
           return
         }
-        case CONTROL_PATHS.stop:
+        case CONTROL_PATHS.stop: {
           if (!allow(req, res, 'POST')) return
-          req.resume()
-          res.once('finish', () => { options.onStopRequested() })
+          const asked = await readStopRequest(req)
+          if (asked === TOO_LARGE) {
+            refuseTooLarge(req, res)
+            return
+          }
+          if (typeof asked === 'string') {
+            answer(res, 400, failure(asked))
+            return
+          }
+          res.once('finish', () => { options.onStopRequested(asked) })
           answer(res, 200, ok())
           return
+        }
         default:
           req.resume()
           answer(res, 404, failure(`The daemon has no control path ${path}.`))
@@ -170,26 +190,98 @@ function failure(error: string): ErrorAnswer {
   return { ok: false, error }
 }
 
-/** The probe request's body: empty or `{}` for every login, or `{ logins: [...] }`. A string is why it does not read. */
-async function readProbeRequest(req: IncomingMessage): Promise<ProbeRequest | string> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string)
-    size += bytes.length
-    if (size > MAX_CONTROL_BODY_BYTES) return 'The probe request is too large.'
-    chunks.push(bytes)
-  }
-  const text = Buffer.concat(chunks).toString('utf8').trim()
+/** What `readBody` answers for a body larger than `MAX_CONTROL_BODY_BYTES`. */
+const TOO_LARGE = Symbol('too large')
+
+/**
+ * The request body as text, or `TOO_LARGE`. A body whose `content-length` is too large is not
+ * read at all; one that grows too large while it is read stops being kept. Either way the
+ * request is left to be read on and thrown away (`refuseTooLarge`), not destroyed.
+ */
+function readBody(req: IncomingMessage): Promise<string | typeof TOO_LARGE> {
+  const declared = Number(req.headers['content-length'])
+  if (Number.isFinite(declared) && declared > MAX_CONTROL_BODY_BYTES) return Promise.resolve(TOO_LARGE)
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    const stopListening = (): void => {
+      req.off('data', onData)
+      req.off('end', onEnd)
+      req.off('error', onError)
+    }
+    const onData = (chunk: Buffer | string): void => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += bytes.length
+      if (size > MAX_CONTROL_BODY_BYTES) {
+        stopListening()
+        resolve(TOO_LARGE)
+        return
+      }
+      chunks.push(bytes)
+    }
+    const onEnd = (): void => {
+      stopListening()
+      resolve(Buffer.concat(chunks).toString('utf8'))
+    }
+    const onError = (error: Error): void => {
+      stopListening()
+      reject(error)
+    }
+    req.on('data', onData)
+    req.on('end', onEnd)
+    req.on('error', onError)
+  })
+}
+
+/**
+ * Answers 413 at once, then reads the rest of the body and throws it away, so the client can
+ * finish sending and read the answer. A client still sending after `DISCARD_BODY_MS` has its
+ * connection closed.
+ */
+function refuseTooLarge(req: IncomingMessage, res: ServerResponse): void {
+  answer(res, 413, failure(`The control request's body is larger than ${String(MAX_CONTROL_BODY_BYTES / 1024)} KB.`))
+  if (req.complete) return
+  const timer = setTimeout(() => { req.socket.destroy() }, DISCARD_BODY_MS)
+  timer.unref()
+  const done = (): void => { clearTimeout(timer) }
+  req.once('end', done)
+  req.once('close', done)
+  req.resume()
+}
+
+/** A JSON object body, or a string saying why it is not one. An empty body is `{}`. */
+async function readJsonObject(req: IncomingMessage, what: string): Promise<Record<string, unknown> | string | typeof TOO_LARGE> {
+  const body = await readBody(req)
+  if (body === TOO_LARGE) return TOO_LARGE
+  const text = body.trim()
   if (text.length === 0) return {}
   let value: unknown
   try {
     value = JSON.parse(text)
   } catch {
-    return 'The probe request is not JSON.'
+    return `The ${what} is not JSON.`
   }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'The probe request must be a JSON object.'
-  const logins = (value as { logins?: unknown }).logins
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return `The ${what} must be a JSON object.`
+  return value as Record<string, unknown>
+}
+
+/** The stop request's body: empty or `{}`, or `{ maxWaitMs: <n> }`. A string is why it does not read. */
+async function readStopRequest(req: IncomingMessage): Promise<StopRequest | string | typeof TOO_LARGE> {
+  const value = await readJsonObject(req, 'stop request')
+  if (typeof value !== 'object') return value
+  const maxWaitMs = value.maxWaitMs
+  if (maxWaitMs === undefined) return {}
+  if (typeof maxWaitMs !== 'number' || !Number.isFinite(maxWaitMs) || maxWaitMs < 0) {
+    return '"maxWaitMs" must be a number of milliseconds, 0 or more.'
+  }
+  return { maxWaitMs }
+}
+
+/** The probe request's body: empty or `{}` for every login, or `{ logins: [...] }`. A string is why it does not read. */
+async function readProbeRequest(req: IncomingMessage): Promise<ProbeRequest | string | typeof TOO_LARGE> {
+  const value = await readJsonObject(req, 'probe request')
+  if (typeof value !== 'object') return value
+  const logins = value.logins
   if (logins === undefined) return {}
   if (!Array.isArray(logins) || !logins.every((id) => typeof id === 'string')) return '"logins" must be a list of login ids.'
   return { logins }

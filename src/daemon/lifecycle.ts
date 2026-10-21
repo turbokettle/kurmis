@@ -104,8 +104,12 @@ export type PortHolder =
   | { kind: 'free' }
   /** A kurmis daemon with this key answers there. */
   | { kind: 'kurmis'; status: StatusAnswer }
-  /** Something listens there that is not a kurmis daemon with this key, or does not answer. */
-  | { kind: 'other'; reason: string }
+  /**
+   * Something listens there that is not a kurmis daemon with this key, or does not answer.
+   * `status` is the HTTP status it answered with, when it answered: 403 is what a kurmis daemon
+   * with another key answers.
+   */
+  | { kind: 'other'; reason: string; status?: number }
 
 /** Who holds `127.0.0.1:<port>`: a keyed `GET /_kurmis/status` decides. */
 export async function portHolder(port: number, key: string, timeoutMs = CONTROL_TIMEOUT_MS): Promise<PortHolder> {
@@ -113,7 +117,7 @@ export async function portHolder(port: number, key: string, timeoutMs = CONTROL_
   if (result.kind === 'refused') return { kind: 'free' }
   if (result.kind === 'failed') return { kind: 'other', reason: result.reason }
   if (result.status === 200 && isStatusAnswer(result.body)) return { kind: 'kurmis', status: result.body }
-  return { kind: 'other', reason: `it answered ${String(result.status)} to a kurmis status request` }
+  return { kind: 'other', reason: `it answered ${String(result.status)} to a kurmis status request`, status: result.status }
 }
 
 /** Whether anything accepts a connection on `127.0.0.1:<port>` now. */

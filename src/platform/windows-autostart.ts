@@ -22,14 +22,15 @@
 //   Microsoft documents for a value with quotes.
 // - **The script** is UTF-16 with a byte order mark, which wscript reads whatever the system's
 //   ANSI code page is, so a user folder with letters outside it still works. It sets the
-//   kurmis variables the daemon needs (`KURMIS_HOME` and the test hooks, when set at setup) in
-//   its own environment before it starts node, since a program started at logon gets only the
-//   user's environment from Windows. PATH is that environment's, which is the user's normal one.
+//   kurmis variables the daemon needs (`KURMIS_HOME` as an absolute path, and the test hooks,
+//   when set at setup) in its own environment before it starts node, since a program started at
+//   logon gets only the user's environment from Windows. PATH is that environment's, which is the
+//   user's normal one.
 //
 // `KURMIS_REG_PROGRAM` (a test hook) names a stand-in for reg.exe; tests use
 // `test/platform/fake-reg/reg.mjs`.
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, win32 } from 'node:path'
 import { windowsAutostartScriptPath } from '../data/paths.ts'
 import { makePrivateDirSync } from './files.ts'
 import { windowsCommandLine } from './detach.ts'
@@ -118,12 +119,17 @@ export function vbsString(text: string): string {
   return `"${text.replace(/"/g, '""')}"`
 }
 
-/** The kurmis variables the logon script sets before it starts the daemon. */
+/**
+ * The kurmis variables a daemon started on Windows outside this process's environment needs:
+ * the ones the logon script sets before it starts the daemon, and the ones a start through WMI
+ * passes on the command line. `KURMIS_HOME` is made absolute (Windows path rules, from the
+ * current folder), since the daemon starts in another folder.
+ */
 export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}
   for (const name of DAEMON_JOB_VARIABLES) {
     const value = env[name]
-    if (value !== undefined && value !== '') out[name] = value
+    if (value !== undefined && value !== '') out[name] = name === 'KURMIS_HOME' ? win32.resolve(value) : value
   }
   return out
 }

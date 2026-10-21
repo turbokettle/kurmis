@@ -1,14 +1,15 @@
 // The real bundle, request handling included: `kurmis daemon start`, `status`, `stop` and the
 // version handover against a daemon that runs `createDaemonApp`, with the fake claude, codex and
 // Anthropic API. Skipped while `createDaemonApp` is not implemented.
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { readDaemonFile, readOrCreateKey } from '../../src/data/daemon-file.ts'
 import { openDaemonLog } from '../../src/data/log.ts'
 import { createDaemonApp } from '../../src/daemon/app.ts'
-import { processExists } from '../../src/daemon/lifecycle.ts'
+import { CONTROL_PATHS } from '../../src/core/control-api.ts'
+import { controlRequest, processExists } from '../../src/daemon/lifecycle.ts'
 import { buildTestBundle } from '../daemon/bundle.ts'
 import { call, messagesBody } from '../daemon/harness.ts'
 import { dataFolderWithPort, freePort, waitUntil } from '../daemon/helpers.ts'
@@ -71,6 +72,27 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     expect(stopped.code).toBe(0)
     expect(processExists(pid)).toBe(false)
     expect(existsSync(join(home, 'daemon.json'))).toBe(false)
+  }, 60_000)
+
+  it('daemon run --env KURMIS_HOME=<folder> uses that data folder, as a start through WMI on Windows needs', async () => {
+    const bundle = await buildTestBundle({ version: '0.5.0', entry: 'real' })
+    const port = await freePort()
+    const home = dataFolderWithPort(port)
+    homes.push(home)
+    const other = dataFolderWithPort(await freePort())
+    const env: NodeJS.ProcessEnv = { ...process.env, KURMIS_HOME: other, KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT, KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT, KURMIS_UPSTREAM_URL: api.url }
+    delete env.NODE_OPTIONS
+    const child = spawn(process.execPath, [bundle, 'daemon', 'run', '--env', `KURMIS_HOME=${home}`], { env, stdio: 'ignore' })
+    const exited = new Promise<number | null>((resolve) => child.once('exit', resolve))
+    try {
+      await waitUntil(() => readDaemonFile(join(home, 'daemon.json')).status === 'ok', 30_000, 'daemon.json in the folder --env named')
+      expect(existsSync(join(other, 'daemon.json'))).toBe(false)
+      const stop = await controlRequest({ port, key: readOrCreateKey(join(home, 'key')), method: 'POST', path: CONTROL_PATHS.stop })
+      expect(stop).toMatchObject({ kind: 'answered', status: 200 })
+      expect(await exited).toBe(0)
+    } finally {
+      child.kill('SIGKILL')
+    }
   }, 60_000)
 
   it('hands over to a newer version while a proxied request finishes on the older one', async () => {

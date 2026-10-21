@@ -1,6 +1,7 @@
 // The daemon process: `kurmis daemon run`. It listens on `127.0.0.1:<port>`, writes
 // `daemon.json`, hands every request to the request handling in `app.ts`, and stops on a
-// signal or a control `stop` once the open proxied requests have finished.
+// signal or a control `stop` once the open proxied requests have finished. A `stop` that names
+// `maxWaitMs` waits for them at most that long.
 //
 // The port is the lock that keeps one daemon per user. When the port is busy:
 //
@@ -68,7 +69,7 @@ export interface RunDaemonOptions {
  * open at the cap is cut, and the CLI retries it.
  *
  * The cap seldom costs anything: in a version handover the port is free during the drain, and
- * `kurmis daemon stop` sends a second signal after its own deadline, which ends the drain.
+ * `kurmis daemon stop` asks for a shorter wait (`maxWaitMs` in its `stop` request).
  */
 export const DEFAULT_DRAIN_CAP_MS = 15 * 60_000
 
@@ -164,7 +165,7 @@ async function serve(options: ServeOptions): Promise<number> {
   try {
     app = (options.createApp ?? createDaemonApp)({
       env: options.env, log, key, port, pid, startedAt,
-      onStopRequested: () => stop.request('shutdown')
+      onStopRequested: (request) => stop.request('shutdown', request.maxWaitMs)
     })
   } catch (error) {
     log.write('internal_error', { code: errorCodeOf(error) })
@@ -265,7 +266,10 @@ async function serve(options: ServeOptions): Promise<number> {
   return stop.exitCode
 }
 
-/** Waits for the open proxied requests, until the cap or a second stop signal. */
+/**
+ * Waits for the open proxied requests, until the cap, a second stop signal, or the end of the
+ * wait a `stop` request asked for.
+ */
 async function drain(app: DaemonApp, options: ServeOptions): Promise<void> {
   if (app.openRequests() === 0) return
   const outcome = await waitAtMost(app.drained(), options.drainCapMs, options.stop.drainSkipped)
@@ -346,7 +350,8 @@ function listenOnce(server: Server, port: number): Promise<NodeJS.ErrnoException
 
 /**
  * Collects the reasons to stop. The first request starts the stop. A later stop signal, or an
- * error at any time, ends the drain. An error makes the exit code 1.
+ * error at any time, ends the drain, and so does the end of the longest wait a request named
+ * (`maxWaitMs`, from when it was made). An error makes the exit code 1.
  */
 class StopControl {
   requested = false
@@ -367,8 +372,12 @@ class StopControl {
     })
   }
 
-  request(reason: LogReason): void {
+  request(reason: LogReason, maxWaitMs?: number): void {
     if (reason === 'error') this.exitCode = 1
+    if (maxWaitMs !== undefined) {
+      // Unref'd, so a daemon that has finished stopping does not wait for it.
+      setTimeout(() => this.skip('timeout'), Math.max(0, maxWaitMs)).unref()
+    }
     if (!this.requested) {
       this.requested = true
       this.reason = reason

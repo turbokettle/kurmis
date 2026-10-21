@@ -2,23 +2,28 @@
 // daemon processes is tested in `daemon-lifecycle.test.ts`.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, resolve, win32 } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CONTROL_API_VERSION, type StatusAnswer } from '../../src/core/control-api.ts'
 import { saveConfig, defaultConfig } from '../../src/data/config.ts'
 import { readOrCreateKey, writeDaemonFile } from '../../src/data/daemon-file.ts'
-import { daemonFilePath, kurmisHome } from '../../src/data/paths.ts'
+import { daemonFilePath, keyPath, kurmisHome } from '../../src/data/paths.ts'
+import { processExists } from '../../src/daemon/lifecycle.ts'
 import {
   chooseStartMethod,
   daemonEnvironment,
   DaemonError,
   findDaemon,
+  keyRefusedProblem,
   readStatus,
   requestProbe,
   requestReload,
   restartDaemon,
-  startDaemon
+  startDaemon,
+  stopDaemon,
+  wmiDaemonArguments
 } from '../../src/cli/daemon-client.ts'
 
 interface FakeDaemon {
@@ -81,10 +86,29 @@ beforeEach(() => {
   mkdirSync(kurmisHome(), { recursive: true })
 })
 
+let children: number[] = []
+
 afterEach(async () => {
   await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
   servers = []
+  for (const pid of children) {
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch {
+      // Already gone.
+    }
+  }
+  children = []
 })
+
+/** A process that runs until it is signalled, standing in for a daemon that does not exit by itself. */
+async function lingeringPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  await new Promise((resolve) => child.once('spawn', resolve))
+  const pid = child.pid ?? 0
+  children.push(pid)
+  return pid
+}
 
 /** A pid that existed and has exited. */
 async function deadPid(): Promise<number> {
@@ -181,6 +205,40 @@ describe('startDaemon', () => {
     await expect(startDaemon({ env: {} })).rejects.toThrow(/source tree.*KURMIS_ENTRY/)
   })
 
+  it('does not stop a newer daemon on another port than config.json names', async () => {
+    const key = readOrCreateKey()
+    const daemon = await fakeDaemon(key, { version: '2.0.0' })
+    writeDaemonFile({ pid: process.pid, port: daemon.port, version: '2.0.0', startedAt: 1 })
+    const configured = await freePort()
+    usePort(configured)
+    const failure = startDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
+    await expect(failure).rejects.toThrow(DaemonError)
+    const message = await failure.catch((error: unknown) => (error as Error).message)
+    expect(message).toContain(`The kurmis daemon 2.0.0 runs on port ${String(daemon.port)}, but ${join(kurmisHome(), 'config.json')} ` +
+      `names port ${String(configured)}. Its version is newer than this kurmis (1.2.3)`)
+    expect(message).toContain('Update kurmis, or stop the daemon with "kurmis daemon stop"')
+    expect(daemon.requests.some((request) => request.url === '/_kurmis/stop')).toBe(false)
+  })
+
+  it('says the running daemon no longer accepts the key file, with the pid and how to stop it', async () => {
+    readOrCreateKey()
+    const daemon = await fakeDaemon('1'.repeat(64))
+    usePort(daemon.port)
+    const pid = await lingeringPid()
+    writeDaemonFile({ pid, port: daemon.port, version: '1.2.3', startedAt: 1 })
+    const failure = startDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
+    const message = await failure.catch((error: unknown) => (error as Error).message)
+    expect(message).toContain(`refused the key in ${keyPath()}, and daemon.json names pid ${String(pid)} on that port`)
+    expect(message).toContain('its key no longer matches the key file')
+    expect(message).toContain(`stop it with "kill ${String(pid)}"`)
+    expect(processExists(pid)).toBe(true)
+    // The same when the key file was deleted, and on Windows with taskkill.
+    rmSync(keyPath())
+    await expect(stopDaemon({ env: {}, platform: 'win32' })).rejects.toThrow(`stop it with "taskkill /PID ${String(pid)} /F"`)
+    expect(await keyRefusedProblem({ env: {}, platform: 'linux' })).toContain(`"kill ${String(pid)}"`)
+    expect(processExists(pid)).toBe(true)
+  })
+
   it('reports a config.json it cannot read as a DaemonError', async () => {
     writeFileSync(`${kurmisHome()}/config.json`, '{ "version": 1, "port": 80 }')
     await expect(startDaemon({ env: {} })).rejects.toThrow(DaemonError)
@@ -194,6 +252,34 @@ describe('restartDaemon', () => {
     usePort(daemon.port)
     await expect(restartDaemon({ env: {}, version: '1.0.0', entry: '/nonexistent/kurmis.cjs' })).rejects.toThrow(/newer than this kurmis/)
     expect(daemon.requests.some((request) => request.url === '/_kurmis/stop')).toBe(false)
+  })
+})
+
+describe('stopDaemon', () => {
+  it('tells the daemon how long to wait for its open requests, and on Windows waits a grace period before it ends the process', async () => {
+    const key = readOrCreateKey()
+    const pid = await lingeringPid()
+    const daemon = await fakeDaemon(key, { pid })
+    usePort(daemon.port)
+    const startedAt = Date.now()
+    const stopping = stopDaemon({ env: {}, platform: 'win32', stopTimeoutMs: 300, stopGraceMs: 1_500 })
+    await new Promise((resolve) => setTimeout(resolve, 900))
+    // Past the deadline but within the grace period: not ended yet.
+    expect(processExists(pid)).toBe(true)
+    expect(await stopping).toBe(true)
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_700)
+    expect(processExists(pid)).toBe(false)
+    const stop = daemon.requests.find((request) => request.url === '/_kurmis/stop')
+    expect(JSON.parse(stop?.body ?? '')).toEqual({ maxWaitMs: 300 })
+  })
+
+  it('sends SIGTERM at the deadline on macOS and Linux', async () => {
+    const key = readOrCreateKey()
+    const pid = await lingeringPid()
+    const daemon = await fakeDaemon(key, { pid })
+    usePort(daemon.port)
+    expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, stopGraceMs: 60_000 })).toBe(true)
+    expect(processExists(pid)).toBe(false)
   })
 })
 
@@ -247,5 +333,24 @@ describe('daemonEnvironment', () => {
       ANTHROPIC_AUTH_TOKEN: 'example',
       CLAUDE_SECURESTORAGE_CONFIG_DIR: '/tmp/example/claude/work'
     })).toEqual({ PATH: '/usr/bin', KURMIS_HOME: '/tmp/example' })
+  })
+
+  it('makes a relative KURMIS_HOME absolute, since the daemon runs in the home folder', () => {
+    const env = daemonEnvironment({ KURMIS_HOME: join('relative', 'data') })
+    expect(isAbsolute(env.KURMIS_HOME ?? '')).toBe(true)
+    expect(env.KURMIS_HOME).toBe(resolve('relative', 'data'))
+  })
+})
+
+describe('wmiDaemonArguments', () => {
+  it('puts the kurmis variables on the command line, KURMIS_HOME as an absolute Windows path', () => {
+    expect(wmiDaemonArguments('C:\\Program Files\\nodejs\\node.exe', 'C:\\kurmis\\kurmis.cjs', {
+      KURMIS_HOME: 'D:\\kurmis data', KURMIS_CLAUDE_BIN: 'C:\\c.exe', ANTHROPIC_API_KEY: 'sk-ant-api03-fake', Path: 'C:\\Windows'
+    })).toEqual(['C:\\Program Files\\nodejs\\node.exe', 'C:\\kurmis\\kurmis.cjs', 'daemon', 'run',
+      '--env', 'KURMIS_HOME=D:\\kurmis data', '--env', 'KURMIS_CLAUDE_BIN=C:\\c.exe'])
+    const relative = wmiDaemonArguments('node.exe', 'kurmis.cjs', { KURMIS_HOME: 'data' })
+    const home = relative[5]?.slice('KURMIS_HOME='.length) ?? ''
+    expect(win32.isAbsolute(home)).toBe(true)
+    expect(home.endsWith('\\data')).toBe(true)
   })
 })

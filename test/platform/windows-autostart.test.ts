@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { windowsCommandLine } from '../../src/platform/detach.ts'
 import {
@@ -146,6 +146,13 @@ describe('the logon script', () => {
       KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe', KURMIS_ENTRY: '',
       ANTHROPIC_API_KEY: 'sk-ant-api03-fake', Path: 'C:\\Windows', USERPROFILE: 'C:\\Users\\Example User'
     })).toEqual({ KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe' })
+  })
+
+  it('makes a relative KURMIS_HOME absolute, since the daemon starts in the profile folder', () => {
+    const home = windowsAutostartEnvironment({ KURMIS_HOME: 'kurmis-data' }).KURMIS_HOME ?? ''
+    expect(win32.isAbsolute(home)).toBe(true)
+    expect(home).toBe(win32.resolve('kurmis-data'))
+    expect(windowsAutostartEnvironment({ KURMIS_HOME: 'D:\\data\\' }).KURMIS_HOME).toBe('D:\\data')
   })
 
   it('is written as UTF-16 with a byte order mark', () => {

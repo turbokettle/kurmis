@@ -11,7 +11,23 @@
 // Two CLIs that start one at the same moment both start a process; the port decides which one
 // stays, the other exits at once, and both CLIs connect to the one that stayed. A daemon of an
 // older version is replaced by the new process itself (`main.ts` asks it to stop, which frees the
-// port at once while it finishes its open requests). An older CLI never replaces a newer daemon.
+// port at once while it finishes its open requests). A daemon on another port than `config.json`
+// names is asked to stop by the CLI, unless it is newer than the CLI. An older CLI never
+// replaces a newer daemon.
+//
+// **A daemon that refuses the key.** When `daemon.json` names a pid that exists and the program
+// on its port answers the keyed status request with 403, the `key` file was most likely changed
+// or deleted while that daemon ran. Its pid cannot be shown to be a kurmis daemon (it answers
+// nothing without its key, and a pid can be reused), so it is never signalled: the CLI says
+// what happened and names the pid and the command to stop it.
+//
+// **Stopping.** `stopDaemon` sends `stop` with its own deadline as `maxWaitMs`, since a daemon
+// that has answered `stop` no longer listens on its port and cannot be sent a second request.
+// The daemon stops waiting for its open requests by itself at that deadline. A daemon older than
+// `maxWaitMs` ignores it, so after the deadline the CLI sends SIGTERM on macOS and Linux, which
+// the daemon takes as a second stop signal. On Windows `process.kill` ends the process at once
+// (TerminateProcess), so there the CLI first waits `STOP_GRACE_MS` more for the daemon to write
+// `state.json` and exit by itself.
 //
 // Where the daemon is started from:
 // - macOS, from an ssh login or wherever the login Keychain cannot be read: through launchd, in
@@ -21,9 +37,10 @@
 // - Windows, from an ssh login: through WMI, outside the job the ssh server ends with the session.
 // - Everywhere else: directly, detached.
 import { homedir } from 'node:os'
-import { CONTROL_PATHS, type StatusAnswer } from '../core/control-api.ts'
+import { resolve } from 'node:path'
+import { CONTROL_PATHS, type StatusAnswer, type StopRequest } from '../core/control-api.ts'
 import { ConfigError, loadConfig } from '../data/config.ts'
-import { readDaemonFile, readKey, readOrCreateKey, removeDaemonFile } from '../data/daemon-file.ts'
+import { readDaemonFile, readKey, readOrCreateKey, removeDaemonFile, type DaemonInfo } from '../data/daemon-file.ts'
 import { configPath, keyPath, logPath } from '../data/paths.ts'
 import { isPlainObject } from '../data/validate.ts'
 import { probeLoginKeychain, SECURITY_PROGRAM } from '../daemon/keychain.ts'
@@ -40,6 +57,7 @@ import {
 } from '../daemon/lifecycle.ts'
 import { createThroughWmi, inSshSession, kurmisEntry, nodeForJobs, spawnDetached, type DetachedChild } from '../platform/detach.ts'
 import { startThroughLaunchd } from '../platform/launchd.ts'
+import { windowsAutostartEnvironment } from '../platform/windows-autostart.ts'
 import { kurmisVersion } from '../version.ts'
 
 export interface DaemonConnection {
@@ -69,8 +87,13 @@ export interface DaemonClientOptions {
   noLaunchd?: boolean
   /** How long a start may take before it is an error. */
   startTimeoutMs?: number
-  /** How long `stopDaemon` waits for the daemon to exit before it sends SIGTERM. */
+  /**
+   * How long `stopDaemon` lets the daemon wait for its open requests (`maxWaitMs`), and waits
+   * for it to exit before it signals it.
+   */
   stopTimeoutMs?: number
+  /** Windows: how much longer `stopDaemon` waits before it ends the process. `STOP_GRACE_MS` by default. */
+  stopGraceMs?: number
   /** Told a sentence when something went less well than it should but the command goes on. */
   onWarning?: (text: string) => void
 }
@@ -88,7 +111,12 @@ const OUTSIDE_START_TIMEOUT_MS = 30_000
 export const PROBE_TIMEOUT_MS = 90_000
 /** `stopDaemon` waits this long for the daemon to finish its open requests and exit. */
 const STOP_TIMEOUT_MS = 30_000
-/** After SIGTERM, which makes a stopping daemon skip the rest of its wait. */
+/**
+ * Windows: how long after its deadline `stopDaemon` waits for a daemon that ended its wait by
+ * itself to write `state.json` and exit, before it ends the process.
+ */
+const STOP_GRACE_MS = 10_000
+/** After the signal: SIGTERM makes a stopping daemon skip the rest of its wait; on Windows it ends the process. */
 const KILL_WAIT_MS = 5_000
 /** How long a replaced or restarted daemon gets to close its port. */
 const PORT_FREE_TIMEOUT_MS = 5_000
@@ -185,11 +213,26 @@ const NOT_FOR_THE_DAEMON = [
   'CLAUDE_SECURESTORAGE_CONFIG_DIR'
 ]
 
-/** The environment a daemon started from `env` gets. */
+/**
+ * The environment a daemon started from `env` gets. `KURMIS_HOME` is made absolute, because the
+ * daemon runs in another folder (the home folder) than the CLI.
+ */
 export function daemonEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env }
   for (const name of NOT_FOR_THE_DAEMON) delete out[name]
+  if (out.KURMIS_HOME !== undefined && out.KURMIS_HOME !== '') out.KURMIS_HOME = resolve(out.KURMIS_HOME)
   return out
+}
+
+/**
+ * The command line of a daemon created through WMI (Windows). Such a process gets the user's
+ * environment from Windows, not the CLI's, so the kurmis variables that are set (`KURMIS_HOME`
+ * as an absolute path, and the test hooks) go on the command line as `--env NAME=VALUE`, which
+ * `daemon run` puts into its own environment.
+ */
+export function wmiDaemonArguments(node: string, entry: string, env: NodeJS.ProcessEnv): string[] {
+  const assignments = Object.entries(windowsAutostartEnvironment(env)).flatMap(([name, value]) => ['--env', `${name}=${value}`])
+  return [node, entry, 'daemon', 'run', ...assignments]
 }
 
 function portBusyMessage(port: number, reason: string): string {
@@ -222,12 +265,20 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
     replaced = found.version
     if (found.port !== port) {
       // The new daemon takes over by itself only on its own port, so the one on the old port is
-      // asked to stop here.
+      // asked to stop here, but only by a kurmis at least as new as it.
+      const order = compareVersions(found.version, version)
+      if (order === 1 || (order === null && found.version !== version)) {
+        throw new DaemonError(`The kurmis daemon ${found.version} runs on port ${String(found.port)}, but ${configPath()} names port ` +
+          `${String(port)}. Its version is ${order === 1 ? 'newer than' : 'not comparable with'} this kurmis (${version}), so this ` +
+          'kurmis does not stop it to move it. Update kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.')
+      }
       await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop })
     }
   }
   const key = readOrCreateKey()
   if (found === null) {
+    const refusing = await keyRefusingDaemon(key)
+    if (refusing !== null) throw new DaemonError(keyRefusedMessage(refusing, options.platform ?? process.platform))
     const holder = await portHolder(port, key, FIND_TIMEOUT_MS)
     if (holder.kind === 'other') throw new DaemonError(portBusyMessage(port, holder.reason))
     if (holder.kind === 'kurmis' && !shouldReplace(holder.status.version, version)) {
@@ -269,7 +320,7 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
     }
   } else if (method === 'wmi') {
     try {
-      await createThroughWmi([process.execPath, entry, 'daemon', 'run'], homedir(), env)
+      await createThroughWmi(wmiDaemonArguments(process.execPath, entry, options.env), homedir(), env)
     } catch (error) {
       warn(`The daemon could not be started outside this ssh session (${error instanceof Error ? error.message : String(error)}), ` +
         'so it is started inside it and ends when the session closes.')
@@ -394,17 +445,57 @@ async function waitForPortFree(port: number, timeoutMs: number): Promise<boolean
 }
 
 /**
+ * `daemon.json`'s daemon when its pid exists and the program on its port refuses `key` with
+ * 403, which is what a kurmis daemon answers to a key that is not its own; null otherwise.
+ */
+async function keyRefusingDaemon(key: string): Promise<DaemonInfo | null> {
+  const read = readDaemonFile()
+  if (read.status !== 'ok' || !processExists(read.info.pid)) return null
+  const holder = await portHolder(read.info.port, key, FIND_TIMEOUT_MS)
+  return holder.kind === 'other' && holder.status === 403 ? read.info : null
+}
+
+/** What the CLI says about a daemon that refuses the key (`keyRefusingDaemon`). */
+function keyRefusedMessage(info: DaemonInfo, platform: NodeJS.Platform): string {
+  const pid = String(info.pid)
+  const stopIt = platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`
+  return `The program on port ${String(info.port)} refused the key in ${keyPath()}, and daemon.json names pid ${pid} on that ` +
+    'port, which still runs. Most likely that is a kurmis daemon started before the key file was changed or deleted, so ' +
+    `its key no longer matches the key file. If pid ${pid} is that daemon, stop it with "${stopIt}" and run the command ` +
+    'again. If you ran "kurmis setup", run it again after that, so your Claude Code settings hold the key from the key file.'
+}
+
+/**
+ * The sentence `keyRefusedMessage` gives when `daemon.json`'s daemon refuses the key, or null.
+ * For `kurmis daemon status`, which finds no daemon in that case.
+ */
+export async function keyRefusedProblem(options: DaemonClientOptions): Promise<string | null> {
+  const refusing = await keyRefusingDaemon(readKey() ?? '')
+  return refusing === null ? null : keyRefusedMessage(refusing, options.platform ?? process.platform)
+}
+
+/**
  * Stops the running daemon and waits for it to exit. False when none was running. The daemon
- * finishes its open requests first; when it has not exited within `stopTimeoutMs` it gets
- * SIGTERM, which makes it stop waiting for them. Only a pid that answered the keyed status
- * request as the daemon's own is ever signalled.
+ * finishes its open requests first, for at most `stopTimeoutMs` (sent as `maxWaitMs`). When
+ * it has not exited by then it gets SIGTERM on macOS and Linux, which makes a daemon that
+ * ignored `maxWaitMs` stop waiting; on Windows, where that ends the process at once, the CLI
+ * first waits `stopGraceMs` more. Only a pid that answered the keyed status request as the
+ * daemon's own is ever signalled.
  */
 export async function stopDaemon(options: DaemonClientOptions): Promise<boolean> {
+  const platform = options.platform ?? process.platform
   const found = await findDaemon(options)
-  if (found === null) return false
-  const result = await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop })
+  if (found === null) {
+    const problem = await keyRefusedProblem(options)
+    if (problem !== null) throw new DaemonError(problem)
+    return false
+  }
+  const waitMs = options.stopTimeoutMs ?? STOP_TIMEOUT_MS
+  const body: StopRequest = { maxWaitMs: waitMs }
+  const result = await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop, body })
   if (result.kind === 'answered' && result.status !== 200) throw failureOf(result, found, 'the stop request')
-  if (await waitForExit(found.pid, options.stopTimeoutMs ?? STOP_TIMEOUT_MS)) return true
+  const graceMs = platform === 'win32' ? options.stopGraceMs ?? STOP_GRACE_MS : 0
+  if (await waitForExit(found.pid, waitMs + graceMs)) return true
   try {
     process.kill(found.pid, 'SIGTERM')
   } catch {

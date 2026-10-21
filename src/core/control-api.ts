@@ -22,11 +22,17 @@ export const CONTROL_PATHS = {
   /** `POST`: reads `config.json` again. Answers `OkAnswer`. */
   reload: `${CONTROL_PREFIX}reload`,
   /**
-   * `POST`: answers `OkAnswer`, then stops taking new requests and exits once the open ones
-   * have finished.
+   * `POST` with an optional `StopRequest` (no body is the same as `{}`): answers `OkAnswer`,
+   * then stops taking new requests and exits once the open ones have finished.
    */
   stop: `${CONTROL_PREFIX}stop`
 } as const
+
+/**
+ * The largest body a control request may have; a probe request names a few login ids. A larger
+ * one is answered 413 with an `ErrorAnswer`.
+ */
+export const MAX_CONTROL_BODY_BYTES = 64 * 1024
 
 export interface OkAnswer {
   ok: true
@@ -36,6 +42,20 @@ export interface OkAnswer {
 export interface ErrorAnswer {
   ok: false
   error: string
+}
+
+/**
+ * The body of a `stop` request. A daemon older than a field ignores it, so a client must not
+ * rely on it being honoured.
+ */
+export interface StopRequest {
+  /**
+   * The longest the daemon waits for its open proxied requests before it stops without them,
+   * in milliseconds from the moment it answered. Without it the daemon waits up to its own cap
+   * (15 minutes). `kurmis daemon stop` sends its own deadline here, because once the daemon has
+   * answered it no longer listens on its port and cannot be sent a second request.
+   */
+  maxWaitMs?: number
 }
 
 export interface ProbeRequest {

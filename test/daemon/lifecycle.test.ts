@@ -168,7 +168,7 @@ describe('portHolder', () => {
     })
     expect(await portHolder(port, KEY)).toEqual({ kind: 'kurmis', status: status('0.1.0', 1) })
     // A kurmis daemon with another key is not this user's daemon.
-    expect(await portHolder(port, 'b'.repeat(64))).toEqual({ kind: 'other', reason: 'it answered 403 to a kurmis status request' })
+    expect(await portHolder(port, 'b'.repeat(64))).toEqual({ kind: 'other', reason: 'it answered 403 to a kurmis status request', status: 403 })
   })
 
   it('is other when the answer is not a status answer', async () => {
@@ -176,7 +176,7 @@ describe('portHolder', () => {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ hello: 'world' }))
     })
-    expect(await portHolder(port, KEY)).toEqual({ kind: 'other', reason: 'it answered 200 to a kurmis status request' })
+    expect(await portHolder(port, KEY)).toEqual({ kind: 'other', reason: 'it answered 200 to a kurmis status request', status: 200 })
   })
 
   it('is other when the holder does not answer in time', async () => {

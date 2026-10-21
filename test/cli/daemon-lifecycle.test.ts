@@ -206,6 +206,39 @@ describe('kurmis daemon', () => {
     expect(status.stdout).toContain('This kurmis is 0.4.0, older than the daemon.')
   }, 60_000)
 
+  it('never lets an older kurmis stop a newer daemon to move it to the port config.json now names', async () => {
+    const { home, port } = await newHome()
+    expect((await kurmis(bundles.newer, home, ['daemon', 'start'])).code).toBe(0)
+    const pid = daemonInfo(home)?.pid ?? 0
+    const moved = await freePort()
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1, port: moved }))
+    const start = await kurmis(bundles.older, home, ['daemon', 'start'])
+    expect(start.code).toBe(1)
+    expect(start.stderr).toContain(`The kurmis daemon 0.5.0 runs on port ${String(port)}, but ${join(home, 'config.json')} names port ` +
+      `${String(moved)}. Its version is newer than this kurmis (0.4.0)`)
+    expect(processExists(pid)).toBe(true)
+    expect(daemonInfo(home)).toMatchObject({ pid, port })
+  }, 60_000)
+
+  it('says the daemon no longer accepts a key file that changed while it ran, and names its pid', async () => {
+    const { home, port } = await newHome()
+    expect((await kurmis(bundles.newer, home, ['daemon', 'start'])).code).toBe(0)
+    const pid = daemonInfo(home)?.pid ?? 0
+    writeFileSync(join(home, 'key'), `${'b'.repeat(64)}\n`)
+    const expected = `The program on port ${String(port)} refused the key in ${join(home, 'key')}, and daemon.json names pid ${String(pid)}`
+    const status = await kurmis(bundles.newer, home, ['daemon', 'status'])
+    expect(status.code).toBe(1)
+    expect(status.stdout).toContain(expected)
+    expect(status.stdout).toContain(`stop it with "kill ${String(pid)}"`)
+    const start = await kurmis(bundles.newer, home, ['daemon', 'start'])
+    expect(start).toMatchObject({ code: 1 })
+    expect(start.stderr).toContain(expected)
+    const stop = await kurmis(bundles.newer, home, ['daemon', 'stop'])
+    expect(stop.code).toBe(1)
+    expect(stop.stderr).toContain(expected)
+    expect(processExists(pid)).toBe(true)
+  }, 60_000)
+
   it('restarts: a new daemon serves at once', async () => {
     const { home } = await newHome()
     await kurmis(bundles.newer, home, ['daemon', 'start'])

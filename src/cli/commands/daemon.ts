@@ -2,9 +2,11 @@
 import { runDaemon } from '../../daemon/main.ts'
 import { kurmisVersion } from '../../version.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
+import { DAEMON_JOB_VARIABLES } from '../../platform/launchd.ts'
 import {
   DaemonError,
   findDaemon,
+  keyRefusedProblem,
   readStatus,
   restartDaemon,
   silentDaemon,
@@ -76,6 +78,10 @@ const stop: Handler = async (args, context) => {
   if (typeof parsed === 'number') return parsed
   try {
     const found = await findDaemon(clientOptions(context))
+    if (found === null) {
+      const problem = await keyRefusedProblem(clientOptions(context))
+      if (problem !== null) throw new DaemonError(problem)
+    }
     if (found === null || !(await stopDaemon(clientOptions(context)))) {
       writeLine(context.stdout, 'The kurmis daemon is not running.')
     } else {
@@ -95,11 +101,19 @@ const status: Handler = async (args, context) => {
     const found = await findDaemon(clientOptions(context))
     if (found === null) {
       const silent = silentDaemon()
+      const refused = silent === null ? null : await keyRefusedProblem(clientOptions(context))
       if (json) {
-        writeLine(context.stdout, JSON.stringify({ running: false, cliVersion: kurmisVersion, ...(silent === null ? {} : { notAnswering: silent }) }, null, 2))
+        writeLine(context.stdout, JSON.stringify({
+          running: false,
+          cliVersion: kurmisVersion,
+          ...(silent === null ? {} : { notAnswering: silent }),
+          ...(refused === null ? {} : { keyRefused: refused })
+        }, null, 2))
       } else {
         writeLine(context.stdout, 'The kurmis daemon is not running.')
-        if (silent !== null) {
+        if (refused !== null) {
+          writeLine(context.stdout, refused)
+        } else if (silent !== null) {
           writeLine(context.stdout, `Process ${String(silent.pid)}, named in daemon.json, does not answer on ${address(silent.port)}. ` +
             'It may be finishing its open requests before it stops.')
         }
@@ -131,10 +145,33 @@ const status: Handler = async (args, context) => {
   }
 }
 
+/**
+ * The `--env NAME=VALUE` assignments of `daemon run`, as variables, or a sentence saying what is
+ * wrong. Only the kurmis variables a daemon job carries (`DAEMON_JOB_VARIABLES`) may be set.
+ */
+export function daemonRunAssignments(values: readonly string[]): Record<string, string> | string {
+  const out: Record<string, string> = {}
+  for (const value of values) {
+    const at = value.indexOf('=')
+    const name = at === -1 ? value : value.slice(0, at)
+    if (at === -1 || !DAEMON_JOB_VARIABLES.includes(name)) {
+      return `--env takes NAME=VALUE with NAME one of ${DAEMON_JOB_VARIABLES.join(', ')}, not "${name}"`
+    }
+    out[name] = value.slice(at + 1)
+  }
+  return out
+}
+
 const run: Handler = async (args, context) => {
-  const parsed = parseCommandArgs('daemon run', args, {}, context)
+  const parsed = parseCommandArgs('daemon run', args, { env: { type: 'string', multiple: true } }, context)
   if (typeof parsed === 'number') return parsed
-  const code = await runDaemon({ env: context.env, stdout: context.stdout, stderr: context.stderr })
+  const assignments = daemonRunAssignments(parsed.values.env ?? [])
+  if (typeof assignments === 'string') return usageError('daemon run', assignments, context)
+  // The data folder's paths are read from `process.env` (`src/data/paths.ts`), so the variables
+  // go there as well as into the environment the daemon hands to the programs it starts.
+  for (const [name, value] of Object.entries(assignments)) process.env[name] = value
+  const env = { ...context.env, ...assignments }
+  const code = await runDaemon({ env, stdout: context.stdout, stderr: context.stderr })
   // A timer or socket left open by mistake must not keep a stopped daemon around.
   setTimeout(() => process.exit(code), RUN_EXIT_FALLBACK_MS).unref()
   return code
@@ -151,13 +188,14 @@ The daemon is the background process that routes Claude requests. "kurmis claude
 when it is not running, so it seldom needs starting by hand.
 
   start [--no-launchd]    Start it in the background, replacing one of an older version.
-  stop                    Stop it after it finishes the requests it has open. After 30 seconds
-                          it is told to stop without waiting for them.
+  stop                    Stop it after it finishes the requests it has open, waiting at most
+                          30 seconds for them.
   restart [--no-launchd]  Start a new one now; the old one finishes its open requests first.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
   run                     Run it in this terminal instead of the background (what "start"
-                          launches).
+                          launches). --env NAME=VALUE sets a kurmis variable in its
+                          environment; kurmis uses it when it starts the daemon through WMI.
 
 On macOS, a daemon started from an ssh login could not read the login Keychain, so "start"
 asks launchd to start it in your desktop session; --no-launchd starts it directly instead.

@@ -6,6 +6,7 @@
 // request and without its custom headers; paths under `/_kurmis/` go to the control API
 // (`control.ts`); the routed Anthropic paths go to the proxy (`proxy.ts`); everything else is 404.
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { StopRequest } from '../core/control-api.ts'
 import { requestKind } from '../core/proxy-rules.ts'
 import { ClaudeIdentityReader } from '../data/identity.ts'
 import type { DaemonLog } from '../data/log.ts'
@@ -33,8 +34,11 @@ export interface DaemonAppOptions {
   pid: number
   /** Milliseconds since epoch. */
   startedAt: number
-  /** Called once a control `stop` request has been answered. `main.ts` then stops the daemon. */
-  onStopRequested(): void
+  /**
+   * Called once a control `stop` request has been answered, with what it asked for (`{}` when
+   * it had no body). `main.ts` then stops the daemon.
+   */
+  onStopRequested(request: StopRequest): void
   now?: () => number
   /** Shorter timings, fixed randomness and stand-in probes, for tests. The daemon leaves it unset. */
   tuning?: DaemonTuning
@@ -95,7 +99,7 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
       ...(tuning.holdMaxMs === undefined ? {} : { maxMs: tuning.holdMaxMs }) },
     ...(tuning.renewalWaitMs === undefined ? {} : { renewalWaitMs: tuning.renewalWaitMs }) })
   const control = createControl({ key, table, tokens, identity, poller, log, now, pid: options.pid, port: options.port,
-    startedAt: options.startedAt, onStopRequested: () => { options.onStopRequested() } })
+    startedAt: options.startedAt, onStopRequested: (request) => { options.onStopRequested(request) } })
   let closed: Promise<void> | null = null
 
   return {

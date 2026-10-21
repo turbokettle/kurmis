@@ -125,7 +125,12 @@ older version, after that daemon finishes the requests it has open.
   answers are in `src/core/control-api.ts`. Every request needs the secret from `key`, in the
   header `x-kurmis-key`; without it the answer is 403 with no body. `status` also gives each
   Claude login's email from its profile file (`src/data/identity.ts`), for `kurmis status` and
-  `list` on the person's own terminal; the email is never logged.
+  `list` on the person's own terminal; the email is never logged. A request body may be at most
+  64 KB (`MAX_CONTROL_BODY_BYTES`). A larger one is answered 413 with the control API's error
+  answer (`{ "ok": false, "error": "…" }`) as soon as the size is known, from `content-length` or
+  while reading. The daemon then goes on reading the rest of the body and throws it away, for at
+  most 30 seconds, instead of closing the connection: a connection closed while the client is
+  still sending is reset, and the reset can lose the answer before the client reads it.
 - **The proxy** is every other routed path (`src/daemon/proxy.ts`). A request needs the header
   `x-kurmis-key: <secret>`, which reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`, else it gets
   403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
@@ -230,7 +235,10 @@ Only after the bind does the daemon write `daemon.json` and start the request ha
 reads `state.json`, so a daemon that loses the bind never touches the state. Requests that
 arrive while the request handling starts wait for it.
 
-**Stopping.** On SIGTERM, SIGINT, SIGHUP or a control `stop`, the daemon:
+**Stopping.** On SIGTERM, SIGINT, SIGHUP or a control `stop`, the daemon does the steps below. On
+Windows a SIGTERM from another process cannot be caught: Node's `process.kill` ends the process
+at once there. So on Windows only a control `stop`, and Ctrl-C or closing the console of a
+`daemon run` in a terminal (SIGINT, SIGHUP), stop it this way. The daemon:
 
 1. stops accepting at once, which frees the port;
 2. closes idle keep-alive connections, again every second, and marks its answers
@@ -239,7 +247,9 @@ arrive while the request handling starts wait for it.
 3. waits for its open proxied requests, for at most 15 minutes. A Claude CLI waits at most
    `API_TIMEOUT_MS` (600 s by default) for the headers of an answer; that a streamed answer
    that has started ends within the rest of the 15 minutes is an assumption. A second stop
-   signal ends the wait;
+   signal ends the wait. A control `stop` with a body `{ "maxWaitMs": <n> }` ends it after n
+   milliseconds instead (`kurmis daemon stop` sends its own 30-second deadline this way); a
+   `stop` without a body waits the whole 15 minutes;
 4. writes `state.json`, closes the remaining connections, removes `daemon.json` and exits 0.
 
 An uncaught error is logged by its error code only, and the daemon stops without waiting for its
@@ -251,8 +261,13 @@ new daemon does the handover: it sends the old one a control `stop` and tries th
 finishes its open requests in the background while the new one serves. A routed Claude CLI
 retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
 in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older
-kurmis never replaces a newer daemon. A daemon on another port than `config.json` names is asked
-to stop by the CLI before the new one starts.
+kurmis never replaces a newer daemon. A daemon on another port than `config.json` names (the
+port was changed while it ran) is not reached by the new daemon's bind, so the CLI asks it to
+stop with a control `stop` before it starts the new one, and the old daemon finishes its open
+requests in the background as above. The CLI does this only when the running daemon's version
+is the same as its own or older. When the daemon is newer, or the two versions cannot be
+compared and differ, the CLI stops with an error that says to update kurmis or to stop the
+daemon with `kurmis daemon stop`.
 
 **Finding it.** The CLI reads `daemon.json` and counts the daemon as running only when it
 answers a status request with the key. A `daemon.json` whose pid exists but that does not answer
@@ -260,13 +275,25 @@ is left alone, since that daemon may be finishing its requests before it stops. 
 `daemon.json` finds nothing, the CLI also asks the configured port, since a daemon that has just
 bound may not have written `daemon.json` yet.
 
+When the pid in `daemon.json` exists and the program on its port answers the keyed status
+request with 403, the `key` file was most likely changed or deleted while that daemon ran, so
+the daemon still has the old key. `kurmis daemon start`, `stop` and every command that starts the
+daemon then stop with an error, and `kurmis daemon status` prints the same text: the program on
+the port refused the key in the key file, `daemon.json` names pid N, and if that is the daemon,
+stop it with `kill N` (`taskkill /PID N /F` on Windows), then run the command again, and run
+`kurmis setup` again if it was used, so the Claude Code settings hold the new key. The CLI does
+not signal that pid itself: a daemon that refuses the key answers nothing that shows it is a
+kurmis daemon, and the pid may since belong to another program.
+
 **Starting it from the CLI** (`ensureDaemon`, `kurmis daemon start`): when none answers, the CLI
 starts `<node> <bundle> daemon run` and waits up to 15 seconds for a daemon of its version or a
 newer one to answer (30 seconds through launchd or WMI). The bundle is the one running now, with
 symlinks resolved. The daemon does not inherit `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` or `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which a
 CLI started inside a routed session has. It runs in the home folder, so it holds no project
-folder open. How it is started:
+folder open, and so `KURMIS_HOME` is made absolute (from the CLI's current folder) in every
+environment the CLI hands to a daemon: a direct start, the launchd job, the launchd login item,
+the Windows logon script and the command line of a start through WMI. How it is started:
 
 - **Directly, detached**, everywhere except the two cases below. On macOS and Linux
   `detached: true` puts it in a new session, so the terminal's hangup does not reach it, and its
@@ -296,19 +323,34 @@ folder open. How it is started:
   `Invoke-CimMethod Win32_Process Create`, every value in a single-quoted PowerShell string. WMI's
   own host process becomes the daemon's parent, outside the session's job. Measured with TK
   the original router on Windows 10: such a process outlives the ssh session. The process gets the user's
-  own environment from Windows, not the CLI's, so a `KURMIS_HOME` set only in the ssh session
-  does not reach it. When WMI refuses, the daemon is started directly with a warning that it
-  ends with the session.
+  own environment from Windows, not the CLI's, so the kurmis variables that are set
+  (`KURMIS_HOME` as an absolute path, and the test hooks; the same list the launchd job carries)
+  go on its command line: `daemon run --env KURMIS_HOME=<path> …`, and `daemon run` puts each
+  into its own environment before it reads any file. `--env` takes only those names. When WMI
+  refuses, the daemon is started directly with a warning that it ends with the session.
 
 Terminals that put their children in a kill-on-close job (some IDE terminals) are not detected;
 a daemon started from one ends with it, and the next kurmis command starts it again.
 
-**Stopping it from the CLI** (`kurmis daemon stop`) sends the control `stop` and waits up to 30
-seconds for the pid to exit. Then it sends SIGTERM, which, as the second stop signal, ends the
-daemon's wait for its open requests. Only a pid that answered the keyed status request as the
-daemon's own is ever signalled. `kurmis daemon restart` sends `stop`, waits until the port is
-free, and starts a new daemon at once, so the old one finishes its requests in the background.
-It refuses to replace a daemon of a newer version.
+**Stopping it from the CLI** (`kurmis daemon stop`) sends the control `stop` with
+`{ "maxWaitMs": 30000 }` and waits up to 30 seconds for the pid to exit. A second control
+request cannot be sent instead: a daemon that has answered `stop` no longer listens on its
+port, and another daemon may hold the port by then. So the deadline goes with the first
+request, and the daemon ends its wait for its open requests by itself when it is over, writes
+`state.json` and exits. What happens when the pid is still there after the 30 seconds (a daemon
+older than `maxWaitMs`, which ignores the field) depends on the platform:
+
+- **macOS and Linux:** the CLI sends SIGTERM, which, as the second stop signal, ends the
+  daemon's wait, and waits 5 more seconds.
+- **Windows:** `process.kill` ends the process at once there (TerminateProcess), without
+  `state.json` being written or `daemon.json` removed. So the CLI first waits 10 seconds more,
+  for a daemon that ended its wait by itself to finish, and only then ends the process and waits
+  5 more seconds.
+
+Only a pid that answered the keyed status request as the daemon's own is ever signalled.
+`kurmis daemon restart` sends `stop` without a body, waits until the port is free, and starts a
+new daemon at once, so the old one finishes its requests in the background. It refuses to
+replace a daemon of a newer version.
 
 ### Starting at login
 
@@ -318,18 +360,20 @@ removing the entry never ends a running daemon. Both are idempotent: what is alr
 compared first. The Node is the first `node` on PATH when it is the same file as the running one,
 since `process.execPath` names a versioned folder that a Homebrew upgrade removes.
 
-- **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist`, the same shape as the one-shot job
-  (mode 0644; it holds no secret). It is written only when its content differs, then loaded
-  with `launchctl bootstrap`, which also runs it once; one loaded with old content is unloaded
-  first, since launchd keeps what it read at load time. When loading fails (nobody at the
-  screen), the plist stays and a warning says it starts at the next login. `setup --undo` runs
-  `bootout`, ignoring "not loaded", and deletes the plist.
+- **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist`, the same shape and environment as
+  the one-shot job (`KURMIS_HOME` as an absolute path; mode 0644; it holds no secret). It is
+  written only when its content differs, then loaded with `launchctl bootstrap`, which also runs
+  it once; one loaded with old content is unloaded first, since launchd keeps what it read at
+  load time. When loading fails (nobody at the screen), the plist stays and a warning says it
+  starts at the next login. `setup --undo` runs `bootout`, ignoring "not loaded", and deletes the
+  plist.
 - **Windows:** the `REG_SZ` value `kurmis` under
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, set, read and removed with `reg.exe`
   through `runProgram` (no shell). It needs no admin rights and shows in Task Manager's Startup
   tab. Its data is `<SystemRoot>\System32\wscript.exe //B //Nologo "<data folder>\autostart.vbs"`
   with full paths. node.exe is a console program and would flash a console window at logon, so
-  the script, UTF-16 with a byte order mark, sets the kurmis variables and the start folder and
+  the script, UTF-16 with a byte order mark, sets the kurmis variables (`KURMIS_HOME` as an
+  absolute path, and the test hooks that are set) and the start folder and
   starts node hidden without waiting (`WScript.Shell.Run "<command line>", 0, False`). `//B`
   stops error dialogs at logon.
 - **Other platforms:** a warning; the next kurmis command starts the daemon.
@@ -582,7 +626,9 @@ set, because Node finds a package's dependencies from its real folder.
 Environment variables that exist only so tests can point kurmis at stand-ins. A person never
 needs them.
 
-- `KURMIS_HOME` moves the data folder; every test sets it to a temporary folder.
+- `KURMIS_HOME` moves the data folder; every test sets it to a temporary folder. A relative one
+  is taken from the current folder, and every start of a daemon passes it on as an absolute path
+  ("Starting it from the CLI").
 - `KURMIS_CLAUDE_BIN`, `KURMIS_CODEX_BIN` name the programs (also usable by a person).
   `test/setup.ts` points both at `test/no-real-program.mjs`, which only fails, so no test can
   start the real CLIs from PATH by accident; a test that needs a CLI names a fake, and a test of

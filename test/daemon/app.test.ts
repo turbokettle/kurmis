@@ -2,6 +2,7 @@
 // the fake Anthropic API, with logins whose `.credentials.json` the fake helpers write and the
 // fake Keychain answering "no item".
 import { readFileSync, writeFileSync } from 'node:fs'
+import { request } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
@@ -179,7 +180,7 @@ describe('choosing and signing', () => {
     expect(bearers(h)).toEqual([WORK])
   })
 
-  test('a 400 on the login a session has just moved to sends it back to its previous login, and holds it there', async () => {
+  test('a 400 on the login a session has just moved to sends it back to its previous login', async () => {
     const h = await twoLogins()
     expect((await messages(h, S1)).status).toBe(200) // S1 is placed on claude:default
     h.api.scriptFor(DEFAULT, reply.quota({ resetsAt: Date.now() + 3_600_000 }))
@@ -188,8 +189,7 @@ describe('choosing and signing', () => {
     const answer = await messages(h, S1)
     expect(answer.status).toBe(200)
     expect(bearers(h)).toEqual([DEFAULT, DEFAULT, WORK, WORK, DEFAULT])
-    expect((await messages(h, S1)).status).toBe(200)
-    expect(bearers(h).at(-1)).toBe(DEFAULT)
+    // How long the session stays held there is tested in proxy.test.ts.
   })
 })
 
@@ -388,6 +388,45 @@ describe('the control API', () => {
     expect(answer.status).toBe(200)
     expect(JSON.parse(answer.text)).toEqual({ ok: true })
     await expect.poll(() => harness!.stopRequested()).toBe(1)
+  })
+
+  test('stop passes on how long the daemon may wait, and refuses a wait that is not a number', async () => {
+    harness = await startHarness()
+    const stop = (body?: unknown): ReturnType<typeof call> =>
+      call(harness!, CONTROL_PATHS.stop, { method: 'POST', headers: { 'x-kurmis-key': KEY }, ...(body === undefined ? {} : { body }) })
+    expect((await stop({ maxWaitMs: 1_500 })).status).toBe(200)
+    expect((await stop()).status).toBe(200)
+    const wrong = await stop({ maxWaitMs: -1 })
+    expect(wrong.status).toBe(400)
+    expect(JSON.parse(wrong.text)).toMatchObject({ ok: false, error: expect.stringContaining('maxWaitMs') as unknown })
+    await expect.poll(() => harness!.stopRequested()).toBe(2)
+    expect(harness.stopRequests).toEqual([{ maxWaitMs: 1_500 }, {}])
+  })
+
+  test('a body larger than 64 KB is answered 413, and the client gets the answer rather than a reset', async () => {
+    harness = await startHarness()
+    const body = Buffer.alloc(2 * 1024 * 1024, 0x20)
+    /** Sends `body` in 64 KB pieces, with a content-length or chunked, and answers what came back. */
+    const send = (path: string, chunked: boolean): Promise<{ status: number; text: string }> => new Promise((resolve, reject) => {
+      const outgoing = request({
+        host: '127.0.0.1', port: harness!.port, path, method: 'POST',
+        headers: { 'x-kurmis-key': KEY, 'content-type': 'application/json', ...(chunked ? {} : { 'content-length': String(body.length) }) }
+      }, (incoming) => {
+        const chunks: Buffer[] = []
+        incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
+        incoming.on('end', () => resolve({ status: incoming.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }))
+        incoming.on('error', reject)
+      })
+      outgoing.on('error', reject)
+      for (let at = 0; at < body.length; at += 64 * 1024) outgoing.write(body.subarray(at, at + 64 * 1024))
+      outgoing.end()
+    })
+    for (const [path, chunked] of [[CONTROL_PATHS.probe, false], [CONTROL_PATHS.probe, true], [CONTROL_PATHS.stop, false], [CONTROL_PATHS.stop, true]] as const) {
+      const answer = await send(path, chunked)
+      expect(answer.status).toBe(413)
+      expect(JSON.parse(answer.text)).toEqual({ ok: false, error: "The control request's body is larger than 64 KB." })
+    }
+    expect(harness.stopRequested()).toBe(0)
   })
 
   test('a wrong method is 405, an unknown path 404, and a probe of an unknown login 400', async () => {
