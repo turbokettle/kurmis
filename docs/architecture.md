@@ -16,10 +16,14 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 
 - `config.json` holds the logins and their settings: id, provider, label, opt-in, the two limits
   and use-first. The CLI writes it, and the daemon reloads it when it changes.
-- `claude/<id>/` is the config folder of an extra Claude login. On Windows it holds the
-  login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain, under a name
-  derived from this folder's path.
-- `codex/<id>/` is the `CODEX_HOME` of an extra Codex login.
+- `claude/<name>/` is the config folder of the extra Claude login `claude:<name>`. On Windows
+  it holds the login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain,
+  under a name derived from this folder's path (`keychainService` in
+  `src/core/keychain-service.ts`).
+- `codex/<name>/` is the `CODEX_HOME` of the extra Codex login `codex:<name>`.
+
+A login id is the provider and a name: `claude:work`, `codex:default`. Only the name part is
+used for the folder.
 - `daemon.json` holds the running daemon's pid, port, version and the secret clients send.
   Only the user can read it.
 - `state.json` holds the daemon's usage snapshots, cooldowns and which login each session is on,
@@ -42,13 +46,19 @@ older version, after that daemon finishes the requests it has open.
   `daemon.json`.
 - **The proxy** is every other path. A request needs the header `x-kurmis-key: <secret>`, which
   reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`. A request may also carry
-  `x-kurmis-login: <id>`, which pins it to that login. Neither header is forwarded upstream.
+  `x-kurmis-login: claude:<name>`, which pins it to that login. Neither header is forwarded
+  upstream.
 - **Sessions** are told apart by the `X-Claude-Code-Session-Id` header the CLI sends. That is
   what a session stays on its login by. The CLI's subagents and small-model requests share it.
+- **Moving a session back.** When an Auto session has just moved to another login and that login
+  answers 400, the request is sent again on the login that served the session before, and the
+  session stays on that login from then on. Some conversations cannot be continued on another
+  login.
 - **Usage** is probed every 15 minutes for each signed-in login, and on demand. The daemon also
   updates it from the rate-limit headers of every answer it forwards.
 - **Tokens** come from the Keychain (`/usr/bin/security`, with stdin closed and a deadline) or
-  from `.credentials.json`. They are cached for a minute and never written anywhere. A token
+  from `.credentials.json`. A Keychain answer is kept for a minute; the file is read again when
+  its size or modification time changes. Tokens are never written anywhere. A token
   that is about to expire is renewed by running a usage probe on that login, because the probe's
   CLI renews it.
 - **Starting.** The CLI starts the daemon when it is not running, detached from the terminal. On
@@ -107,10 +117,29 @@ the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it 
 
 - `src/core/` holds pure logic with no I/O: routing, usage parsing, limits, the TOML merge. It
   holds most of the code copied from the original router.
-- `src/daemon/` holds the proxy, the control API, the token readers, the usage probes and the
-  daemon's lifecycle.
+  - `accounts.ts`: login ids and the defaults for a new login (both limits 100%, opted in).
+  - `account-router.ts`: which login serves a request, the 429 and 400 handling, and when the
+    pool can serve again.
+  - `proxy-rules.ts`: the proxy's pure decisions: which paths it routes, the headers it sends
+    and drops, the account uuid in the body, and the answers it gives when no login can serve.
+  - `capacity-hold.ts`: how long a request waits when Anthropic has no capacity (529).
+  - `route-headers.ts`: the `x-kurmis-*` headers and `ANTHROPIC_CUSTOM_HEADERS`.
+  - `routed-env.ts`: the environment a routed Claude CLI is started with.
+  - `claude-usage.ts`, `usage.ts`, `usage-rules.ts`, `countdown.ts`: the usage snapshot, the
+    `get_usage` parser and the rules over the windows.
+  - `codex-protocol.ts`, `codex-usage.ts`, `codex-account.ts`: the Codex app-server's
+    `account/rateLimits/read` and `account/read` answers.
+  - `codex-account-config.ts`, `codex-home.ts`: the `config.toml` merge and what preparing an
+    extra Codex home has to do.
+  - `credentials.ts`, `keychain-service.ts`: the `.credentials.json` format and the Keychain
+    item name.
+- `src/daemon/` holds the proxy, the control API, the token readers (`credentials.ts` for the
+  file, `keychain.ts` for the macOS Keychain), the usage probes and the daemon's lifecycle.
 - `src/cli/` holds the commands and the wrapper.
 - `src/platform/` holds what differs per OS: finding programs, junctions, detaching, autostart.
+  Every program kurmis starts goes through `runProgram` in `run.ts`: no shell, stdin closed, a
+  deadline and a cap on the output.
 - `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude`, `codex app-server` and
-  Anthropic's API. No test reaches the network or the user's real `~/.claude`, `~/.codex` or
+  Anthropic's API. `test/daemon/fake-security/` stands in for macOS's `security` program, with
+  its Keychain items in a temporary folder. No test reaches the network or the user's real `~/.claude`, `~/.codex` or
   Keychain.

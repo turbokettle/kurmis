@@ -17,9 +17,11 @@ machine after each larger change. Linux works where it costs nothing extra.
   subscription is billed.
 - **Codex:** the CLI has one variable, `CODEX_HOME`, and it moves the whole folder. So each login
   has its own home. Before every start, `config.toml` is merged in from `~/.codex` without its
-  secrets, keeping TOML types and comments. `AGENTS.md` is copied in, and every folder of
-  `~/.codex` is linked in: a symlink on macOS, a directory junction on Windows. `auth.json` is
-  never copied or linked.
+  secrets. TOML types are kept, and so are the comments in the login's own file; comments in
+  `~/.codex/config.toml` are not carried over. `AGENTS.md` is copied in, and the folders of
+  `~/.codex` are linked in: a symlink on macOS, a directory junction on Windows. Scratch folders
+  (`tmp`, `.tmp`), links and anything whose name says it holds a credential or a database are
+  not linked. `auth.json` is never copied or linked.
 
 ## Claude routing
 
