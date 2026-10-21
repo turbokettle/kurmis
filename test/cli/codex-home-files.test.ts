@@ -22,8 +22,17 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { tomlValue } from '../../src/core/codex-account-config.ts'
 import { codexSourceHome, prepareCodexHome, writeIfUnchanged } from '../../src/cli/codex-home-files.ts'
 import { codexMergedRecordPath, loginFolder } from '../../src/data/paths.ts'
+import { normaliseLinkTarget } from '../../src/platform/links.ts'
+import { canCreateSymlinks, linkFolder } from '../host.ts'
 
+// Windows has no folder permissions that chmod could change.
 const posixOnly = test.skipIf(process.platform === 'win32')
+const windows = process.platform === 'win32'
+
+/** A link's target as kurmis reads it back: without the `\\?\` prefix a Windows junction may have. */
+function linkTarget(path: string): string {
+  return normaliseLinkTarget(readlinkSync(path), process.platform)
+}
 
 const SOURCE_CONFIG = `# the default home's settings
 model = "gpt-a"
@@ -63,7 +72,7 @@ afterEach(() => {
     if (value === undefined) delete process.env[name]
     else process.env[name] = value
   }
-  rmSync(root, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true, maxRetries: 10 })
 })
 
 /** A default home with something of every kind in it. */
@@ -78,7 +87,7 @@ function makeSourceHome(dir: string): void {
   writeFileSync(join(dir, 'sessions', 'rollout.jsonl'), 'shared\n')
   writeFileSync(join(dir, 'secrets', 'key'), 'SECRET_DIR_CANARY\n')
   mkdirSync(join(root, 'elsewhere'))
-  symlinkSync(join(root, 'elsewhere'), join(dir, 'rules'), 'dir')
+  linkFolder(join(root, 'elsewhere'), join(dir, 'rules'))
 }
 
 function read(path: string): string {
@@ -102,7 +111,7 @@ describe('prepareCodexHome', () => {
     await expect(prepareCodexHome('codex:work', { env: {} })).rejects.toThrow(/Could not create the Codex home of codex:work/)
   })
 
-  posixOnly('prepares a login home from ~/.codex: links, AGENTS.md and config.toml, and nothing private', async () => {
+  test('prepares a login home from ~/.codex: links, AGENTS.md and config.toml, and nothing private', async () => {
     const source = join(root, 'home', '.codex')
     makeSourceHome(source)
 
@@ -110,11 +119,11 @@ describe('prepareCodexHome', () => {
     const home = loginFolder('codex:work')
 
     expect(prepared.codexHome).toBe(home)
-    expect(statSync(home).mode & 0o777).toBe(0o700)
+    if (!windows) expect(statSync(home).mode & 0o777).toBe(0o700)
     // rules is a link in the default home that leads to a folder, so it is shared through that link.
     for (const name of ['sessions', 'skills', 'log', 'rules']) {
       expect(lstatSync(join(home, name)).isSymbolicLink(), name).toBe(true)
-      expect(readlinkSync(join(home, name))).toBe(join(source, name))
+      expect(linkTarget(join(home, name))).toBe(join(source, name))
     }
     expect(read(join(home, 'sessions', 'rollout.jsonl'))).toBe('shared\n')
     expect(readdirSync(home).sort()).toEqual(['AGENTS.md', 'config.toml', 'log', 'rules', 'sessions', 'skills'])
@@ -123,14 +132,14 @@ describe('prepareCodexHome', () => {
     const config = read(join(home, 'config.toml'))
     expect(tomlValue(config)).toMatchObject({ model: 'gpt-a', approval_policy: 'on-request', mcp_servers: { demo: { command: 'demo-server' } } })
     expect(config).not.toContain('DEFAULT_SECRET_CANARY')
-    expect(statSync(join(home, 'config.toml')).mode & 0o777).toBe(0o600)
+    if (!windows) expect(statSync(join(home, 'config.toml')).mode & 0o777).toBe(0o600)
 
     expect(prepared.warnings).toHaveLength(1)
     expect(prepared.warnings[0]).toMatch(/has a secret/)
     expect(JSON.stringify(prepared)).not.toMatch(/CANARY/)
   })
 
-  posixOnly('refreshes the login home after the default home changes, keeping the login\'s own secret and comment', async () => {
+  test('refreshes the login home after the default home changes, keeping the login\'s own secret and comment', async () => {
     const source = join(root, 'home', '.codex')
     makeSourceHome(source)
     await prepareCodexHome('codex:work', { env: {} })
@@ -152,7 +161,7 @@ describe('prepareCodexHome', () => {
     expect(config).toContain("# the login's own note")
     expect(config).not.toContain('DEFAULT_SECRET_CANARY')
     expect(read(join(home, 'AGENTS.md'))).toBe('# new house rules\n')
-    expect(readlinkSync(join(home, 'memories'))).toBe(join(source, 'memories'))
+    expect(linkTarget(join(home, 'memories'))).toBe(join(source, 'memories'))
     expect(second.warnings).toEqual([])
     expect(existsSync(join(home, 'auth.json'))).toBe(false)
 
@@ -164,27 +173,27 @@ describe('prepareCodexHome', () => {
     expect(readdirSync(home).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
-  posixOnly('leaves a real folder where a link should go alone, with a warning', async () => {
+  test('leaves a real folder where a link should go alone, with a warning', async () => {
     const source = join(root, 'home', '.codex')
     makeSourceHome(source)
     const home = loginFolder('codex:work')
     mkdirSync(join(home, 'skills'), { recursive: true })
     writeFileSync(join(home, 'skills', 'mine.md'), 'the login\'s own\n')
-    symlinkSync(join(root, 'elsewhere'), join(home, 'log'), 'dir')
+    linkFolder(join(root, 'elsewhere'), join(home, 'log'))
 
     const prepared = await prepareCodexHome('codex:work', { env: {} })
 
     expect(read(join(home, 'skills', 'mine.md'))).toBe('the login\'s own\n')
     expect(lstatSync(join(home, 'skills')).isSymbolicLink()).toBe(false)
-    expect(readlinkSync(join(home, 'log'))).toBe(join(root, 'elsewhere'))
-    expect(readlinkSync(join(home, 'sessions'))).toBe(join(source, 'sessions'))
+    expect(linkTarget(join(home, 'log'))).toBe(join(root, 'elsewhere'))
+    expect(linkTarget(join(home, 'sessions'))).toBe(join(source, 'sessions'))
     const conflicts = prepared.warnings.filter((line) => line.includes('left as it is and not linked'))
     expect(conflicts).toHaveLength(2)
     expect(conflicts.some((line) => line.includes(join(home, 'skills')))).toBe(true)
     expect(conflicts.some((line) => line.includes(join(home, 'log')))).toBe(true)
   })
 
-  posixOnly('takes CODEX_HOME from the env as the default home instead of ~/.codex', async () => {
+  test('takes CODEX_HOME from the env as the default home instead of ~/.codex', async () => {
     const custom = join(root, 'custom-codex')
     mkdirSync(join(custom, 'sessions'), { recursive: true })
     writeFileSync(join(custom, 'AGENTS.md'), '# custom rules\n')
@@ -194,7 +203,7 @@ describe('prepareCodexHome', () => {
     const home = loginFolder('codex:work')
 
     expect(prepared.warnings).toEqual([])
-    expect(readlinkSync(join(home, 'sessions'))).toBe(join(custom, 'sessions'))
+    expect(linkTarget(join(home, 'sessions'))).toBe(join(custom, 'sessions'))
     expect(existsSync(join(home, 'skills'))).toBe(false)
     expect(read(join(home, 'AGENTS.md'))).toBe('# custom rules\n')
     // There is no config.toml in either home, so the login gets none.
@@ -242,11 +251,11 @@ describe('prepareCodexHome over several starts', () => {
   const source = (): string => join(root, 'home', '.codex')
   const home = (): string => loginFolder('codex:work')
 
-  posixOnly('keeps what Codex wrote into the login\'s config.toml, and keeps the merged copy outside the home', async () => {
+  test('keeps what Codex wrote into the login\'s config.toml, and keeps the merged copy outside the home', async () => {
     makeSourceHome(source())
     await prepareCodexHome('codex:work', { env: {} })
     const record = codexMergedRecordPath('codex:work')
-    expect(statSync(record).mode & 0o777).toBe(0o600)
+    if (!windows) expect(statSync(record).mode & 0o777).toBe(0o600)
     expect(read(record)).not.toMatch(/CANARY/)
     expect(record.startsWith(home())).toBe(false)
 
@@ -261,7 +270,7 @@ describe('prepareCodexHome over several starts', () => {
     expect(config).not.toHaveProperty('approval_policy')
   })
 
-  posixOnly('copies AGENTS.override.md, and removes the copy once the default home has none', async () => {
+  test('copies AGENTS.override.md, and removes the copy once the default home has none', async () => {
     makeSourceHome(source())
     writeFileSync(join(source(), 'AGENTS.override.md'), '# override\n')
     await prepareCodexHome('codex:work', { env: {} })
@@ -278,15 +287,18 @@ describe('prepareCodexHome over several starts', () => {
     expect(read(join(home(), 'AGENTS.override.md'))).toBe('# the login\'s own\n')
   })
 
-  posixOnly('removes links it made that lead nowhere or to a folder no longer shared, and leaves other links alone', async () => {
+  test('removes links it made that lead nowhere or to a folder no longer shared, and leaves other links alone', async () => {
     makeSourceHome(source())
     mkdirSync(join(source(), 'memories'))
     mkdirSync(join(source(), '.sandbox'))
     await prepareCodexHome('codex:work', { env: {} })
     expect(lstatSync(join(home(), 'memories')).isSymbolicLink()).toBe(true)
     // A link an earlier kurmis made to the sandbox folder, which is private now.
-    symlinkSync(join(source(), '.sandbox'), join(home(), '.sandbox'), 'dir')
-    symlinkSync(join(root, 'nowhere', 'my-notes'), join(home(), 'notes'), 'dir')
+    linkFolder(join(source(), '.sandbox'), join(home(), '.sandbox'))
+    // A link of the user's own that leads nowhere; a dangling symlink needs Developer Mode or an
+    // administrator on Windows.
+    const dangling = canCreateSymlinks()
+    if (dangling) symlinkSync(join(root, 'nowhere', 'my-notes'), join(home(), 'notes'), 'dir')
 
     rmSync(join(source(), 'memories'), { recursive: true })
     const prepared = await prepareCodexHome('codex:work', { env: {} })
@@ -294,11 +306,11 @@ describe('prepareCodexHome over several starts', () => {
     expect(existsSync(join(home(), 'memories'))).toBe(false)
     expect(existsSync(join(home(), '.sandbox'))).toBe(false)
     expect(existsSync(join(source(), '.sandbox'))).toBe(true)
-    expect(lstatSync(join(home(), 'notes')).isSymbolicLink()).toBe(true)
+    if (dangling) expect(lstatSync(join(home(), 'notes')).isSymbolicLink()).toBe(true)
     expect(prepared.warnings.filter((line) => !line.includes('has a secret'))).toEqual([])
   })
 
-  posixOnly('replaces an empty folder Codex made with the link, and warns once about a folder with something in it', async () => {
+  test('replaces an empty folder Codex made with the link, and warns once about a folder with something in it', async () => {
     makeSourceHome(source())
     mkdirSync(join(home(), 'memories'), { recursive: true })
     mkdirSync(join(home(), 'shell_snapshots'))
@@ -307,7 +319,7 @@ describe('prepareCodexHome over several starts', () => {
     mkdirSync(join(source(), 'shell_snapshots'))
 
     const first = await prepareCodexHome('codex:work', { env: {} })
-    expect(readlinkSync(join(home(), 'memories'))).toBe(join(source(), 'memories'))
+    expect(linkTarget(join(home(), 'memories'))).toBe(join(source(), 'memories'))
     expect(first.warnings.filter((line) => line.includes('not linked'))).toEqual([expect.stringContaining(join(home(), 'shell_snapshots'))])
 
     const second = await prepareCodexHome('codex:work', { env: {} })
@@ -315,11 +327,11 @@ describe('prepareCodexHome over several starts', () => {
     expect(read(join(home(), 'shell_snapshots', 'one.sh'))).toBe('echo\n')
   })
 
-  posixOnly('gives no warning when two starts link the same folders at once', async () => {
+  test('gives no warning when two starts link the same folders at once', async () => {
     makeSourceHome(source())
     const both = await Promise.all([prepareCodexHome('codex:work', { env: {} }), prepareCodexHome('codex:work', { env: {} })])
     for (const prepared of both) expect(prepared.warnings.filter((line) => /link/i.test(line))).toEqual([])
-    expect(readlinkSync(join(home(), 'sessions'))).toBe(join(source(), 'sessions'))
+    expect(linkTarget(join(home(), 'sessions'))).toBe(join(source(), 'sessions'))
   })
 
   test('does not use a record left by an earlier login of the same name', async () => {

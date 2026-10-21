@@ -61,7 +61,7 @@ export function buildTestBundle(options: TestBundleOptions): Promise<string> {
 /** Removes every bundle built so far. */
 export function disposeTestBundles(): void {
   builds.clear()
-  if (folder !== null) rmSync(folder, { recursive: true, force: true })
+  if (folder !== null) rmSync(folder, { recursive: true, force: true, maxRetries: 10 })
   folder = null
 }
 

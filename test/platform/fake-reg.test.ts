@@ -9,7 +9,7 @@ const reg = regFor()
 const KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 
 beforeEach(() => {
-  rmSync(dir(), { recursive: true, force: true })
+  rmSync(dir(), { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(dir(), { recursive: true })
 })
 

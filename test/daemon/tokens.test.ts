@@ -56,7 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs()
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
 })
 
 test('the security program comes from KURMIS_SECURITY_PROGRAM, else /usr/bin/security', () => {
@@ -157,7 +157,9 @@ test('macOS: a read that does not answer is logged as a timeout and the item is 
   keychain.setItem(PLAIN, record(fakeToken('default-item')))
   keychain.setMode('prompt')
   let now = 1_000_000
-  const tokens = source({ now: () => now, keychainReadTimeoutMs: 500 })
+  // Short, but long enough for the stand-in to start and record its call before it is killed,
+  // which takes longer on Windows.
+  const tokens = source({ now: () => now, keychainReadTimeoutMs: process.platform === 'win32' ? 3_000 : 500 })
   await tokens.prime([DEFAULT])
   expect(tokens.read(DEFAULT)?.accessToken).toBe(fakeToken('default-file'))
   keychain.setMode(null)

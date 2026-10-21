@@ -20,8 +20,8 @@ beforeEach(() => {
   cwd = mkdtempSync(join(tmpdir(), 'kurmis-claude-cmd-cwd-'))
 })
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true })
-  rmSync(cwd, { recursive: true, force: true })
+  rmSync(home, { recursive: true, force: true, maxRetries: 10 })
+  rmSync(cwd, { recursive: true, force: true, maxRetries: 10 })
 })
 
 interface Harness {

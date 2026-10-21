@@ -6,6 +6,7 @@ import { backupPathFor } from '../../../src/cli/global-settings.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
 import type { AutostartOptions, AutostartResult } from '../../../src/platform/autostart.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
+import { canCreateSymlinks } from '../../host.ts'
 
 const home = process.env.HOME as string
 const kurmisHome = process.env.KURMIS_HOME as string
@@ -62,14 +63,14 @@ function settings(): Record<string, unknown> {
 }
 
 beforeEach(() => {
-  rmSync(join(home, '.claude'), { recursive: true, force: true })
-  rmSync(kurmisHome, { recursive: true, force: true })
+  rmSync(join(home, '.claude'), { recursive: true, force: true, maxRetries: 10 })
+  rmSync(kurmisHome, { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(kurmisHome, { recursive: true })
   writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 1, port: PORT }))
 })
 
 afterEach(() => {
-  rmSync(join(home, '.claude'), { recursive: true, force: true })
+  rmSync(join(home, '.claude'), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('kurmis setup', () => {
@@ -137,7 +138,8 @@ describe('kurmis setup', () => {
     expect(statSync(backupPathFor(settingsPath)).mode & 0o777).toBe(0o600)
   })
 
-  it.skipIf(process.platform === 'win32')('warns that the key goes to the target of a linked settings file', async () => {
+  // A symlink to a file needs Developer Mode or an administrator on Windows.
+  it.runIf(canCreateSymlinks())('warns that the key goes to the target of a linked settings file', async () => {
     const dotfiles = join(home, 'dotfiles')
     mkdirSync(dotfiles, { recursive: true })
     mkdirSync(join(home, '.claude'), { recursive: true })
@@ -153,7 +155,7 @@ describe('kurmis setup', () => {
       const undone = await run(command, ['--undo'])
       expect(undone.stderr).not.toContain('symbolic link')
     } finally {
-      rmSync(dotfiles, { recursive: true, force: true })
+      rmSync(dotfiles, { recursive: true, force: true, maxRetries: 10 })
     }
   })
 
@@ -268,7 +270,7 @@ describe('kurmis setup', () => {
     // Undo takes the line out with the other kurmis headers.
     expect((await run(command, ['--undo'], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
     expect(readFileSync(join(dir, 'settings.json'), 'utf8')).not.toContain('x-kurmis')
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
   })
 
   it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on claude:default', async () => {

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { removeTreeSync, type RemoveTreeFs } from '../../src/platform/remove-tree.ts'
+import { canCreateSymlinks, linkFolder } from '../host.ts'
 
 let root: string
 
@@ -11,28 +12,40 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('removeTreeSync on this machine', () => {
-  it('removes a folder with links into another folder and leaves the targets alone', () => {
+  it('removes a folder with folder links into another folder and leaves the targets alone', () => {
     const outside = join(root, 'outside')
     mkdirSync(join(outside, 'sessions'), { recursive: true })
     writeFileSync(join(outside, 'sessions', 'one.jsonl'), 'kept')
-    writeFileSync(join(outside, 'config.toml'), 'kept')
     const home = join(root, 'home')
     mkdirSync(join(home, 'nested', 'deeper'), { recursive: true })
     writeFileSync(join(home, 'auth.json'), '{}')
     writeFileSync(join(home, 'nested', 'deeper', 'file'), 'x')
-    symlinkSync(join(outside, 'sessions'), join(home, 'sessions'), 'dir')
-    symlinkSync(join(outside, 'config.toml'), join(home, 'config.toml'), 'file')
-    symlinkSync(join(outside, 'sessions'), join(home, 'nested', 'link'), 'dir')
-    symlinkSync(join(root, 'nowhere'), join(home, 'broken'))
+    linkFolder(join(outside, 'sessions'), join(home, 'sessions'))
+    linkFolder(join(outside, 'sessions'), join(home, 'nested', 'link'))
 
     removeTreeSync(home)
 
     expect(existsSync(home)).toBe(false)
     expect(readFileSync(join(outside, 'sessions', 'one.jsonl'), 'utf8')).toBe('kept')
+  })
+
+  // A symlink to a file, and a dangling one, need Developer Mode or an administrator on Windows.
+  it.runIf(canCreateSymlinks())('removes a folder with a file symlink and a dangling symlink and leaves the target alone', () => {
+    const outside = join(root, 'outside')
+    mkdirSync(outside)
+    writeFileSync(join(outside, 'config.toml'), 'kept')
+    const home = join(root, 'home')
+    mkdirSync(home)
+    symlinkSync(join(outside, 'config.toml'), join(home, 'config.toml'), 'file')
+    symlinkSync(join(root, 'nowhere'), join(home, 'broken'))
+
+    removeTreeSync(home)
+
+    expect(existsSync(home)).toBe(false)
     expect(readFileSync(join(outside, 'config.toml'), 'utf8')).toBe('kept')
   })
 
@@ -40,7 +53,7 @@ describe('removeTreeSync on this machine', () => {
     const target = join(root, 'target')
     mkdirSync(target)
     writeFileSync(join(target, 'file'), 'kept')
-    symlinkSync(target, join(root, 'link'), 'dir')
+    linkFolder(target, join(root, 'link'))
     removeTreeSync(join(root, 'link'))
     expect(existsSync(join(root, 'link'))).toBe(false)
     expect(readFileSync(join(target, 'file'), 'utf8')).toBe('kept')

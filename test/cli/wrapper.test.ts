@@ -25,7 +25,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'kurmis-wrapper-'))
 })
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
 })
 
 /** A stand-in for `process` that records what the wrapper did with signals. */
@@ -63,8 +63,13 @@ async function waitForFile(path: string): Promise<void> {
   }
 }
 
-// Sending SIGTERM or SIGHUP to a child only works on macOS and Linux.
+// Sending SIGHUP to a child only works on macOS and Linux; on Windows libuv answers ENOSYS.
 const posixTest = test.skipIf(process.platform === 'win32')
+
+// How a `hold` child that the wrapper sends SIGTERM ends. On macOS and Linux its handler exits
+// 143. On Windows any signal Node sends to a child is TerminateProcess, which no handler sees,
+// and Node reports the child as ended by the signal it sent.
+const endedBySigterm: ChildEnd = process.platform === 'win32' ? { kind: 'signal', signal: 'SIGTERM' } : { kind: 'exit', code: 143 }
 
 const env = (extra: Record<string, string> = {}): Record<string, string> => {
   const out: Record<string, string> = { ...(process.env as Record<string, string>), ...extra }
@@ -113,7 +118,7 @@ test('the child\'s exit code is the answer', async () => {
   expect(end).toEqual({ kind: 'exit', code: 7 })
 })
 
-posixTest('in a terminal, while the child runs, SIGINT and SIGQUIT are ignored and SIGTERM and SIGHUP have handlers; all are removed after', async () => {
+test('in a terminal, while the child runs, SIGINT and SIGQUIT are ignored and SIGTERM and SIGHUP have handlers; all are removed after', async () => {
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
   const running = runInteractive({ command: process.execPath, args: [CHILD, 'hold', ready], env: env() },
@@ -125,15 +130,15 @@ posixTest('in a terminal, while the child runs, SIGINT and SIGQUIT are ignored a
   expect(proc.listenerCount('SIGHUP')).toBe(1)
   proc.emit('SIGINT')
   proc.emit('SIGQUIT')
-  // The child is still running: the ignored signals did nothing to it. SIGTERM ends it (143).
+  // The child is still running: the ignored signals did nothing to it. SIGTERM ends it.
   await new Promise((done) => setTimeout(done, 200))
   proc.emit('SIGTERM')
-  expect(await running).toEqual({ kind: 'exit', code: 143 })
+  expect(await running).toEqual(endedBySigterm)
   expect(proc.signalCount()).toBe(0)
   expect(proc.killed).toEqual([])
 })
 
-posixTest('SIGTERM is forwarded to the child, and a child it ends is reported as ended by it', async () => {
+test('SIGTERM is forwarded to the child, and a child it ends is reported as ended by it', async () => {
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
   const running = runInteractive({ command: process.execPath, args: [CHILD, 'hold-default', ready], env: env() },
@@ -143,7 +148,7 @@ posixTest('SIGTERM is forwarded to the child, and a child it ends is reported as
   expect(await running).toEqual({ kind: 'signal', signal: 'SIGTERM' })
 })
 
-posixTest('without a terminal on stdin, SIGINT sent to the wrapper alone is forwarded to the child', async () => {
+test('without a terminal on stdin, SIGINT sent to the wrapper alone is forwarded to the child', async () => {
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
   const running = runInteractive({ command: process.execPath, args: [CHILD, 'hold-default', ready], env: env() },
@@ -154,7 +159,7 @@ posixTest('without a terminal on stdin, SIGINT sent to the wrapper alone is forw
   expect(proc.signalCount()).toBe(0)
 })
 
-posixTest('a kill that fails more than once after the start does not end the wrapper', async () => {
+test('a kill that fails more than once after the start does not end the wrapper', async () => {
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
   let failKills = (): void => {}
@@ -175,7 +180,7 @@ posixTest('a kill that fails more than once after the start does not end the wra
   // With a one-time handler the second 'error' would be unhandled and throw.
   failKills()
   proc.emit('SIGTERM')
-  expect(await running).toEqual({ kind: 'exit', code: 143 })
+  expect(await running).toEqual(endedBySigterm)
 })
 
 posixTest('SIGHUP is forwarded to the child', async () => {
@@ -188,7 +193,7 @@ posixTest('SIGHUP is forwarded to the child', async () => {
   expect(await running).toEqual({ kind: 'signal', signal: 'SIGHUP' })
 })
 
-posixTest('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the console reach the child by themselves', async () => {
+test('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the console reach the child by themselves', async () => {
   expect(ignoredSignals('win32')).toEqual(['SIGINT', 'SIGBREAK', 'SIGHUP'])
   expect(forwardedSignals('win32')).toEqual([])
   expect(ignoredSignals('darwin')).toEqual(['SIGINT', 'SIGQUIT'])
@@ -198,9 +203,8 @@ posixTest('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the c
   expect(ignoredSignals('win32', false)).toEqual(['SIGINT', 'SIGBREAK', 'SIGHUP'])
   expect(forwardedSignals('win32', false)).toEqual([])
 
-  // Run with the Windows rules here: SIGHUP must not end the child; it ends by itself (SIGTERM
-  // from the test, which stands in for the child's own reaction). This part needs signals, so it
-  // runs on macOS and Linux only.
+  // Run with the Windows rules: SIGHUP must not end the child; it ends by itself (SIGTERM from
+  // the test, which stands in for the child's own reaction).
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
   const child = { kills: [] as string[], end: (): void => {} }
@@ -227,7 +231,7 @@ posixTest('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the c
   // The emitted signals were handled synchronously; had any reached the child, it would be gone.
   await new Promise((resolve) => setTimeout(resolve, 100))
   child.end()
-  expect(await running).toEqual({ kind: 'exit', code: 143 })
+  expect(await running).toEqual(endedBySigterm)
   expect(child.kills).toEqual([])
   expect(proc.signalCount()).toBe(0)
 })

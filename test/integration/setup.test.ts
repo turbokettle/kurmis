@@ -4,13 +4,15 @@
 // environment and no routing variable of its own, reaches the fake Anthropic API through the
 // daemon because of that settings file alone.
 //
-// macOS only: the login item there is a launchd agent, which the fake launchctl stands in for.
-// The Windows logon entry goes through `reg.exe` and is covered by the unit tests.
+// The login item is the host's: on macOS a launchd agent, which the fake launchctl stands in
+// for, and on Windows a Run value in the registry, which the fake reg.exe stands in for, and a
+// JScript file that wscript.exe would run at logon.
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ROUTING_VARIABLES } from '../../src/core/routed-env.ts'
+import { parseRegQuery, regFor, regQueryArgs, RUN_ENTRY_DESCRIPTION, RUN_VALUE_NAME } from '../../src/platform/windows-autostart.ts'
 import { FAKE_CLAUDE_SCRIPT, fakeToken, reply, type FakeClaudeRecord } from '../fakes/index.ts'
 import { createWorld, waitUntil, type KurmisResult, type World } from './harness.ts'
 
@@ -266,4 +268,52 @@ describe.skipIf(process.platform !== 'darwin')('kurmis setup on macOS', () => {
     expect(launchctlCalls(world)).toEqual([])
     expect(world.daemonInfo()).toBeNull()
   }, 60_000)
+})
+
+describe.runIf(process.platform === 'win32')('kurmis setup on Windows', () => {
+  /** kurmis' Run value as the fake reg.exe holds it, or null. */
+  async function runValue(world: World): Promise<string | null> {
+    return parseRegQuery((await regFor(world.env)(regQueryArgs())).stdout, RUN_VALUE_NAME)?.data ?? null
+  }
+
+  it('routes a plain claude through the daemon, and --undo puts the file back and removes the logon entry', async () => {
+    const world = await createWorld()
+    world.signInDefaultClaude()
+    mkdirSync(join(world.home, '.claude'), { recursive: true })
+    writeFileSync(settingsPath(world), ORIGINAL)
+    world.api.setDefault(reply.ok({ text: 'Hello through global mode' }))
+    const script = join(world.data, 'autostart.js')
+
+    const setup = await world.kurmis(['setup'])
+    expect(setup, JSON.stringify(setup)).toMatchObject({ code: 0 })
+    expect(setup.stdout).toContain(`The daemon now starts at login (${RUN_ENTRY_DESCRIPTION}).`)
+    expect(setup.stdout).toContain(`The daemon is running on port ${String(world.port)}.`)
+    const key = readKey(world)
+    expect(readFileSync(settingsPath(world), 'utf8')).toBe(expectedAfterSetup(world.port, key))
+
+    // The Run value runs wscript (the stand-in of test/setup.ts) on the script, and the script
+    // starts this bundle's `daemon start` with this world's data folder.
+    const value = await runValue(world)
+    expect(value).toContain('//E:JScript')
+    expect(value).toContain(script)
+    const text = readFileSync(script).subarray(2).toString('utf16le')
+    expect(text).toContain('daemon start --no-launchd --env KURMIS_HOME=')
+    expect(text).not.toContain(key)
+
+    const routed = await plainClaude(world, ['-p', 'hi'])
+    expect(routed, JSON.stringify(routed)).toMatchObject({ code: 0, stdout: expect.stringContaining('Hello through global mode') as string })
+    expect(messageRequests(world).map((request) => request.bearer)).toEqual([fakeToken('default')])
+
+    const again = await world.kurmis(['setup'])
+    expect(again, JSON.stringify(again)).toMatchObject({ code: 0 })
+    expect(again.stdout).toContain(`The daemon already starts at login (${RUN_ENTRY_DESCRIPTION}).`)
+
+    const undo = await world.kurmis(['setup', '--undo'])
+    expect(undo, JSON.stringify(undo)).toMatchObject({ code: 0 })
+    expect(undo.stdout).toContain(`The daemon no longer starts at login (${RUN_ENTRY_DESCRIPTION}).`)
+    expect(readFileSync(settingsPath(world), 'utf8')).toBe(ORIGINAL)
+    expect(await runValue(world)).toBeNull()
+    expect(existsSync(script)).toBe(false)
+    expect((await world.kurmis(['daemon', 'status'])).code).toBe(0)
+  }, 180_000)
 })

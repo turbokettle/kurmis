@@ -23,7 +23,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'kurmis-settings-arg-'))
 })
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
 })
 
 const read = (args: string[]): UserSettingsArg | { error: string } => readUserSettingsArg(args, { cwd: dir })
@@ -150,7 +150,7 @@ describe('merging', () => {
       shared.remove()
       expect(existsSync(shared.path)).toBe(true)
     } finally {
-      rmSync(folder, { recursive: true, force: true })
+      rmSync(folder, { recursive: true, force: true, maxRetries: 10 })
     }
   })
 
@@ -173,7 +173,7 @@ describe('merging', () => {
       expect(existsSync(dead)).toBe(false)
       expect(existsSync(running)).toBe(true)
     } finally {
-      rmSync(folder, { recursive: true, force: true })
+      rmSync(folder, { recursive: true, force: true, maxRetries: 10 })
     }
   })
 
@@ -207,7 +207,7 @@ describe('merging', () => {
       expect(second).not.toBe(first)
       expect(readdirSync(folder).sort()).toEqual([basename(first), basename(second), 'other.txt'].sort())
     } finally {
-      rmSync(folder, { recursive: true, force: true })
+      rmSync(folder, { recursive: true, force: true, maxRetries: 10 })
     }
   })
 

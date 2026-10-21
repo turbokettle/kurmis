@@ -97,7 +97,7 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
       await new Promise<void>((resolve) => server.close(() => resolve()))
       await app.close()
       await api.close()
-      rmSync(home, { recursive: true, force: true })
+      rmSync(home, { recursive: true, force: true, maxRetries: 10 })
     }
   }
 }

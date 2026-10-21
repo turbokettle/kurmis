@@ -81,12 +81,18 @@ export class UsagePoller {
     this.timer = null
   }
 
-  /** Stops the timer and kills the probes that are running. */
-  close(): void {
+  /**
+   * Stops the timer, kills the probes that are running and resolves once they have ended. A
+   * probe ends only after its process has exited, so after this no probe's process holds the
+   * data folder open: on Windows a running process's working folder or open file cannot be
+   * deleted.
+   */
+  async close(): Promise<void> {
     this.closed = true
     if (this.timer !== null) clearInterval(this.timer)
     this.timer = null
     this.controller.abort()
+    await Promise.all(this.running.values())
   }
 
   /** Whether a probe of this login is running now. */

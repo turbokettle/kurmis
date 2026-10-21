@@ -193,9 +193,9 @@ describe('registering through reg.exe', () => {
   }
 
   beforeEach(() => {
-    rmSync(regDir(), { recursive: true, force: true })
+    rmSync(regDir(), { recursive: true, force: true, maxRetries: 10 })
     mkdirSync(regDir(), { recursive: true })
-    rmSync(join(process.env.HOME ?? '', 'win'), { recursive: true, force: true })
+    rmSync(join(process.env.HOME ?? '', 'win'), { recursive: true, force: true, maxRetries: 10 })
   })
 
   it('writes the script and the value once, and changes nothing the second time', async () => {

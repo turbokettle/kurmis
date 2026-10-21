@@ -25,6 +25,7 @@ import {
   startThroughLaunchd
 } from '../../src/platform/launchd.ts'
 import type { RunResult } from '../../src/platform/run.ts'
+import { withoutAddedVariables } from '../host.ts'
 
 const fakeDir = (): string => process.env.FAKE_LAUNCHCTL_DIR ?? ''
 
@@ -39,9 +40,9 @@ function result(code: number, stdout = '', stderr = ''): RunResult {
 }
 
 beforeEach(() => {
-  rmSync(fakeDir(), { recursive: true, force: true })
+  rmSync(fakeDir(), { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(fakeDir(), { recursive: true })
-  rmSync(launchdJobFolder(), { recursive: true, force: true })
+  rmSync(launchdJobFolder(), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('launchctl program', () => {
@@ -219,7 +220,7 @@ describe('startThroughLaunchd', () => {
     const job = await startThroughLaunchd({ programArguments: program, env: process.env })
     expect(job.label).toMatch(new RegExp(`^${ONE_SHOT_LABEL_PREFIX.replace('.', '\\.')}\\.[0-9a-f]{8}$`))
     expect(job.plistPath).toBe(join(launchdJobFolder(), `${job.label}.plist`))
-    expect(statSync(job.plistPath).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(job.plistPath).mode & 0o777).toBe(0o600)
     const text = readFileSync(job.plistPath, 'utf8')
     for (const arg of program) expect(text).toContain(`<string>${arg}</string>`)
     expect(text).toContain(`<key>KURMIS_HOME</key>\n    <string>${resolve(process.env.KURMIS_HOME ?? '')}</string>`)
@@ -281,8 +282,9 @@ describe('startThroughLaunchd', () => {
     const seen = JSON.parse(readFileSync(out, 'utf8')) as { env: Record<string, string>; cwd: string }
     const expected = { ...daemonJobEnvironment(env) }
     for (const [name, value] of Object.entries(env)) if (name.startsWith('FAKE_') && value !== undefined) expected[name] = value
-    // Node or the OS may add a variable of its own (macOS adds __CF_USER_TEXT_ENCODING).
-    const seenEnv = Object.fromEntries(Object.entries(seen.env).filter(([name]) => !name.startsWith('__CF')))
+    // The OS or Node may add variables of their own (macOS adds __CF_USER_TEXT_ENCODING, libuv
+    // on Windows adds SYSTEMROOT, TEMP and a few more).
+    const seenEnv = withoutAddedVariables(seen.env, expected)
     expect(seenEnv).toEqual(expected)
     expect(seenEnv.ANTHROPIC_API_KEY).toBeUndefined()
     expect(seenEnv.SSH_TTY).toBeUndefined()

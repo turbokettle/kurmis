@@ -13,7 +13,7 @@ import { configPath, kurmisHome } from '../../../src/data/paths.ts'
 import { collect, fakeDaemonClient } from '../helpers.ts'
 
 beforeEach(() => {
-  rmSync(kurmisHome(), { recursive: true, force: true })
+  rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
   let config = addLogin(defaultConfig(), 'claude:work', { label: 'Work' })
   config = addLogin(config, 'codex:work')
   config = addLogin(config, 'codex:side')

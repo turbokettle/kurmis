@@ -68,7 +68,9 @@ async function waitForDaemonFile(home: string, pid: number): Promise<void> {
 }
 
 describe('the daemon process', () => {
-  it('stops on SIGTERM, exits 0 and removes daemon.json', async () => {
+  // Windows has no signals a process can catch: SIGTERM from Node is TerminateProcess, so the
+  // daemon cannot clean up. There `kurmis daemon stop` uses the control API (the next test).
+  it.skipIf(process.platform === 'win32')('stops on SIGTERM, exits 0 and removes daemon.json', async () => {
     const port = await freePort()
     const home = dataFolderWithPort(port)
     const daemon = spawnDaemon(bundles['0.0.2'], home)
@@ -80,6 +82,19 @@ describe('the daemon process', () => {
     expect(await daemon.exit).toBe(0)
     expect(daemonFile(home).status).toBe('missing')
     expect(daemon.stdout()).toContain('kurmis daemon 0.0.2 runs on')
+  })
+
+  it('stops on a control stop, exits 0 and removes daemon.json', async () => {
+    const port = await freePort()
+    const home = dataFolderWithPort(port)
+    const daemon = spawnDaemon(bundles['0.0.2'], home)
+    await waitForDaemonFile(home, daemon.pid)
+    const key = readOrCreateKey(join(home, 'key'))
+    const answer = await controlRequest({ port, key, method: 'POST', path: CONTROL_PATHS.stop, body: { maxWaitMs: 1_000 } })
+    expect(answer).toMatchObject({ kind: 'answered', status: 200 })
+    expect(await daemon.exit).toBe(0)
+    expect(daemonFile(home).status).toBe('missing')
+    expect(daemon.stdout()).toContain('kurmis daemon stopped')
   })
 
   it('hands the port to a newer version while the older one finishes its open request', async () => {

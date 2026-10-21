@@ -16,7 +16,7 @@ function info(patch: Partial<DaemonInfo> = {}): DaemonInfo {
 }
 
 beforeEach(() => {
-  rmSync(kurmisHome(), { recursive: true, force: true })
+  rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('daemon.json', () => {

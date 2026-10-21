@@ -76,9 +76,9 @@ const routedEnv = {
 }
 
 beforeEach(() => {
-  rmSync(kurmisHome(), { recursive: true, force: true })
+  rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
   rmSync(join(home, '.claude.json'), { force: true })
-  rmSync(join(home, '.codex'), { recursive: true, force: true })
+  rmSync(join(home, '.codex'), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('choosing the login', () => {
@@ -377,7 +377,7 @@ describe('kurmis login codex', () => {
     const { login } = command(runner)
     expect(await login.run(['codex:default'], collect({ CODEX_HOME: codexHome }).context)).toBe(0)
     expect(runner.specs[0]!.env.CODEX_HOME).toBe(codexHome)
-    rmSync(codexHome, { recursive: true, force: true })
+    rmSync(codexHome, { recursive: true, force: true, maxRetries: 10 })
   })
 })
 

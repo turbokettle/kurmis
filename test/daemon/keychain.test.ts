@@ -21,12 +21,13 @@ const DEFAULT = 'claude:default'
 const WORK = 'claude:work'
 const PLAIN = 'Claude Code-credentials'
 const SECRET = JSON.stringify({ claudeAiOauth: { accessToken: 'fake-token', expiresAt: 4_100_000_000_000 } })
-/** Short, so the tests of a `security` that never answers do not wait three seconds each. */
 // A read that should answer gets a deadline that a loaded machine still meets: the stand-in is a
 // Node script, and starting Node can take over a second when many tests run at once. A test of a
-// read that never answers passes the short HANG_TIMEOUT_MS instead.
+// read that never answers passes the shorter HANG_TIMEOUT_MS instead, so it does not wait long.
+// That deadline still has to let the stand-in start and record its call before it is killed,
+// and Node starts more slowly on Windows, so there it is longer.
 const TIMEOUT_MS = 10_000
-const HANG_TIMEOUT_MS = 500
+const HANG_TIMEOUT_MS = process.platform === 'win32' ? 3_000 : 500
 
 let dir: string
 let keychain: FakeKeychain
@@ -49,7 +50,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs()
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
 })
 
 test('the daemon constants', () => {
@@ -301,7 +302,7 @@ test('an item whose read did not answer is never read again, so it puts up at mo
   const services = (): string[] => keychain.calls().map((argv) => argv.at(-1) ?? '')
   expect(services()).toEqual([PLAIN])
   expect(lines).toHaveLength(1)
-  expect(lines[0]).toContain(`reading login ${DEFAULT} from the Keychain item "${PLAIN}" did not answer within 0.5 seconds`)
+  expect(lines[0]).toContain(`reading login ${DEFAULT} from the Keychain item "${PLAIN}" did not answer within ${String(HANG_TIMEOUT_MS / 1000)} seconds`)
   expect(lines[0]).toContain('will not read that item again until it restarts')
 
   keychain.setItem(workService, SECRET)

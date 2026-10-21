@@ -335,7 +335,8 @@ at once there. So on Windows only a control `stop`, and Ctrl-C or closing the co
    signal ends the wait. A control `stop` with a body `{ "maxWaitMs": <n> }` ends it after n
    milliseconds instead (`kurmis daemon stop` sends its own 30-second deadline this way); a
    `stop` without a body waits the whole 15 minutes;
-4. writes `state.json`, closes the remaining connections, removes `daemon.json` and exits 0.
+4. kills the usage probes that still run and waits for their processes to exit, writes
+   `state.json`, closes the remaining connections, removes `daemon.json` and exits 0.
 
 An uncaught error is logged by its error code only, and the daemon stops without waiting for its
 requests and exits 1. The next kurmis command starts a new one.
@@ -943,7 +944,9 @@ needs them.
   in the process's own environment, so a test that passes an empty or partial environment
   still gets the stand-in `test/setup.ts` set. For the same reason a daemon kurmis starts gets
   these variables, the guard and its log from the process's environment when the environment it
-  is started with lacks them (`inheritedTestHooks`). `test/setup.ts` points them at:
+  is started with lacks them (`inheritedTestHooks`). A stand-in that is a `.mjs` file runs
+  through Node, as every `.js` program does (`invocationFor` in `src/platform/run.ts`), since
+  Windows cannot start such a file itself. `test/setup.ts` points them at:
   - `test/daemon/fake-security/security.mjs`, with its Keychain items in `$FAKE_SECURITY_DIR`;
   - `test/platform/fake-launchctl/launchctl.mjs`, which records its calls in
     `$FAKE_LAUNCHCTL_DIR` and answers bootstrap, bootout, print and kickstart with launchctl's
@@ -981,6 +984,19 @@ end to end, against the fake claude, codex and Anthropic API. `createWorld` in
 fake API, and fake Keychain, launchctl and registry folders. It builds the children's
 environment from nothing, so only the fakes and the stand-ins of `test/setup.ts` can be reached.
 After each test it stops every daemon the test's commands started.
+
+**Tests on Windows.** The suite is meant to pass on Windows as well. `test/host.ts` has what the
+tests need for that: `linkFolder` makes a directory junction on Windows (a directory symlink
+elsewhere), and `canCreateSymlinks` makes one symlink to find out whether this process may;
+tests of a symlink to a file or of a dangling link run only when it may (on Windows with
+Developer Mode on or as an administrator). `withoutAddedVariables` drops the variables libuv
+adds to a child's environment on Windows (`SYSTEMROOT`, `TEMP` and a few more) before an exact
+comparison. Mode bits are checked only off Windows, which has none. Windows cannot deliver a
+signal that a process could handle: SIGTERM from Node ends a process at once, so tests that need
+a handler to run are POSIX-only, and the daemon process test also stops it through the control
+API. Temporary folders are removed with `maxRetries`: on Windows a file another process has
+open, or the folder it runs in, cannot be deleted (EBUSY), and a process that has just been
+ended may hold them a moment longer.
 
 ## Known limits
 

@@ -61,7 +61,7 @@ async function probedStatus(world: World): Promise<StatusJson> {
   return status
 }
 
-describe.skipIf(process.platform === 'win32')('kurmis status, end to end', () => {
+describe('kurmis status, end to end', () => {
   it("shows every Claude and Codex login's probed usage, limits and blocks", async () => {
     const world = await createWorld()
     const nowSeconds = Math.floor(Date.now() / 1000)

@@ -55,7 +55,7 @@ async function twoLogins(world: World): Promise<string> {
   return await world.addClaudeLogin('work')
 }
 
-describe.skipIf(process.platform === 'win32')('routing kurmis claude -p', () => {
+describe('routing kurmis claude -p', () => {
   it('replays a usage-limit 429 of the first login onto the second one', async () => {
     const world = await createWorld()
     const work = await twoLogins(world)

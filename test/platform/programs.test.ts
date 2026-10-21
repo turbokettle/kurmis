@@ -53,7 +53,7 @@ describe('the explicit variables', () => {
 
 describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
   const root = mkdtempSync(join(tmpdir(), 'kurmis-programs-'))
-  afterAll(() => rmSync(root, { recursive: true, force: true }))
+  afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
 
   const folder = (name: string): string => {
     const path = join(root, name)

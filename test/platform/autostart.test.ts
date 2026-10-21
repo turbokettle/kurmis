@@ -18,10 +18,10 @@ const mac = (env: NodeJS.ProcessEnv = process.env) => ({ env, platform: 'darwin'
 
 beforeEach(() => {
   for (const dir of [process.env.FAKE_LAUNCHCTL_DIR ?? '', process.env.FAKE_REG_DIR ?? '']) {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
     mkdirSync(dir, { recursive: true })
   }
-  rmSync(launchAgentsDir(), { recursive: true, force: true })
+  rmSync(launchAgentsDir(), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('macOS login item', () => {
@@ -37,7 +37,7 @@ describe('macOS login item', () => {
     expect(text).toContain('<key>RunAtLoad</key>\n  <true/>')
     expect(text).toContain('<key>AbandonProcessGroup</key>\n  <true/>')
     expect(text).not.toContain('KeepAlive')
-    expect(statSync(autostartPlistPath()).mode & 0o777).toBe(0o644)
+    if (process.platform !== 'win32') expect(statSync(autostartPlistPath()).mode & 0o777).toBe(0o644)
     expect(launchctlCalls()).toEqual([
       ['print', `${guiDomain()}/${AUTOSTART_LABEL}`],
       ['bootstrap', guiDomain(), autostartPlistPath()]
@@ -130,6 +130,8 @@ describe('Windows logon entry', () => {
     windowsScriptPath: scriptPath()
   })
 
+  // About ten runs of the reg.exe stand-in, each a Node start, which takes longer on Windows and
+  // on a loaded machine than the default 5 s allow.
   it('registers the Run value and the script, idempotently, and removes them', async () => {
     expect(await registerAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     const script = readFileSync(scriptPath()).subarray(2).toString('utf16le')
@@ -142,7 +144,7 @@ describe('Windows logon entry', () => {
     expect(await unregisterAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     expect(existsSync(scriptPath())).toBe(false)
     expect(launchctlCalls()).toEqual([])
-  })
+  }, 30_000)
 })
 
 describe('other platforms', () => {
