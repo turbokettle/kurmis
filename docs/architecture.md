@@ -48,8 +48,8 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   `src/data/lock.ts`, held for the whole command, because a sign-in can take minutes. A second
   run for the same login stops at once with a message naming the pid that holds it. A lock whose
   pid no longer runs, or that is older than 24 hours, is taken over.
-- `codex-merged/<name>.json` records what was last merged and copied into that home from the
-  default Codex home (see "Codex").
+- `codex-merged/<name>.json` records what was last merged, copied and linked into that home
+  from the default Codex home (see "Codex").
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
   names its own pid, so a replaced daemon never removes its successor's file. The file is renamed
@@ -778,10 +778,13 @@ ignored and `~/.codex` is used. The decisions are the pure functions of `src/cor
   default home. Left out are scratch folders (`tmp`, `.tmp`), every `.sandbox` folder of the
   Windows sandbox (below), and names that say they hold a credential or a database
   (`codexPrivateName`).
-- A link in the login's home that kurmis made and that leads to a folder no longer shared, or
-  leads nowhere, is removed first (`codexStaleLink`). A link that leads nowhere counts as kurmis'
-  when its target has the link's own name, which also catches links into a default home used
-  before. Other links are left alone.
+- A link in the login's home to the place of the same name in the default home is removed first
+  when that place is no longer a folder the login shares: it is gone, private now, or no longer
+  a folder (`codexStaleLink`). Such a link that leads to a file stays, because kurmis links only
+  folders and the link is the user's own, unless the record (below) names it. A link to
+  anywhere else is removed only when it leads nowhere and the record names it with that
+  target: a link kurmis made into a default home used before. Every other link is left alone,
+  such as the user's own link into a volume that is not mounted now.
 - `AGENTS.md` and `AGENTS.override.md` are copied. When the default home no longer has one of
   them, a copy kurmis made is removed, so a removed `AGENTS.override.md` (which Codex reads
   instead of `AGENTS.md`) stops overriding; a file kurmis did not put there stays.
@@ -792,14 +795,18 @@ ignored and `~/.codex` is used. The decisions are the pure functions of `src/cor
 An empty real folder where a link should go (Codex made it before the default home had that
 folder) is replaced by the link. A folder with something in it, or a link to somewhere else, is
 left as it is with a warning, given once per folder. When two `kurmis codex` start on one login
-at the same moment, the one whose link creation fails with EEXIST reads the place again and
-finds the other's link. Every step that fails adds a warning to stderr and the start goes on.
+at the same moment, the one whose removal of the empty folder fails (the other removed it, or
+put its link there) or whose link creation fails with EEXIST reads the place again and finds
+the other's link. Every step that fails adds a warning to stderr and the start goes on.
 Only a home that cannot be created stops it.
 
 **What was merged.** `codex-merged/<name>.json` in the data folder records, for the login's
 home, the default home's `config.toml` without secrets as it was last merged in, a SHA-256 of
-each file last copied in, and the folders already warned about. It is kept outside the Codex
-home, written with mode 0600, rewritten only when it changes, and removed by `logout`. A home
+each file last copied in, the target of each link kurmis made (or found leading where it would
+make it), and the folders already warned about. It is kept outside the Codex home, written with
+mode 0600, and rewritten only when it changes. `logout` removes it, and so does a `kurmis login`
+of a new login that fails; `logout` of a login of which only the record is left removes the
+record. A home
 that is empty when a start begins (a new login) starts from an empty record, so a record left
 by an earlier login of the same name is not used.
 
@@ -809,17 +816,29 @@ switches, trust), so the merge is three-way, against the last merged copy, one s
 value, or a whole array) at a time:
 
 - A setting the default home has is taken from it, unless the default home's value is the one
-  last merged in and the login's file has another: then the login (or Codex in a session on it)
-  changed it, and that value stays until the default home's changes.
+  last merged in and the login's file has another value, or lacks the setting: then the login
+  (or Codex in a session on it) changed or deleted it, and that stays until the default home's
+  value changes. These are the ordinary rules of a three-way merge. A login without a
+  `config.toml` gets the default home's settings again, so deleting the file starts it over.
 - A setting the login's file has and the default home no longer has is removed when it was in
-  the last merged copy, and kept when it never was.
+  the last merged copy, and kept when it never was. When the default home still has the setting
+  but its value now holds a secret (a password added to a URL, an `env` table added to an
+  element of an array of tables), the login's value stays and a warning names it (below).
 - A table that loses its last setting that is not a secret goes as a whole, with its header and
   the login's own secrets in it. Codex refuses to load a file where an MCP server has only an
   `env` table left (`invalid transport`).
+- An MCP server (`mcp_servers.<name>`) and a model provider (`model_providers.<name>`) each
+  count as one unit, because Codex refuses a server without its `command` or `url` and a
+  provider without its `name`. One the default home dropped since the last merge goes whole,
+  with the login's own keys and secrets in it. One the login's file lacks as a whole stays out
+  until the default home changes anything in it, and then comes in whole.
 - Without a last merged copy (the first start after kurmis began keeping one), every setting of
   the login that is not a secret or trust counts as merged in before, which is what the earlier
   two-way merge did: what the default home lacks is removed this once.
-- When the default home has no `config.toml`, the login's file and the record stay as they are.
+- When the default home has no `config.toml`, the login's file stays as it is, and so does the
+  record, except that a record with no merged copy yet gets an empty one. So for a login made
+  before the user had a `config.toml`, everything Codex wrote into the login's file counts as
+  the login's own once the default home's file appears, and none of it is removed.
 
 A secret is never copied from the default home, and a secret in the login's file is never
 changed or removed, except with its whole table. A key name marks the strings under it as
@@ -835,17 +854,20 @@ is never a secret. A string is also a secret when its text looks like one (a bea
 known key format, a password in a URL, `--token <value>`), and an argument list when it passes
 a header or a token. The rule errs towards secrets: `features.network_proxy.credentials.<n>.env`
 holds names of variables and is still not copied. When the default home has a secret the login
-lacks, a warning says so. When a secret stands in the way of a setting (the login's value holds
-one, or the default home's array of tables holds one and differs from the login's in more than
-its secrets, such as a new `[[x]]` element), the login's stays and a warning names the setting,
-at every start until the two agree.
+lacks, a warning says so. When a secret stands in the way of a setting, the login's stays and a
+warning names the setting, at every start until the two agree. That is when the login's value
+holds a secret, or when the default home's value holds one and differs from the login's in more
+than its secrets: an array of tables with a new `[[x]]` element, or one whose element gained an
+`env` table.
 
 The login's file keeps its layout and comments. The merge parses each file once and makes all
 its changes in one pass: a changed value is replaced where it stands, a removed key goes with
 its line, a removed table with its header, and a new key goes into the section that already
 defines its table, or under a new `[header]` at the end. A value from the default home is
-written the way the default home wrote it (a multi-line string stays multi-line); comments of
-the default home are not copied. Only a changed array of tables is then set one element at a
+written the way the default home wrote it (a multi-line string stays multi-line, `0x10` stays
+hexadecimal), except inside an array of tables and inside an inline table of the login's file
+that changes: those are written anew in one plain form, a string on one line with escapes.
+Comments of the default home are not copied. Only a changed array of tables is then set one element at a
 time, and the result is checked to hold exactly the merged settings. A UTF-8 byte order mark at
 the start of either file is ignored. A login's `config.toml` that is not valid TOML is left as
 it is, because it may hold the login's own secrets.
@@ -1149,8 +1171,8 @@ These are known and left as they are.
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
     wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
-    local credentials are there; otherwise a folder this run created is removed and nothing is
-    added. The email is printed and never stored; the label defaults to the name. A running
+    local credentials are there; otherwise a folder this run created is removed (for Codex with
+    its `codex-merged/` record) and nothing is added. The email is printed and never stored; the label defaults to the name. A running
     daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
     it may still hold the login as signed out from before and Auto would pass it over until
     its next poll; none is started for this.
@@ -1160,7 +1182,8 @@ These are known and left as they are.
     `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
     item that may be left on macOS, and the removal goes on), and deletes the folder with
     `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
-    without following them.
+    without following them. For a Codex login it also deletes `codex-merged/<name>.json`, and
+    when that record is all that is left of the login, deleting it is all logout does.
   - `set <id> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>] [--use-first on|off]
     [--label <text>]`: needs at least one option, changes `config.json` under the lock, tells a
     running daemon to reload and prints the login's settings. `<id>` may be a bare name when only

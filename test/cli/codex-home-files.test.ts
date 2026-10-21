@@ -340,7 +340,7 @@ describe('prepareCodexHome over several starts', () => {
     mkdirSync(source(), { recursive: true })
     writeFileSync(join(source(), 'config.toml'), 'model = "gpt-a"\n')
     await prepareCodexHome('codex:work', { env: {} })
-    expect(JSON.parse(read(codexMergedRecordPath('codex:work')))).toEqual({ config: 'model = "gpt-a"\n', copied: {}, conflicts: [] })
+    expect(JSON.parse(read(codexMergedRecordPath('codex:work')))).toEqual({ config: 'model = "gpt-a"\n', copied: {}, links: {}, conflicts: [] })
   })
 })
 
@@ -398,5 +398,70 @@ describe('writeIfUnchanged', () => {
     const target = join(root, 'AGENTS.md')
     expect(await writeIfUnchanged(target, () => null, 0o644)).toBe('unchanged')
     expect(existsSync(target)).toBe(false)
+  })
+})
+
+describe('prepareCodexHome: what a later start keeps', () => {
+  const source = (): string => join(root, 'home', '.codex')
+  const home = (): string => loginFolder('codex:work')
+
+  test("keeps the login's own settings when the default home's config.toml appears after the login was made", async () => {
+    mkdirSync(join(source(), 'sessions'), { recursive: true })
+    await prepareCodexHome('codex:work', { env: {} })
+    // Sessions on the login write its own settings, an MCP server with a secret among them.
+    const own = 'model = "own"\n[mcp_servers.mine]\ncommand = "mine"\n[mcp_servers.mine.env]\nK = "LOGIN_CANARY"\n'
+    writeFileSync(join(home(), 'config.toml'), own)
+    await prepareCodexHome('codex:work', { env: {} })
+    writeFileSync(join(source(), 'config.toml'), 'approval_policy = "never"\n')
+
+    const prepared = await prepareCodexHome('codex:work', { env: {} })
+
+    expect(tomlValue(read(join(home(), 'config.toml')))).toEqual({
+      model: 'own',
+      approval_policy: 'never',
+      mcp_servers: { mine: { command: 'mine', env: { K: 'LOGIN_CANARY' } } }
+    })
+    expect(prepared.warnings).toEqual([])
+  })
+
+  // A symlink to a file and a dangling symlink need Developer Mode or an administrator on Windows.
+  test.runIf(canCreateSymlinks())("leaves the user's own links alone: one to a file in the default home, and one that leads nowhere", async () => {
+    makeSourceHome(source())
+    writeFileSync(join(source(), 'hooks.json'), '{}\n')
+    await prepareCodexHome('codex:work', { env: {} })
+    symlinkSync(join(source(), 'hooks.json'), join(home(), 'hooks.json'), 'file')
+    // A link into a volume that is not mounted now; its target has the link's own name.
+    symlinkSync(join(root, 'unmounted', 'prompts'), join(home(), 'prompts'), 'dir')
+
+    const prepared = await prepareCodexHome('codex:work', { env: {} })
+
+    expect(linkTarget(join(home(), 'hooks.json'))).toBe(join(source(), 'hooks.json'))
+    expect(linkTarget(join(home(), 'prompts'))).toBe(join(root, 'unmounted', 'prompts'))
+    expect(prepared.warnings.filter((line) => !line.includes('has a secret'))).toEqual([])
+  })
+
+  test('removes a link it made into a default home used before, once that home is gone', async () => {
+    const old = join(root, 'old-codex')
+    mkdirSync(join(old, 'memories'), { recursive: true })
+    await prepareCodexHome('codex:work', { env: { CODEX_HOME: old } })
+    expect(linkTarget(join(home(), 'memories'))).toBe(join(old, 'memories'))
+    rmSync(old, { recursive: true, maxRetries: 10 })
+    mkdirSync(join(source(), 'memories'), { recursive: true })
+
+    const prepared = await prepareCodexHome('codex:work', { env: {} })
+
+    expect(linkTarget(join(home(), 'memories'))).toBe(join(source(), 'memories'))
+    expect(prepared.warnings).toEqual([])
+  })
+
+  test('gives no warning when two starts replace the same empty folders with links at once', async () => {
+    makeSourceHome(source())
+    for (let round = 0; round < 5; round++) {
+      rmSync(home(), { recursive: true, force: true, maxRetries: 10 })
+      for (const name of ['sessions', 'skills', 'log']) mkdirSync(join(home(), name), { recursive: true })
+      const both = await Promise.all([prepareCodexHome('codex:work', { env: {} }), prepareCodexHome('codex:work', { env: {} })])
+      for (const prepared of both) expect(prepared.warnings.filter((line) => /link/i.test(line))).toEqual([])
+      expect(linkTarget(join(home(), 'sessions'))).toBe(join(source(), 'sessions'))
+    }
   })
 })

@@ -8,18 +8,19 @@
 //
 // 1. creates the login's home, private to the user, when it is missing;
 // 2. removes the links kurmis made there that lead nowhere or to a folder no longer shared
-//    (`codexStaleLink`), and links every folder of the default home into it that
-//    `codexHomeEntryAction` shares (`src/platform/links.ts`). An empty real folder at that
-//    place is replaced by the link; a folder with something in it, or a link elsewhere, is
-//    left alone with a warning, once;
+//    (`codexStaleLink`), leaving the user's own links alone, and links every folder of the
+//    default home into it that `codexHomeEntryAction` shares (`src/platform/links.ts`). An
+//    empty real folder at that place is replaced by the link; a folder with something in it,
+//    or a link elsewhere, is left alone with a warning, once;
 // 3. copies `AGENTS.md` and `AGENTS.override.md` (`codexAgentsCopy`);
 // 4. merges `config.toml` (`codexConfigRefresh`).
 //
 // What was last merged and copied is kept in `codexMergedRecordPath(id)`, outside the login's
 // home: the default home's `config.toml` without secrets as last merged in (the three-way
-// merge needs it), a hash of each file copied, and the folders already warned about. A home
-// that is empty when the start begins (a new login) starts from an empty record, so a record
-// left by an earlier login of the same name is not used.
+// merge needs it), a hash of each file copied, the target of each link kurmis made or found
+// in place, and the folders already warned about. A home that is empty when the start begins
+// (a new login) starts from an empty record, so a record left by an earlier login of the same
+// name is not used.
 //
 // `config.toml` and the copied files of the default home are read through a link, so a file
 // that is a symlink into a dotfiles folder is still used.
@@ -42,7 +43,8 @@ import {
   codexLinkAction,
   codexStaleLink,
   type CodexAgentsCopy,
-  type CodexHomeEntryKind
+  type CodexHomeEntryKind,
+  type CodexLinkEnd
 } from '../core/codex-home.ts'
 import { formatJson, readJsonFile, writeJsonFile } from '../data/json-file.ts'
 import { isDefaultLoginId, providerOfLoginId, toLoginId } from '../data/login-id.ts'
@@ -68,12 +70,18 @@ interface CodexMergedRecord {
   config: string | null
   /** For each file copied in, the SHA-256 of the text kurmis last copied there. */
   copied: Record<string, string>
+  /**
+   * For each link in the login's home that kurmis made, or found leading where it would make
+   * it, the target it leads to. Stale-link cleanup removes a link that leads nowhere into
+   * another folder only when it is named here, so a link of the user's own stays.
+   */
+  links: Record<string, string>
   /** The folders a folder or link of the login's own keeps from being linked, already warned about. */
   conflicts: string[]
 }
 
 function emptyRecord(): CodexMergedRecord {
-  return { config: null, copied: {}, conflicts: [] }
+  return { config: null, copied: {}, links: {}, conflicts: [] }
 }
 
 /**
@@ -98,7 +106,7 @@ export async function prepareCodexHome(id: string, options: PrepareCodexHomeOpti
   const warnings: string[] = []
   const recordPath = codexMergedRecordPath(login)
   const record = (await isEmptyFolder(home)) ? emptyRecord() : await readRecord(recordPath, warnings)
-  const next: CodexMergedRecord = { config: record.config, copied: { ...record.copied }, conflicts: [] }
+  const next: CodexMergedRecord = { config: record.config, copied: { ...record.copied }, links: {}, conflicts: [] }
   await linkSharedFolders(source, home, platform, warnings, record, next)
   for (const file of CODEX_AGENTS_FILES) await copyAgents(source, home, file, warnings, record, next)
   await refreshConfig(source, home, warnings, record, next)
@@ -132,15 +140,19 @@ async function readRecord(path: string, warnings: string[]): Promise<CodexMerged
   }
   if (read.status !== 'ok' || read.value === null || typeof read.value !== 'object') return emptyRecord()
   const value = read.value as Record<string, unknown>
-  const copied = value['copied']
   const conflicts = value['conflicts']
   return {
     config: typeof value['config'] === 'string' ? value['config'] : null,
-    copied: copied !== null && typeof copied === 'object' && !Array.isArray(copied)
-      ? Object.fromEntries(Object.entries(copied).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-      : {},
+    copied: stringRecord(value['copied']),
+    links: stringRecord(value['links']),
     conflicts: Array.isArray(conflicts) ? conflicts.filter((name): name is string => typeof name === 'string') : []
   }
+}
+
+/** The string values of an object read from JSON, by key; an empty one for anything else. */
+function stringRecord(value: unknown): Record<string, string> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
 }
 
 function sha256(text: string): string {
@@ -224,14 +236,18 @@ async function linkSharedFolders(
   const shared = await sharedFolders(source, home, warnings)
   if (shared === null) {
     next.conflicts = [...record.conflicts]
+    next.links = { ...record.links }
     return
   }
-  await removeStaleLinks(source, home, new Set(shared), platform, warnings)
+  await removeStaleLinks(source, home, new Set(shared), platform, warnings, record, next)
   for (const name of shared) {
     const from = join(source, name)
     const place = join(home, name)
     try {
-      if ((await placeLink(from, place, platform)) === 'linked') continue
+      if ((await placeLink(from, place, platform)) === 'linked') {
+        next.links[name] = from
+        continue
+      }
       next.conflicts.push(name)
       if (!record.conflicts.includes(name)) {
         warnings.push(`${place} is a folder of this login's own with something in it, or a link to somewhere else, so it was left as it is and not linked to ${from}. Move it away to share ${from} with this login. This is said once.`)
@@ -242,19 +258,29 @@ async function linkSharedFolders(
   }
 }
 
-/** Whether nothing is at the end of the link at `place`. */
-async function leadsNowhere(place: string): Promise<boolean> {
+/** What is at the end of the link at `place`. A link whose end cannot be read counts as leading to something. */
+async function linkEnd(place: string): Promise<CodexLinkEnd> {
   try {
-    await stat(place)
-    return false
+    return (await stat(place)).isDirectory() ? 'folder' : 'other'
   } catch (error) {
     const code = errorCode(error)
-    return code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP'
+    return code === 'ENOENT' || code === 'ENOTDIR' || code === 'ELOOP' ? 'nothing' : 'other'
   }
 }
 
-/** Removes each link in `home` that `codexStaleLink` says kurmis made and has to go. */
-async function removeStaleLinks(source: string, home: string, shared: ReadonlySet<string>, platform: NodeJS.Platform, warnings: string[]): Promise<void> {
+/**
+ * Removes each link in `home` that `codexStaleLink` says kurmis made and has to go. A link the
+ * record names that stays is carried into `next`, so it is still known once it leads nowhere.
+ */
+async function removeStaleLinks(
+  source: string,
+  home: string,
+  shared: ReadonlySet<string>,
+  platform: NodeJS.Platform,
+  warnings: string[],
+  record: CodexMergedRecord,
+  next: CodexMergedRecord
+): Promise<void> {
   let entries: Dirent[]
   try {
     entries = await readdir(home, { withFileTypes: true })
@@ -268,8 +294,18 @@ async function removeStaleLinks(source: string, home: string, shared: ReadonlySe
     try {
       const found = await readFolderLink(place, platform)
       if (found.kind !== 'link') continue
-      if (!codexStaleLink(entry.name, found.target, source, shared.has(entry.name), await leadsNowhere(place), platform)) continue
-      await removeFolderLink(place, platform)
+      const recorded = Object.hasOwn(record.links, entry.name) ? record.links[entry.name]! : null
+      const link = { name: entry.name, target: found.target, end: await linkEnd(place), recorded }
+      if (!codexStaleLink(link, source, shared.has(entry.name), platform)) {
+        if (recorded !== null) next.links[entry.name] = recorded
+        continue
+      }
+      try {
+        await removeFolderLink(place, platform)
+      } catch (error) {
+        // Another start on this login removed it first.
+        if (errorCode(error) !== 'ENOENT') throw error
+      }
     } catch (error) {
       warnings.push(`Could not remove ${place}, a link that leads nowhere or to a folder this login no longer shares: ${errorText(error)}`)
     }
@@ -279,15 +315,19 @@ async function removeStaleLinks(source: string, home: string, shared: ReadonlySe
 /**
  * Makes `place` a link to `from` unless it is one: `linked` when it is in the end, `conflict`
  * when a folder with something in it or a link elsewhere is there. An empty real folder is
- * removed first (`rmdir` removes only an empty one). When another `kurmis codex` made the link
- * at the same moment, creating it fails with EEXIST, and the place is read again.
+ * removed first (`rmdir` removes only an empty one). Another `kurmis codex` on the same login
+ * may do the same at the same moment: then removing the folder fails because it is gone or is
+ * the other's link already, or creating the link fails with EEXIST, and the place is read again.
  */
 async function placeLink(from: string, place: string, platform: NodeJS.Platform): Promise<'linked' | 'conflict'> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const found = await readFolderLink(place, platform)
     const action = codexLinkAction(found, from, platform)
     if (action === 'linked') return 'linked'
-    if (action === 'conflict' && (found.kind !== 'other' || !(await removeEmptyFolder(place)))) return 'conflict'
+    if (action === 'conflict') {
+      if (found.kind !== 'other') return 'conflict'
+      if (!(await removeEmptyFolder(place))) continue
+    }
     try {
       await linkFolder(from, place, platform)
       return 'linked'

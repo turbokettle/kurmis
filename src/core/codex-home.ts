@@ -11,7 +11,8 @@
 //   scratch folders, the Windows sandbox's folders, and anything whose name says it holds a
 //   credential or a database. A link in `~/.codex` that leads to a folder counts as a folder.
 // - a link kurmis made that leads nowhere any more, or to a folder that is no longer shared,
-//   is removed (`codexStaleLink`);
+//   is removed (`codexStaleLink`, which uses the links kurmis recorded to tell its own
+//   from the user's);
 // - `config.toml` is merged in three ways without its secrets (`codexConfigRefresh`, and
 //   `codex-account-config.ts` for the rules);
 // - `AGENTS.md` and `AGENTS.override.md` are copied in, and a copy kurmis made is removed
@@ -141,27 +142,40 @@ function sameFolderPath(a: string, b: string, platform: NodeJS.Platform): boolea
   return win32.resolve(a).toLowerCase() === win32.resolve(b).toLowerCase()
 }
 
+/** What is at the end of a link in the login's home: nothing, a folder, or something else (a file). */
+export type CodexLinkEnd = 'nothing' | 'folder' | 'other'
+
+/** A link found in the login's home. */
+export interface CodexHomeLink {
+  /** Its name in the login's home. */
+  name: string
+  /** The target it reads back. */
+  target: string
+  /** What is at its end. */
+  end: CodexLinkEnd
+  /** The target kurmis recorded when it made or last found this link, or null when the record has none. */
+  recorded: string | null
+}
+
 /**
- * Whether a link in the login's home is one kurmis made that has to go: it leads to the
- * place in the default home of the same name, which is no longer a folder the login shares
- * (`shared` false: gone, private now, or no longer a folder), or it leads nowhere
- * (`leadsNowhere`) and its target has the link's own name, the way kurmis makes them, which
- * also catches a link into a default home used before. Any other link is left alone, since
- * it may be the user's own.
+ * Whether a link in the login's home is one kurmis made that has to go. Kurmis links only
+ * folders, each to the place of the same name in the default home, and records each link.
+ *
+ * - A link to the place of the same name in the current default home goes when that place is
+ *   no longer a folder the login shares (`shared` false: gone, private now, such as a
+ *   `.sandbox` folder an earlier kurmis linked, or no longer a folder). A link that leads to a
+ *   file there is left alone unless the record names it, since kurmis never made one.
+ * - A link to anywhere else goes only when it leads nowhere and the record names it with this
+ *   target: a link into a default home used before, which is gone.
+ *
+ * Any other link is left alone, since it is the user's own: one to a file, or one into a
+ * volume that is not mounted now.
  */
-export function codexStaleLink(
-  name: string,
-  target: string,
-  source: string,
-  shared: boolean,
-  leadsNowhere: boolean,
-  platform: NodeJS.Platform = process.platform
-): boolean {
+export function codexStaleLink(link: CodexHomeLink, source: string, shared: boolean, platform: NodeJS.Platform = process.platform): boolean {
   const paths = platform === 'win32' ? win32 : posix
-  if (sameFolderPath(target, paths.join(source, name), platform)) return !shared
-  if (!leadsNowhere) return false
-  const base = paths.basename(paths.resolve(target))
-  return platform === 'win32' ? base.toLowerCase() === name.toLowerCase() : base === name
+  const recorded = link.recorded !== null && sameFolderPath(link.target, link.recorded, platform)
+  if (sameFolderPath(link.target, paths.join(source, link.name), platform)) return !shared && (link.end !== 'other' || recorded)
+  return link.end === 'nothing' && recorded
 }
 
 /** What to do with the login's copy of `AGENTS.md` or `AGENTS.override.md`. */
@@ -194,7 +208,7 @@ export interface CodexConfigRefresh {
    * The default home's settings without secrets, as merged in this time: the new last merged
    * copy, to be kept once the login's file holds the merge (it was written, or `keep` because
    * it held it already). Null when nothing was merged, and then the last merged copy stays
-   * as it was.
+   * as it was. '' when the default home has no `config.toml` and there is no last merged copy.
    */
   merged: string | null
   /**
@@ -228,7 +242,11 @@ function errorText(error: unknown): string {
  * - With a default file, the login's becomes the three-way `mergeAccountConfig` of the three.
  * - With no default file, the login's file stays as it is, or absent, and so does the last
  *   merged copy. A default home that has no `config.toml` for a moment (it is being
- *   replaced, or `CODEX_HOME` named another folder for one start) removes nothing.
+ *   replaced, or `CODEX_HOME` named another folder for one start) removes nothing. When
+ *   there is no last merged copy yet (a new login, made before the user had a
+ *   `config.toml`), an empty one is answered as `merged`: without it, the first merge after
+ *   the file appears would count every setting Codex wrote into the login's file as merged in
+ *   before and remove what the default home lacks.
  * - When the login's file is not valid TOML, or the default file cannot be merged, the
  *   login's file stays as it is, and `mergeFailure` says why. A broken login file is not
  *   replaced, because it may hold the login's own secrets.
@@ -240,7 +258,9 @@ function errorText(error: unknown): string {
 export function codexConfigRefresh(source: string | null, current: string | null, lastMerged: string | null): CodexConfigRefresh {
   const keep = (merged: string | null, missingSecrets: boolean, heldBack: string[], mergeFailure: string | null): CodexConfigRefresh =>
     ({ action: 'keep', content: null, merged, missingSecrets, heldBack, mergeFailure })
-  if (source === null) return keep(null, false, [], null)
+  // With no default file and no last merged copy yet, an empty copy is recorded, so that the
+  // first merge once the file appears treats every setting of the login as its own.
+  if (source === null) return keep(lastMerged === null ? '' : null, false, [], null)
   if (current !== null && !validToml(current)) return keep(null, false, [], "the login's config.toml is not valid TOML, so it was left as it is")
   let merge: AccountConfigMerge
   try {

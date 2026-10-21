@@ -177,6 +177,9 @@ describe('kurmis logout', () => {
     const out = collect()
     expect(await logout.run(['codex:none'], out.context)).toBe(1)
     expect(out.stderr()).toContain('there is no login codex:none')
+    const claude = collect()
+    expect(await logout.run(['claude:none'], claude.context)).toBe(1)
+    expect(claude.stderr()).toContain('there is no login claude:none')
     expect(run.runs).toEqual([])
   })
 
@@ -191,6 +194,20 @@ describe('kurmis logout', () => {
     expect(out.stdout()).toContain('Deleted the folder that codex:left left behind.')
     expect(existsSync(folder)).toBe(false)
     expect(run.runs).toHaveLength(1)
+    expect(daemon.calls).toEqual([])
+  })
+
+  it('deletes the merged record a failed new login left, when nothing else is left', async () => {
+    mkdirSync(join(kurmisHome(), 'codex-merged'), { recursive: true })
+    writeFileSync(codexMergedRecordPath('codex:left'), '{"config":"","copied":{},"links":{},"conflicts":[]}\n')
+    const run = fakeRun()
+    const daemon = fakeDaemonClient()
+    const logout = createLogoutCommand({ daemon, findProgram: fakeProgram, runProgram: run.runProgram })
+    const out = collect()
+    expect(await logout.run(['codex:left'], out.context)).toBe(0)
+    expect(out.stdout()).toContain('codex:left left behind')
+    expect(existsSync(codexMergedRecordPath('codex:left'))).toBe(false)
+    expect(run.runs).toEqual([])
     expect(daemon.calls).toEqual([])
   })
 

@@ -26,7 +26,7 @@ import { addLogin, changeConfig, ConfigError, findLogin, loadConfig, updateLogin
 import { CLAUDE_PROFILE_FILE, parseClaudeIdentity, readClaudeIdentity, type ClaudeIdentity } from '../../data/identity.ts'
 import { applyEnvPatch, claudeLoginEnv, codexLoginEnv } from '../../data/login-env.ts'
 import { isDefaultLoginId, isLoginProvider, isValidLoginName, parseLoginId, type LoginId, type LoginProvider } from '../../data/login-id.ts'
-import { claudeDefaultProbeFolder, loginFolder } from '../../data/paths.ts'
+import { claudeDefaultProbeFolder, codexMergedRecordPath, loginFolder } from '../../data/paths.ts'
 import { makePrivateDirSync } from '../../platform/files.ts'
 import { ProgramNotFoundError, type findProgram, type ResolvedProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
@@ -204,7 +204,10 @@ async function signIn(run: SignInRun): Promise<number> {
     created = true
   }
   const cleanUp = (): void => {
-    if (created && folder !== null) removeTreeSync(folder)
+    if (!created || folder === null) return
+    removeTreeSync(folder)
+    // Preparing the Codex home wrote what it merged in; a later login of this name must not find it.
+    if (provider === 'codex') rmSync(codexMergedRecordPath(id), { force: true })
   }
   const notAdded = isNew ? ` ${id} was not added.` : ''
 
