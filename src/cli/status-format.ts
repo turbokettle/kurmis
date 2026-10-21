@@ -64,7 +64,7 @@ export interface StatusJsonLogin {
   /** The name the person sees and types for the login. */
   alias: string
   provider: AccountProvider
-  /** Whether this is the machine's own sign-in of the provider, the one a plain `claude` or `codex` uses. */
+  /** Whether this is the login a plain `claude` or a plain `codex` uses. */
   machineOwn: boolean
   /** The login's email as its own CLI cached it; null when unknown. Shown, never stored. */
   email: string | null
@@ -90,7 +90,7 @@ export interface StatusJsonLogin {
 export interface StatusJson {
   format: typeof STATUS_JSON_FORMAT
   daemon: { version: string; pid: number; port: number; startedAt: string }
-  /** The logins in `config.json` order, the machine's own logins first. */
+  /** The logins in `config.json` order, the logins of plain claude and plain codex first. */
   logins: StatusJsonLogin[]
   /**
    * The login `kurmis codex` without `--login` would start on now (`login` is its id), and its
@@ -99,7 +99,7 @@ export interface StatusJson {
   codexStart: { login: string; alias: string; note: string | null } | null
   /**
    * Sentences about something the person may want to change: an extra login signed in to the
-   * same account as the machine's own login of its provider, which makes both use one
+   * same account as the login plain claude or plain codex uses, which makes both use one
    * subscription.
    */
   warnings: string[]
@@ -108,7 +108,7 @@ export interface StatusJson {
 export interface StatusFormatOptions {
   /** Whether the logins' tokens come from the macOS Keychain, which changes a block's wording. */
   keychain: boolean
-  /** The IANA time zone the text output gives times in; the machine's own when absent. */
+  /** The IANA time zone the text output gives times in; the machine's time zone when absent. */
   timeZone?: string
 }
 
@@ -145,9 +145,9 @@ function loginArgument(answer: StatusAnswer, login: LoginStatus): string {
 }
 
 /**
- * A warning for each extra login whose email is that of the machine's own login of its provider,
- * compared without regard to case: both are then signed in to one account and use one
- * subscription.
+ * A warning for each extra Claude login whose email is that of the login plain claude uses, and
+ * the same for Codex, compared without regard to case: both are then signed in to one account
+ * and use one subscription.
  */
 export function sameAccountWarnings(answer: StatusAnswer): string[] {
   const warnings: string[] = []
@@ -156,7 +156,7 @@ export function sameAccountWarnings(answer: StatusAnswer): string[] {
     for (const extra of answer.logins) {
       if (extra.machineOwn || extra.provider !== own.provider || extra.email?.trim().toLowerCase() !== email) continue
       const product = PRODUCT_NAMES[own.provider]
-      warnings.push(`${extra.alias} and ${own.alias}, this machine's own ${product} sign-in, are the same ${product} account ` +
+      warnings.push(`${extra.alias} and ${own.alias}, the login plain ${own.provider} uses, are the same ${product} account ` +
         `(${own.email!}), so they use one subscription. "kurmis logout ${loginArgument(answer, extra)}" removes ${extra.alias}.`)
     }
   }
@@ -202,7 +202,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
     : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`]
       : [title, `  ${login.email}`]
   if (login.machineOwn) {
-    lines.push(`  this machine's own ${PRODUCT_NAMES[login.provider]} sign-in, the account a plain "${login.provider}" uses`)
+    lines.push(`  the login plain ${login.provider} uses`)
   }
   const facts = [
     login.signedIn === null ? 'sign-in not checked yet' : login.signedIn ? 'signed in' : 'signed out',
@@ -295,7 +295,7 @@ function blockText(block: RouteBlock, now: number, options: StatusFormatOptions,
 }
 
 /**
- * A time as a 24-hour clock in `timeZone` (the machine's own when absent) shows it: `03:10`,
+ * A time as a 24-hour clock in `timeZone` (the machine's time zone when absent) shows it: `03:10`,
  * with the date in front (`2026-09-14 03:10`) when it falls on another day than `now`.
  */
 export function localTimeText(at: number, now: number, timeZone?: string): string {

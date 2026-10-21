@@ -112,7 +112,7 @@ async function runCodex(args: string[], context: CliContext, deps: CodexDeps): P
 /**
  * The login to start on, by `--login` (`named`) or by the daemon's ranking, with its Codex home
  * prepared. A config.json that cannot be read stops a named login, which cannot be looked up then;
- * without a name Codex starts on the machine's own login, which needs nothing from the config.
+ * without a name Codex starts on plain codex's login, which needs nothing from the config.
  * Null after a message on stderr when Codex is not to start.
  */
 async function preparedHome(named: string | null, context: CliContext, deps: CodexDeps): Promise<PreparedCodexHome | null> {
@@ -148,8 +148,8 @@ async function preparedHome(named: string | null, context: CliContext, deps: Cod
 }
 
 /**
- * The `CODEX_HOME` change for the child. An extra login gets its prepared home. The machine's own
- * Codex login keeps the inherited `CODEX_HOME`, unless that is an extra login's home kurmis set for an
+ * The `CODEX_HOME` change for the child. An extra login gets its prepared home. The login plain
+ * codex uses keeps the inherited `CODEX_HOME`, unless that is an extra login's home kurmis set for an
  * outer `kurmis codex` session (this one was started from a shell inside it), which would put
  * this session on the outer one's login.
  */
@@ -165,7 +165,7 @@ export function codexHomePatch(prepared: PreparedCodexHome, env: NodeJS.ProcessE
 /**
  * The login the daemon's usage ranks first. Asks for a probe of logins whose usage is missing
  * or old and waits for it at most `probeWaitMs`. When the daemon cannot be reached, the
- * machine's own login. Prints a note on stderr when the choice is not the plain ranked one.
+ * login plain codex uses. Prints a note on stderr when the choice is not the plain ranked one.
  */
 async function chooseLogin(context: CliContext, config: KurmisConfig, deps: CodexDeps): Promise<LoginSettings> {
   const own = machineOwnLogin(config, 'codex')
@@ -192,7 +192,7 @@ async function chooseLogin(context: CliContext, config: KurmisConfig, deps: Code
   }
   const choice = chooseCodexLogin(status, deps.now())
   // The daemon names the logins of the config it last read; one it has and this config lacks is
-  // gone, so the machine's own login is used.
+  // gone, so plain codex's login is used.
   const chosen = findLogin(config, choice.login) ?? own
   if (choice.note !== null) {
     writeLine(context.stderr, `kurmis codex: ${choice.note}`)

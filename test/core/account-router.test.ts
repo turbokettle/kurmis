@@ -261,7 +261,7 @@ describe('Auto eligibility and choice', () => {
     expect(choose([])).toBeNull()
   })
 
-  test("with no login opted in, Auto runs on the machine's own login, its home, as if pinned to it", () => {
+  test("with no login opted in, Auto runs on the login plain claude uses, its home, as if pinned to it", () => {
     const none = { autoRoute: false }
     const auto: RouteSession = { homeAccountId: OWN_CLAUDE, currentAccountId: 'homeclaude' }
     const fallback = account(OWN_CLAUDE, { ...none, usage: usage(100), cooldownUntil: Infinity })
@@ -430,8 +430,8 @@ describe('a request that runs into a usage limit', () => {
 })
 
 describe('a pool where every login is under its limits', () => {
-  // Three Claude logins. Nothing here is out of usage: the busiest window is the machine's own
-  // login's seven-day at 79%, under the 90% each row allows.
+  // Three Claude logins. Nothing here is out of usage: the busiest window is the seven-day
+  // window of the login plain claude uses, at 79%, under the 90% each row allows.
   const threeLogins = (patch: Partial<RouteAccount> = {}): RouteAccount[] => [
     account(OWN_CLAUDE, { ...limits(90), usage: {
       ...emptyAccountUsage(OWN_CLAUDE, NOW), status: 'allowed_warning',
@@ -472,7 +472,7 @@ describe('a pool where every login is under its limits', () => {
     expect(chooseAccount(auto, [fresh], NOW, new Set())?.id).toBe('freshclaude')
   })
 
-  test("with nobody opted in an Auto session runs on the machine's own login", () => {
+  test("with nobody opted in an Auto session runs on the login plain claude uses", () => {
     const none = threeLogins({ autoRoute: false })
     expect(effectivePin(auto, none)).toBe(OWN_CLAUDE)
     expect(chooseAccount(auto, none, NOW, new Set())?.id).toBe(OWN_CLAUDE)
@@ -701,8 +701,8 @@ describe('the login an Auto CLI is started on', () => {
     expect(autoStartLogin([login(OWN_CLAUDE, true, true), login('poolclaude', true, true)], 'poolclaude')).toBe(OWN_CLAUDE)
   })
 
-  test("a list without the machine's own login is a mistake of the caller", () => {
-    expect(() => autoStartLogin([login('poolclaude', true, true)])).toThrow(/machine's own sign-in/)
+  test("a list without the login plain claude uses is a mistake of the caller", () => {
+    expect(() => autoStartLogin([login('poolclaude', true, true)])).toThrow(/no login that plain claude uses/)
   })
 
   test('a signed-in pool login when the login of the machine is signed out, the one that served last first', () => {
@@ -714,7 +714,7 @@ describe('the login an Auto CLI is started on', () => {
   })
 
   // A pool with nothing signed in is a sign-in problem with a pool login, so the CLI is not
-  // started on the machine's own login, which an Auto session with a pool never runs on.
+  // started on the login plain claude uses, which an Auto session with a pool never runs on.
   test('a pool login when the pool has logins but none is signed in, the one that served last first', () => {
     const rows = [login(OWN_CLAUDE, false, false), login('offclaude', true, false), login('outaclaude', false, true), login('outbclaude', false, true)]
     expect(effectivePin({ homeAccountId: OWN_CLAUDE, currentAccountId: null }, rows.map((row) => account(row.id, {
@@ -744,7 +744,7 @@ describe('the rules kurmis adds', () => {
     expect(tokenIsFresh(NOW + TOKEN_MARGIN_MS, NOW)).toBe(false)
   })
 
-  test("a Codex choice with no login opted in falls back to the machine's own Codex login, its home", () => {
+  test("a Codex choice with no login opted in falls back to the login plain codex uses, its home", () => {
     const codex: RouteSession = { homeAccountId: OWN_CODEX, currentAccountId: null }
     const rows = [account(OWN_CODEX, { autoRoute: false }), account('workcodex', { autoRoute: false })]
     expect(effectivePin(codex, rows)).toBe(OWN_CODEX)

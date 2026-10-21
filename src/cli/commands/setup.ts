@@ -103,9 +103,9 @@ Options:
   --uninstall-and-logout  Remove everything kurmis set up: its settings and the backup copy,
                           the daemon's start at login, every login you added to kurmis (each is
                           signed out first, which removes its Keychain or Credential Manager
-                          item), the daemon and the kurmis data folder. Your own Claude Code
-                          and Codex sign-ins are not signed out, so a plain "claude" and
-                          "codex" keep working. It lists what it removes and asks first. The
+                          item), the daemon and the kurmis data folder. The logins plain
+                          claude and plain codex use are not signed out, so a plain "claude"
+                          and "codex" keep working. It lists what it removes and asks first. The
                           last step, "${NPM_UNINSTALL}", is yours to run.
   --yes                   With --uninstall-and-logout: do not ask. Without a terminal to ask
                           at, --uninstall-and-logout needs it.
@@ -327,9 +327,9 @@ async function runSetup(deps: SetupDeps, context: CliContext): Promise<number> {
   reportFile(result, false, context)
   if (clearPaused()) writeLine(context.stdout, 'Global routing was paused; it is on again.')
   if (configDirHasOwnCredentials(context.env, deps.platform)) {
-    writeLine(context.stdout, 'CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that ' +
-      'folder, which is not the machine\'s own Claude login. Kurmis sends its requests only to the extra logins and never ' +
-      'signs them as the machine\'s own Claude login. "kurmis claude" still starts on the machine\'s own Claude login.')
+    writeLine(context.stdout, 'CLAUDE_CONFIG_DIR is set, so a claude that reads this file signs in with the login in that ' +
+      'folder, not with the login plain claude uses, which is the one in ~/.claude. Kurmis sends the requests of such a ' +
+      'claude only to the extra logins. "kurmis claude" still starts on the login plain claude uses.')
   }
 
   const ok = await autostartStep(false, deps, context)
@@ -491,7 +491,7 @@ async function runUninstall(yes: boolean, deps: SetupDeps, context: CliContext):
     : `the logins added to kurmis, each signed out first: ${logins.map(({ name }) => name).join(', ')}`)
   if (pid !== null) listLine(context, `the running daemon (pid ${String(pid)}), which is stopped`)
   if (existsSync(dataFolder)) listLine(context, `the kurmis data folder ${dataFolder}`)
-  writeLine(context.stdout, 'Your own Claude Code and Codex sign-ins are not signed out, so a plain "claude" and "codex" keep working.')
+  writeLine(context.stdout, 'The logins plain claude and plain codex use are not signed out, so a plain "claude" and "codex" keep working.')
 
   if (!yes) {
     if (!deps.stdinIsTerminal()) {

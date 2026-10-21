@@ -49,7 +49,7 @@ function wholeMinute(ms: number): number {
   return Math.ceil((Date.now() + ms) / MINUTE_MS) * MINUTE_MS
 }
 
-/** The machine's own Claude login signed in, and an extra Claude login work-example; answers the extra login. */
+/** The login plain claude uses signed in, and an extra Claude login work-example; answers the extra login. */
 async function twoLogins(world: World): Promise<AddedLogin> {
   world.signInDefaultClaude()
   return await world.addClaudeLogin('work@example.com')
@@ -72,12 +72,12 @@ describe('routing kurmis claude -p', () => {
   it('keeps a session on its login while a new session goes where the order now says', async () => {
     const world = await createWorld()
     const work = await twoLogins(world)
-    // The machine's own login's week resets first, so a new session is placed there.
+    // The week of the login plain claude uses resets first, so a new session is placed there.
     writeClaudeScenario(join(world.home, '.claude'), { sevenDay: { utilization: 10, resetsAt: new Date(Date.now() + DAY_MS).toISOString() } })
     writeClaudeScenario(work.folder, { sevenDay: { utilization: 10, resetsAt: new Date(Date.now() + 3 * DAY_MS).toISOString() } })
     expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
     await waitForProbes(world, [OWN_CLAUDE, work.id])
-    // The answer on the machine's own login says its week resets in five days, after work-example's.
+    // The answer on the login plain claude uses says its week resets in five days, after work-example's.
     const later = { fiveHour: { utilization: 0.1, resetsAt: Date.now() + 3 * HOUR_MS }, sevenDay: { utilization: 0.1, resetsAt: Date.now() + 5 * DAY_MS } }
     world.api.setDefault(reply.ok({ text: 'answered', unified: later }))
 
@@ -92,7 +92,7 @@ describe('routing kurmis claude -p', () => {
       [second, work.token]
     ])
 
-    // A limit that the machine's own login is now over moves the first session too.
+    // A limit that the login plain claude uses is now over moves the first session too.
     expect((await world.kurmis(['set', OWN_CLAUDE, '--five-hour', '5'])).code).toBe(0)
     expect((await world.kurmis(['claude', '-p', 'four', '--session-id', first])).code).toBe(0)
     expect(messages(world).at(-1)).toMatchObject({ sessionId: first, bearer: work.token })
@@ -157,19 +157,19 @@ describe('routing kurmis claude -p', () => {
     const session = randomUUID()
     const first = await world.kurmis(['claude', '--login', 'work-example', '-p', 'hi', '--session-id', session])
     expect(first).toMatchObject({ code: 0, stdout: expect.stringContaining('pinned answer') as string })
-    // Its usage-limit 429 reaches the CLI as it is, and the machine's own login is never tried.
+    // Its usage-limit 429 reaches the CLI as it is, and the login plain claude uses is never tried.
     const back = wholeMinute(HOUR_MS)
     world.api.scriptFor(work.token, reply.quota({ claim: 'five_hour', resetsAt: back }))
     const second = await world.kurmis(['claude', '--login', 'claude:work-example', '-p', 'again', '--session-id', session])
     expect(second.code).toBe(1)
     expect(second.stdout).toContain(`You've hit your session limit · resets ${resetText(back)}`)
     expect(bearers(world)).toEqual([work.token, work.token])
-    // An Auto request meanwhile goes to the machine's own login, which has room.
+    // An Auto request meanwhile goes to the login plain claude uses, which has room.
     expect((await world.kurmis(['claude', '-p', 'auto'])).code).toBe(0)
     expect(bearers(world).at(-1)).toBe(fakeToken('default'))
   }, 120_000)
 
-  it("with CLAUDE_CONFIG_DIR set, starts claude on the machine's own Claude login's credentials, never on those in that folder", async () => {
+  it("with CLAUDE_CONFIG_DIR set, starts claude on the credentials of the login plain claude uses, never on those in that folder", async () => {
     const world = await createWorld()
     expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
     // The person's shell sets CLAUDE_CONFIG_DIR to a folder signed in to another account.
@@ -177,11 +177,11 @@ describe('routing kurmis claude -p', () => {
     writeClaudeCredentials(ownConfig, { accessToken: fakeToken('own') })
     world.api.setDefault(reply.ok({ text: 'Answered with the token in ~/.claude' }))
 
-    // The machine's own login, the one in ~/.claude, is not signed in: the CLI says so and sends nothing.
+    // The login plain claude uses, the one in ~/.claude, is not signed in: the CLI says so and sends nothing.
     const signedOut = await world.kurmis(['claude', '-p', 'hi'], { env: { CLAUDE_CONFIG_DIR: ownConfig } })
     expect(signedOut.code).not.toBe(0)
     expect(signedOut.stdout).toContain('Not logged in')
-    expect(signedOut.stderr).toContain("CLAUDE_CONFIG_DIR is set, but the machine's own Claude login is the one in ~/.claude")
+    expect(signedOut.stderr).toContain("CLAUDE_CONFIG_DIR is set, but kurmis starts claude on the login plain claude uses, the one in ~/.claude")
     expect(bearers(world)).toEqual([])
 
     world.signInDefaultClaude()

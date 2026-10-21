@@ -19,7 +19,7 @@
 //
 // - an extra login: its folder in the kurmis data folder (`loginFolder`) is both the string its
 //   Keychain item name is made from and the folder that holds its file;
-// - the machine's own login: the Keychain item with the plain name (its CLI runs without
+// - plain claude's login: the Keychain item with the plain name (its CLI runs without
 //   `CLAUDE_SECURESTORAGE_CONFIG_DIR`), and `<home>/.claude/.credentials.json`.
 //
 // The source is asked by login id. It looks each id up in the config once (`login` in the
@@ -57,7 +57,7 @@ export interface TokenSourceOptions {
   /** Defaults to `process.platform`. */
   platform?: NodeJS.Platform
   /**
-   * The user's home folder. Defaults to `os.homedir()`. The machine's own login's file is
+   * The user's home folder. Defaults to `os.homedir()`. The file of plain claude's login is
    * `<home>/.claude/.credentials.json`.
    */
   home?: () => string
@@ -102,7 +102,7 @@ export function securityProgramOf(env: NodeJS.ProcessEnv, processEnv: NodeJS.Pro
 
 /**
  * The string a Claude login's Keychain item name is made from: the login's folder for an extra
- * login, null for the machine's own login, whose item has the plain name. Throws for a login
+ * login, null for plain claude's login, whose item has the plain name. Throws for a login
  * that is not a Claude login.
  */
 export function claudeSecureStorageDir(login: LoginRef): string | null {
@@ -111,7 +111,7 @@ export function claudeSecureStorageDir(login: LoginRef): string | null {
 
 /**
  * The folder holding a Claude login's `.credentials.json`: the login's folder for an extra login,
- * `<home>/.claude` for the machine's own login. Throws for a login that is not a Claude login.
+ * `<home>/.claude` for plain claude's login. Throws for a login that is not a Claude login.
  */
 export function claudeCredentialsDir(login: LoginRef, home: string): string {
   return checkedClaude(login).machineOwn ? join(home, '.claude') : loginFolder(login)

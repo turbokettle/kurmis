@@ -74,7 +74,7 @@ test('the security program comes from KURMIS_SECURITY_PROGRAM, else /usr/bin/sec
   expect(securityProgramOf({})).toBe(process.env.KURMIS_SECURITY_PROGRAM)
 })
 
-test("an extra login uses its folder for both the item name and the file; the machine's own login the plain item and ~/.claude", () => {
+test("an extra login uses its folder for both the item name and the file; the login plain claude uses the plain item and ~/.claude", () => {
   expect(claudeSecureStorageDir(claudeRef(WORK))).toBe(join(dir, 'kurmis', 'claude', WORK))
   expect(claudeSecureStorageDir(OWN_CLAUDE_REF)).toBeNull()
   expect(claudeCredentialsDir(claudeRef(WORK), home)).toBe(join(dir, 'kurmis', 'claude', WORK))
@@ -111,7 +111,7 @@ test('macOS: with no item, an extra login is read from its .credentials.json, an
   expect(entries).toEqual([])
 })
 
-test("macOS: with no item, the machine's own login is read from ~/.claude/.credentials.json", async () => {
+test("macOS: with no item, the login plain claude uses is read from ~/.claude/.credentials.json", async () => {
   writeClaudeCredentials(defaultDir(), { accessToken: fakeToken('default-file'), refreshToken: null })
   const tokens = source()
   await tokens.prime([DEFAULT])

@@ -50,7 +50,7 @@ export function configLockPath(): string {
 }
 
 /**
- * The config folder (`CLAUDE_CONFIG_DIR`) of the usage probe of the machine's own Claude login.
+ * The config folder (`CLAUDE_CONFIG_DIR`) of the usage probe of plain claude's login.
  * A probe on the user's own `~/.claude` would walk its transcripts and write into
  * `~/.claude.json`, so it gets this folder instead, and its credentials are pointed back at the
  * default place with an empty `CLAUDE_SECURESTORAGE_CONFIG_DIR` (`claudeProbeEnv` in
@@ -93,13 +93,13 @@ export function providerFolder(provider: LoginProvider): string {
 /**
  * The folder of an extra login: `claude/<id>/` (its `CLAUDE_SECURESTORAGE_CONFIG_DIR`) or
  * `codex/<id>/` (its `CODEX_HOME`). The id is checked again here, so a slash or `..` can never
- * produce a path. The machine's own logins have no folder here, since they use `~/.claude` and
- * `~/.codex`; asking for one is an error.
+ * produce a path. The logins of plain claude and plain codex have no folder here, since they use
+ * `~/.claude` and `~/.codex`; asking for one is an error.
  */
 export function loginFolder(login: LoginRef): string {
   const id = toLoginId(login.id)
   if (login.machineOwn) {
-    throw new Error(`${id} is the machine's own ${login.provider} sign-in and has no folder in the kurmis data folder.`)
+    throw new Error(`${id} is the login plain ${login.provider} uses and has no folder in the kurmis data folder.`)
   }
   return join(providerFolder(login.provider), id)
 }

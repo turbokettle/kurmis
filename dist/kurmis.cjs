@@ -3682,7 +3682,7 @@ function effectivePin(session, accounts) {
 }
 function autoStartLogin(accounts, preferred) {
   const own2 = accounts.find((account) => account.machineOwn);
-  if (own2 === void 0) throw new Error("autoStartLogin: the list has no login of the machine's own sign-in");
+  if (own2 === void 0) throw new Error("autoStartLogin: the list has no login that plain claude uses");
   if (own2.loggedIn) return own2.id;
   const pool = accounts.filter((account) => account.autoRoute);
   const signedIn = pool.filter((account) => account.loggedIn);
@@ -4322,7 +4322,7 @@ function providerFolder(provider) {
 function loginFolder(login) {
   const id = toLoginId(login.id);
   if (login.machineOwn) {
-    throw new Error(`${id} is the machine's own ${login.provider} sign-in and has no folder in the kurmis data folder.`);
+    throw new Error(`${id} is the login plain ${login.provider} uses and has no folder in the kurmis data folder.`);
   }
   return (0, import_node_path3.join)(providerFolder(login.provider), id);
 }
@@ -4402,7 +4402,7 @@ var ConfigError = class extends Error {
 };
 function machineOwnLogin(config, provider) {
   const own2 = config.logins.find((login) => login.machineOwn && login.provider === provider);
-  if (own2 === void 0) throw new ConfigError(`The config has no login for the machine's own ${provider} sign-in.`);
+  if (own2 === void 0) throw new ConfigError(`The config has no login that plain ${provider} uses.`);
   return own2;
 }
 function extraLogins(config, provider) {
@@ -4518,7 +4518,10 @@ function parseConfig(value, file) {
     const login = parseLogin(entry, at2);
     if (logins.some((other) => other.id === login.id)) fail(child(at2, "id"), `repeats "${login.id}"`);
     if (login.machineOwn && logins.some((other) => other.machineOwn && other.provider === login.provider)) {
-      fail(child(at2, "machineOwn"), `is true for a second ${login.provider} login; only one login of a provider is the machine's own`);
+      fail(
+        child(at2, "machineOwn"),
+        `is true for a second ${login.provider} login; only one ${login.provider} login can be the one plain ${login.provider} uses`
+      );
     }
     const clash = logins.find((other) => other.id === login.alias || other.alias === login.id || other.provider === login.provider && other.alias === login.alias);
     if (clash !== void 0) {
@@ -4604,7 +4607,7 @@ function addLogin(config, ref, patch = {}) {
 function removeLogin(config, id) {
   const login = findLogin(config, id);
   if (login === void 0) throw new ConfigError(`There is no login ${id}.`);
-  if (login.machineOwn) throw new ConfigError(`${login.alias} is the machine's own ${login.provider} sign-in and cannot be removed.`);
+  if (login.machineOwn) throw new ConfigError(`${login.alias} is the login plain ${login.provider} uses and cannot be removed.`);
   return { ...config, logins: config.logins.filter((other) => other.id !== id) };
 }
 function updateLogin(config, id, patch) {
@@ -4689,7 +4692,7 @@ function refusedUntil(usage) {
 }
 function ownCodexLogin(status2) {
   const own2 = status2.logins.find((login) => login.provider === "codex" && login.machineOwn);
-  if (own2 === void 0) throw new Error("The daemon's status has no login for the machine's own Codex sign-in.");
+  if (own2 === void 0) throw new Error("The daemon's status has no login that plain codex uses.");
   return own2;
 }
 function aliasIn(status2, id) {
@@ -4714,7 +4717,7 @@ function chooseCodexLogin(status2, now) {
     return {
       login: ownId,
       kind: "none-signed-in",
-      note: `No Codex login that routing may use is signed in; starting on ${aliasIn(status2, ownId)}, this machine's own Codex sign-in.`
+      note: `No Codex login that routing may use is signed in; starting on ${aliasIn(status2, ownId)}, the login plain codex uses.`
     };
   }
   let best = null;
@@ -8016,7 +8019,7 @@ function userOwnedRoutingVariables(layers) {
 // src/cli/login-names.ts
 var PROVIDER_NAMES2 = { claude: "Claude", codex: "Codex" };
 function machineOwnText(provider) {
-  return `this machine's own ${PROVIDER_NAMES2[provider]} sign-in`;
+  return `the login plain ${provider} uses`;
 }
 function loginArgument(config, login) {
   const found = resolveLogin(config, login.alias);
@@ -8220,9 +8223,9 @@ function settingsLayers(userSettings, env, deps) {
 function configDirNote(value, deps) {
   if (namesDefaultClaudeFolder(value, deps.platform, deps.homeDir())) {
     const keeps = deps.platform === "win32" ? "may keep its credentials in a Credential Manager entry" : "keeps its credentials in a Keychain item";
-    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of the machine's own Claude login, but a claude started with it set ${keeps} of its own, which may hold another account. Kurmis starts claude with the machine's own login's credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.`;
+    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of the login plain claude uses, but a claude started with it set ${keeps} of its own, which may hold another account. Kurmis starts claude with the credentials of the login plain claude uses, the ones a claude without CLAUDE_CONFIG_DIR reads.`;
   }
-  return "CLAUDE_CONFIG_DIR is set, but the machine's own Claude login is the one in ~/.claude, so claude signs in with that login's credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from CLAUDE_CONFIG_DIR.";
+  return "CLAUDE_CONFIG_DIR is set, but kurmis starts claude on the login plain claude uses, the one in ~/.claude, so claude signs in with that login's credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from CLAUDE_CONFIG_DIR.";
 }
 function oauthTokenNotes(env, layers, userSettings, userSettingsPath) {
   const windows = layers.windows === true;
@@ -9563,7 +9566,7 @@ var LoginTable = class {
     if (this.options.now() - this.lastCheck < (this.options.configCheckMs ?? CONFIG_CHECK_MS)) return;
     this.reloadConfig();
   }
-  /** Every login in `config.json`, the machine's own logins first. */
+  /** Every login in `config.json`, the logins of plain claude and plain codex first. */
   logins() {
     return this.config.logins;
   }
@@ -9574,7 +9577,7 @@ var LoginTable = class {
     return findLogin(this.config, id);
   }
   /**
-   * The machine's own login of a provider: the one a plain `claude` or `codex` is signed in
+   * The login a plain `claude` or a plain `codex` uses: the one that CLI is signed in
    * to. The config always has one for each provider.
    */
   ownLogin(provider) {
@@ -9589,7 +9592,7 @@ var LoginTable = class {
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
    * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
    * credentials are no kurmis login's (`STARTED_ON_NONE`): no login is signed with its header,
-   * and the machine's own Claude login, whose token belongs to another account than the CLI's,
+   * and plain claude's login, whose token belongs to another account than the CLI's,
    * is left out of the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
    * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
@@ -12345,7 +12348,7 @@ function formatLoginTable(logins) {
   ];
   const widths = HEADER.map((_, column) => Math.max(...rows.map((row) => row[column].length)));
   const table = rows.map((row) => row.map((cell, column) => cell.padEnd(widths[column])).join("  ").trimEnd());
-  const own2 = logins.filter((login) => login.machineOwn).map((login) => `${login.alias} is ${machineOwnText(login.provider)}: the account a plain "${login.provider}" is signed in to.`);
+  const own2 = logins.filter((login) => login.machineOwn).map((login) => `${login.alias} is ${machineOwnText(login.provider)}.`);
   return [...table, ...own2.length > 0 ? ["", ...own2] : []].join("\n");
 }
 function createListCommand(deps = {}) {
@@ -12357,7 +12360,7 @@ function createListCommand(deps = {}) {
     usage: `Usage: kurmis list [--json]
 
 Lists every login kurmis knows, with its settings and whether it has credentials on this
-machine. The machine's own Claude and Codex logins come first. They are the accounts a plain
+machine. The logins of plain claude and plain codex come first. They are the accounts a plain
 "claude" and a plain "codex" are signed in to, and the lines under the table name them.
 Change the settings with "kurmis set". The columns:
 
@@ -12380,7 +12383,7 @@ Change the settings with "kurmis set". The columns:
 
 Options:
   --json       Print the logins as JSON. Each has "alias", "id", "provider", "machineOwn"
-               (true for the machine's own logins) and "credentials" for the last column.
+               (true for the logins of plain claude and plain codex) and "credentials" for the last column.
   -h, --help   Show this help.`,
     async run(args, context) {
       const parsed = parseCommandArgs("list", args, { json: { type: "boolean" } }, context);
@@ -12734,7 +12737,7 @@ the sign-in page in the browser.
                               at 100%; "kurmis set" changes that.
   kurmis login codex          Adds a new Codex login.
   kurmis login work-example   Signs the login work-example in again, for example after it was
-                              signed out. This works for the machine's own logins too.
+                              signed out. This works for the logins of plain claude and plain codex too.
 
 <login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
 Codex login have the same alias, put claude: or codex: in front, for example
@@ -12949,7 +12952,7 @@ deletes its folder in the kurmis data folder. A running daemon stops using it at
 Codex login have the same alias, put claude: or codex: in front, for example
 codex:work-example.
 
-The machine's own Claude and Codex logins cannot be removed. To sign them out, run
+The logins of plain claude and plain codex cannot be removed. To sign them out, run
 "claude auth logout" or "codex logout" yourself.
 
 An id that is in no list any more but still has a folder in the kurmis data folder, for
@@ -13638,7 +13641,7 @@ function displayValue(value) {
 }
 function keyVariableWarnings(env) {
   if (env === void 0) return [];
-  return KEY_VARIABLES.filter((name) => env[name] !== void 0 && env[name] !== "").map((name) => OAUTH_TOKEN_VARIABLES.includes(name) ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of the credentials of the machine's own Claude login, and a request kurmis sends on that login may be billed to the token's account. Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.` : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`);
+  return KEY_VARIABLES.filter((name) => env[name] !== void 0 && env[name] !== "").map((name) => OAUTH_TOKEN_VARIABLES.includes(name) ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of the credentials of the login plain claude uses, and a request kurmis sends on that login may be billed to the token's account. Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.` : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`);
 }
 function backupBefore(backupText) {
   if (backupText === null || backupText === void 0) return null;
@@ -14003,9 +14006,9 @@ Options:
   --uninstall-and-logout  Remove everything kurmis set up: its settings and the backup copy,
                           the daemon's start at login, every login you added to kurmis (each is
                           signed out first, which removes its Keychain or Credential Manager
-                          item), the daemon and the kurmis data folder. Your own Claude Code
-                          and Codex sign-ins are not signed out, so a plain "claude" and
-                          "codex" keep working. It lists what it removes and asks first. The
+                          item), the daemon and the kurmis data folder. The logins plain
+                          claude and plain codex use are not signed out, so a plain "claude"
+                          and "codex" keep working. It lists what it removes and asks first. The
                           last step, "${NPM_UNINSTALL}", is yours to run.
   --yes                   With --uninstall-and-logout: do not ask. Without a terminal to ask
                           at, --uninstall-and-logout needs it.
@@ -14177,7 +14180,7 @@ async function runSetup(deps, context) {
   reportFile(result, false, context);
   if (clearPaused()) writeLine(context.stdout, "Global routing was paused; it is on again.");
   if (configDirHasOwnCredentials(context.env, deps.platform)) {
-    writeLine(context.stdout, `CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder, which is not the machine's own Claude login. Kurmis sends its requests only to the extra logins and never signs them as the machine's own Claude login. "kurmis claude" still starts on the machine's own Claude login.`);
+    writeLine(context.stdout, 'CLAUDE_CONFIG_DIR is set, so a claude that reads this file signs in with the login in that folder, not with the login plain claude uses, which is the one in ~/.claude. Kurmis sends the requests of such a claude only to the extra logins. "kurmis claude" still starts on the login plain claude uses.');
   }
   const ok3 = await autostartStep(false, deps, context);
   if (result.changed) {
@@ -14293,7 +14296,7 @@ async function runUninstall(yes, deps, context) {
   listLine(context, logins.length === 0 ? "no logins: none was added to kurmis" : `the logins added to kurmis, each signed out first: ${logins.map(({ name }) => name).join(", ")}`);
   if (pid !== null) listLine(context, `the running daemon (pid ${String(pid)}), which is stopped`);
   if ((0, import_node_fs26.existsSync)(dataFolder)) listLine(context, `the kurmis data folder ${dataFolder}`);
-  writeLine(context.stdout, 'Your own Claude Code and Codex sign-ins are not signed out, so a plain "claude" and "codex" keep working.');
+  writeLine(context.stdout, 'The logins plain claude and plain codex use are not signed out, so a plain "claude" and "codex" keep working.');
   if (!yes) {
     if (!deps.stdinIsTerminal()) {
       writeLine(context.stderr, "kurmis setup: --uninstall-and-logout asks before it removes anything, and there is no terminal to ask at. Run it again with --yes to remove all of the above. Nothing was removed.");
@@ -14456,7 +14459,7 @@ function sameAccountWarnings(answer2) {
     for (const extra of answer2.logins) {
       if (extra.machineOwn || extra.provider !== own2.provider || extra.email?.trim().toLowerCase() !== email) continue;
       const product = PRODUCT_NAMES[own2.provider];
-      warnings.push(`${extra.alias} and ${own2.alias}, this machine's own ${product} sign-in, are the same ${product} account (${own2.email}), so they use one subscription. "kurmis logout ${loginArgument2(answer2, extra)}" removes ${extra.alias}.`);
+      warnings.push(`${extra.alias} and ${own2.alias}, the login plain ${own2.provider} uses, are the same ${product} account (${own2.email}), so they use one subscription. "kurmis logout ${loginArgument2(answer2, extra)}" removes ${extra.alias}.`);
     }
   }
   return warnings;
@@ -14489,7 +14492,7 @@ function loginLines(login, now, labelWidth) {
   const title = `${login.alias} (${PRODUCT_NAMES[login.provider]}, id ${login.id})`;
   const lines = login.email === null ? [title] : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`] : [title, `  ${login.email}`];
   if (login.machineOwn) {
-    lines.push(`  this machine's own ${PRODUCT_NAMES[login.provider]} sign-in, the account a plain "${login.provider}" uses`);
+    lines.push(`  the login plain ${login.provider} uses`);
   }
   const facts = [
     login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
@@ -14619,10 +14622,10 @@ Shows each login's five-hour and weekly usage, its limits, and whether routing c
 The daemon is started first when it is not running.
 
 Each login is shown by its alias, with its provider, its id and the account's email when the
-daemon knows it. The machine's own Claude and Codex logins are marked: they are the accounts a
-plain "claude" and a plain "codex" are signed in to. When an extra login is the same account
-as the machine's own login of its provider, a warning says so, because both then use one
-subscription.
+daemon knows it. The login plain claude uses and the login plain codex uses are marked: they
+are the accounts a plain "claude" and a plain "codex" are signed in to. When an extra Claude
+login is the same account as the login plain claude uses, a warning says so, because both then
+use one subscription. The same goes for Codex.
 
 Options:
   --json       Print the same as JSON. Each login has "alias", "id", "provider" and

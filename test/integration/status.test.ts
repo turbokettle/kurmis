@@ -1,7 +1,7 @@
 // `kurmis status --json` (and the text form) end to end: the real bundle starts the real daemon,
 // whose usage probes run the fake claude and the fake codex app-server against each login's own
 // folder. Each login's `get_usage` and rate-limit answers come from the scenario file in that
-// folder (`~/.claude` and `~/.codex` of the world's HOME for the machine's own logins).
+// folder (`~/.claude` and `~/.codex` of the world's HOME for the logins of plain claude and plain codex).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -61,17 +61,17 @@ async function probedStatus(world: World): Promise<StatusJson> {
   return status
 }
 
-/** The line `kurmis status` prints under a machine's own login's title. */
+/** The line `kurmis status` prints under the title of the login plain claude or plain codex uses. */
 function ownLine(provider: 'claude' | 'codex'): string {
-  return `  this machine's own ${provider === 'claude' ? 'Claude' : 'Codex'} sign-in, the account a plain "${provider}" uses\n`
+  return `  the login plain ${provider} uses\n`
 }
 
 describe('kurmis status, end to end', () => {
-  it("shows every Claude and Codex login's probed usage, limits and blocks, and gives the machine's own logins aliases from their emails", async () => {
+  it("shows every Claude and Codex login's probed usage, limits and blocks, and gives the logins of plain claude and plain codex aliases from their emails", async () => {
     const world = await createWorld()
     const nowSeconds = Math.floor(Date.now() / 1000)
 
-    // The machine's own Claude login, its usage read through ~/.claude.
+    // The login plain claude uses, its usage read through ~/.claude.
     world.signInDefaultClaude()
     writeClaudeIdentity(join(world.home, '.claude.json'), { email: 'default@example.com' })
     const defaultFiveHourReset = isoIn(2 * HOUR_MS)
@@ -91,7 +91,7 @@ describe('kurmis status, end to end', () => {
     })
     expect((await world.kurmis(['set', 'work-example', '--five-hour', '80', '--weekly', '90'])).code).toBe(0)
 
-    // The machine's own Codex login: ~/.codex.
+    // The login plain codex uses: ~/.codex.
     writeCodexAuth(join(world.home, '.codex'), { email: 'codex-default@example.com', planType: 'plus' })
     writeCodexScenario(join(world.home, '.codex'), {
       primary: { usedPercent: 30, resetsAt: nowSeconds + 3600 },
@@ -104,7 +104,7 @@ describe('kurmis status, end to end', () => {
     writeCodexScenario(spare.folder, { primary: { usedPercent: 99, resetsAt: nowSeconds + 1800 } })
     expect((await world.kurmis(['set', 'codex-spare-example', '--five-hour', '90'])).code).toBe(0)
 
-    // Nothing has told kurmis the emails of the machine's own logins yet.
+    // Nothing has told kurmis the emails of the logins of plain claude and plain codex yet.
     expect([world.configLogin(OWN_CLAUDE).alias, world.configLogin(OWN_CODEX).alias]).toEqual([OWN_CLAUDE, OWN_CODEX])
 
     // Nothing has started a daemon yet: `status` starts one and waits for its first probes.
@@ -125,7 +125,7 @@ describe('kurmis status, end to end', () => {
       expect(Math.abs(Date.parse(login.usage?.fetchedAt ?? '') - Date.now()), login.id).toBeLessThan(5 * MINUTE_MS)
     }
 
-    // The probes told the daemon the emails of the machine's own logins, and it gave them their
+    // The probes told the daemon the emails of the logins of plain claude and plain codex, and it gave them their
     // automatic aliases in config.json.
     expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ machineOwn: true, alias: 'default-example', aliasSetByUser: false })
     expect(world.configLogin(OWN_CODEX)).toMatchObject({ machineOwn: true, alias: 'codex-default-example', aliasSetByUser: false })
@@ -169,13 +169,13 @@ describe('kurmis status, end to end', () => {
     expect(spareRow.blocked).toMatchObject({ kind: 'over-limit', until: isoSeconds(nowSeconds + 1800) })
     expect(status.codexStart).toEqual({ login: OWN_CODEX, alias: 'codex-default-example', note: null })
 
-    // Each Codex login was probed in its own home: the machine's own with CODEX_HOME left unset.
+    // Each Codex login was probed in its own home: the one plain codex uses with CODEX_HOME left unset.
     const probedHomes = world.codexRecord()
       .filter((line) => line.event === 'start' && line.mode === 'app-server')
       .map((line) => line.event === 'start' ? line.codexHome : undefined)
     expect(new Set(probedHomes)).toEqual(new Set([null, spare.folder]))
 
-    // The text form says the same, and marks the machine's own logins.
+    // The text form says the same, and marks the logins of plain claude and plain codex.
     const text = await world.kurmis(['status'])
     expect(text.code).toBe(0)
     expect(text.stdout).toContain(`kurmis daemon ${PACKAGE_VERSION}, pid ${String(daemon?.pid)}, port ${String(world.port)}`)
@@ -187,7 +187,7 @@ describe('kurmis status, end to end', () => {
     expect(text.stdout).toContain(`codex-spare-example (Codex, id ${spare.id})  codex-spare@example.com\n  signed in`)
     expect(text.stdout).toMatch(/\n {2}Codex 5h +99% {2}resets in [^\n]+limit 90%\n/)
     expect(text.stdout).toContain('kurmis codex would start on codex-default-example.')
-    expect(text.stdout.match(/this machine's own/g)).toHaveLength(2)
+    expect(text.stdout.match(/^ {2}the login plain (claude|codex) uses$/gm)).toHaveLength(2)
     expect((text.stdout.match(/\n {2}passed over: /g) ?? []).length).toBe(2)
 
     // Emails are shown, never kept by the daemon.
@@ -198,7 +198,7 @@ describe('kurmis status, end to end', () => {
 
   it('shows signed-out logins, a failed probe, and what forwarded answers and a usage-limit 429 told the daemon', async () => {
     const world = await createWorld()
-    // The machine's own Claude and Codex logins have no credentials at all.
+    // The logins of plain claude and plain codex have no credentials at all.
     const work = await world.addClaudeLogin('work@example.com')
     const spare = await world.addClaudeLogin('spare@example.com')
     writeClaudeScenario(spare.folder, { getUsage: 'error' })

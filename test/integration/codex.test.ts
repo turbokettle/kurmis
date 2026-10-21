@@ -8,7 +8,7 @@ import { normaliseLinkTarget } from '../../src/platform/links.ts'
 import { writeCodexAuth, writeCodexScenario, type FakeCodexRecord } from '../fakes/index.ts'
 import { createWorld, OWN_CLAUDE, OWN_CODEX, waitUntil, type World } from './harness.ts'
 
-const DEFAULT_CONFIG = `# The machine's own settings
+const DEFAULT_CONFIG = `# The settings in ~/.codex
 model = "gpt-5"
 approval_policy = "on-request"
 
@@ -119,7 +119,7 @@ describe('kurmis codex', () => {
     expect(sessionStarts(world).map((start) => start.codexHome)).toEqual([home, home])
   }, 90_000)
 
-  it("starts the machine's own Codex login with CODEX_HOME as inherited, dropping one that is a login home of kurmis", async () => {
+  it("starts the login plain codex uses with CODEX_HOME as inherited, dropping one that is a login home of kurmis", async () => {
     const world = await createWorld({ config: { extras: [WORK_LOGIN] } })
     writeDefaultCodexHome(world)
     const own = join(world.root, 'own-codex-home')
@@ -130,7 +130,7 @@ describe('kurmis codex', () => {
     const nested = await world.kurmis(['codex', '--login', OWN_CODEX, 'exec', 'three'], { env: { CODEX_HOME: world.loginFolder('codex', WORK) } })
     for (const result of [plain, inherited, nested]) expect(result.code, result.stderr).toBe(0)
     expect(sessionStarts(world).map((start) => [start.argv.at(-1), start.codexHome])).toEqual([['one', null], ['two', own], ['three', null]])
-    // The machine's own login has no home of its own to prepare.
+    // The login plain codex uses has no home of its own to prepare.
     expect(existsSync(join(world.data, 'codex', OWN_CODEX))).toBe(false)
   }, 90_000)
 
@@ -151,7 +151,7 @@ describe('kurmis codex', () => {
     const codexHome = writeDefaultCodexHome(world)
     const work = world.loginFolder('codex', WORK)
     writeCodexAuth(work, { email: 'work-codex@example.com' })
-    // The machine's own Codex login is at its five-hour limit; the extra login has room.
+    // The login plain codex uses is at its five-hour limit; the extra login has room.
     writeCodexScenario(codexHome, { primary: { usedPercent: 100, resetsInSeconds: 600 }, secondary: { usedPercent: 20 } })
     writeCodexScenario(work, { primary: { usedPercent: 10, resetsInSeconds: 3 * 3600 }, secondary: { usedPercent: 5 } })
 

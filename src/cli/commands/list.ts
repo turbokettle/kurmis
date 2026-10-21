@@ -46,7 +46,7 @@ function namesAccount(file: string): boolean {
  * - an extra Claude login: its folder holds `.credentials.json`, or a `.claude.json` that names
  *   an account. On macOS the secret is in the Keychain, which is not read here, so the account
  *   in `.claude.json` (written by `claude auth login`) is the sign there.
- * - the machine's own Claude login: `~/.claude/.credentials.json`, or an account in
+ * - plain claude's login: `~/.claude/.credentials.json`, or an account in
  *   `~/.claude.json`.
  * - Codex: `auth.json` exists in the login's Codex home (`codexHomeOf`). Only its existence is
  *   checked. A login that keeps its sign-in in the system's keyring has none; `hasCredentials`
@@ -63,7 +63,7 @@ export function hasLocalCredentials(login: LoginRef, env: NodeJS.ProcessEnv, hom
 
 /**
  * The Codex home of a Codex login, the one `codex login` and `codex logout` run in
- * (`codexLoginEnv`): the login's folder, or for the machine's own Codex login the inherited
+ * (`codexLoginEnv`): the login's folder, or for plain codex's login the inherited
  * `CODEX_HOME` (unless it is an extra login's home), else `~/.codex`.
  */
 export function codexHomeOf(login: LoginRef, env: NodeJS.ProcessEnv, home: string, platform: NodeJS.Platform = process.platform): string {
@@ -131,7 +131,7 @@ const HEADER = ['PROVIDER', 'ALIAS', 'ID', 'AUTO', 'FIVE-HOUR', 'WEEKLY', 'USE-F
 
 /**
  * The logins as a table with a header row, columns padded to their widest cell, followed by a
- * line for each of the machine's own logins that says which one it is.
+ * line for each of the logins of plain claude and plain codex that says which one it is.
  */
 export function formatLoginTable(logins: readonly ListedLogin[]): string {
   const rows = [
@@ -150,7 +150,7 @@ export function formatLoginTable(logins: readonly ListedLogin[]): string {
   const widths = HEADER.map((_, column) => Math.max(...rows.map((row) => row[column]!.length)))
   const table = rows.map((row) => row.map((cell, column) => cell.padEnd(widths[column]!)).join('  ').trimEnd())
   const own = logins.filter((login) => login.machineOwn).map((login) =>
-    `${login.alias} is ${machineOwnText(login.provider)}: the account a plain "${login.provider}" is signed in to.`)
+    `${login.alias} is ${machineOwnText(login.provider)}.`)
   return [...table, ...(own.length > 0 ? ['', ...own] : [])].join('\n')
 }
 
@@ -163,7 +163,7 @@ export function createListCommand(deps: Partial<ListDeps> = {}): Command {
     usage: `Usage: kurmis list [--json]
 
 Lists every login kurmis knows, with its settings and whether it has credentials on this
-machine. The machine's own Claude and Codex logins come first. They are the accounts a plain
+machine. The logins of plain claude and plain codex come first. They are the accounts a plain
 "claude" and a plain "codex" are signed in to, and the lines under the table name them.
 Change the settings with "kurmis set". The columns:
 
@@ -186,7 +186,7 @@ Change the settings with "kurmis set". The columns:
 
 Options:
   --json       Print the logins as JSON. Each has "alias", "id", "provider", "machineOwn"
-               (true for the machine's own logins) and "credentials" for the last column.
+               (true for the logins of plain claude and plain codex) and "credentials" for the last column.
   -h, --help   Show this help.`,
     async run(args, context) {
       const parsed = parseCommandArgs('list', args, { json: { type: 'boolean' } }, context)

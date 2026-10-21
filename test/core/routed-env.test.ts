@@ -30,7 +30,7 @@ describe('the routed environment', () => {
     expect(env.unset).toEqual(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
   })
 
-  test('on the machine\'s own login: pinned, with the folder variable empty, which means the default credentials', () => {
+  test('on the login plain claude uses: pinned, with the folder variable empty, which means the default credentials', () => {
     const env = routedClaudeEnv({ port: 1, key: 'k', login: OWN_CLAUDE, secureStorageDir: null })
     expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe(`x-kurmis-key: k\nx-kurmis-login: ${OWN_CLAUDE}`)
     expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('')

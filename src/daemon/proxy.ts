@@ -213,7 +213,7 @@ export function createProxy(options: ProxyOptions): Proxy {
       return
     }
     table.checkConfig()
-    /** The machine's own Claude login, which an Auto session starts from (`effectivePin`). */
+    /** Plain claude's login, which an Auto session starts from (`effectivePin`). */
     const ownClaude = table.ownLogin('claude').id
     const sessionKey = info.sessionId !== null && isSessionId(info.sessionId) ? info.sessionId : NO_SESSION_KEY
     /**

@@ -17,7 +17,7 @@
 // token replaces it.
 //
 // After the sign-in the command reads the account's email: for Claude from the `.claude.json`
-// the CLI wrote (`readClaudeIdentity`; `~/.claude.json` for the machine's own login), for Codex
+// the CLI wrote (`readClaudeIdentity`; `~/.claude.json` for plain claude's login), for Codex
 // from `codex app-server` (`readCodexEmail`). The email is shown on the terminal and written
 // nowhere. It gives the login's automatic alias (`followEmail`) unless `--alias` sets one. When
 // a new sign-in is an account that is already a kurmis login of the same provider, the machine's
@@ -87,7 +87,7 @@ export interface LoginDeps {
   probeWaitMs: number
   /**
    * Whether Windows Credential Manager holds a record of the Claude login whose folder this is
-   * (null for the machine's own login); such a login signs in with
+   * (null for plain claude's login); such a login signs in with
    * `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`claudeLoginEnv`), so the new token replaces the
    * record. `holdsStoredRecord` by default.
    */
@@ -125,7 +125,7 @@ export function freshLoginId(config: KurmisConfig): LoginId {
   }
 }
 
-/** The account in `~/.claude.json`, which `claude auth login` writes for the machine's own login. */
+/** The account in `~/.claude.json`, which `claude auth login` writes for plain claude's login. */
 function homeIdentity(home: string): ClaudeIdentity | null {
   try {
     return parseClaudeIdentity(readFileSync(join(home, CLAUDE_PROFILE_FILE), 'utf8'))
@@ -259,7 +259,7 @@ async function signIn(run: SignInRun): Promise<number> {
   }
 
   if (provider === 'claude' && ref.machineOwn) {
-    // The probe folder's profile names the account the machine's own login had before; without
+    // The probe folder's profile names the account plain claude's login had before; without
     // it the daemon reads ~/.claude.json, which this sign-in just wrote, until the next probe
     // writes the probe folder's file again.
     rmSync(join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true })
@@ -363,7 +363,7 @@ the sign-in page in the browser.
                               at 100%; "kurmis set" changes that.
   kurmis login codex          Adds a new Codex login.
   kurmis login work-example   Signs the login work-example in again, for example after it was
-                              signed out. This works for the machine's own logins too.
+                              signed out. This works for the logins of plain claude and plain codex too.
 
 <login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
 Codex login have the same alias, put claude: or codex: in front, for example

@@ -2,8 +2,8 @@
 // touching the disk. The code that lists `~/.codex`, links folders and writes files calls
 // these.
 //
-// An extra login's `CODEX_HOME` is `codex/<id>/` in the data folder. The machine's own Codex
-// login has none of its own and is never prepared. Before every start of `codex` on an extra
+// An extra login's `CODEX_HOME` is `codex/<id>/` in the data folder. The login plain codex
+// uses has none of its own and is never prepared. Before every start of `codex` on an extra
 // login:
 //
 // - every folder of `~/.codex` is linked into the login's home (a symlink on macOS, a

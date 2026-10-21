@@ -98,7 +98,7 @@ function read(path: string): string {
 const WORK = codexRef('workcodex1')
 
 describe('prepareCodexHome', () => {
-  test('answers null for the machine\'s own login and touches nothing', async () => {
+  test('answers null for the login plain codex uses and touches nothing', async () => {
     const prepared = await prepareCodexHome(OWN_CODEX_REF, { env: {} })
     expect(prepared).toEqual({ codexHome: null, warnings: [] })
     expect(existsSync(join(root, 'home', '.kurmis'))).toBe(false)

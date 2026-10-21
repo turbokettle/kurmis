@@ -54,12 +54,12 @@ export interface RoutedEnvInput {
   /**
    * The id of the login whose credentials the CLI is started on, sent as `x-kurmis-started-on`.
    * For a pinned CLI it is the pinned login; on Auto it is `autoStartLogin`'s choice. Null leaves
-   * the header out, which the proxy reads as the machine's own login.
+   * the header out, which the proxy reads as plain claude's login.
    */
   startedOn?: string | null
   /**
    * The folder the CLI is started on, as `CLAUDE_SECURESTORAGE_CONFIG_DIR`, when it is started on
-   * an extra login; null for the machine's own login. It is passed to the
+   * an extra login; null for plain claude's login. It is passed to the
    * CLI as it stands, because the CLI names the login's Keychain item after exactly this string
    * (`keychainService` in `keychain-service.ts`).
    */
@@ -69,7 +69,7 @@ export interface RoutedEnvInput {
 }
 
 /**
- * The value of `CLAUDE_SECURESTORAGE_CONFIG_DIR` for a CLI started on the machine's own login. The
+ * The value of `CLAUDE_SECURESTORAGE_CONFIG_DIR` for a CLI started on plain claude's login. The
  * CLI reads the empty string as "the default credentials": `~/.claude/.credentials.json` and the
  * Keychain item with the plain name, which are what the daemon reads for that login,
  * whatever `CLAUDE_CONFIG_DIR` says. Without it, a CLI with `CLAUDE_CONFIG_DIR` set would read
@@ -96,7 +96,7 @@ export interface RoutedEnv {
  *   came apart from the account uuid.
  * - `CLAUDE_CODE_MAX_RETRIES`, see `ROUTED_CLI_MAX_RETRIES`.
  * - `CLAUDE_SECURESTORAGE_CONFIG_DIR` names the folder of the login the CLI is started on when
- *   that is not the machine's own login. On the machine's own login it is the empty string
+ *   that is not plain claude's login. On plain claude's login it is the empty string
  *   (`DEFAULT_SECURE_STORAGE_DIR`), so the CLI signs in with that login's credentials even
  *   when `CLAUDE_CONFIG_DIR` is set, and a CLI started from inside a session on another login
  *   does not keep that login's folder.

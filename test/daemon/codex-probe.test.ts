@@ -143,7 +143,7 @@ test('aborting the signal kills the app-server', async () => {
   expect(isRunning(start(record)?.pid ?? 0)).toBe(false)
 })
 
-test("the machine's own login runs with CODEX_HOME as inherited", async () => {
+test("the login plain codex uses runs with CODEX_HOME as inherited", async () => {
   const { record, env } = login()
   writeCodexAuth(join(homedir(), '.codex'))
   const result = await probeCodexUsage(OWN_CODEX_REF, { env: { ...env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' } })

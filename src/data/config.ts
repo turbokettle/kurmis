@@ -2,8 +2,8 @@
 // it, and the daemon writes a login's automatic alias when the login's email changes; the daemon
 // reloads it when `configStamp` changes.
 //
-// The machine's own logins, one per provider, are always in a loaded config, first and in the
-// order of `LOGIN_PROVIDERS`. `loadConfig` adds one with a new id when the file has none, and
+// The login plain claude uses and the login plain codex uses are always in a loaded config,
+// first and in the order of `LOGIN_PROVIDERS`. `loadConfig` adds one with a new id when the file has none, and
 // saves the file then, so that every reader sees the same id.
 //
 // No email is stored here. An automatic alias is made from one (`automaticAlias`), and the
@@ -74,7 +74,7 @@ export interface LoginSettings extends LoginRef {
 export interface KurmisConfig {
   version: typeof CONFIG_VERSION
   port: number
-  /** The machine's own logins first, then the extra ones in the order they were added. */
+  /** The logins of plain claude and plain codex first, then the extra ones in the order they were added. */
   logins: LoginSettings[]
 }
 
@@ -91,15 +91,15 @@ export class ConfigError extends Error {
   }
 }
 
-/** Whether a login is the machine's own sign-in of its provider, which kurmis never signs out. */
+/** Whether a login is the one plain claude or plain codex uses, which kurmis never signs out. */
 export function isMachineOwn(login: LoginRef): boolean {
   return login.machineOwn
 }
 
-/** The machine's own login of a provider. Every loaded config has one for each provider. */
+/** The login plain claude or plain codex uses. Every loaded config has one for each provider. */
 export function machineOwnLogin(config: KurmisConfig, provider: LoginProvider): LoginSettings {
   const own = config.logins.find((login) => login.machineOwn && login.provider === provider)
-  if (own === undefined) throw new ConfigError(`The config has no login for the machine's own ${provider} sign-in.`)
+  if (own === undefined) throw new ConfigError(`The config has no login that plain ${provider} uses.`)
   return own
 }
 
@@ -139,14 +139,14 @@ function emptyConfig(): KurmisConfig {
   return { version: CONFIG_VERSION, port: DEFAULT_PORT, logins: [] }
 }
 
-/** The config of a machine with no `config.json`: the machine's own logins, with new ids. */
+/** The config of a machine with no `config.json`: the logins of plain claude and plain codex, with new ids. */
 export function defaultConfig(): KurmisConfig {
   return ensureMachineOwnLogins(emptyConfig())
 }
 
 /**
- * The config with a machine's own login, with a new id, for each provider that has none. The
- * same object when every provider has one.
+ * The config with a login for plain claude and one for plain codex, each added with a new id
+ * where the config has none. The same object when it has both.
  */
 export function ensureMachineOwnLogins(config: KurmisConfig): KurmisConfig {
   const missing = LOGIN_PROVIDERS.filter((provider) => !config.logins.some((login) => login.machineOwn && login.provider === provider))
@@ -161,7 +161,7 @@ export function ensureMachineOwnLogins(config: KurmisConfig): KurmisConfig {
   return { ...config, logins: ordered([...config.logins, ...added]) }
 }
 
-/** The machine's own logins first, in provider order, then the others in the order given. */
+/** The logins of plain claude and plain codex first, in provider order, then the others in the order given. */
 function ordered(logins: readonly LoginSettings[]): LoginSettings[] {
   const own = LOGIN_PROVIDERS.flatMap((provider) => logins.filter((login) => login.machineOwn && login.provider === provider))
   return [...own, ...logins.filter((login) => !login.machineOwn)]
@@ -233,9 +233,9 @@ function checkVersion(raw: Record<string, unknown>, file: string): void {
 }
 
 /**
- * Checks a parsed `config.json` and fills in what it leaves out, apart from the machine's own
- * logins (`ensureMachineOwnLogins`). Throws a `DataFileError` naming the file and the field for
- * anything wrong. Unknown fields are ignored.
+ * Checks a parsed `config.json` and fills in what it leaves out, apart from the logins of plain
+ * claude and plain codex (`ensureMachineOwnLogins`). Throws a `DataFileError` naming the file
+ * and the field for anything wrong. Unknown fields are ignored.
  */
 export function parseConfig(value: unknown, file: string): KurmisConfig {
   const raw = expectObject(value, topOf(file))
@@ -249,7 +249,8 @@ export function parseConfig(value: unknown, file: string): KurmisConfig {
     const login = parseLogin(entry, at)
     if (logins.some((other) => other.id === login.id)) fail(child(at, 'id'), `repeats "${login.id}"`)
     if (login.machineOwn && logins.some((other) => other.machineOwn && other.provider === login.provider)) {
-      fail(child(at, 'machineOwn'), `is true for a second ${login.provider} login; only one login of a provider is the machine's own`)
+      fail(child(at, 'machineOwn'),
+        `is true for a second ${login.provider} login; only one ${login.provider} login can be the one plain ${login.provider} uses`)
     }
     const clash = logins.find((other) => other.id === login.alias || other.alias === login.id ||
       (other.provider === login.provider && other.alias === login.alias))
@@ -273,8 +274,8 @@ function readConfigFile(path: string): KurmisConfig {
 
 /**
  * Reads `config.json`. A file that is not JSON, or has a wrong field, is a `ConfigError` whose
- * message names the file and the field. When the file is missing or has no login for the
- * machine's own sign-in of a provider, that login is added with a new id and the file is saved
+ * message names the file and the field. When the file is missing or has no login for
+ * plain claude or plain codex, that login is added with a new id and the file is saved
  * under the lock (`changeConfig`), so the id stays the same from then on.
  */
 export function loadConfig(path = configPath(), lockOptions: FileLockOptions = {}): KurmisConfig {
@@ -283,7 +284,7 @@ export function loadConfig(path = configPath(), lockOptions: FileLockOptions = {
   return changeConfig((current) => current, path, lockOptions)
 }
 
-/** Writes `config.json` atomically. Every login is written, the machine's own ones included. */
+/** Writes `config.json` atomically. Every login is written, those of plain claude and plain codex included. */
 export function saveConfig(config: KurmisConfig, path = configPath()): void {
   writeJsonFileSync(path, { version: CONFIG_VERSION, port: config.port, logins: config.logins })
 }
@@ -376,11 +377,11 @@ export function addLogin(config: KurmisConfig, ref: Pick<LoginRef, 'id' | 'provi
   return { ...config, logins: [...config.logins, login] }
 }
 
-/** The config without a login. The machine's own logins cannot be removed. */
+/** The config without a login. The logins of plain claude and plain codex cannot be removed. */
 export function removeLogin(config: KurmisConfig, id: string): KurmisConfig {
   const login = findLogin(config, id)
   if (login === undefined) throw new ConfigError(`There is no login ${id}.`)
-  if (login.machineOwn) throw new ConfigError(`${login.alias} is the machine's own ${login.provider} sign-in and cannot be removed.`)
+  if (login.machineOwn) throw new ConfigError(`${login.alias} is the login plain ${login.provider} uses and cannot be removed.`)
   return { ...config, logins: config.logins.filter((other) => other.id !== id) }
 }
 
@@ -422,8 +423,8 @@ function capitalized(text: string): string {
  * Loads the config, applies `change`, and saves the result, holding the lock file
  * (`configLockPath()`, or `<path>.lock` for another path) from before the read until after the
  * write, so two kurmis processes changing the config at the same moment both keep their change.
- * `change` gets the config with the machine's own logins in it and must not call `changeConfig`
- * itself. A lock that cannot be taken in time is a `ConfigError` saying who holds it.
+ * `change` gets the config with the logins of plain claude and plain codex in it and must not
+ * call `changeConfig` itself. A lock that cannot be taken in time is a `ConfigError` saying who holds it.
  */
 export function changeConfig(
   change: (config: KurmisConfig) => KurmisConfig,

@@ -19,7 +19,7 @@ describe('kurmis status', () => {
     expect(daemon.calls).toEqual(['ensureDaemon', 'readStatus'])
     expect(out.stdout()).toContain('kurmis daemon 0.1.0, pid 4242, port 40123')
     expect(out.stdout()).toContain('  Codex 5h    7%')
-    expect(out.stdout()).toContain('ownclaude1 (Claude, id ownclaude1)\n  this machine\'s own Claude sign-in')
+    expect(out.stdout()).toContain('ownclaude1 (Claude, id ownclaude1)\n  the login plain claude uses')
     expect(out.stderr()).toBe('')
   })
 
@@ -33,7 +33,7 @@ describe('kurmis status', () => {
     expect(json.warnings).toEqual([])
   })
 
-  test('warns when an extra login is the same account as the machine\'s own login', async () => {
+  test('warns when an extra login is the same account as the login plain claude uses', async () => {
     const status = statusAnswer([
       loginStatus(OWN_CLAUDE_REF, { email: 'own@example.com', usage: PROBED.logins[1]!.usage }),
       loginStatus({ ...claudeRef('workclaude'), alias: 'own-example' }, { email: 'own@example.com' })
@@ -41,7 +41,7 @@ describe('kurmis status', () => {
     const daemon = fakeDaemonClient({ status })
     const text = collect()
     expect(await createStatusCommand({ daemon, now: () => NOW, platform: 'linux' }).run([], text.context)).toBe(0)
-    expect(text.stdout()).toContain('Warning: own-example and ownclaude1, this machine\'s own Claude sign-in, are the')
+    expect(text.stdout()).toContain('Warning: own-example and ownclaude1, the login plain claude uses, are the')
     const json = collect()
     expect(await createStatusCommand({ daemon, now: () => NOW, platform: 'linux' }).run(['--json'], json.context)).toBe(0)
     expect((JSON.parse(json.stdout()) as { warnings: string[] }).warnings).toEqual([expect.stringContaining('"kurmis logout own-example"')])

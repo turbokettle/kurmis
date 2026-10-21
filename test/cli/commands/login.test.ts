@@ -383,7 +383,7 @@ describe('kurmis login claude', () => {
     expect(findLogin(loadConfig(), 'workclaude')).toBeDefined()
   })
 
-  it('signs the machine\'s own login in on the machine\'s own folders, and its alias follows the email', async () => {
+  it('signs the login plain claude uses in on ~/.claude, and its alias follows the email', async () => {
     mkdirSync(ownClaudeProbeFolder(), { recursive: true })
     writeClaudeIdentity(join(ownClaudeProbeFolder(), '.claude.json'), { email: 'before@example.com' })
     const runner = fakeRunner(claudeSignsIn('own@example.com'))
@@ -449,7 +449,7 @@ describe('kurmis login of an account that is already a kurmis login', () => {
     expect(daemon.calls).toEqual([])
   })
 
-  it('finds the machine\'s own Claude login, and signs out with CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1 on Windows', async () => {
+  it('finds the login plain claude uses, and signs out with CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1 on Windows', async () => {
     writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
     writeTestConfig({ ownClaude: { alias: 'own-example' }, extras: [{ id: 'othercodex', provider: 'codex', alias: 'own-example' }] })
     const signOut = fakeRun({ code: 1 })
@@ -459,7 +459,7 @@ describe('kurmis login of an account that is already a kurmis login', () => {
     expect(signOut.runs[0]!.env?.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBe('1')
     expect(out.stderr()).toContain('"claude auth logout" did not finish (exit code 1); the new sign-in is deleted anyway.')
     expect(out.stderr()).toContain('may be left; Credential Manager can delete them.')
-    expect(out.stdout()).toContain(`own@example.com is already a kurmis Claude login: own-example, this machine's own Claude sign-in (id ${OWN_CLAUDE}).`)
+    expect(out.stdout()).toContain(`own@example.com is already a kurmis Claude login: own-example, the login plain claude uses (id ${OWN_CLAUDE}).`)
     // A Codex login has the same alias, so the command names the provider.
     expect(out.stdout()).toContain('"kurmis login claude:own-example" signs own-example in again.')
     expect(folders('claude')).toEqual([])
@@ -485,7 +485,7 @@ describe('kurmis login of an account that is already a kurmis login', () => {
     expect(existsSync(codexMergedRecordPath(codexRef(newId!)))).toBe(false)
     expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workcodex1'])
     expect(out.stdout()).toContain('work@example.com is already a kurmis Codex login: work-example (id workcodex1).')
-    // The new login's email, then the others', the machine's own included.
+    // The new login's email, then the others', the login plain claude uses included.
     expect(asked.sort()).toEqual([newId, OWN_CODEX, 'workcodex1'].sort())
   })
 
@@ -614,7 +614,7 @@ describe('kurmis login codex', () => {
     expect(folders('codex')).toEqual([entry.id])
   })
 
-  it('signs the machine\'s own Codex login in with CODEX_HOME as inherited', async () => {
+  it('signs the login plain codex uses in with CODEX_HOME as inherited', async () => {
     const codexHome = join(home, 'codex-own')
     const runner = fakeRunner(codexSignsIn())
     const { login } = command(runner)

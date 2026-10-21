@@ -7,7 +7,7 @@
 // by the others at once. `onChange` tells listeners, which is how a request held for capacity
 // learns that the pool has changed.
 //
-// Which provider a login belongs to, and whether it is the machine's own sign-in, is read from
+// Which provider a login belongs to, and whether it is the login of plain claude or plain codex, is read from
 // its settings in the config (`find`, `ownLogin`), never from its id.
 //
 // The table also writes one thing into `config.json`: a login's automatic alias, when a usage
@@ -43,8 +43,8 @@ export const STATE_WRITE_MS = 2_000
 
 /**
  * How long the daemon waits for `config.json`'s lock when it writes the file (an automatic
- * alias, or the machine's own logins added to a file that has none). The wait blocks the event
- * loop, so it is short; a write that does not get the lock in time is tried again later.
+ * alias, or the logins of plain claude and plain codex added to a file that has none). The wait
+ * blocks the event loop, so it is short; a write that does not get the lock in time is tried again later.
  */
 export const CONFIG_LOCK_TIMEOUT_MS = 500
 
@@ -169,7 +169,7 @@ export class LoginTable {
     this.reloadConfig()
   }
 
-  /** Every login in `config.json`, the machine's own logins first. */
+  /** Every login in `config.json`, the logins of plain claude and plain codex first. */
   logins(): readonly LoginSettings[] {
     return this.config.logins
   }
@@ -183,7 +183,7 @@ export class LoginTable {
   }
 
   /**
-   * The machine's own login of a provider: the one a plain `claude` or `codex` is signed in
+   * The login a plain `claude` or a plain `codex` uses: the one that CLI is signed in
    * to. The config always has one for each provider.
    */
   ownLogin(provider: LoginProvider): LoginSettings {
@@ -200,7 +200,7 @@ export class LoginTable {
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
    * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
    * credentials are no kurmis login's (`STARTED_ON_NONE`): no login is signed with its header,
-   * and the machine's own Claude login, whose token belongs to another account than the CLI's,
+   * and plain claude's login, whose token belongs to another account than the CLI's,
    * is left out of the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
    * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.

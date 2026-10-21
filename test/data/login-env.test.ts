@@ -20,7 +20,7 @@ describe('claude', () => {
     expect(claudeProbeEnv(claudeRef('workclaude'))).toEqual(env)
   })
 
-  test("the machine's own login signs in on ~/.claude, with both folder variables removed", () => {
+  test("the login plain claude uses signs in on ~/.claude, with both folder variables removed", () => {
     const env = claudeLoginEnv(OWN_CLAUDE_REF)
     expect(Object.entries(env).filter(([, value]) => value !== undefined)).toEqual([])
     expect(Object.keys(env)).toEqual(expect.arrayContaining(['CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']))
@@ -33,7 +33,7 @@ describe('claude', () => {
     expect('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN' in claudeLoginEnv(claudeRef('workclaude'))).toBe(false)
   })
 
-  test("the machine's own login is probed in the probe folder with the default credentials", () => {
+  test("the login plain claude uses is probed in the probe folder with the default credentials", () => {
     const env = claudeProbeEnv(OWN_CLAUDE_REF)
     expect(env['CLAUDE_CONFIG_DIR']).toBe(ownClaudeProbeFolder())
     expect(env['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('')
@@ -41,13 +41,13 @@ describe('claude', () => {
 })
 
 describe('codex', () => {
-  test("an extra login gets its CODEX_HOME, the machine's own login keeps the inherited one", () => {
+  test("an extra login gets its CODEX_HOME, the login plain codex uses keeps the inherited one", () => {
     expect(codexLoginEnv(codexRef('workcodex1'))['CODEX_HOME']).toBe(join(kurmisHome(), 'codex', 'workcodex1'))
     expect('CODEX_HOME' in codexLoginEnv(OWN_CODEX_REF)).toBe(false)
     expect('CODEX_HOME' in codexLoginEnv(OWN_CODEX_REF, { CODEX_HOME: '/somewhere/else' })).toBe(false)
   })
 
-  test("the machine's own login drops an inherited CODEX_HOME that is an extra login's home", () => {
+  test("the login plain codex uses drops an inherited CODEX_HOME that is an extra login's home", () => {
     const env = codexLoginEnv(OWN_CODEX_REF, { CODEX_HOME: join(kurmisHome(), 'codex', 'workcodex1') })
     expect('CODEX_HOME' in env && env['CODEX_HOME'] === undefined).toBe(true)
   })

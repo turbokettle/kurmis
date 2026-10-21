@@ -27,7 +27,7 @@ afterEach(async () => {
   harness = null
 })
 
-/** A harness with the machine's own Claude login and `WORK_ID`, both signed in with a file. */
+/** A harness with the login plain claude uses and `WORK_ID`, both signed in with a file. */
 async function twoLogins(options: Parameters<typeof startHarness>[0] = {}): Promise<Harness> {
   harness = await startHarness({ claude: { [WORK_ID]: {} }, ...options })
   writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
@@ -79,7 +79,7 @@ describe('what the daemon answers itself', () => {
     expect(harness.api.apiRequests()).toHaveLength(0)
     expect(harness.log.filter((line) => line.event === 'proxy_rejected').map((line) => line.fields.reason))
       .toEqual(['invalid', 'invalid', 'invalid', 'invalid', 'invalid'])
-    // The machine's own Claude login, named by its id, is a Claude login like any other.
+    // The login plain claude uses, named by its id, is a Claude login like any other.
     expect((await messages(harness, S1, { 'x-kurmis-login': OWN_CLAUDE })).status).toBe(200)
     expect(bearers(harness)).toEqual([DEFAULT])
   })
@@ -178,7 +178,7 @@ describe('choosing and signing', () => {
     const userId = JSON.stringify(JSON.stringify({ device_id: 'device-1', account_uuid: '00000000-0000-4000-8000-00000000c11e' }))
     const text = `{ "model" : "claude-sonnet-5",\n "max_tokens": 100, "seed": 18446744073709551615, "stream": true,\n` +
       ` "messages": [{"role":"user","content":"caf\u00e9"}], "metadata": {"user_id": ${userId}} }`
-    // The machine's own login has no identity here, so its request is not rewritten at all.
+    // The login plain claude uses has no identity here, so its request is not rewritten at all.
     await call(h, '/v1/messages?beta=true', { headers: { ...routed(S1), 'content-type': 'application/json' }, text })
     expect(h.api.apiRequests()[0]!.body).toBe(text)
     await call(h, '/v1/messages?beta=true', { headers: { ...routed(S2, { 'x-kurmis-login': WORK_ID }), 'content-type': 'application/json' }, text })
@@ -212,9 +212,9 @@ describe('choosing and signing', () => {
 
   test('a 400 on the login a session has just moved to sends it back to its previous login', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is placed on the machine's own login
+    expect((await messages(h, S1)).status).toBe(200) // S1 is placed on the login plain claude uses
     h.api.scriptFor(DEFAULT, reply.quota({ resetsAt: Date.now() + 3_600_000 }))
-    expect((await messages(h, S2)).status).toBe(200) // the machine's own login is now cooling, S2 is on WORK_ID
+    expect((await messages(h, S2)).status).toBe(200) // the login plain claude uses is now cooling, S2 is on WORK_ID
     h.api.scriptFor(WORK, reply.raw(400, '{"type":"error","error":{"type":"invalid_request_error","message":"no"}}'))
     const answer = await messages(h, S1)
     expect(answer.status).toBe(200)
@@ -386,7 +386,7 @@ describe('the control API', () => {
     expect(harness.stopRequested()).toBe(0)
   })
 
-  test("status lists every login with its settings, the machine's own ones first", async () => {
+  test("status lists every login with its settings, those of plain claude and plain codex first", async () => {
     const h = await twoLogins()
     writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'), { email: 'work@example.com' })
     const answer = await status(h)
@@ -408,7 +408,7 @@ describe('the control API', () => {
     writeClaudeCredentials(join(h.home, '.claude'), { accessToken: DEFAULT })
     writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
     writeClaudeCredentials(loginFolder(claudeRef('picked')), { accessToken: fakeToken('picked') })
-    // Before its first probe, the machine's own Claude login's profile is read from ~/.claude.json.
+    // Before its first probe, the profile of the login plain claude uses is read from ~/.claude.json.
     writeClaudeIdentity(join(h.home, '.claude.json'), { email: 'own.person@example.com' })
     writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'), { email: 'work.person@example.com' })
     writeClaudeIdentity(join(loginFolder(claudeRef('picked')), '.claude.json'), { email: 'picked.person@example.com' })

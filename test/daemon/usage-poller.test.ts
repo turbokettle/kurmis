@@ -295,7 +295,7 @@ describe("a probe and the login's email", () => {
   const codexAnswer = (answer: () => ProbeAnswer): ProbeFunction => () => Promise.resolve(answer())
   const codexUsage = (id: string): AccountUsage => emptyCodexUsage(id, Date.now())
 
-  test('is handed the login with its provider and whether it is the machine\'s own', async () => {
+  test('is handed the login with its provider and whether it is the login of a plain CLI', async () => {
     writeLogins({ claude: { [WORK]: {} } })
     const seen: LoginRef[] = []
     const { poller } = setup((login) => {

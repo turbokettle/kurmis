@@ -20,7 +20,7 @@ export const LOGIN_HEADER = 'x-kurmis-login'
 /**
  * The header naming the login whose credentials the CLI was started on, by its id. The
  * proxy may forward the CLI's own `authorization` header only for that login. A request without
- * it was sent by a CLI started on the machine's own login, such as a plain `claude` in global mode.
+ * it was sent by a CLI started on plain claude's login, such as a plain `claude` in global mode.
  */
 export const STARTED_ON_HEADER = 'x-kurmis-started-on'
 
@@ -29,7 +29,7 @@ export const STARTED_ON_HEADER = 'x-kurmis-started-on'
  * mode writes it into `$CLAUDE_CONFIG_DIR/settings.json`, which only a CLI that reads the
  * credentials in that folder uses (`configDirHasOwnCredentials` in `src/data/login-env.ts`). The
  * proxy then never forwards the CLI's own `authorization` header and never signs the request as
- * the machine's own login.
+ * plain claude's login.
  */
 export const STARTED_ON_NONE = 'none'
 
@@ -105,7 +105,7 @@ export interface RouteRequest {
   sessionId: string | null
 }
 
-/** Reads a request's headers. `ownClaude` is the id of the machine's own Claude login. */
+/** Reads a request's headers. `ownClaude` is the id of plain claude's login. */
 export function readRouteRequest(get: RequestHeaderGetter, ownClaude: string): RouteRequest {
   const key = nonEmpty(get(KEY_HEADER))
   const named = nonEmpty(get(LOGIN_HEADER))

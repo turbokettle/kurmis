@@ -69,10 +69,10 @@ function refusedUntil(usage: AccountUsage | null): number | null {
   return Number.isFinite(at) ? at : Infinity
 }
 
-/** The machine's own Codex login of a status answer. Every answer has one. */
+/** The login of a status answer that plain codex uses. Every answer has one. */
 export function ownCodexLogin(status: Pick<StatusAnswer, 'logins'>): LoginStatus {
   const own = status.logins.find((login) => login.provider === 'codex' && login.machineOwn)
-  if (own === undefined) throw new Error("The daemon's status has no login for the machine's own Codex sign-in.")
+  if (own === undefined) throw new Error('The daemon\'s status has no login that plain codex uses.')
   return own
 }
 
@@ -85,12 +85,12 @@ function aliasIn(status: Pick<StatusAnswer, 'logins'>, id: string): string {
 export type CodexChoiceKind =
   /** The login that ranks first. */
   | 'ranked'
-  /** No Codex login is opted in to routing, so the machine's own login is used. */
+  /** No Codex login is opted in to routing, so plain codex's login is used. */
   | 'machine-own'
   /** Every login routing may use is at a limit; this one gets its usage back first. */
   | 'all-out'
   /**
-   * No login routing may use is signed in, or the machine's own login is not when it is the
+   * No login routing may use is signed in, or plain codex's login is not when it is the
    * only choice.
    */
   | 'none-signed-in'
@@ -105,7 +105,7 @@ export interface CodexChoice {
 /**
  * The Codex login to start on. Normally the one `chooseAccount` ranks first. When every login
  * routing may use is at one of its limits, the one whose usage comes back first, with a note
- * that says when. When none of them is signed in, the machine's own login, with a note.
+ * that says when. When none of them is signed in, plain codex's login, with a note.
  */
 export function chooseCodexLogin(status: Pick<StatusAnswer, 'logins'>, now: number): CodexChoice {
   const ownId = ownCodexLogin(status).id
@@ -126,7 +126,7 @@ export function chooseCodexLogin(status: Pick<StatusAnswer, 'logins'>, now: numb
     return {
       login: ownId,
       kind: 'none-signed-in',
-      note: `No Codex login that routing may use is signed in; starting on ${aliasIn(status, ownId)}, this machine's own Codex sign-in.`
+      note: `No Codex login that routing may use is signed in; starting on ${aliasIn(status, ownId)}, the login plain codex uses.`
     }
   }
   let best: { id: string; readyAt: number } | null = null
@@ -185,8 +185,8 @@ export function codexLoginsToProbe(status: Pick<StatusAnswer, 'logins'>, now: nu
  * Whether an inherited `CODEX_HOME` is one kurmis set for an extra login: a folder inside the
  * data folder's `codex/` folder (`codexLoginsFolder`). A `kurmis codex` started from a shell
  * inside another `kurmis codex` session on an extra login inherits that session's
- * `CODEX_HOME`, and a start on the machine's own login must not run on it. A `CODEX_HOME` anywhere
- * else is the user's own and is the machine's own login. Paths are compared as given, after
+ * `CODEX_HOME`, and a start on plain codex's login must not run on it. A `CODEX_HOME` anywhere
+ * else is the user's own and is plain codex's login. Paths are compared as given, after
  * removing trailing separators; on Windows (`windows`) without regard to case and with either
  * slash.
  */

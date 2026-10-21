@@ -52,7 +52,7 @@ import { makePrivateDirSync, PRIVATE_FILE_MODE, replaceFile, syncDirectory } fro
 import { linkFolder, pathsOf, readFolderLink, removeFolderLink } from '../platform/links.ts'
 
 export interface PreparedCodexHome {
-  /** The `CODEX_HOME` to start codex with, or null for the machine's own Codex login, which keeps the inherited one. */
+  /** The `CODEX_HOME` to start codex with, or null for plain codex's login, which keeps the inherited one. */
   codexHome: string | null
   /** Sentences about what could not be prepared, for stderr. Never a secret. */
   warnings: string[]
@@ -90,7 +90,7 @@ function emptyRecord(config: string | null): CodexMergedRecord {
 
 /**
  * Prepares the home of the extra Codex login `login` and answers it as the `CODEX_HOME` to start
- * codex with. The machine's own Codex login answers null and nothing is touched. Throws only when
+ * codex with. Plain codex's login answers null and nothing is touched. Throws only when
  * `login` is not a Codex login or its home cannot be created. Messages name the login by `alias`
  * when it is given, otherwise by its id.
  */

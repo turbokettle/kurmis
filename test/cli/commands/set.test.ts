@@ -93,12 +93,12 @@ describe('kurmis set', () => {
     expect(out.stdout()).not.toContain('daemon')
   })
 
-  it('sets the machine\'s own logins too, and marks them', async () => {
+  it('sets the logins of plain claude and plain codex too, and marks them', async () => {
     const set = createSetCommand({ daemon: fakeDaemonClient({ running: false }) })
     const out = collect()
     expect(await set.run([OWN_CODEX, '--auto', 'off'], out.context)).toBe(0)
     expect(findLogin(loadConfig(), OWN_CODEX)?.routing).toBe(false)
-    expect(out.stdout()).toContain(`${OWN_CODEX} (Codex, id ${OWN_CODEX})\n  this machine's own Codex sign-in\n`)
+    expect(out.stdout()).toContain(`${OWN_CODEX} (Codex, id ${OWN_CODEX})\n  the login plain codex uses\n`)
     expect(out.stdout()).toContain(`  alias       ${OWN_CODEX} (the id, while kurmis knows no email for the login)`)
   })
 

@@ -42,7 +42,7 @@ function stored(id: string, provider: 'claude' | 'codex', more: Record<string, u
   return { id, provider, ...more }
 }
 
-/** The machine's own logins as a version 2 file stores them. */
+/** The logins of plain claude and plain codex as a version 2 file stores them. */
 const OWN_ROWS = [stored(OWN_CLAUDE, 'claude', { machineOwn: true }), stored(OWN_CODEX, 'codex', { machineOwn: true })]
 
 function idsOf(config: KurmisConfig): string[] {
@@ -70,7 +70,7 @@ beforeEach(() => {
 })
 
 describe('loading', () => {
-  it("creates the machine's own logins with new ids when there is no file, and saves them", () => {
+  it("creates the logins of plain claude and plain codex with new ids when there is no file, and saves them", () => {
     const config = loadConfig()
     expect(config.version).toBe(CONFIG_VERSION)
     expect(config.port).toBe(DEFAULT_PORT)
@@ -96,7 +96,7 @@ describe('loading', () => {
     expect(loadConfig()).toEqual(config)
   })
 
-  it("adds the machine's own login a file leaves out, keeping the other's id", () => {
+  it("adds the login of plain claude or plain codex that a file leaves out, keeping the other's id", () => {
     writeRaw({ version: 2, logins: [OWN_ROWS[1], stored('workclaude', 'claude')] })
     const config = loadConfig()
     expect(config.logins.map((login) => [login.provider, login.machineOwn])).toEqual([['claude', true], ['codex', true], ['claude', false]])
@@ -107,14 +107,14 @@ describe('loading', () => {
     expect(machineOwnLogin(loadConfig(), 'claude').id).toBe(added)
   })
 
-  it("leaves a file that has both of the machine's own logins as it is", () => {
+  it("leaves a file that has both of the logins of plain claude and plain codex as it is", () => {
     const text = JSON.stringify({ version: 2, logins: [...OWN_ROWS] })
     saveRawText(text)
     loadConfig()
     expect(readFileSync(configPath(), 'utf8')).toBe(text)
   })
 
-  it("puts the machine's own Claude login first, then the own Codex login, then the extras in file order", () => {
+  it("puts the login plain claude uses first, then the own Codex login, then the extras in file order", () => {
     writeRaw({
       version: 2,
       logins: [
@@ -225,7 +225,7 @@ describe('loading', () => {
   })
 })
 
-describe("the machine's own logins", () => {
+describe("the logins of plain claude and plain codex", () => {
   it('are found by provider, and are not extra logins', () => {
     const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude' }, { id: 'sidecodex1', provider: 'codex' }] })
     expect(machineOwnLogin(config, 'claude').id).toBe(OWN_CLAUDE)
@@ -382,11 +382,11 @@ describe('changing logins', () => {
     expect(() => addLogin(config, { id: 'abc123' as LoginId, provider: 'claude' })).toThrow(ConfigError)
   })
 
-  it("removes an extra login but never one of the machine's own", () => {
+  it("removes an extra login but never that of plain claude or plain codex", () => {
     const config = addLogin(testConfig({ ownCodex: { alias: 'mycodex' } }), { id: 'workclaude' as LoginId, provider: 'claude' })
     expect(findLogin(removeLogin(config, 'workclaude'), 'workclaude')).toBeUndefined()
-    expect(() => removeLogin(config, OWN_CLAUDE)).toThrow(`${OWN_CLAUDE} is the machine's own claude sign-in and cannot be removed.`)
-    expect(() => removeLogin(config, OWN_CODEX)).toThrow("mycodex is the machine's own codex sign-in and cannot be removed.")
+    expect(() => removeLogin(config, OWN_CLAUDE)).toThrow(`${OWN_CLAUDE} is the login plain claude uses and cannot be removed.`)
+    expect(() => removeLogin(config, OWN_CODEX)).toThrow("mycodex is the login plain codex uses and cannot be removed.")
     expect(() => removeLogin(config, 'nobody')).toThrow('There is no login nobody.')
   })
 

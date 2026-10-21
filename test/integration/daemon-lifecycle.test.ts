@@ -229,7 +229,7 @@ describe('the kurmis daemon, end to end', () => {
     const world = await createWorld()
     world.signInDefaultClaude()
     const work = await world.addClaudeLogin('work@example.com')
-    // A new session goes to the login whose week resets first: the machine's own login.
+    // A new session goes to the login whose week resets first: the login plain claude uses.
     const soon = new Date(Date.now() + DAY_MS).toISOString()
     const late = new Date(Date.now() + 5 * DAY_MS).toISOString()
     writeClaudeScenario(join(world.home, '.claude'), { sevenDay: { utilization: 10, resetsAt: soon } })
@@ -256,7 +256,7 @@ describe('the kurmis daemon, end to end', () => {
 
     const resetsAt = Date.now() + 2 * HOUR_MS
     world.api.scriptFor(fakeToken('default'), reply.quota({ claim: 'five_hour', resetsAt }))
-    // From now on the machine's own login's probes agree with the 429.
+    // From now on the probes of the login plain claude uses agree with the 429.
     writeClaudeScenario(join(world.home, '.claude'), { fiveHour: { utilization: 100, resetsAt: new Date(resetsAt).toISOString() }, sevenDay: { utilization: 10, resetsAt: soon } })
     expect(await ask(SESSION_C)).toBe('served by work')
 

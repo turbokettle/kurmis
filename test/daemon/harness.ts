@@ -36,13 +36,13 @@ export interface Harness {
 }
 
 export interface HarnessOptions {
-  /** Extra Claude logins by id, with their settings, added after the machine's own logins. */
+  /** Extra Claude logins by id, with their settings, added after the logins of plain claude and plain codex. */
   claude?: Record<string, LoginSettingsPatch>
   /** Extra Codex logins by id, with their settings, added after the extra Claude logins. */
   codex?: Record<string, LoginSettingsPatch>
-  /** Settings of the machine's own Claude login (`OWN_CLAUDE`). */
+  /** Settings of the login plain claude uses (`OWN_CLAUDE`). */
   ownClaude?: LoginSettingsPatch
-  /** Settings of the machine's own Codex login (`OWN_CODEX`). */
+  /** Settings of the login plain codex uses (`OWN_CODEX`). */
   ownCodex?: LoginSettingsPatch
   tuning?: DaemonTuning
   env?: Record<string, string>
@@ -58,7 +58,7 @@ export function freshHome(): string {
 }
 
 /**
- * Writes a `config.json` with the machine's own logins at `OWN_CLAUDE` and `OWN_CODEX` and the
+ * Writes a `config.json` with the logins of plain claude and plain codex at `OWN_CLAUDE` and `OWN_CODEX` and the
  * given extra logins (`writeTestConfig`).
  */
 export function writeLogins(options: Pick<HarnessOptions, 'claude' | 'codex' | 'ownClaude' | 'ownCodex'>): KurmisConfig {

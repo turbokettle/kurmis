@@ -48,7 +48,7 @@ describe('kurmis login, set, list and logout', () => {
     expect(readClaudeCredentials(folder)?.accessToken).toMatch(/^sk-ant-oat01-fake-/)
     expect(claudeLoginDirs(world)).toEqual([folder])
     expect(loginFolders(world, 'claude')).toEqual([id])
-    // ~/.claude stays the machine's own.
+    // ~/.claude stays as it was.
     expect(existsSync(join(world.home, '.claude', '.credentials.json'))).toBe(false)
 
     expect(world.configLogin(id!)).toEqual({
@@ -81,9 +81,9 @@ describe('kurmis login, set, list and logout', () => {
     const lines = table.stdout.trimEnd().split('\n')
     expect(lines[0]!.split(/\s+/)).toEqual(['PROVIDER', 'ALIAS', 'ID', 'AUTO', 'FIVE-HOUR', 'WEEKLY', 'USE-FIRST', 'CREDENTIALS'])
     expect(lines.find((line) => line.includes(id!))!.split(/\s+/)).toEqual(['claude', 'work-example', id, 'on', '100%', '100%', 'off', 'yes'])
-    // The lines under the table mark the machine's own logins.
-    expect(lines).toContain(`${OWN_CLAUDE} is this machine's own Claude sign-in: the account a plain "claude" is signed in to.`)
-    expect(lines).toContain(`${OWN_CODEX} is this machine's own Codex sign-in: the account a plain "codex" is signed in to.`)
+    // The lines under the table mark the logins of plain claude and plain codex.
+    expect(lines).toContain(`${OWN_CLAUDE} is the login plain claude uses.`)
+    expect(lines).toContain(`${OWN_CODEX} is the login plain codex uses.`)
 
     // None of these commands needs or starts the daemon.
     expect(world.daemonInfo()).toBeNull()
@@ -107,11 +107,11 @@ describe('kurmis login, set, list and logout', () => {
     expect(loginFolders(world, 'claude')).toEqual([work.id])
     expect(configText(world)).toBe(before)
 
-    // The account of the machine's own login is found too.
+    // The account of the login plain claude uses is found too.
     writeClaudeIdentity(join(world.home, '.claude.json'), { email: 'own@example.com' })
     const own = await world.kurmis(['login', 'claude'], { env: { FAKE_CLAUDE_EMAIL: 'own@example.com' } })
     expect(own.code, own.stderr).toBe(0)
-    expect(own.stdout).toContain(`own@example.com is already a kurmis Claude login: ${OWN_CLAUDE}, this machine's own Claude sign-in (id ${OWN_CLAUDE}).`)
+    expect(own.stdout).toContain(`own@example.com is already a kurmis Claude login: ${OWN_CLAUDE}, the login plain claude uses (id ${OWN_CLAUDE}).`)
     expect(loginFolders(world, 'claude')).toEqual([work.id])
     expect(configText(world)).toBe(before)
   }, 90_000)
@@ -186,7 +186,7 @@ describe('kurmis login, set, list and logout', () => {
     expect(configText(world)).not.toContain('example.com')
   }, 120_000)
 
-  it("signs the machine's own Claude login in again in ~/.claude, without a folder of its own, and gives it an alias from the email", async () => {
+  it("signs the login plain claude uses in again in ~/.claude, without a folder of its own, and gives it an alias from the email", async () => {
     const world = await createWorld()
     const result = await world.kurmis(['login', OWN_CLAUDE], { env: { FAKE_CLAUDE_EMAIL: 'own@example.com' } })
     expect(result.code, result.stderr).toBe(0)
@@ -203,7 +203,7 @@ describe('kurmis login, set, list and logout', () => {
     expect(listed.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ alias: 'own-example', credentials: true })
   }, 60_000)
 
-  it("gives the machine's own logins new ids when config.json has none, and refuses a config.json of an older version", async () => {
+  it("gives the logins of plain claude and plain codex new ids when config.json has none, and refuses a config.json of an older version", async () => {
     const world = await createWorld({ ownLogins: false })
     const listed = await world.kurmis(['list', '--json'])
     expect(listed.code, listed.stderr).toBe(0)
@@ -241,10 +241,10 @@ describe('kurmis login, set, list and logout', () => {
       id: work.id, provider: 'claude', machineOwn: false, alias: 'work', aliasSetByUser: true,
       routing: false, fiveHourLimit: 80, weeklyLimit: 90, useFirst: true
     })
-    // The machine's own logins can be set too, by their id.
+    // The logins of plain claude and plain codex can be set too, by their id.
     const own = await world.kurmis(['set', OWN_CLAUDE, '--weekly', '50'])
     expect(own.code, own.stderr).toBe(0)
-    expect(own.stdout).toContain("this machine's own Claude sign-in")
+    expect(own.stdout).toContain("the login plain claude uses")
     expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ weeklyLimit: 50, machineOwn: true })
 
     const before = configText(world)
@@ -305,7 +305,7 @@ describe('kurmis login, set, list and logout', () => {
     expect(loginIds(world)).toEqual([OWN_CLAUDE, OWN_CODEX])
     // The daemon was told to reload, so it no longer lists the login.
     expect((await world.status()).logins.map((login) => login.id)).not.toContain(work.id)
-    // The machine's own login is untouched.
+    // The login plain claude uses is untouched.
     expect(existsSync(join(world.home, '.claude', '.credentials.json'))).toBe(true)
 
     const again = await world.kurmis(['logout', 'work-example'])
@@ -316,7 +316,7 @@ describe('kurmis login, set, list and logout', () => {
       const alias = world.configLogin(id).alias
       const refused = await world.kurmis(['logout', id])
       expect(refused.code).toBe(2)
-      expect(refused.stderr).toContain(`${alias} is this machine's own ${product} sign-in and cannot be removed`)
+      expect(refused.stderr).toContain(`${alias} is the login plain ${product.toLowerCase()} uses and cannot be removed`)
     }
     expect((await world.kurmis(['logout', 'not-a-login'])).code).toBe(1)
   }, 120_000)
@@ -384,12 +384,12 @@ describe('Codex logins and the folders they link to', () => {
     expect(normaliseLinkTarget(readlinkSync(join(work.folder, 'sessions')), process.platform)).toBe(join(codexHome, 'sessions'))
     expect(lstatSync(join(work.folder, 'skills')).isSymbolicLink()).toBe(true)
 
-    // A new sign-in of the machine's own Codex account is signed out again and deleted.
+    // A new sign-in of the account of the login plain codex uses is signed out again and deleted.
     const signIn = join(world.root, 'own-codex-sign-in')
     const auth = writeCodexAuth(signIn, { email: 'default-codex@example.com' })
     const duplicate = await world.kurmis(['login', 'codex'], { env: { KURMIS_CODEX_BIN: world.codexSignInScript, TEST_CODEX_SIGN_IN: auth } })
     expect(duplicate.code, duplicate.stderr).toBe(0)
-    expect(duplicate.stdout).toContain(`default-codex@example.com is already a kurmis Codex login: ${OWN_CODEX}, this machine's own Codex sign-in (id ${OWN_CODEX}).`)
+    expect(duplicate.stdout).toContain(`default-codex@example.com is already a kurmis Codex login: ${OWN_CODEX}, the login plain codex uses (id ${OWN_CODEX}).`)
     const dropped = codexHomesOf(world, 'login')[1]!
     expect(dropped).not.toBe(work.folder)
     expect(codexHomesOf(world, 'logout')).toEqual([dropped])

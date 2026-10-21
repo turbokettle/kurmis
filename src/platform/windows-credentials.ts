@@ -310,7 +310,7 @@ export async function readStoredRecords(secureStorageDirs: ReadonlyArray<string 
 
 /**
  * Whether Credential Manager holds a Claude record for the login whose CLI names it after
- * `secureStorageDir` (null for the machine's own login). False on other platforms, and when it cannot
+ * `secureStorageDir` (null for plain claude's login). False on other platforms, and when it cannot
  * be read. Runs PowerShell (`powerShellCredentialRead`) unless `read` is given.
  */
 export async function holdsStoredRecord(secureStorageDir: string | null, env: NodeJS.ProcessEnv,

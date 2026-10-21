@@ -28,9 +28,9 @@ never holds tokens or request bodies, so it can be shared.
 ### Logins
 The checks below call the extra Claude login `<t1>`: use the alias `kurmis list` shows for it.
 
-1. **The machine's own logins get their alias.** Start from an empty data folder. Run
-   `kurmis list` first: the machine's own Claude and Codex logins are there, each with its id
-   as its alias and a line under the table that marks it as the machine's own. Then run
+1. **The logins plain claude and plain codex use get their alias.** Start from an empty data
+   folder. Run `kurmis list` first: those two logins are there, each with its id as its alias
+   and a line under the table that says which plain CLI uses it. Then run
    `kurmis status`, which waits for the daemon's first usage probe. After it, `kurmis list`
    should show each of them with the alias made from its email (`me@example.com` gives
    `me-example`).
@@ -41,16 +41,16 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis list`
 3. **The same account twice.** Run `kurmis login claude` again and sign in to the account of
    `<t1>`. Expect a message that the email is already `<t1>`, exit code 0, no new row in
    `kurmis list`, and no new folder in the data folder's `claude/`. Do the same with the account
-   of the machine's own Claude login: the message should name the machine's own login. On macOS,
+   of the login plain claude uses: the message should name that login. On macOS,
    check that no new `Claude Code-credentials-<8 hex digits>` Keychain item is left.
-4. **An extra login of the machine's own account.** This needs a spare Claude account B
-   besides the account A of the machine's own login. Sign plain `claude` in to B with
-   `claude auth login`, and run `kurmis daemon restart` and `kurmis status` until the machine's
-   own login shows B's email. Add A with `kurmis login claude`. Sign plain `claude` in to A
-   again, and run `kurmis daemon restart` and `kurmis status` until the machine's own login
-   shows A's email. Expect a warning at the top that the extra login and the machine's own
-   login are the same account, and the machine's own login's alias with `-2` at the end,
-   because the extra login has the plain one.
+4. **An extra login of the account plain claude uses.** This needs a spare Claude account B
+   besides the account A of the login plain claude uses. Sign plain `claude` in to B with
+   `claude auth login`, and run `kurmis daemon restart` and `kurmis status` until the login
+   plain claude uses shows B's email. Add A with `kurmis login claude`. Sign plain `claude` in
+   to A again, and run `kurmis daemon restart` and `kurmis status` until the login plain claude
+   uses shows A's email. Expect a warning at the top that the extra login and the login plain
+   claude uses are the same account, and the alias of the login plain claude uses with `-2` at
+   the end, because the extra login has the alias without it.
 5. Run `kurmis login <t1>` (signing it in again) in two terminals at once. The second should
    stop with a message that another `kurmis login` or `logout` of it is running, and the first
    should succeed.
@@ -132,7 +132,7 @@ Run this last, since it removes the logins added above.
    `settings.json.kurmis-backup`, no autostart entry, no daemon, no data folder, and a last line
    that says to run `npm uninstall -g kurmis`.
 4. A plain `claude -p --model haiku "Reply ok"` and a plain `codex exec "Reply ok"` still answer
-   on the machine's own sign-ins.
+   on the logins they used before.
 5. The extra logins' Keychain items (macOS) or Credential Manager records (Windows) are gone,
    and every file in `~/.codex` is still there.
 
@@ -170,8 +170,8 @@ Run this last, since it removes the logins added above.
   without a token. Then run `kurmis setup` at the screen and log out and in again. Over ssh,
   `kurmis daemon status` should show the daemon started at that login, and `kurmis claude -p
   --model haiku "Reply ok"` should be routed on a Keychain login.
-- **Signed-out machine's own login.** When `claude` itself is signed out, `kurmis claude` says it
-  starts on another login's credentials and still routes.
+- **The login plain claude uses, signed out.** When `claude` itself is signed out, `kurmis claude`
+  says it starts on another login's credentials and still routes.
 
 ## Windows only
 

@@ -315,8 +315,8 @@ export function refusalAnswer(session: RouteSession, rows: readonly RouteAccount
  * The proxy's own 599 for a request no login here can sign. Not a usage limit, and never a 401,
  * which would send the CLI off to renew a token that is not the problem. The CLI retries a 5xx
  * and honours `retry-after`. `cliOnOwnCredentials` is a request whose CLI said its credentials
- * are no kurmis login's (`STARTED_ON_NONE`), and the message then says why the machine's own
- * Claude login was not used.
+ * are no kurmis login's (`STARTED_ON_NONE`), and the message then says why the login plain
+ * claude uses was not used.
  */
 export function noSignerAnswer(cliOnOwnCredentials = false): ProxyAnswer {
   const message = cliOnOwnCredentials

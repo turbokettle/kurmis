@@ -105,9 +105,9 @@ export interface SetupValues {
   key: string
   /**
    * The file is `$CLAUDE_CONFIG_DIR/settings.json`, read only by CLIs that sign in with the
-   * credentials in that folder, which are not those of the machine's own Claude login
+   * credentials in that folder, which are not those of plain claude's login
    * (`configDirHasOwnCredentials`). The custom headers then say so (`STARTED_ON_NONE`), and the
-   * proxy never signs those CLIs' requests as the machine's own Claude login.
+   * proxy never signs those CLIs' requests as plain claude's login.
    */
   credentialsOfItsOwn?: boolean
 }
@@ -354,7 +354,7 @@ function newEnvJson(values: Record<string, string>, outerIndent: string, layout:
 
 /**
  * The values setup writes: `ROUTING_VARIABLES` from `routedClaudeEnv` on Auto, started on the
- * machine's own Claude login. The user's own lines of `existingHeaders` come first, exactly as
+ * login plain claude uses. The user's own lines of `existingHeaders` come first, exactly as
  * written, then kurmis' lines.
  */
 export function kurmisEnvValues(values: SetupValues, existingHeaders: string | null): Record<string, string> {
@@ -424,7 +424,7 @@ function keyVariableWarnings(env: Record<string, unknown> | undefined): string[]
   // An empty value is read as unset by Claude Code, so it signs nothing.
   return KEY_VARIABLES.filter((name) => env[name] !== undefined && env[name] !== '').map((name) => OAUTH_TOKEN_VARIABLES.includes(name)
     ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of ` +
-      'the credentials of the machine\'s own Claude login, and a request kurmis sends on that login may be billed to the token\'s account. ' +
+      'the credentials of the login plain claude uses, and a request kurmis sends on that login may be billed to the token\'s account. ' +
       'Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.'
     : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`)
 }

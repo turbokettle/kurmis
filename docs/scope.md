@@ -9,20 +9,21 @@ machine after each larger change. Linux works where it costs nothing extra.
 
 ## Logins
 
-- **The machine's own logins.** The account a plain `claude` is signed in to and the account a
-  plain `codex` is signed in to are always logins of kurmis. They follow whatever those CLIs are
-  signed in to, and kurmis never signs them out. Every other login is an extra login, added with
-  `kurmis login`.
+- **The logins plain `claude` and plain `codex` use.** The account a plain `claude` is signed in to
+  and the account a plain `codex` is signed in to are always logins of kurmis. They follow whatever
+  those CLIs are signed in to, and kurmis never signs them out. Every other login is an extra login,
+  added with `kurmis login`.
 - **Names.** Each login has a random id that never changes, and an alias that the person sees
   and types. Kurmis makes the alias from the account's email, as soon as it knows the email, so
   `work@example.com` becomes `work-example`. The person can set an alias of their own instead.
   A Claude login and a Codex login of the same account can have the same alias.
 - **One login per account.** Signing in to an account that is already a login of the same
   provider adds nothing, and kurmis says which login it is. `kurmis status` warns when an extra
-  login is the same account as the machine's own login, because both then use one subscription.
+  login is the same account as the login plain `claude` or plain `codex` uses, because both
+  then use one subscription.
 - **Claude:** each extra login keeps only its credentials in a folder of its own. A CLI started
   on it gets `CLAUDE_SECURESTORAGE_CONFIG_DIR` and nothing else, so settings, CLAUDE.md, skills,
-  plugins and transcripts stay the machine's own. The only thing a login changes is which
+  plugins and transcripts stay those of `~/.claude`. The only thing a login changes is which
   subscription is billed.
 - **Codex:** the CLI has one variable, `CODEX_HOME`, and it moves the whole folder. So each login
   has its own home. Before every start, `config.toml` is merged in from `~/.codex` without its
@@ -83,7 +84,7 @@ signs the request with that login's token.
 - `kurmis setup` routes every Claude Code on the machine through kurmis by editing the user's
   `settings.json`. `kurmis setup --pause` takes kurmis' settings out of that file and keeps the
   rest. `kurmis setup --uninstall-and-logout` removes everything kurmis set up, signs out every
-  login added to kurmis and leaves the machine's own Claude and Codex sign-ins alone.
+  login added to kurmis and leaves the logins plain `claude` and plain `codex` use alone.
 - There are also commands to start and stop the background process and show its state.
   `kurmis daemon stop --now` stops it without waiting for its open requests.
 

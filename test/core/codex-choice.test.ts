@@ -19,8 +19,8 @@ const HOUR = 60 * MINUTE
 const at = (ms: number): string => new Date(NOW + ms).toISOString()
 
 /**
- * A login as the daemon's status lists it: a Codex login unless it is `OWN_CLAUDE`, the machine's own
- * when it is `OWN_CLAUDE` or `OWN_CODEX`, and with its id as its alias.
+ * A login as the daemon's status lists it: a Codex login unless it is `OWN_CLAUDE`, marked as the
+ * login of plain claude or plain codex when it is `OWN_CLAUDE` or `OWN_CODEX`, and with its id as its alias.
  */
 function loginStatus(id: string, patch: Partial<LoginStatus> = {}): LoginStatus {
   return {
@@ -77,15 +77,15 @@ describe('the Codex rows', () => {
   })
 })
 
-describe("the machine's own Codex login", () => {
-  test('is the Codex login the status marks as the machine\'s own', () => {
+describe("the login plain codex uses", () => {
+  test('is the Codex login the status marks as the one plain codex uses', () => {
     const status = statusAnswer([loginStatus(OWN_CLAUDE), loginStatus('workcodex1'), loginStatus(OWN_CODEX)])
     expect(ownCodexLogin(status).id).toBe(OWN_CODEX)
   })
 
   test('is an error when the status has none, as only a broken daemon would answer', () => {
-    expect(() => ownCodexLogin(statusAnswer([loginStatus(OWN_CLAUDE), loginStatus('workcodex1')]))).toThrow(/machine's own Codex/)
-    expect(() => chooseCodexLogin(statusAnswer([loginStatus('workcodex1')]), NOW)).toThrow(/machine's own Codex/)
+    expect(() => ownCodexLogin(statusAnswer([loginStatus(OWN_CLAUDE), loginStatus('workcodex1')]))).toThrow(/no login that plain codex uses/)
+    expect(() => chooseCodexLogin(statusAnswer([loginStatus('workcodex1')]), NOW)).toThrow(/no login that plain codex uses/)
   })
 })
 
@@ -115,14 +115,14 @@ describe('the Codex login to start on', () => {
     expect(choice).toEqual({ login: 'workcodex1', kind: 'ranked', note: null })
   })
 
-  test('with no usage read anywhere, is the machine\'s own login', () => {
+  test('with no usage read anywhere, is the login plain codex uses', () => {
     const choice = chooseCodexLogin(statusAnswer([loginStatus(OWN_CODEX), loginStatus('workcodex1')]), NOW)
     expect(choice.login).toBe(OWN_CODEX)
-    // The machine's own login is the one marked so, wherever the status lists it.
+    // The login plain codex uses is the one marked so, wherever the status lists it.
     expect(chooseCodexLogin(statusAnswer([loginStatus('workcodex1'), loginStatus(OWN_CODEX)]), NOW).login).toBe(OWN_CODEX)
   })
 
-  test('with no Codex login opted in to routing, is the machine\'s own login whatever its usage', () => {
+  test('with no Codex login opted in to routing, is the login plain codex uses whatever its usage', () => {
     const choice = chooseCodexLogin(statusAnswer([
       loginStatus(OWN_CODEX, { routing: false, usage: codexUsage(OWN_CODEX, { fiveHour: 100, fetchedAt: NOW }) }),
       loginStatus('workcodex1', { routing: false })
@@ -130,7 +130,7 @@ describe('the Codex login to start on', () => {
     expect(choice).toEqual({ login: OWN_CODEX, kind: 'machine-own', note: null })
   })
 
-  test("with no login opted in and the machine's own login signed out, is still that login, with a note naming its alias", () => {
+  test("with no login opted in and the login plain codex uses signed out, is still that login, with a note naming its alias", () => {
     const choice = chooseCodexLogin(statusAnswer([
       loginStatus(OWN_CODEX, { alias: 'me-example', routing: false, signedIn: false })
     ]), NOW)
@@ -174,14 +174,14 @@ describe('the Codex login to start on', () => {
     expect(choice.note).toBe('Every Codex login is at its limit and none says when it resets; starting on work-example.')
   })
 
-  test("when no login routing may use is signed in, is the machine's own login, with a note", () => {
+  test("when no login routing may use is signed in, is the login plain codex uses, with a note", () => {
     const choice = chooseCodexLogin(statusAnswer([
       loginStatus(OWN_CODEX, { alias: 'me-example', routing: false }),
       loginStatus('workcodex1', { signedIn: false })
     ]), NOW)
     expect(choice.login).toBe(OWN_CODEX)
     expect(choice.kind).toBe('none-signed-in')
-    expect(choice.note).toBe("No Codex login that routing may use is signed in; starting on me-example, this machine's own Codex sign-in.")
+    expect(choice.note).toBe("No Codex login that routing may use is signed in; starting on me-example, the login plain codex uses.")
   })
 
   test('a window whose reset has passed counts as empty again', () => {

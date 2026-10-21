@@ -38,8 +38,8 @@ export interface CredentialsSource {
 export interface CredentialsFileReaderOptions {
   /**
    * The folder holding a login's `.credentials.json`: the login's own folder for an extra
-   * login, and the machine's own Claude config folder (normally `~/.claude`) for the machine's
-   * own login.
+   * login, and the default Claude config folder (normally `~/.claude`) for the login plain claude
+   * uses.
    */
   credentialsDir(id: string): string
 }

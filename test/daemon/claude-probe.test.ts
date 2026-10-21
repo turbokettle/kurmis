@@ -189,7 +189,7 @@ test('a failed renewal leaves the login signed out', async () => {
   expect(await probeClaudeUsage(claudeRef(id), { env })).toMatchObject({ ok: true, signedIn: false, usage: { rateLimitsAvailable: false } })
 })
 
-test("the machine's own login runs with claudeProbeEnv, its own probe folder and the default credentials", async () => {
+test("the login plain claude uses runs with claudeProbeEnv, its own probe folder and the default credentials", async () => {
   const { record, env } = login()
   const credentials = join(homedir(), '.claude')
   writeClaudeCredentials(credentials, { accessToken: fakeToken('default') })

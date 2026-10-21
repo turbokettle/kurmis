@@ -61,7 +61,7 @@ describe('kurmis status as text', () => {
     expect(formatStatus(sampleStatus(), NOW, { keychain: false, timeZone: 'UTC' })).toBe(`kurmis daemon 0.1.0, pid 4242, port 40123, running for 2h 5m
 
 own-example (Claude, id ownclaude1)
-  this machine's own Claude sign-in, the account a plain "claude" uses
+  the login plain claude uses
   signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
   5 hour       42%  resets in 2h 10m      limit 100%
   7 day        63%  resets in 3d 4h       limit 100%
@@ -88,7 +88,7 @@ coolclaude (Claude, id coolclaude)
   passed over: cooling down until 02:10 (in 1h)
 
 own-example (Codex, id owncodex01)
-  this machine's own Codex sign-in, the account a plain "codex" uses
+  the login plain codex uses
   signed in, routing on, limits 100% 5 hour, 100% weekly, plan plus
   Codex 5h    100%  resets in 1h          limit 100%
   Codex 7d     30%  resets in 5d          limit 100%
@@ -211,7 +211,7 @@ describe('kurmis status as JSON', () => {
   })
 })
 
-describe('the warning about an extra login that is the machine\'s own account', () => {
+describe('the warning about an extra login that is the account of the login plain claude uses', () => {
   test('names both logins and the account, per provider, ignoring case', () => {
     const status = statusAnswer([
       loginStatus(OWN_CLAUDE_LOGIN, { email: 'own@example.com' }),
@@ -220,15 +220,15 @@ describe('the warning about an extra login that is the machine\'s own account', 
       // The same email on a Codex login is another subscription than the Claude one.
       loginStatus(WORK_CODEX, { email: 'other@example.com' })
     ])
-    const warning = 'work-example and own-example, this machine\'s own Claude sign-in, are the same Claude account ' +
+    const warning = 'work-example and own-example, the login plain claude uses, are the same Claude account ' +
       '(own@example.com), so they use one subscription. "kurmis logout claude:work-example" removes work-example.'
     expect(statusJson(status, NOW, { keychain: false }).warnings).toEqual([warning])
     const text = formatStatus(status, NOW, { keychain: false })
-    expect(text).toContain('\n\nWarning: work-example and own-example, this machine\'s own Claude sign-in, are\n  the same Claude account')
+    expect(text).toContain('\n\nWarning: work-example and own-example, the login plain claude uses, are the same\n  Claude account')
     for (const line of text.split('\n')) expect(line.length).toBeLessThanOrEqual(80)
   })
 
-  test('says nothing while the machine\'s own email is not known', () => {
+  test('says nothing while the email of the login plain claude uses is not known', () => {
     const status = statusAnswer([loginStatus(OWN_CLAUDE_LOGIN), loginStatus(WORK_CLAUDE, { email: 'own@example.com' })])
     expect(statusJson(status, NOW, { keychain: false }).warnings).toEqual([])
     expect(formatStatus(status, NOW, { keychain: false })).not.toContain('Warning')

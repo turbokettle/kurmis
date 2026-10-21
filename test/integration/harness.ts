@@ -2,7 +2,7 @@
 // processes, against the fakes. Each test makes a `World`: a temporary folder with its own HOME
 // (= USERPROFILE), KURMIS_HOME, fake Keychain, fake launchctl and fake registry folders, a free
 // port in `config.json`, and its own fake Anthropic API. The world's `config.json` holds the
-// machine's own logins with the fixed ids `OWN_CLAUDE` and `OWN_CODEX` of `test/logins.ts`,
+// logins of plain claude and plain codex with the fixed ids `OWN_CLAUDE` and `OWN_CODEX` of `test/logins.ts`,
 // unless the test asks for a file without logins (`WorldOptions.ownLogins`).
 //
 // What a child process gets is built here from nothing, not from `process.env`: only PATH (a
@@ -105,13 +105,13 @@ export interface WorldOptions {
   /** The version the bundle reports. Default: the version in package.json. */
   version?: string
   /**
-   * The logins `config.json` starts with: the machine's own at `OWN_CLAUDE` and `OWN_CODEX`
+   * The logins `config.json` starts with: those of plain claude and plain codex at `OWN_CLAUDE` and `OWN_CODEX`
    * and these extras and settings (`testConfig`). The port is always the world's.
    */
   config?: TestConfigOptions
   /**
    * False: `config.json` holds only its version and the port, so the first kurmis command gives
-   * the machine's own logins new random ids. Default true.
+   * the logins of plain claude and plain codex new random ids. Default true.
    */
   ownLogins?: boolean
 }
@@ -138,7 +138,7 @@ export interface World {
   /** Runs `node <bundle> …args` and waits for it. */
   kurmis(args: string[], options?: RunOptions): Promise<KurmisResult>
   /**
-   * Writes `~/.claude/.credentials.json` for the machine's own Claude login, with the token
+   * Writes `~/.claude/.credentials.json` for the login plain claude uses, with the token
    * `fakeToken('default')`, and answers what it wrote.
    */
   signInDefaultClaude(options?: Partial<ClaudeCredentials>): ClaudeCredentials

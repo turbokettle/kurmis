@@ -35,7 +35,7 @@ describe('reading', () => {
     expect(readClaudeIdentity(WORK)?.accountUuid).toBe('uuid-work')
   })
 
-  test("the machine's own login prefers the probe folder and falls back to ~/.claude.json", () => {
+  test("the login plain claude uses prefers the probe folder and falls back to ~/.claude.json", () => {
     writeFileSync(join(homedir(), '.claude.json'), profile('uuid-shared', 'shared@example.com'))
     const reader = new ClaudeIdentityReader()
     expect(reader.read(OWN_CLAUDE_REF)?.accountUuid).toBe('uuid-shared')

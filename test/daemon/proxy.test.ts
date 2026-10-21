@@ -33,7 +33,7 @@ afterEach(async () => {
   harness = null
 })
 
-/** A harness with the machine's own Claude login and `WORK_ID`, both signed in with a file. */
+/** A harness with the login plain claude uses and `WORK_ID`, both signed in with a file. */
 async function twoLogins(options: Parameters<typeof startHarness>[0] = {},
   credentials: { default?: Parameters<typeof writeClaudeCredentials>[1] } = {}): Promise<Harness> {
   harness = await startHarness({ claude: { [WORK_ID]: {} }, ...options })
@@ -66,8 +66,8 @@ function useWorkFirst(): void {
 }
 
 /**
- * S1 is placed on the machine's own login, then moves to WORK_ID (marked "use first"), which answers
- * 400, so S1 is sent back to the machine's own login and held there. The machine's own login can serve throughout.
+ * S1 is placed on the login plain claude uses, then moves to WORK_ID (marked "use first"), which answers
+ * 400, so S1 is sent back to the login plain claude uses and held there. The login plain claude uses can serve throughout.
  */
 async function holdS1OnDefault(h: Harness): Promise<void> {
   expect((await messages(h, S1)).status).toBe(200)
@@ -75,7 +75,7 @@ async function holdS1OnDefault(h: Harness): Promise<void> {
   h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
   expect((await messages(h, S1)).status).toBe(200)
   expect(bearers(h)).toEqual([DEFAULT, WORK, DEFAULT])
-  // Held: the next request stays on the machine's own login although WORK_ID comes first.
+  // Held: the next request stays on the login plain claude uses although WORK_ID comes first.
   expect((await messages(h, S1)).status).toBe(200)
   expect(bearers(h).at(-1)).toBe(DEFAULT)
 }
@@ -146,14 +146,14 @@ describe('a 401', () => {
 describe('the hold after a pin-back', () => {
   test('ends when the held login is cooling down, and the request goes on Auto', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is on the machine's own login
+    expect((await messages(h, S1)).status).toBe(200) // S1 is on the login plain claude uses
     h.api.scriptFor(DEFAULT, reply.quota({ resetsAt: Date.now() + 3_600_000 }))
-    expect((await messages(h, S2)).status).toBe(200) // the machine's own login is cooling, S2 is on WORK_ID
+    expect((await messages(h, S2)).status).toBe(200) // the login plain claude uses is cooling, S2 is on WORK_ID
     h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
-    // S1 moves to WORK_ID, which answers 400; the pin-back tries the machine's own login once.
+    // S1 moves to WORK_ID, which answers 400; the pin-back tries the login plain claude uses once.
     expect((await messages(h, S1)).status).toBe(200)
     expect(bearers(h)).toEqual([DEFAULT, DEFAULT, WORK, WORK, DEFAULT])
-    // The machine's own login is still cooling, so the hold ends and S1 goes where Auto sends it.
+    // The login plain claude uses is still cooling, so the hold ends and S1 goes where Auto sends it.
     expect((await messages(h, S1)).status).toBe(200)
     expect(bearers(h).at(-1)).toBe(WORK)
     expect(events(h, 'session_hold_ended')).toBe(1)
@@ -179,7 +179,7 @@ describe('the hold after a pin-back', () => {
 
   test('back to a previous login that is signed out gives the CLI the 400', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is on the machine's own login
+    expect((await messages(h, S1)).status).toBe(200) // S1 is on the login plain claude uses
     rmSync(join(h.home, '.claude', '.credentials.json'))
     h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
     const answer = await messages(h, S1)
@@ -190,7 +190,7 @@ describe('the hold after a pin-back', () => {
 
   test('that meets a usage limit on the previous login gives the CLI that 429, not the 400 again', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is on the machine's own login
+    expect((await messages(h, S1)).status).toBe(200) // S1 is on the login plain claude uses
     useWorkFirst()
     h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
     h.api.scriptFor(DEFAULT, reply.quota({ claim: 'seven_day', resetsAt: Date.now() + 3_600_000 }))
@@ -204,7 +204,7 @@ describe('the hold after a pin-back', () => {
 describe('a CLI whose credentials are no kurmis login\'s (x-kurmis-started-on: none)', () => {
   const none = { 'x-kurmis-started-on': 'none', authorization: 'Bearer cli-own-token' }
 
-  test("is never signed as the machine's own login, and its own header is never forwarded", async () => {
+  test("is never signed as the login plain claude uses, and its own header is never forwarded", async () => {
     const h = await twoLogins()
     expect((await messages(h, S1, none)).status).toBe(200)
     expect((await messages(h, S2, none)).status).toBe(200)
@@ -321,7 +321,7 @@ describe('a request body that is too large', () => {
   test('is answered 413 also for a client that sends its whole body before it reads the answer', async () => {
     const log: string[] = []
     // Nothing but the key and the body is looked at before a body that is too large is refused.
-    // The table only names the machine's own Claude login: the body is refused before anything else is read.
+    // The table only names the login plain claude uses: the body is refused before anything else is read.
     const table = { ownLogin: () => ({ id: OWN_CLAUDE }) }
     const proxy = createProxy({ key: KEY, table: table as never, tokens: {} as never, identity: {} as never, poller: {} as never,
       upstream: {} as never, log: { write: (event) => { log.push(event) } }, now: Date.now, maxBodyBytes: 1_000 })

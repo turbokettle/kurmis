@@ -5,11 +5,11 @@
 //
 // The block is read only from a config folder that this login's own CLI runs write, so it can
 // never name another login: the login's folder for an extra login (written by `claude auth login`
-// and by its usage probes), and the probe folder for the machine's own login (written by its
+// and by its usage probes), and the probe folder for plain claude's login (written by its
 // probes).
-// The shared `~/.claude.json` is read for the machine's own login only before its first probe has
+// The shared `~/.claude.json` is read for plain claude's login only before its first probe has
 // written the probe folder's file, as a last resort: a routed CLI writes there too, but always
-// on behalf of the machine's own login.
+// on behalf of plain claude's login.
 //
 // The email is personal data. It may be shown to the person on their own terminal, and is never
 // written to the log or to any file kurmis keeps.
@@ -31,7 +31,7 @@ export interface ClaudeIdentity {
 
 /**
  * The files the identity of a login is read from, best first: for an extra login only its own
- * folder's `.claude.json`, for the machine's own login the probe folder's and then
+ * folder's `.claude.json`, for plain claude's login the probe folder's and then
  * `~/.claude.json`.
  */
 export function claudeIdentityFiles(login: LoginRef, home: string = homedir()): string[] {

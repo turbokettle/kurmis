@@ -225,7 +225,7 @@ deletes its folder in the kurmis data folder. A running daemon stops using it at
 Codex login have the same alias, put claude: or codex: in front, for example
 codex:work-example.
 
-The machine's own Claude and Codex logins cannot be removed. To sign them out, run
+The logins of plain claude and plain codex cannot be removed. To sign them out, run
 "claude auth logout" or "codex logout" yourself.
 
 An id that is in no list any more but still has a folder in the kurmis data folder, for

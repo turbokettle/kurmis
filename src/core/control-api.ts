@@ -69,7 +69,7 @@ export interface LoginStatus {
   provider: AccountProvider
   /** The name the person sees and types for the login (`alias` in `config.json`). */
   alias: string
-  /** The machine's own sign-in of the provider, which follows what a plain `claude` or `codex` is signed in to. */
+  /** The login plain claude or plain codex uses, which follows what that CLI is signed in to. */
   machineOwn: boolean
   /** Opted in to routing. */
   routing: boolean
@@ -108,6 +108,6 @@ export interface StatusAnswer {
   port: number
   /** Milliseconds since epoch. */
   startedAt: number
-  /** Every login in `config.json`, the machine's own logins first. */
+  /** Every login in `config.json`, the logins of plain claude and plain codex first. */
   logins: LoginStatus[]
 }

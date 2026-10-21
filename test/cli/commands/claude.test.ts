@@ -104,7 +104,7 @@ const routedHeaders = (...lines: string[]): string => [...lines].join('\n')
 const NO_TOKEN = { CLAUDE_CODE_OAUTH_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '' }
 
 describe('kurmis claude on Auto', () => {
-  test('starts claude on the machine\'s own login, routed through the daemon, with the routing variables in --settings too', async () => {
+  test('starts claude on the login plain claude uses, routed through the daemon, with the routing variables in --settings too', async () => {
     const h = harness()
     const out = collect({
       PATH: '/usr/bin',
@@ -183,32 +183,32 @@ describe('kurmis claude on Auto', () => {
     expect(passedSettings(h.specs[0]).env).toMatchObject(NO_TOKEN)
   })
 
-  test('with CLAUDE_CONFIG_DIR naming ~/.claude itself, claude starts on the machine\'s own login\'s credentials, with a note that says so', async () => {
+  test('with CLAUDE_CONFIG_DIR naming ~/.claude itself, claude starts on the credentials of the login plain claude uses, with a note that says so', async () => {
     const h = harness()
     const out = collect({ CLAUDE_CONFIG_DIR: join(home, '.claude') })
     await createClaudeCommand(h.deps).run([], out.context)
     expect(h.specs[0]?.env).toMatchObject({ CLAUDE_CONFIG_DIR: join(home, '.claude'), CLAUDE_SECURESTORAGE_CONFIG_DIR: '' })
-    expect(out.stderr()).toBe('kurmis claude: CLAUDE_CONFIG_DIR names ~/.claude, the folder of the machine\'s own Claude login, but a claude ' +
+    expect(out.stderr()).toBe('kurmis claude: CLAUDE_CONFIG_DIR names ~/.claude, the folder of the login plain claude uses, but a claude ' +
       'started with it set keeps its credentials in a Keychain item of its own, which may hold another account. Kurmis starts ' +
-      'claude with the machine\'s own login\'s credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.\n')
+      'claude with the credentials of the login plain claude uses, the ones a claude without CLAUDE_CONFIG_DIR reads.\n')
   })
 
-  test('with CLAUDE_CONFIG_DIR set, claude starts on the machine\'s own login\'s credentials, with a note', async () => {
+  test('with CLAUDE_CONFIG_DIR set, claude starts on the credentials of the login plain claude uses, with a note', async () => {
     const h = harness()
     const out = collect({ CLAUDE_CONFIG_DIR: '/Users/example/other-claude' })
     await createClaudeCommand(h.deps).run([], out.context)
     expect(h.specs[0]?.env).toMatchObject({ CLAUDE_CONFIG_DIR: '/Users/example/other-claude', CLAUDE_SECURESTORAGE_CONFIG_DIR: '' })
-    expect(out.stderr()).toContain('CLAUDE_CONFIG_DIR is set, but the machine\'s own Claude login is the one in ~/.claude')
+    expect(out.stderr()).toContain('CLAUDE_CONFIG_DIR is set, but kurmis starts claude on the login plain claude uses, the one in ~/.claude')
   })
 
-  test('the machine\'s own login\'s unknown sign-in state counts as signed in', async () => {
+  test('an unknown sign-in state of the login plain claude uses counts as signed in', async () => {
     const h = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: null }), loginStatus(WORK)]) })
     await createClaudeCommand(h.deps).run([], collect().context)
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain(`x-kurmis-started-on: ${OWN_CLAUDE}`)
     expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
   })
 
-  test('with the machine\'s own login signed out, claude starts on a signed-in pool login, whose folder stays out of --settings', async () => {
+  test('with the login plain claude uses signed out, claude starts on a signed-in pool login, whose folder stays out of --settings', async () => {
     const h = harness({
       status: statusAnswer([
         loginStatus(OWN_CLAUDE_REF, { signedIn: false }),
@@ -224,10 +224,10 @@ describe('kurmis claude on Auto', () => {
     expect(spec?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`, 'x-kurmis-started-on: workclaude'))
     const settings = passedSettings(spec)
     expect(settings.env).not.toHaveProperty('CLAUDE_SECURESTORAGE_CONFIG_DIR')
-    expect(out.stderr()).toContain(`kurmis claude: ${OWN_CLAUDE}, this machine's own Claude sign-in, is not signed in, so claude starts on work-example's credentials`)
+    expect(out.stderr()).toContain(`kurmis claude: ${OWN_CLAUDE}, the login plain claude uses, is not signed in, so claude starts on work-example's credentials`)
   })
 
-  test('startableLogins reads only Claude logins, and an unknown sign-in only for the machine\'s own login', () => {
+  test('startableLogins reads only Claude logins, and an unknown sign-in only for the login plain claude uses', () => {
     expect(startableLogins(statusAnswer([
       loginStatus(OWN_CLAUDE_REF, { signedIn: null }),
       loginStatus(WORK, { signedIn: null, routing: false }),
@@ -291,7 +291,7 @@ describe('kurmis claude --login', () => {
     } })
   })
 
-  test('--login with the machine\'s own login starts on its credentials and needs no folder', async () => {
+  test('--login with the login plain claude uses starts on its credentials and needs no folder', async () => {
     const h = harness({}, { folderExists: () => false })
     expect(await createClaudeCommand(h.deps).run(['--login', OWN_CLAUDE], collect({ CLAUDE_SECURESTORAGE_CONFIG_DIR: '/x' }).context)).toBe(3)
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain(`x-kurmis-login: ${OWN_CLAUDE}`)

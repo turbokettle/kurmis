@@ -113,7 +113,7 @@ export interface KeychainReaderOptions {
   accounts: {
     /**
      * The `CLAUDE_SECURESTORAGE_CONFIG_DIR` the login's CLI is started with, exactly as passed,
-     * or null for the machine's own login, which is started without it.
+     * or null for plain claude's login, which is started without it.
      */
     secureStorageDir(id: string): string | null
   }

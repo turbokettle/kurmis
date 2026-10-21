@@ -6,9 +6,9 @@ import type { LoginProvider } from '../data/login-id.ts'
 /** The product name of a provider, for sentences. */
 export const PROVIDER_NAMES: Record<LoginProvider, string> = { claude: 'Claude', codex: 'Codex' }
 
-/** The words that mark a machine's own login: `this machine's own Claude sign-in`. */
+/** The words that mark the login a plain CLI uses: `the login plain claude uses`. */
 export function machineOwnText(provider: LoginProvider): string {
-  return `this machine's own ${PROVIDER_NAMES[provider]} sign-in`
+  return `the login plain ${provider} uses`
 }
 
 /**

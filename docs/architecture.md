@@ -17,10 +17,10 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 `KURMIS_HOME` moves it, and every test runs with it set to a temporary folder. The code is in
 `src/data/`.
 
-- `config.json` holds the daemon's port and the logins with their settings: id, provider,
-  whether it is the machine's own login, alias, whether the person set the alias, opt-in, the
-  two limits and use-first. The CLI writes it. The daemon writes it only to give a login its
-  automatic alias (see "Aliases" below), and reloads it when its contents change
+- `config.json` holds the daemon's port and the logins with their settings: id, provider, whether it
+  is the login plain claude or plain codex uses (`machineOwn`), alias, whether the person set the
+  alias, opt-in, the two limits and use-first. The CLI writes it. The daemon writes it only to give
+  a login its automatic alias (see "Aliases" below), and reloads it when its contents change
   (`configStamp`, a hash of the file).
 - `config.json.lock` exists while a command changes `config.json` (`changeConfig` in
   `src/data/config.ts`, `src/data/lock.ts`). It is created with exclusive create and holds
@@ -49,8 +49,8 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 - `codex-merged/<id>.json` records what was last merged, copied and linked into that home
   from the default Codex home (see "Codex").
 - `probe/` holds the usage probes' folders: `probe/cwd`, the empty folder every probe runs in,
-  and `probe/claude-own`, the `CLAUDE_CONFIG_DIR` of the probe of the machine's own Claude
-  login. The CLI caches that login's profile in `probe/claude-own/.claude.json`, which is where
+  and `probe/claude-own`, the `CLAUDE_CONFIG_DIR` of the probe of the login plain claude
+  uses. The CLI caches that login's profile in `probe/claude-own/.claude.json`, which is where
   the daemon reads its account uuid and email.
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
@@ -76,26 +76,27 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   request body, an alias or an email. At 5 MB it is renamed to `daemon.log.1`, replacing the
   previous one.
 
-**The machine's own logins.** There is one per provider, marked `machineOwn` in `config.json`:
-the account a plain `claude` and a plain `codex` are signed in to. They follow whatever those
+**The logins plain claude and plain codex use.** There is one per provider, marked `machineOwn`
+in `config.json`: the account a plain `claude` and a plain `codex` are signed in to. Plain
+`claude` and plain `codex` mean the CLIs run without kurmis. They follow whatever those
 CLIs are signed in to. They are always in the config, cannot be removed, and have no folder
-here. The machine's own Claude login is the login in `~/.claude`: `~/.claude/.credentials.json`
-and the Keychain item with the plain name, whatever `CLAUDE_CONFIG_DIR` says (see "The
-machine's own Claude login and `CLAUDE_CONFIG_DIR`" below). A CLI on a machine's own login runs
-with the environment left as it was inherited, apart from the routing variables and, for
-Claude, `CLAUDE_SECURESTORAGE_CONFIG_DIR`. Code tells the machine's own logins apart by their
+here. Plain claude's login is the login in `~/.claude`: `~/.claude/.credentials.json`
+and the Keychain item with the plain name, whatever `CLAUDE_CONFIG_DIR` says (see "Plain
+claude's login and `CLAUDE_CONFIG_DIR`" below). A CLI on one of these two logins runs with the
+environment left as it was inherited, apart from the routing variables and, for Claude,
+`CLAUDE_SECURESTORAGE_CONFIG_DIR`. Code tells these two logins apart from the others by their
 `machineOwn` setting (`isMachineOwn`, `machineOwnLogin` and `extraLogins` in
 `src/data/config.ts`), never by their id.
 
-**Login ids.** Every login, the machine's own ones included, has an id that never changes. A
-new id is 10 lowercase letters and digits from `node:crypto` (`newLoginId` in
+**Login ids.** Every login, those of plain claude and plain codex included, has an id that never
+changes. A new id is 10 lowercase letters and digits from `node:crypto` (`newLoginId` in
 `src/data/login-id.ts`, `newLoginIdFor` in `src/data/config.ts`). It is unique across both
 providers, and it is none of the logins' aliases, so an id alone names one login. `kurmis login`
-also passes over an id that has a folder in `claude/` or `codex/`. An id read from a file may be
-1 to 32 lowercase letters and digits. It may not be a Windows device name such as `con` or
-`nul`, `none` (the value of `x-kurmis-started-on` for no kurmis login), `invalid`, `claude` or
-`codex`. So an id is always a safe folder name and a safe value for the log, and the path
-functions check it again.
+also passes over an id that has a folder in `claude/` or `codex/`. An id read from a file may be 1
+to 32 lowercase letters and digits. It may not be a Windows device name such as `con` or `nul`,
+`none` (the value of `x-kurmis-started-on` for no kurmis login), `invalid`, `claude` or `codex`. So
+an id is always a safe folder name and a safe value for the log, and the path functions check it
+again.
 
 **Aliases** (`src/core/login-alias.ts`). The alias is the name the person sees and types. Every
 command takes a login by its alias or its id, without regard to case, or as `claude:<alias>` or
@@ -137,15 +138,15 @@ about a second. On macOS and Linux the data folder is created with mode 0700, an
 protected by the access list they inherit from `%USERPROFILE%`, which only lets in the user,
 SYSTEM and Administrators.
 
-**Reading files.** `loadConfig` adds a machine's own login with a new id for each provider that
-has none, a missing `config.json` included, and saves the file under its lock, so every reader
-sees the same id from then on. A `config.json` that is not JSON or has a wrong field is an error
-that names the file and the field. So is one whose `version` is not 2: a version-1 file is refused
-with a message that says to delete it and add the extra logins again with `kurmis login claude`
-and `kurmis login codex`. Two logins with the same id, a second machine's own login of a provider,
-two logins of one provider with the same alias, and an alias that is another login's id are errors
-too. A damaged `state.json` never stops the daemon: an entry that does not check out is dropped
-and the rest is kept, and a file that is not JSON reads as empty.
+**Reading files.** `loadConfig` adds the login of plain claude or plain codex, with a new id, when
+the config has none, a missing `config.json` included, and saves the file under its lock, so every
+reader sees the same id from then on. A `config.json` that is not JSON or has a wrong field is an
+error that names the file and the field. So is one whose `version` is not 2: a version-1 file is
+refused with a message that says to delete it and add the extra logins again with `kurmis login
+claude` and `kurmis login codex`. Two logins with the same id, a second `machineOwn` login of a
+provider, two logins of one provider with the same alias, and an alias that is another login's id
+are errors too. A damaged `state.json` never stops the daemon: an entry that does not check out is
+dropped and the rest is kept, and a file that is not JSON reads as empty.
 
 ```json
 // config.json
@@ -182,7 +183,7 @@ and the rest is kept, and a file that is not JSON reads as empty.
 // key: 64 hex characters on one line
 ```
 
-In this example the machine's own Codex login has no alias from an email yet, so its alias is
+In this example plain codex's login has no alias from an email yet, so its alias is
 its id.
 
 Session placements are dropped after 7 days without a request, and beyond the newest 2000. The
@@ -202,31 +203,30 @@ daemon finishes the requests it has open.
   because the CLI checks the base URL with it before its first request and without its custom
   headers. A path that is neither the control API nor one of the routed Anthropic paths
   (`ROUTE_PATHS` in `src/core/proxy-rules.ts`) is a 404. The code is `src/daemon/app.ts`.
-- **The control API** is on paths under `/_kurmis/` (`src/daemon/control.ts`). It lets the CLI
-  read status, ask for a usage probe, reload config and stop the daemon. The paths and their
-  answers are in `src/core/control-api.ts`. Every request needs the secret from `key`, in the
-  header `x-kurmis-key`; without it the answer is 403 with no body. `status` gives each login's
-  id, alias, provider and whether it is the machine's own (`LoginStatus`, control API version 2).
+- **The control API** is on paths under `/_kurmis/` (`src/daemon/control.ts`). It lets the CLI read
+  status, ask for a usage probe, reload config and stop the daemon. The paths and their answers are
+  in `src/core/control-api.ts`. Every request needs the secret from `key`, in the header
+  `x-kurmis-key`; without it the answer is 403 with no body. `status` gives each login's id, alias,
+  provider and whether plain claude or plain codex uses it (`LoginStatus`, control API version 2).
   It also gives each login's email, for `kurmis status` on the person's own terminal: a Claude
-  login's from its profile file (`src/data/identity.ts`), a Codex login's from its last usage
-  probe, which the daemon keeps in memory only. The email is never logged. A request body may be
-  at most 64 KB (`MAX_CONTROL_BODY_BYTES`). A larger one is answered 413 with the control API's
-  error answer (`{ "ok": false, "error": "…" }`) as soon as the size is known, from
-  `content-length` or while reading. The daemon then goes on reading the rest of the body and
-  throws it away, for at most 30 seconds, instead of closing the connection: a connection closed
-  while the client is still sending is reset, and the reset can lose the answer before the client
-  reads it.
+  login's from its profile file (`src/data/identity.ts`), a Codex login's from its last usage probe,
+  which the daemon keeps in memory only. The email is never logged. A request body may be at most 64
+  KB (`MAX_CONTROL_BODY_BYTES`). A larger one is answered 413 with the control API's error answer
+  (`{ "ok": false, "error": "…" }`) as soon as the size is known, from `content-length` or while
+  reading. The daemon then goes on reading the rest of the body and throws it away, for at most 30
+  seconds, instead of closing the connection: a connection closed while the client is still sending
+  is reset, and the reset can lose the answer before the client reads it.
 - **The proxy** is every other routed path (`src/daemon/proxy.ts`). A request needs the header
   `x-kurmis-key: <secret>`, which reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`, else it gets
   403 with no body. Both other kurmis headers carry login ids, never aliases:
   - `x-kurmis-login: <id>` pins the request to that login. One that is not a login id, or not
     the id of a Claude login in the config, is a 400.
   - `x-kurmis-started-on: <id>` names the login the CLI was started on, and
-    `x-kurmis-started-on: none` says the CLI's credentials are no kurmis login's (below, "The
-    machine's own Claude login and `CLAUDE_CONFIG_DIR`"). Only the format is checked: a value
+    `x-kurmis-started-on: none` says the CLI's credentials are no kurmis login's (below, "Plain
+    claude's login and `CLAUDE_CONFIG_DIR`"). Only the format is checked: a value
     that is neither a login id nor `none` is a 400, and an id that is not a Claude login in the
     config never matches a login the proxy signs for. A request without the header counts as
-    started on the machine's own Claude login.
+    started on plain claude's login.
 
   None of them is forwarded upstream. The body is read whole (at most 64 MB), because a request
   may have to be sent more than once. A body that is not JSON is a 400. Otherwise it goes upstream
@@ -252,7 +252,7 @@ daemon finishes the requests it has open.
   When the chosen login is the one the CLI was started on and no token was read for it, the
   CLI's own `authorization` header is forwarded instead. No other login is ever signed with the
   CLI's header. A request with `x-kurmis-started-on: none` is never signed with the CLI's header,
-  and the machine's own Claude login is left out of its pool, because the CLI is signed in to
+  and plain claude's login is left out of its pool, because the CLI is signed in to
   another account than that login's; when no other login can take it, the proxy's 599 says so.
   A 401 is handled this way:
   - A 401 on the CLI's own header goes to the CLI as it is: the CLI owns that token.
@@ -338,46 +338,46 @@ daemon finishes the requests it has open.
   PATH later is found only after a `kurmis daemon restart` from a shell that finds it; the error
   a probe records when the program is missing says that.
 - **Tokens** (`src/daemon/tokens.ts`). On macOS the login's Keychain item comes first
-  (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read
-  when the Keychain gives no token: the CLI falls back to the file when it cannot use the
-  Keychain, for example in an ssh session. On Linux only the file is read. On Windows, newer
-  Claude Code versions (seen from 2.1.150) keep the record in Windows Credential Manager instead,
-  when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag `tengu_windows_credman` is
-  on in the CLI's config file: `.config.json` in the config folder the CLI runs with when that
-  file is there and not empty, else `.claude.json` in `CLAUDE_CONFIG_DIR` or the home folder. Such
-  a CLI reads Credential Manager first and the file only when Credential Manager has nothing, and
-  deletes the file when it first writes the record to Credential Manager. The daemon reads in the
-  same order (`src/daemon/credential-manager.ts`, `src/platform/windows-credentials.ts`). It lists
-  the generic credentials named `<Keychain item name>/<account>` and takes the account name Claude
-  Code uses on macOS (the user's name), else `claude-code-user`, else the only one there is, since
-  the Windows build's account name could not be checked. The blob is the same JSON as the file,
-  or, when `…#m` holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes
-  a record longer than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script
-  declares it with `Add-Type` and prints each name and blob as base64; one run reads up to 247
-  logins, and more are split into runs that keep the command line within Windows' 32,767
-  characters. That needs PowerShell's full language mode: under Constrained Language Mode
-  `Add-Type` is refused, the read fails (logged once as `token_read_failed` for a login without
-  the file, or whose record was found there), and only the file is used. A failed read keeps the
-  token and the found state from before, and is tried again after 1, 2, 4, 8, then every 15
-  minutes. A request waits for a Credential Manager read only for a login that was not read yet,
-  or not since its token was refused or renewed, and only when the login has no file or its record
-  was found there; any other login is answered from the file meanwhile. A usage probe of a login
-  whose last read that worked found its record in Credential Manager runs with
-  `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`probeEnvironment`): the probe's config folder is not the
-  one a routed CLI runs with, so its feature flag may be off, and then it would not see the record
-  and would report the login signed out. An extra login's file is in its folder, the machine's own
-  login's is `~/.claude/.credentials.json`. A Keychain or Credential Manager answer is kept for a
-  minute. An old Credential Manager answer, and one after a usage probe, is read again in the
-  background while it goes on being used, since starting PowerShell takes a second or two. After a
-  refused token or a renewal, the Keychain and Credential Manager readers go on answering the old
-  token until the new read lands, and the next request waits for that read; a read that started
-  before is not used. A login whose file exists and for which Credential Manager had no record is
-  looked up there again only every 15 minutes, or after its token was refused or renewed, so a
-  machine whose logins all use the file runs PowerShell every 15 minutes, not every minute. A
-  record can still appear while the file is there, when the CLI could not delete the file after
-  moving the record, or when a CLI with the flag off wrote the file after a record was made. The
-  file is read again when its size or modification time changes. Tokens are never written
-  anywhere. Only whether a record has a refresh token is kept, never the refresh token itself.
+  (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read when
+  the Keychain gives no token: the CLI falls back to the file when it cannot use the Keychain, for
+  example in an ssh session. On Linux only the file is read. On Windows, newer Claude Code versions
+  (seen from 2.1.150) keep the record in Windows Credential Manager instead, when
+  `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag `tengu_windows_credman` is on in
+  the CLI's config file: `.config.json` in the config folder the CLI runs with when that file is
+  there and not empty, else `.claude.json` in `CLAUDE_CONFIG_DIR` or the home folder. Such a CLI
+  reads Credential Manager first and the file only when Credential Manager has nothing, and deletes
+  the file when it first writes the record to Credential Manager. The daemon reads in the same order
+  (`src/daemon/credential-manager.ts`, `src/platform/windows-credentials.ts`). It lists the generic
+  credentials named `<Keychain item name>/<account>` and takes the account name Claude Code uses on
+  macOS (the user's name), else `claude-code-user`, else the only one there is, since the Windows
+  build's account name could not be checked. The blob is the same JSON as the file, or, when `…#m`
+  holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes a record longer
+  than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script declares it with
+  `Add-Type` and prints each name and blob as base64; one run reads up to 247 logins, and more are
+  split into runs that keep the command line within Windows' 32,767 characters. That needs
+  PowerShell's full language mode: under Constrained Language Mode `Add-Type` is refused, the read
+  fails (logged once as `token_read_failed` for a login without the file, or whose record was found
+  there), and only the file is used. A failed read keeps the token and the found state from before,
+  and is tried again after 1, 2, 4, 8, then every 15 minutes. A request waits for a Credential
+  Manager read only for a login that was not read yet, or not since its token was refused or
+  renewed, and only when the login has no file or its record was found there; any other login is
+  answered from the file meanwhile. A usage probe of a login whose last read that worked found its
+  record in Credential Manager runs with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`probeEnvironment`):
+  the probe's config folder is not the one a routed CLI runs with, so its feature flag may be off,
+  and then it would not see the record and would report the login signed out. An extra login's file
+  is in its folder, that of the login plain claude uses is `~/.claude/.credentials.json`. A Keychain
+  or Credential Manager answer is kept for a minute. An old Credential Manager answer, and one after
+  a usage probe, is read again in the background while it goes on being used, since starting
+  PowerShell takes a second or two. After a refused token or a renewal, the Keychain and Credential
+  Manager readers go on answering the old token until the new read lands, and the next request waits
+  for that read; a read that started before is not used. A login whose file exists and for which
+  Credential Manager had no record is looked up there again only every 15 minutes, or after its
+  token was refused or renewed, so a machine whose logins all use the file runs PowerShell every 15
+  minutes, not every minute. A record can still appear while the file is there, when the CLI could
+  not delete the file after moving the record, or when a CLI with the flag off wrote the file after
+  a record was made. The file is read again when its size or modification time changes. Tokens are
+  never written anywhere. Only whether a record has a refresh token is kept, never the refresh token
+  itself.
 - **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when
   a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
   does not read leaves the config the daemon has.
@@ -605,7 +605,7 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
   environment, to a value that is not empty: routing works without them, so their value stays,
   as `kurmis setup` keeps it in `settings.json`;
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the folder of the login it starts on, or set to the
-  empty string on the machine's own Claude login, which the CLI reads as the default
+  empty string on plain claude's login, which the CLI reads as the default
   credentials, so that also a CLI with `CLAUDE_CONFIG_DIR` set signs in as that login;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
   itself and no subscription would be billed;
@@ -633,8 +633,8 @@ is `src/cli/wrapper-args.ts`.
 
 **The login the CLI starts on** (`src/cli/commands/claude.ts`). The wrapper starts the daemon
 when it is not running and reads its status. With `--login`, the CLI starts on that login, which
-must be a Claude login in `config.json` and, unless it is the machine's own, must have its
-folder. On Auto, `autoStartLogin` picks the login: the machine's own Claude login while it is
+must be a Claude login in `config.json` and, unless it is the login plain claude uses, must have
+its folder. On Auto, `autoStartLogin` picks the login: plain claude's login while it is
 signed in (an unknown sign-in state counts as signed in for it, and only for it), otherwise a
 signed-in login of the pool, with a note on stderr. The proxy signs each request with the login
 it picks. When that is the login the CLI was started on, the proxy forwards the CLI's own
@@ -689,7 +689,7 @@ So the wrapper passes exactly one `--settings`, first, ahead of the person's arg
 **Global mode** is `kurmis setup` (`src/cli/global-settings.ts`, `src/cli/commands/setup.ts`). It
 puts the routing variables in the `env` block of the user settings file, so a plain `claude` and
 the IDE extensions are routed too. The values are those of an Auto CLI with no started-on header,
-so a plain `claude` runs on the machine's own Claude login, except in a
+so a plain `claude` runs on plain claude's login, except in a
 `$CLAUDE_CONFIG_DIR/settings.json` whose CLIs have credentials of their own (below). It also
 registers the daemon to start at login (a launchd agent on macOS, a logon entry on Windows) and
 starts the daemon.
@@ -778,7 +778,7 @@ as it is then, which includes what the person changed while routing was paused.
 `kurmis setup --uninstall-and-logout` first lists what it will remove: kurmis' settings in the
 file (when it has any), the backup, the start at login (on macOS when the plist is there, on
 Windows always), the logins kurmis added, the running daemon and the data folder. It says that
-the machine's own Claude and Codex sign-ins are not signed out. At a terminal it then asks, and
+the logins of plain claude and plain codex are not signed out. At a terminal it then asks, and
 anything but `y` or `yes` removes nothing. `--yes` skips the question. Without a terminal on
 stdin and without `--yes` it refuses. A `config.json` it cannot read, or a settings file it
 cannot change, stops it before the list, with nothing removed. Then, in this order:
@@ -793,8 +793,8 @@ cannot change, stops it before the list, with nothing removed. Then, in this ord
    `src/cli/commands/logout.ts`). The logins are the extra ones in `config.json` and every
    folder under `claude/` and `codex/` whose name is a login id, so a second run finds the
    logins a first run removed from `config.json` but could not finish. A folder named by the id
-   of the machine's own Claude or Codex login is left out, and those logins are never signed
-   out. Here a logout CLI that fails keeps the login's folder,
+   of the login plain claude or plain codex uses is left out, and those logins are never
+   signed out. Here a logout CLI that fails keeps the login's folder,
    since the folder's path names the Keychain item and Credential Manager record that a second
    run's logout CLI removes.
 5. The data folder is deleted (`removeDataFolder` in `src/data/remove-data-folder.ts`). Only the
@@ -811,7 +811,7 @@ and says to run it again. When every step worked, its last line says to run
 Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
 headers. The proxy answers that path itself.
 
-**The machine's own Claude login and `CLAUDE_CONFIG_DIR`.** The machine's own Claude login is
+**Plain claude's login and `CLAUDE_CONFIG_DIR`.** Plain claude's login is
 the login in `~/.claude`: the daemon reads its token from the Keychain item with the plain name
 or from `~/.claude/.credentials.json`, its probe runs with `CLAUDE_SECURESTORAGE_CONFIG_DIR`
 empty, and `kurmis login` of it runs without `CLAUDE_CONFIG_DIR`. Claude Code 2.1.306 (read from
@@ -819,11 +819,11 @@ its bundled source) takes its credentials from `CLAUDE_SECURESTORAGE_CONFIG_DIR`
 set, the empty string meaning the default ones, and otherwise from `CLAUDE_CONFIG_DIR`: the file
 in that folder, and a Keychain item named after the variable's value (`keychain-service.ts`). So
 a CLI started with `CLAUDE_CONFIG_DIR` set may be signed in to another account than the
-machine's own Claude login. The daemon is one per user and cannot follow a variable that each
-shell sets for itself, so kurmis keeps the machine's own Claude login fixed to `~/.claude` and
+login plain claude uses. The daemon is one per user and cannot follow a variable that each
+shell sets for itself, so kurmis keeps plain claude's login fixed to `~/.claude` and
 makes sure no request is signed as that login for a CLI on other credentials:
 
-- `kurmis claude` on the machine's own Claude login sets `CLAUDE_SECURESTORAGE_CONFIG_DIR` to the
+- `kurmis claude` on plain claude's login sets `CLAUDE_SECURESTORAGE_CONFIG_DIR` to the
   empty string, so the CLI signs in with that login's own credentials while its settings and
   transcripts still come from `CLAUDE_CONFIG_DIR`. When `CLAUDE_CONFIG_DIR` is set it says so on
   stderr.
@@ -890,8 +890,8 @@ kills whatever is left in the process group. It needs `python3` and is skipped o
 ## Codex
 
 There is no proxy for Codex. `kurmis codex …` picks a login when it starts, or uses the one named
-with `--login`, prepares that login's `CODEX_HOME` and starts `codex` with it. The machine's own
-Codex login runs with `CODEX_HOME` as it was inherited, except that an inherited `CODEX_HOME`
+with `--login`, prepares that login's `CODEX_HOME` and starts `codex` with it. The login plain
+codex uses runs with `CODEX_HOME` as it was inherited, except that an inherited `CODEX_HOME`
 inside kurmis' `codex/` folder (left by an outer `kurmis codex` session on an extra login) is
 removed.
 
@@ -910,8 +910,8 @@ not make the login refused (`statusOf` in `src/core/codex-usage.ts`).
   daemon to probe those logins and waits up to 5 seconds, then goes on with what it has.
 - When every login routing may use is at a limit, it starts on the one whose usage comes back
   first, with a note on stderr saying when.
-- When none of them is signed in, or the daemon cannot be reached, it starts on the machine's own
-  Codex login with a note.
+- When none of them is signed in, or the daemon cannot be reached, it starts on the login plain
+  codex uses, with a note.
 - With more than one Codex login, it prints which one it starts on.
 
 **Preparing a login's home.** Before every start on an extra login, `prepareCodexHome`
@@ -1248,30 +1248,30 @@ These are known and left as they are.
   process environment, and a shell started from that session inherits it. A plain `claude` run
   from that shell takes its routing variables from `settings.json`, whose
   `ANTHROPIC_CUSTOM_HEADERS` has no `x-kurmis-started-on`, so the proxy counts it as started on
-  the machine's own Claude login. That CLI reads the extra login's credentials and sends that
-  login's token in its `Authorization` header. When the proxy picks the machine's own Claude
-  login and has read no token for it, it forwards that header, so the request is billed to the
-  extra login while kurmis counts it as the machine's own. When the proxy has read the machine's
-  own login's token, which is the usual case, the request is signed and counted correctly. The
+  plain claude's login. That CLI reads the extra login's credentials and sends that
+  login's token in its `Authorization` header. When the proxy picks the login plain claude
+  uses and has read no token for it, it forwards that header, so the request is billed to the
+  extra login while kurmis counts it as the login plain claude uses. When the proxy has read
+  that login's token, which is the usual case, the request is signed and counted correctly. The
   wrapper cannot avoid this: any variable it could add to tell the nested CLI apart is
   overridden or never sent, because the `env` of `settings.json` beats the process environment
   and the proxy only sees headers. Use `kurmis claude` inside such a session instead.
-- **A plain `claude` inside a `kurmis claude` session on the machine's own Claude login, with
+- **A plain `claude` inside a `kurmis claude` session on plain claude's login, with
   `CLAUDE_CONFIG_DIR` set and global mode set up from it.** The session's
   `CLAUDE_SECURESTORAGE_CONFIG_DIR` is empty, and a shell started from it passes that on, so the
-  plain `claude` signs in as the machine's own Claude login. It reads
+  plain `claude` signs in as plain claude's login. It reads
   `$CLAUDE_CONFIG_DIR/settings.json`, whose headers say `x-kurmis-started-on: none`, so the proxy
-  does not use the machine's own login for it although it could. Its requests go to the extra
+  does not use the login plain claude uses for it although it could. Its requests go to the extra
   logins, or get the 599 when there is none.
 - **A plain `claude` with `CLAUDE_CONFIG_DIR` naming `~/.claude`, after a setup without the
   variable.** Setup writes `~/.claude/settings.json` with no `x-kurmis-started-on`, so the proxy
-  counts every plain `claude` that reads it as started on the machine's own Claude login. One
+  counts every plain `claude` that reads it as started on plain claude's login. One
   run from a shell with `CLAUDE_CONFIG_DIR=~/.claude` reads that file too, but signs in with the
   Keychain item (or Credential Manager entry) named after the variable's value, which may hold
-  another account or none. When the proxy picks the machine's own login and has read its token,
+  another account or none. When the proxy picks the login plain claude uses and has read its token,
   the request is signed and counted as that login. When it has read no token for that login, it
   forwards the CLI's own `Authorization` header, so the request is billed to whatever account
-  that item holds while kurmis counts it as the machine's own login. Kurmis cannot tell these
+  that item holds while kurmis counts it as the login plain claude uses. Kurmis cannot tell these
   CLIs apart, since the variable is not sent with the request. Unset the variable, or use
   `kurmis claude`.
 - **A daemon started from ssh on macOS.** A process started from an ssh login runs in the ssh
@@ -1355,54 +1355,53 @@ These are known and left as they are.
   real CLI. The commands are:
   - `claude` and `codex` (above).
   - `status [--json]`: starts the daemon when needed and shows its status. When no signed-in login
-    has been read yet it asks for one probe and waits up to 15 seconds; then it ends the request
-    and closes its connection, so the command exits at once while the daemon finishes the probe.
-    `kurmis codex` does the same with its 5-second wait. The text shows per login the alias, the
-    provider, the id, the email the daemon knows (on the terminal only), a line for a machine's
-    own login, sign-in, routing, limits, use-first, sessions, each usage window with its reset,
-    and why routing passes the login over (`routeBlockText`), and last which login `kurmis codex`
-    would start on (`src/cli/status-format.ts`). Above the logins it warns about each extra login
-    whose email is that of the machine's own login of its provider, compared without regard to
-    case, because both then use one subscription (`sameAccountWarnings`). Resets are shown as the
-    time left; a cooldown's end is shown in local time (`02:10`, with the date when it is on
-    another day) with the time left after it.
-  - `list [--json]`: the logins from `config.json` without the daemon, with the columns
-    `PROVIDER ALIAS ID AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`, and under the table a line
-    for each machine's own login. Credentials is a check of local files: an extra Claude login's
-    `.credentials.json` or a `.claude.json` naming an account in its folder,
-    `~/.claude/.credentials.json` or `~/.claude.json` for the machine's own Claude login, and the
-    existence of `auth.json` in the Codex home for Codex (its fields are never read). A Codex
-    login without `auth.json` whose `config.toml` sets `cli_auth_credentials_store` to anything
-    but `"file"` keeps its sign-in in the Keychain or Credential Manager, so for it
-    `codex login status` runs in its home, with a 10-second deadline, and its exit code decides
-    (`hasCredentials`). These runs happen at the same time, and only for such logins, so a list of
-    logins that keep `auth.json` starts no program. `--json` prints an array of the login
-    settings with `credentials: boolean` added:
-    `{ id, provider, machineOwn, alias, aliasSetByUser, routing, fiveHourLimit, weeklyLimit,
-    useFirst, credentials }`.
+    has been read yet it asks for one probe and waits up to 15 seconds; then it ends the request and
+    closes its connection, so the command exits at once while the daemon finishes the probe. `kurmis
+    codex` does the same with its 5-second wait. The text shows per login the alias, the provider,
+    the id, the email the daemon knows (on the terminal only), a line for the login plain claude or
+    plain codex uses, sign-in, routing, limits, use-first, sessions, each usage window with its
+    reset, and why routing passes the login over (`routeBlockText`), and last which login `kurmis
+    codex` would start on (`src/cli/status-format.ts`). Above the logins it warns about each extra
+    login whose email is that of the login plain claude or plain codex uses, of its provider,
+    compared without regard to case, because both then use one subscription (`sameAccountWarnings`).
+    Resets are shown as the time left; a cooldown's end is shown in local time (`02:10`, with the
+    date when it is on another day) with the time left after it.
+  - `list [--json]`: the logins from `config.json` without the daemon, with the columns `PROVIDER
+    ALIAS ID AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`, and under the table a line for each of
+    the logins plain claude and plain codex use. Credentials is a check of local files: an extra
+    Claude login's `.credentials.json` or a `.claude.json` naming an account in its folder,
+    `~/.claude/.credentials.json` or `~/.claude.json` for plain claude's login, and the existence of
+    `auth.json` in the Codex home for Codex (its fields are never read). A Codex login without
+    `auth.json` whose `config.toml` sets `cli_auth_credentials_store` to anything but `"file"` keeps
+    its sign-in in the Keychain or Credential Manager, so for it `codex login status` runs in its
+    home, with a 10-second deadline, and its exit code decides (`hasCredentials`). These runs happen
+    at the same time, and only for such logins, so a list of logins that keep `auth.json` starts no
+    program. `--json` prints an array of the login settings with `credentials: boolean` added: `{
+    id, provider, machineOwn, alias, aliasSetByUser, routing, fiveHourLimit, weeklyLimit, useFirst,
+    credentials }`.
   - `login claude|codex [--alias <alias>]` adds a new login, and `login <login> [--alias <alias>]`
-    signs an existing login in again, the machine's own ones included. A new login gets a fresh id
-    first (`freshLoginId`), and its folder is `claude/<id>/` or `codex/<id>/` from the start. A
-    given `--alias` is checked against the config (`aliasProblem`) before anything runs. Then the
-    command takes the login's lock (`locks/`, above); for an existing login it reads `config.json`
-    again under it. The lock is held until the command ends, so a failed run can never delete the
-    folder of a run that signed in, and a logout cannot delete a folder a sign-in writes into. The
-    login's folder is created next (mode 0700), and for Codex prepared with `prepareCodexHome`, so
-    the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
-    --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
-    wrapper. On Windows a Claude login whose record is already in Credential Manager (one
-    PowerShell read, `holdsStoredRecord`) signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so
-    the new token replaces the record instead of going to a file the record hides. The login
-    counts as signed in when the CLI exits 0 and an account (`.claude.json`) or credentials are
-    there, as `list` checks them; otherwise a folder this run created is removed (for Codex with
-    its `codex-merged/` record) and nothing is added.
+    signs an existing login in again, those of plain claude and plain codex included. A new login
+    gets a fresh id first (`freshLoginId`), and its folder is `claude/<id>/` or `codex/<id>/` from
+    the start. A given `--alias` is checked against the config (`aliasProblem`) before anything
+    runs. Then the command takes the login's lock (`locks/`, above); for an existing login it reads
+    `config.json` again under it. The lock is held until the command ends, so a failed run can never
+    delete the folder of a run that signed in, and a logout cannot delete a folder a sign-in writes
+    into. The login's folder is created next (mode 0700), and for Codex prepared with
+    `prepareCodexHome`, so the sign-in reads the same merged `config.toml` as later sessions. Then
+    `claude auth login --claudeai` runs with `claudeLoginEnv`, or `codex login` with
+    `codexLoginEnv`, through the wrapper. On Windows a Claude login whose record is already in
+    Credential Manager (one PowerShell read, `holdsStoredRecord`) signs in with
+    `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new token replaces the record instead of going to
+    a file the record hides. The login counts as signed in when the CLI exits 0 and an account
+    (`.claude.json`) or credentials are there, as `list` checks them; otherwise a folder this run
+    created is removed (for Codex with its `codex-merged/` record) and nothing is added.
 
     After the sign-in the command reads the account's email: for Claude from the `.claude.json`
-    the CLI wrote (`~/.claude.json` for the machine's own login, whose probe folder's
+    the CLI wrote (`~/.claude.json` for the login plain claude uses, whose probe folder's
     `.claude.json` is deleted first, because it may name the account signed in before), for Codex from
     `codex app-server` (`readCodexEmail`). The email is printed and never stored. When a new
     login's email is that of another login of the same provider, compared without regard to
-    case, the machine's own login included, the new folder is signed out again
+    case, the login plain claude or plain codex uses included, the new folder is signed out again
     (`signOutLogin` in `src/cli/sign-out.ts`) and deleted, the command names that login and says
     that `kurmis login <alias>` signs it in again, and it exits 0. The other Claude logins'
     emails come from their profile files; the other Codex logins' emails from a running daemon's
@@ -1412,20 +1411,19 @@ These are known and left as they are.
     asked to probe the login, waiting up to 15 seconds, because it may still hold the login as
     signed out from before and Auto would pass it over until its next poll; none is started for
     this.
-  - `logout <login>`: refuses the machine's own logins. It holds the login's lock while it runs,
-    and stops at once when a `kurmis login` of the login holds it. It removes the login from
-    `config.json`, tells a running daemon to reload (so it stops probing the login), runs `claude
-    auth logout` or `codex logout` on it with a 30-second deadline (on Windows `claude auth
-    logout` gets `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, without which the CLI deletes only the
-    file and leaves the record in Credential Manager; a failure is a warning, naming the Keychain
-    item or the Windows credentials that may be left, and the removal goes on), and deletes the
-    folder with `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and
-    junctions inside it without following them. For a Codex login it also deletes
-    `codex-merged/<id>.json`. A bare id that names no login in `config.json` but has a folder in
-    `claude/` or `codex/` (a removal or a sign-in that stopped half-way) is cleaned up the same
-    way, and when only a Codex id's `codex-merged/` record is left, deleting it is all logout
-    does. The removal itself is `createLoginLogout`, which `setup --uninstall-and-logout` calls
-    for each login.
+  - `logout <login>`: refuses the logins of plain claude and plain codex. It holds the login's lock
+    while it runs, and stops at once when a `kurmis login` of the login holds it. It removes the
+    login from `config.json`, tells a running daemon to reload (so it stops probing the login), runs
+    `claude auth logout` or `codex logout` on it with a 30-second deadline (on Windows `claude auth
+    logout` gets `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, without which the CLI deletes only the file
+    and leaves the record in Credential Manager; a failure is a warning, naming the Keychain item or
+    the Windows credentials that may be left, and the removal goes on), and deletes the folder with
+    `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
+    without following them. For a Codex login it also deletes `codex-merged/<id>.json`. A bare id
+    that names no login in `config.json` but has a folder in `claude/` or `codex/` (a removal or a
+    sign-in that stopped half-way) is cleaned up the same way, and when only a Codex id's
+    `codex-merged/` record is left, deleting it is all logout does. The removal itself is
+    `createLoginLogout`, which `setup --uninstall-and-logout` calls for each login.
   - `set <login> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>] [--use-first on|off]
     [--alias <alias>]`: needs at least one option, changes `config.json` under the lock, tells a
     running daemon to reload and prints the login's settings, with where its alias comes from.
@@ -1455,20 +1453,21 @@ These are known and left as they are.
     "warnings": [ "<sentence>" ] }
   ```
 
-  The logins come in `config.json` order, the machine's own ones first. `id` never changes;
-  `alias` is what the person types. `email` is shown, never stored, and for a Codex login it comes
-  from the daemon's last probe. `codexStart.login` is an id. `warnings` holds a sentence for each
-  extra login that is the same account as the machine's own login of its provider. `signedIn` is
-  null when the daemon has not looked yet. `usage` and `blocked` may be null. A window whose reset
-  has passed reads `utilization: 0`. `limitPercent` is null for a window that meters one model
-  rather than the plan. The CLI's `get_usage` answer has the server's `seven_day_opus` and
-  `seven_day_sonnet` windows and, in `model_scoped`, the per-model weekly windows from the
-  server's `limits` list, so one model's window can come twice, as `seven_day_opus` and as `Opus`.
-  An `Opus` or `Sonnet` entry with the same figure and reset as the fixed window is left out of
-  `windows` and the text (`repeatsModelWindow` in `src/core/usage-rules.ts`); the daemon's
-  snapshot keeps both. `blocked.text` gives a cooldown's end as an ISO time, as the daemon's log
-  does. `sessions` is null for Codex logins, and `codexStart` is null without Codex logins. A
-  Claude login's `blocked` comes from the daemon; a Codex login's is the Codex choice's rule.
+  The logins come in `config.json` order, those of plain claude and plain codex first. `id` never
+  changes; `alias` is what the person types. `email` is shown, never stored, and for a Codex login
+  it comes from the daemon's last probe. `codexStart.login` is an id. `warnings` holds a sentence
+  for each extra login that is the same account as the login plain claude or plain codex uses, of
+  its provider. `signedIn` is null when the daemon has not looked yet. `usage` and `blocked` may be
+  null. A window whose reset has passed reads `utilization: 0`. `limitPercent` is null for a window
+  that meters one model rather than the plan. The CLI's `get_usage` answer has the server's
+  `seven_day_opus` and `seven_day_sonnet` windows and, in `model_scoped`, the per-model weekly
+  windows from the server's `limits` list, so one model's window can come twice, as `seven_day_opus`
+  and as `Opus`. An `Opus` or `Sonnet` entry with the same figure and reset as the fixed window is
+  left out of `windows` and the text (`repeatsModelWindow` in `src/core/usage-rules.ts`); the
+  daemon's snapshot keeps both. `blocked.text` gives a cooldown's end as an ISO time, as the
+  daemon's log does. `sessions` is null for Codex logins, and `codexStart` is null without Codex
+  logins. A Claude login's `blocked` comes from the daemon; a Codex login's is the Codex choice's
+  rule.
 - `src/version.ts` holds the version, which the build takes from `package.json`.
 - `src/platform/` holds what differs per OS: finding programs and reading npm shims (`programs.ts`,
   `npm-shim.ts`), folder links (`links.ts`), deleting a folder without following its links

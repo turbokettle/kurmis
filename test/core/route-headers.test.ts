@@ -42,7 +42,7 @@ describe('a request to the proxy', () => {
       .toEqual({ key: null, login: null, startedOn: OWN_CLAUDE, sessionId: null })
   })
 
-  test('names the login the CLI was started on, the machine\'s own login without the header', () => {
+  test('names the login the CLI was started on, the login plain claude uses without the header', () => {
     expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'workclaude' }), OWN_CLAUDE).startedOn).toBe('workclaude')
     expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: ' workclaude ' }), OWN_CLAUDE).startedOn).toBe('workclaude')
     expect(readRouteRequest(getter({}), 'otherown01').startedOn).toBe('otherown01')

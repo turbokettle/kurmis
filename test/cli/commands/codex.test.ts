@@ -112,7 +112,7 @@ describe('kurmis codex with --login', () => {
     expect(h.specs).toEqual([])
   })
 
-  test('a config.json that does not read stops a named login, and Auto starts on the machine\'s own login', async () => {
+  test('a config.json that does not read stops a named login, and Auto starts on the login plain codex uses', async () => {
     const h = harness({ status: TWO_LOGINS }, {
       loadConfig: () => {
         throw new ConfigError('config.json is not valid JSON.')
@@ -123,7 +123,7 @@ describe('kurmis codex with --login', () => {
     expect(named.stderr()).toBe('kurmis codex: config.json is not valid JSON.\n')
     const auto = collect({ CODEX_HOME: '/srv/my-codex' })
     expect(await createCodexCommand(h.deps).run([], auto.context)).toBe(3)
-    expect(auto.stderr()).toBe('kurmis codex: config.json is not valid JSON. Starting on this machine\'s own Codex sign-in.\n')
+    expect(auto.stderr()).toBe('kurmis codex: config.json is not valid JSON. Starting on the login plain codex uses.\n')
     expect(h.specs[0]?.env).toEqual({ CODEX_HOME: '/srv/my-codex' })
     expect(h.daemon.calls).toEqual([])
   })
@@ -150,7 +150,7 @@ describe('kurmis codex without --login', () => {
     expect(out.stderr()).toContain('kurmis codex: starting on work-example.')
   })
 
-  test('says nothing about the choice when the machine\'s own login is the only Codex login', async () => {
+  test('says nothing about the choice when the login plain codex uses is the only Codex login', async () => {
     const h = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(OWN_CODEX_REF)]) })
     const out = collect()
     await createCodexCommand(h.deps).run([], out.context)
@@ -207,25 +207,25 @@ describe('kurmis codex without --login', () => {
       'kurmis codex: the hooks file could not be linked\n')
   })
 
-  test('starts on the machine\'s own login with a note when the daemon cannot be reached', async () => {
+  test('starts on the login plain codex uses with a note when the daemon cannot be reached', async () => {
     const h = harness({ ensureFails: 'port 40123 is taken by another program' })
     const out = collect()
     expect(await createCodexCommand(h.deps).run(['resume'], out.context)).toBe(3)
     expect(h.prepared).toEqual([OWN_CODEX])
     expect(h.specs[0]?.args).toEqual(['/fake/codex.js', 'resume'])
-    expect(out.stderr()).toBe(`kurmis codex: the kurmis daemon could not be reached (port 40123 is taken by another program); starting on ${OWN_CODEX}, this machine's own Codex sign-in.\n`)
+    expect(out.stderr()).toBe(`kurmis codex: the kurmis daemon could not be reached (port 40123 is taken by another program); starting on ${OWN_CODEX}, the login plain codex uses.\n`)
   })
 })
 
 describe('kurmis codex and CODEX_HOME', () => {
-  test('the machine\'s own login keeps the user\'s own CODEX_HOME', async () => {
+  test('the login plain codex uses keeps the user\'s own CODEX_HOME', async () => {
     const h = harness()
     const out = collect({ CODEX_HOME: '/srv/my-codex' })
     await createCodexCommand(h.deps).run(['--login', OWN_CODEX], out.context)
     expect(h.specs[0]?.env).toEqual({ CODEX_HOME: '/srv/my-codex' })
   })
 
-  test('the machine\'s own login drops a CODEX_HOME an outer kurmis codex session set for an extra login', async () => {
+  test('the login plain codex uses drops a CODEX_HOME an outer kurmis codex session set for an extra login', async () => {
     // The home is a path of this machine, so the command has to compare it by this OS's rules.
     const h = harness({}, { platform: process.platform })
     const out = collect({ CODEX_HOME: join(providerFolder('codex'), 'work'), PATH: '/usr/bin' })

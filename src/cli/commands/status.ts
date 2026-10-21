@@ -24,10 +24,10 @@ Shows each login's five-hour and weekly usage, its limits, and whether routing c
 The daemon is started first when it is not running.
 
 Each login is shown by its alias, with its provider, its id and the account's email when the
-daemon knows it. The machine's own Claude and Codex logins are marked: they are the accounts a
-plain "claude" and a plain "codex" are signed in to. When an extra login is the same account
-as the machine's own login of its provider, a warning says so, because both then use one
-subscription.
+daemon knows it. The login plain claude uses and the login plain codex uses are marked: they
+are the accounts a plain "claude" and a plain "codex" are signed in to. When an extra Claude
+login is the same account as the login plain claude uses, a warning says so, because both then
+use one subscription. The same goes for Codex.
 
 Options:
   --json       Print the same as JSON. Each login has "alias", "id", "provider" and

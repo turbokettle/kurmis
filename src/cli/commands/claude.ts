@@ -2,7 +2,7 @@
 // (docs/architecture.md, "How a Claude CLI reaches the daemon").
 //
 // The CLI is started on one login's credentials: the pinned one with `--login`, otherwise the
-// one `autoStartLogin` picks from the daemon's status (normally the machine's own Claude login). The proxy
+// one `autoStartLogin` picks from the daemon's status (normally plain claude's login). The proxy
 // signs each request with the login it picks, so on Auto this only has to be a login the CLI
 // can send with at all. The routing variables go into the process environment and, because a
 // `settings.json` in global mode would beat that, into a `--settings` argument too
@@ -229,7 +229,7 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
 
 /**
  * The Claude logins of a status as `autoStartLogin` reads them. A login the daemon has not looked
- * at yet (`signedIn: null`) counts as signed in only for the machine's own login, which is
+ * at yet (`signedIn: null`) counts as signed in only for plain claude's login, which is
  * normally signed in; an extra login that is known to be signed in is better to start on than
  * one that is not known.
  */
@@ -266,19 +266,20 @@ function settingsLayers(userSettings: UserSettingsArg, env: NodeJS.ProcessEnv,
 }
 
 /**
- * The note for a CLI started on the machine's own Claude login while `CLAUDE_CONFIG_DIR` is set, on a platform
+ * The note for a CLI started on plain claude's login while `CLAUDE_CONFIG_DIR` is set, on a platform
  * where that gives the CLI credentials of its own (`configDirHasOwnCredentials`).
  */
 function configDirNote(value: string, deps: ClaudeDeps): string {
   if (namesDefaultClaudeFolder(value, deps.platform, deps.homeDir())) {
     const keeps = deps.platform === 'win32' ? 'may keep its credentials in a Credential Manager entry'
       : 'keeps its credentials in a Keychain item'
-    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of the machine's own Claude login, but a claude started with it set ` +
-      `${keeps} of its own, which may hold another account. Kurmis starts claude with the machine's own login's ` +
-      'credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.'
+    return 'CLAUDE_CONFIG_DIR names ~/.claude, the folder of the login plain claude uses, but a claude started with it set ' +
+      `${keeps} of its own, which may hold another account. Kurmis starts claude with the credentials of the login ` +
+      'plain claude uses, the ones a claude without CLAUDE_CONFIG_DIR reads.'
   }
-  return 'CLAUDE_CONFIG_DIR is set, but the machine\'s own Claude login is the one in ~/.claude, so claude signs in with ' +
-    'that login\'s credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from CLAUDE_CONFIG_DIR.'
+  return 'CLAUDE_CONFIG_DIR is set, but kurmis starts claude on the login plain claude uses, the one in ~/.claude, so claude ' +
+    'signs in with that login\'s credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from ' +
+    'CLAUDE_CONFIG_DIR.'
 }
 
 /**

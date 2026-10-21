@@ -214,7 +214,7 @@ describe('the config', () => {
   })
 })
 
-describe("the machine's own logins", () => {
+describe("the logins of plain claude and plain codex", () => {
   test('are found by provider, whatever their ids', () => {
     writeLogins({ claude: { [WORK]: {} }, codex: { [WORK_CODEX]: {} } })
     const logins = table()
@@ -232,7 +232,7 @@ describe("the machine's own logins", () => {
     expect(loadConfig().logins.map((login) => login.id)).toEqual([own.id, logins.ownLogin('codex').id])
   })
 
-  test("leave the machine's own Claude login out of a request whose CLI runs on credentials of its own", () => {
+  test("leave the login plain claude uses out of a request whose CLI runs on credentials of its own", () => {
     writeLogins({ claude: { [WORK]: {} } })
     tokens.set(OWN_CLAUDE, { accessToken: 'd', expiresAt: null, hasRefreshToken: true })
     tokens.set(WORK, { accessToken: 'w', expiresAt: null, hasRefreshToken: true })

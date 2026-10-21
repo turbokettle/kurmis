@@ -191,12 +191,12 @@ describe('kurmis logout', () => {
     expect(second.stderr()).not.toContain('Keychain')
   })
 
-  it('refuses the machine\'s own logins and a wrong command line without running anything', async () => {
+  it('refuses the logins of plain claude and plain codex and a wrong command line without running anything', async () => {
     const run = fakeRun()
     const daemon = fakeDaemonClient()
     const logout = createLogoutCommand({ daemon, findProgram: fakeProgram, runProgram: run.runProgram })
     for (const [args, message] of [
-      [[OWN_CLAUDE], `${OWN_CLAUDE} is this machine's own Claude sign-in and cannot be removed. To sign it out, run "claude auth logout" yourself.`],
+      [[OWN_CLAUDE], `${OWN_CLAUDE} is the login plain claude uses and cannot be removed. To sign it out, run "claude auth logout" yourself.`],
       [[`codex:${OWN_CODEX}`], 'run "codex logout" yourself'],
       [[], 'takes one login, by its alias or id'],
       [['a', 'b'], 'takes one login, by its alias or id']

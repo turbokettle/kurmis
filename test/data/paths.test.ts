@@ -54,9 +54,9 @@ describe('file paths', () => {
     expect(loginFolder(codexRef('sidecodex1'))).toBe(join(kurmisHome(), 'codex', 'sidecodex1'))
   })
 
-  it("refuses the machine's own logins, which have no folder here", () => {
-    expect(() => loginFolder(OWN_CLAUDE_REF)).toThrow(/machine's own claude sign-in/)
-    expect(() => loginFolder(OWN_CODEX_REF)).toThrow(/machine's own codex sign-in/)
+  it("refuses the logins of plain claude and plain codex, which have no folder here", () => {
+    expect(() => loginFolder(OWN_CLAUDE_REF)).toThrow(/the login plain claude uses/)
+    expect(() => loginFolder(OWN_CODEX_REF)).toThrow(/the login plain codex uses/)
   })
 
   it.each(['../x', 'a/b', 'a\\b', '..', '', 'claude:work', 'Work', 'con', '.hidden', 'side-2', 'a_b', 'a'.repeat(33)])(

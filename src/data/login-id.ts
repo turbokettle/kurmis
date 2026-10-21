@@ -4,7 +4,7 @@
 // knows about the login (`newLoginId`) and never changed. It names the login's folder in the data
 // folder (`claude/<id>/`, `codex/<id>/`), its entries in `state.json` and the log. Ids are unique
 // across both providers, so an id alone names one login. Which provider a login belongs to, and
-// whether it is the machine's own sign-in, is recorded with the login in `config.json`
+// whether it is the login of plain claude or plain codex, is recorded with the login in `config.json`
 // (`LoginRef`), not in the id.
 import { randomInt } from 'node:crypto'
 import { ACCOUNT_PROVIDERS, isLoginIdText, type AccountProvider } from '../core/accounts.ts'
@@ -25,7 +25,7 @@ export interface LoginRef {
   id: LoginId
   provider: LoginProvider
   /**
-   * The machine's own sign-in of the provider: the credentials of a plain `claude` (`~/.claude`)
+   * The login plain claude or plain codex uses: the credentials of a plain `claude` (`~/.claude`)
    * or a plain `codex` (`~/.codex`). It has no folder in the data folder, and kurmis never signs
    * it out.
    */

@@ -305,10 +305,10 @@ describe('kurmis setup', () => {
     expect(result.stdout).toContain(`Claude Code settings: ${join(dir, 'settings.json')}`)
     expect(existsSync(join(dir, 'settings.json'))).toBe(true)
     expect(existsSync(settingsPath)).toBe(false)
-    // A CLI that reads that file signs in with the login in that folder, not the machine's own Claude login.
+    // A CLI that reads that file signs in with the login in that folder, not the login plain claude uses.
     const env = (JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')) as { env: Record<string, string> }).env
     expect(env['ANTHROPIC_CUSTOM_HEADERS']).toMatch(/\nx-kurmis-started-on: none$/)
-    expect(result.stdout).toContain('CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder')
+    expect(result.stdout).toContain('CLAUDE_CONFIG_DIR is set, so a claude that reads this file signs in with the login in that folder')
     // A pause takes the line out with the other kurmis headers.
     expect((await run(command, ['--pause'], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
     expect(readFileSync(join(dir, 'settings.json'), 'utf8')).not.toContain('x-kurmis')
@@ -391,7 +391,7 @@ describe('kurmis setup', () => {
     expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis')
   })
 
-  it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on the machine\'s own login', async () => {
+  it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on the login plain claude uses', async () => {
     const { command } = setup()
     expect((await run(command, [])).code).toBe(0)
     expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis-started-on')
@@ -412,7 +412,7 @@ describe('kurmis setup', () => {
   it('names its three modes in its help', () => {
     const { usage } = setup().command
     expect(usage).toContain('Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]')
-    expect(usage).toContain('Your own Claude Code\n                          and Codex sign-ins are not signed out')
+    expect(usage).toContain('The logins plain\n                          claude and plain codex use are not signed out')
     expect(usage).toContain('npm uninstall -g kurmis')
   })
 })
@@ -598,7 +598,7 @@ describe('kurmis setup --uninstall-and-logout', () => {
     addLoginWithFolder(SPARE, 'spare-example')
   }
 
-  it('lists what it removes, asks, and removes it all, leaving the machine\'s own sign-ins alone', async () => {
+  it('lists what it removes, asks, and removes it all, leaving the logins of plain claude and plain codex alone', async () => {
     const original = '{\n  "model": "opus"\n}\n'
     await installed(original)
     const world = uninstaller({ terminal: true, answer: 'yes' })
@@ -611,13 +611,13 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(result.stdout).toContain('  - the logins added to kurmis, each signed out first: work-example, spare-example')
     expect(result.stdout).toContain(`  - the running daemon (pid ${String(FAKE_CONNECTION.pid)}), which is stopped`)
     expect(result.stdout).toContain(`  - the kurmis data folder ${kurmisHome}`)
-    expect(result.stdout).toContain('Your own Claude Code and Codex sign-ins are not signed out')
+    expect(result.stdout).toContain('The logins plain claude and plain codex use are not signed out')
 
     expect(readFileSync(settingsPath, 'utf8')).toBe(original)
     expect(existsSync(backupPathFor(settingsPath))).toBe(false)
     expect(world.autostart.calls).toEqual(['unregister:darwin'])
     expect(world.stops).toBe(1)
-    // One logout CLI per added login, on its own folder; none on the machine's own logins.
+    // One logout CLI per added login, on its own folder; none on the logins of plain claude and plain codex.
     expect(world.signOuts).toEqual([
       `/fake/bin/claude auth logout ${loginFolder(WORK)}`,
       `/fake/bin/codex logout ${loginFolder(SPARE)}`
@@ -634,7 +634,7 @@ describe('kurmis setup --uninstall-and-logout', () => {
     await installed()
     const leftover = claudeRef('leftover01')
     mkdirSync(loginFolder(leftover), { recursive: true })
-    // A folder named by the id of plain claude's login is not a login kurmis added.
+    // A folder named by the id of the login plain claude uses is not a login kurmis added.
     mkdirSync(join(kurmisHome, 'claude', OWN_CLAUDE_REF.id), { recursive: true })
     const world = uninstaller()
     const result = await run(world.command, ['--uninstall-and-logout', '--yes'])

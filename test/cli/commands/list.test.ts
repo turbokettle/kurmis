@@ -40,7 +40,7 @@ describe('hasLocalCredentials', () => {
     expect(hasLocalCredentials(C, {}, home)).toBe(false)
   })
 
-  it('finds the machine\'s own Claude login in ~/.claude/.credentials.json or ~/.claude.json', () => {
+  it('finds the login plain claude uses in ~/.claude/.credentials.json or ~/.claude.json', () => {
     expect(hasLocalCredentials(OWN_CLAUDE_REF, {}, home)).toBe(false)
     writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
     expect(hasLocalCredentials(OWN_CLAUDE_REF, {}, home)).toBe(true)
@@ -49,7 +49,7 @@ describe('hasLocalCredentials', () => {
     expect(hasLocalCredentials(OWN_CLAUDE_REF, {}, home)).toBe(true)
   })
 
-  it('finds Codex logins by auth.json, in CODEX_HOME or ~/.codex for the machine\'s own login', () => {
+  it('finds Codex logins by auth.json, in CODEX_HOME or ~/.codex for the login plain claude uses', () => {
     expect(hasLocalCredentials(SIDE, {}, home)).toBe(false)
     writeCodexAuth(loginFolder(SIDE))
     expect(hasLocalCredentials(SIDE, {}, home)).toBe(true)
@@ -107,7 +107,7 @@ describe('a Codex login that keeps its sign-in in the keyring', () => {
       .toEqual([['login-status', loginFolder(SIDE)], ['login-status', loginFolder(SIDE)]])
   })
 
-  it('asks for the machine\'s own login in the default home, and starts no codex for a login that keeps auth.json', async () => {
+  it('asks for the login plain claude uses in the default home, and starts no codex for a login that keeps auth.json', async () => {
     keepInKeyring(join(home, '.codex'))
     writeCodexKeyringAuth(keyring(), join(home, '.codex'))
     expect(await hasCredentials(OWN_CODEX_REF, fakeEnv(), home, deps)).toBe(true)
@@ -156,8 +156,8 @@ describe('kurmis list', () => {
       'claude    work-example  workclaude  on    90%        100%    on         yes',
       'codex     sidecodex1    sidecodex1  off   100%       100%    off        no',
       '',
-      `${OWN_CLAUDE} is this machine's own Claude sign-in: the account a plain "claude" is signed in to.`,
-      'work-example is this machine\'s own Codex sign-in: the account a plain "codex" is signed in to.',
+      `${OWN_CLAUDE} is the login plain claude uses.`,
+      'work-example is the login plain codex uses.',
       ''
     ].join('\n'))
     expect(out.stdout()).not.toContain('example.com')
