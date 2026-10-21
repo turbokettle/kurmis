@@ -77,9 +77,16 @@ started on, the proxy forwards the CLI's own `Authorization` header.
 **Global mode** is `kurmis setup`. It puts the same variables in the `env` block of
 `~/.claude/settings.json`, so a plain `claude` and the IDE extensions are routed too. It also
 registers the daemon to start at login: a launchd agent on macOS, and a logon entry on Windows.
-`kurmis setup --undo` removes both. Whether a process variable overrides the `env` of
-`settings.json` decides how `kurmis claude --login <id>` pins a session in global mode. That has
-to be measured before it is built.
+`kurmis setup --undo` removes both.
+
+**The `env` of `settings.json` beats the process environment, and the `--settings` flag beats
+`settings.json`.** Measured with Claude Code 2.1.301 against two local servers. In global mode
+a variable the wrapper puts in the process environment is therefore ignored, so the wrapper
+passes its routing variables in a `--settings` argument instead. When the user's own arguments
+already carry `--settings`, the wrapper merges its `env` into that one.
+
+Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
+headers. The proxy answers that path itself.
 
 ## Codex
 
