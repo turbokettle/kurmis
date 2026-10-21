@@ -1,0 +1,283 @@
+// The rules every reader of a usage snapshot shares: which windows count, which of them are the
+// plan's own, whether the login is out, and when it comes back. One definition each, so the
+// router, `kurmis status` and the Codex login choice cannot disagree about a login. Copied from
+// the original router's `src/tools/claude/core/usage-rules.ts`.
+import type { AccountProvider } from './accounts.ts'
+import { parseTime } from './countdown.ts'
+import {
+  CLAUDE_WINDOWS,
+  SEVEN_DAY_MINS,
+  type AccountUsage,
+  type AccountUsageMap,
+  type NamedUsageWindow,
+  type UsageWindow
+} from './claude-usage.ts'
+import { CODEX_GENERAL_LIMIT_ID, codexWindowLimitId } from './codex-usage.ts'
+
+/**
+ * The limit id of the one Codex bucket that is never shown or counted: `GPT-5.3-Codex-Spark`,
+ * an old model the server meters apart and names in `limitName` (`bengalfox` is its codename).
+ * Every other bucket counts, including ones the server starts metering later.
+ */
+const CODEX_HIDDEN_LIMIT_ID = 'codex_bengalfox'
+
+/** The windows worth showing for this provider: every one but the hidden Codex limit. */
+export function shownUsageWindows<T extends { key: string }>(
+  provider: AccountProvider | undefined,
+  windows: readonly T[]
+): T[] {
+  if (provider !== 'codex') return [...windows]
+  return windows.filter((window) => codexWindowLimitId(window.key) !== CODEX_HIDDEN_LIMIT_ID)
+}
+
+/**
+ * Every window a snapshot carries that is worth looking at, whichever provider it is: a Claude
+ * plan's fixed set plus its per-model windows, or the Codex windows the server named. Disabled
+ * or mirrored extra usage and the hidden Codex bucket are left out.
+ */
+export function allUsageWindows(usage: AccountUsage | null | undefined): NamedUsageWindow[] {
+  if (!usage) return []
+  if (usage.provider === 'codex') return shownUsageWindows('codex', usage.windows ?? [])
+  const out: NamedUsageWindow[] = []
+  for (const spec of CLAUDE_WINDOWS) {
+    const window = spec.field === 'sevenDayOverage' ? extraUsageWindow(usage) : usage[spec.field]
+    if (window === null) continue
+    out.push({
+      key: spec.key,
+      label: spec.label,
+      name: spec.label,
+      windowDurationMins: spec.windowDurationMins,
+      ...window
+    })
+  }
+  for (const entry of usage.modelScoped) {
+    out.push({
+      key: entry.displayName,
+      label: entry.displayName,
+      name: `${entry.displayName} 7 day`,
+      windowDurationMins: SEVEN_DAY_MINS,
+      ...entry
+    })
+  }
+  return out
+}
+
+/**
+ * The seven-day window with extra usage counted in, when extra usage is enabled and the window
+ * says something the plain seven-day window does not. With the same figure and reset it only
+ * mirrors that window, and is left out.
+ */
+export function extraUsageWindow(usage: AccountUsage | null | undefined): UsageWindow | null {
+  if (usage?.extraUsage?.isEnabled !== true) return null
+  const overage = usage.sevenDayOverage ?? null
+  const plain = usage.sevenDay
+  if (overage === null || plain === null) return overage
+  const sameReset = overage.resetsAt === plain.resetsAt || (
+    overage.resetsAt !== null && plain.resetsAt !== null &&
+    Date.parse(overage.resetsAt) === Date.parse(plain.resetsAt)
+  )
+  return overage.utilization === plain.utilization && sameReset ? null : overage
+}
+
+/**
+ * The windows that are the plan's own usage: the ones that stop every request when they run
+ * out, rather than requests on one model. These are the windows the routing limits are
+ * measured against.
+ *
+ * A Claude plan's are the five-hour window, the seven-day window and the seven-day
+ * window with enabled, distinct extra usage counted in; its Opus and Sonnet windows meter one model
+ * each. A Codex plan's general limit is the bucket with limit id `codex`; a bucket that
+ * meters one model is not what the plan runs out of. A plan whose general limit goes under
+ * some other id has no such bucket, and then every window that is shown counts rather than
+ * none of them.
+ */
+export function planUsageWindows(usage: AccountUsage | null | undefined): NamedUsageWindow[] {
+  if (!usage) return []
+  if (usage.provider === 'codex') {
+    const shown = shownUsageWindows('codex', usage.windows ?? [])
+    const general = shown.filter((window) => codexWindowLimitId(window.key) === CODEX_GENERAL_LIMIT_ID)
+    return general.length > 0 ? general : shown
+  }
+  const plan = new Set(CLAUDE_WINDOWS.filter((spec) => spec.plan).map((spec) => spec.key))
+  return allUsageWindows(usage).filter((window) => plan.has(window.key))
+}
+
+/**
+ * The plan window with the least left. Null when the snapshot has no plan window at all. A
+ * window with no reset time still counts, because how full it is says something either way.
+ */
+export function busiestPlanWindow(usage: AccountUsage | null | undefined): NamedUsageWindow | null {
+  let busiest: NamedUsageWindow | null = null
+  for (const window of planUsageWindows(usage)) {
+    if (busiest === null || window.utilization > busiest.utilization) busiest = window
+  }
+  return busiest
+}
+
+/**
+ * Whether the plan's own usage is gone: one of the windows that count has reached 100%, or the
+ * provider said outright that the login was refused.
+ */
+export function usageExhausted(usage: AccountUsage | undefined): boolean {
+  if (usage === undefined) return false
+  if (usage.status === 'rejected') return true
+  return planUsageWindows(usage).some((window) => window.utilization >= 100)
+}
+
+/**
+ * Whether a window's reset time has gone by. What is on such a window was measured
+ * inside the window that ended: the provider has started a new one and nothing has
+ * read it yet.
+ */
+export function windowHasReset(
+  window: { resetsAt: string | null } | null | undefined,
+  now: number
+): boolean {
+  const at = parseTime(window?.resetsAt ?? null)
+  return at !== null && at <= now
+}
+
+/** Whether any window of this snapshot has passed its reset time. */
+export function usageResetPassed(usage: AccountUsage | null | undefined, now: number): boolean {
+  if (!usage) return false
+  return everyWindowOf(usage).some((window) => windowHasReset(window, now))
+}
+
+/**
+ * One snapshot as it stands at `now`. Every window whose reset has passed is emptied, because
+ * its figure belongs to the window that ended. The reset time is kept, so a display can tell a
+ * window that just turned over from one never read. Every routing rule reads usage through
+ * this, because the last reading of a login can be hours old.
+ *
+ * `status` and `limited` go with the window they are about: a login refused because a window
+ * was full is not refused once that window has reset.
+ *
+ * A snapshot with no expired window is returned as it came.
+ */
+export function usageAsOf<T extends AccountUsage | null | undefined>(usage: T, now: number): T {
+  if (!usage) return usage
+  if (!usageResetPassed(usage, now)) return usage
+  const next: AccountUsage = {
+    ...usage,
+    fiveHour: fieldAsOf(usage.fiveHour, now),
+    sevenDay: fieldAsOf(usage.sevenDay, now),
+    sevenDayOverage: fieldAsOf(usage.sevenDayOverage, now),
+    sevenDayOpus: fieldAsOf(usage.sevenDayOpus, now),
+    sevenDaySonnet: fieldAsOf(usage.sevenDaySonnet, now),
+    modelScoped: usage.modelScoped.map((window) => emptyIfReset(window, now))
+  }
+  if (usage.windows !== undefined) {
+    next.windows = usage.windows.map((window) => emptyIfReset(window, now))
+  }
+  // Only the window the refusal named can clear it. A refusal that named no window
+  // is left alone: there is nothing here that says which reset would end it.
+  if (usage.limited !== null && windowHasReset(usage.limited, now)) {
+    next.limited = null
+    next.status = null
+  }
+  return next as T
+}
+
+/**
+ * The same over a whole map. The map itself is returned unchanged when no login has a window
+ * that has turned over.
+ */
+export function usageMapAsOf(usage: AccountUsageMap, now: number): AccountUsageMap {
+  const keys = Object.keys(usage)
+  if (!keys.some((key) => usageResetPassed(usage[key], now))) return usage
+  const next: AccountUsageMap = {}
+  for (const key of keys) {
+    const snapshot = usage[key]
+    if (snapshot !== undefined) next[key] = usageAsOf(snapshot, now)
+  }
+  return next
+}
+
+/** An emptied copy of the window when its reset has passed, and the window itself otherwise. */
+function emptyIfReset<T extends UsageWindow>(window: T, now: number): T {
+  return windowHasReset(window, now) ? { ...window, utilization: 0 } : window
+}
+
+/** The same for one of the fields that may hold no window at all. */
+function fieldAsOf<T extends UsageWindow>(window: T | null, now: number): T | null {
+  return window === null ? null : emptyIfReset(window, now)
+}
+
+/**
+ * Every window a snapshot carries a reset time on, including the hidden ones. A hidden window
+ * still turns over, and a snapshot is current or it is not.
+ */
+function everyWindowOf(usage: AccountUsage): { resetsAt: string | null }[] {
+  const out: { resetsAt: string | null }[] = []
+  for (const spec of CLAUDE_WINDOWS) {
+    const window = usage[spec.field]
+    if (window !== null && window !== undefined) out.push(window)
+  }
+  for (const window of usage.modelScoped) out.push(window)
+  for (const window of usage.windows ?? []) out.push(window)
+  return out
+}
+
+/**
+ * When a login's plan comes back, read off its last usage snapshot.
+ *
+ * The answer is the latest reset among the plan's own windows that are at or over 100%,
+ * because the login is inside none of them until the last one has reset. A provider that
+ * refused a request without any window reaching 100% (Codex says so outright, and a Claude
+ * plan can refuse on a window it reports no percentage for) falls back to the window it named
+ * and then to the busiest window that has a reset time. Null when the login has room.
+ */
+export function resetsAtFromUsage(usage: AccountUsage | null | undefined): string | null {
+  if (!usage) return null
+  const full = planUsageWindows(usage)
+    .filter((window) => window.utilization >= 100)
+    .map((window) => usableReset(window.resetsAt))
+    .filter(isString)
+  if (full.length > 0) return latest(full)
+  if (usage.status !== 'rejected') return null
+  const named = usableReset(usage.limited?.resetsAt ?? null)
+  if (named !== null) return named
+  return busiestReset(allUsageWindows(usage))
+}
+
+/** The reset of the window closest to its limit, among those that have one. */
+function busiestReset(windows: readonly NamedUsageWindow[]): string | null {
+  let best: { utilization: number; resetsAt: string } | null = null
+  for (const window of windows) {
+    const resetsAt = usableReset(window.resetsAt)
+    if (resetsAt === null) continue
+    if (best === null || window.utilization > best.utilization) {
+      best = { utilization: window.utilization, resetsAt }
+    }
+  }
+  return best?.resetsAt ?? null
+}
+
+function usableReset(resetsAt: string | null): string | null {
+  if (resetsAt === null || !Number.isFinite(Date.parse(resetsAt))) return null
+  return resetsAt
+}
+
+function isString(value: string | null): value is string {
+  return value !== null
+}
+
+function latest(times: readonly string[]): string | null {
+  let best: string | null = null
+  let bestAt = -Infinity
+  for (const time of times) {
+    const at = Date.parse(time)
+    if (!Number.isFinite(at) || at <= bestAt) continue
+    best = time
+    bestAt = at
+  }
+  return best
+}
+
+/**
+ * Whether a window covers seven days, which is the length of every weekly window. The weekly
+ * routing limit is measured against these, the five-hour limit against the rest.
+ */
+export function isSevenDayWindow(window: { windowDurationMins?: number | null }): boolean {
+  return window.windowDurationMins === SEVEN_DAY_MINS
+}
