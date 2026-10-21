@@ -1084,7 +1084,15 @@ end to end, against the fake claude, codex and Anthropic API. `createWorld` in
 `test/integration/harness.ts` gives each test its own temporary HOME, data folder, free port,
 fake API, and fake Keychain, launchctl and registry folders. It builds the children's
 environment from nothing, so only the fakes and the stand-ins of `test/setup.ts` can be reached.
-After each test it stops every daemon the test's commands started.
+After each test it runs `kurmis daemon stop`, and then kills a daemon that still runs only when
+it is shown to be the test's (`OwnDaemons` in `test/daemon/own-daemons.ts`): it answers a status
+request on the world's port with a key the world's data folder held and with its own pid, or,
+off Windows, `ps` shows that it runs a bundle the world's commands ran. The pids come from
+`daemon.json` and from the `daemon_started` lines of `daemon.log`. Windows soon gives a freed
+pid to a new process, so there a pid that cannot be shown to be the test's daemon is never
+signalled; the harness waits up to 10 seconds for it to exit, so that the world's folder is no
+longer in use when it is removed. The daemon process tests in `test/cli/` stop their daemons
+the same way.
 
 **Tests on Windows.** The suite is meant to pass on Windows as well. `test/host.ts` has what the
 tests need for that: `linkFolder` makes a directory junction on Windows (a directory symlink
