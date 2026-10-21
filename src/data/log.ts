@@ -71,6 +71,8 @@ export const LOG_REASONS = [
   'config_changed',
   'pinned',
   'out_of_pool',
+  // The macOS Keychain refused the read: it is locked, or the daemon runs in an ssh session.
+  'not_allowed',
   'other'
 ] as const
 
