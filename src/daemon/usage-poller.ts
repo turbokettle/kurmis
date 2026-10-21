@@ -1,6 +1,7 @@
 // The daemon's usage probes: one at a time per login, every signed-in login every 15 minutes,
-// and on demand (the control API's `probe`, a proxy request whose reading is stale, and the
-// renewal of an expiring token, which a Claude probe does because its CLI renews the token).
+// and on demand (the control API's `probe`, a proxy request whose reading is stale, a login that
+// appears when `config.json` is read again, and the renewal of an expiring token, which a Claude
+// probe does because its CLI renews the token).
 //
 // A probe's answer goes into the login table: the usage snapshot, whether the login is signed
 // in, and the end of a cooldown that had no known end (`cooldownAfterProbe`). A successful

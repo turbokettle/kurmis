@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
 import { CONTROL_API_VERSION, CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
 import { addLogin, loadConfig, saveConfig } from '../../src/data/config.ts'
+import { emptyAccountUsage } from '../../src/core/usage.ts'
 import { toLoginId } from '../../src/data/login-id.ts'
 import { loginFolder, statePath } from '../../src/data/paths.ts'
 import { fakeToken, readFakeClaudeRecord, reply, writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth } from '../fakes/index.ts'
@@ -445,6 +446,23 @@ describe('the control API', () => {
     expect(JSON.parse(broken.text)).toMatchObject({ ok: false })
     // The config the daemon had is kept.
     expect((await status(h)).logins.map((login) => login.id)).toContain('extraclaude')
+  })
+
+  test('a login that a request finds added to config.json is probed at once, without a reload request', async () => {
+    const probed: string[] = []
+    const probeClaude = (login: { id: string }) => {
+      probed.push(login.id)
+      return Promise.resolve({ ok: true as const, signedIn: false, usage: emptyAccountUsage(login.id, Date.now()) })
+    }
+    const h = await twoLogins({ tuning: { probeClaude } })
+    saveConfig(addLogin(loadConfig(), { id: toLoginId('extraclaude'), provider: 'claude' }, { alias: 'extra' }))
+    expect((await status(h)).logins.map((login) => login.id)).toContain('extraclaude')
+    await expect.poll(() => probed).toEqual(['extraclaude'])
+    expect(h.log.filter((line) => line.event === 'usage_probe_started').map((line) => line.fields.login)).toEqual(['extraclaude'])
+    await expect.poll(async () => (await status(h)).logins.find((login) => login.id === 'extraclaude')?.signedIn).toBe(false)
+    // A reload request of the same contents probes nothing more.
+    expect((await call(h, CONTROL_PATHS.reload, { method: 'POST', headers: { 'x-kurmis-key': KEY } })).status).toBe(200)
+    expect(probed).toEqual(['extraclaude'])
   })
 
   test('stop answers ok and then asks the daemon to stop', async () => {

@@ -9292,8 +9292,6 @@ function createControl(options) {
             answer(res, 500, failure(result.error));
             return;
           }
-          const fresh = table.logins().filter((login) => table.probedSignedIn(login.id) === null).map((login) => login.id);
-          if (fresh.length > 0) void poller.probeMany(fresh, "config");
           answer(res, 200, ok());
           return;
         }
@@ -9621,6 +9619,7 @@ var LoginTable = class {
   /** When each login's current cooldown was set; absent for one read from `state.json`. In memory only. */
   cooldownSetAt = /* @__PURE__ */ new Map();
   listeners = /* @__PURE__ */ new Set();
+  addedListeners = /* @__PURE__ */ new Set();
   writer;
   /** The files, fixed when the table is made, so a later change of `KURMIS_HOME` cannot move them. */
   configFile = configPath();
@@ -9652,6 +9651,7 @@ var LoginTable = class {
       return { ok: false, error: `${this.configFile} could not be read: ${messageOf3(error)}` };
     }
     if (stamp === this.stamp) return { ok: true, changed: false };
+    const before = this.config;
     try {
       this.config = loadConfig(this.configFile, { timeoutMs: CONFIG_LOCK_TIMEOUT_MS });
     } catch (error) {
@@ -9661,6 +9661,7 @@ var LoginTable = class {
       return { ok: false, error: messageOf3(error) };
     }
     this.stamp = stamp;
+    const added = this.config.logins.map((login) => login.id).filter((id) => findLogin(before, id) === void 0);
     const ids = new Set(this.config.logins.map((login) => login.id));
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id);
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id);
@@ -9671,6 +9672,7 @@ var LoginTable = class {
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id);
     this.options.log.write("config_loaded", { count: this.config.logins.length });
     this.changed();
+    if (added.length > 0) for (const listener of [...this.addedListeners]) listener(added);
     return { ok: true, changed: true };
   }
   /** Reloads the config when its contents changed, looking at most every `configCheckMs`. */
@@ -9738,7 +9740,7 @@ var LoginTable = class {
     return this.state.usage.get(id) ?? null;
   }
   setUsage(id, usage) {
-    if (!isLoginId(id)) return;
+    if (!isLoginId(id) || this.find(id) === void 0) return;
     this.state.usage.set(id, usage);
     this.save();
     this.changed();
@@ -9749,7 +9751,7 @@ var LoginTable = class {
    */
   noteObservation(id, observation) {
     if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return;
-    if (!isLoginId(id)) return;
+    if (!isLoginId(id) || this.find(id) === void 0) return;
     this.observations.set(id, observation);
     this.setUsage(id, usageFromUnifiedHeaders(id, this.usage(id), observation));
   }
@@ -9770,7 +9772,7 @@ var LoginTable = class {
     return until === void 0 || until <= now ? null : until;
   }
   setCooldown(id, until) {
-    if (!isLoginId(id)) return;
+    if (!isLoginId(id) || this.find(id) === void 0) return;
     if (until === null) {
       this.state.cooldowns.delete(id);
       this.cooldownSetAt.delete(id);
@@ -9790,7 +9792,7 @@ var LoginTable = class {
     return this.signedIn.get(id) ?? null;
   }
   setSignedIn(id, value) {
-    if (this.signedIn.get(id) === value) return;
+    if (this.signedIn.get(id) === value || this.find(id) === void 0) return;
     this.signedIn.set(id, value);
     this.changed();
   }
@@ -9825,6 +9827,7 @@ var LoginTable = class {
   }
   /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
   markRefused(id) {
+    if (this.find(id) === void 0) return;
     const known = this.refused.has(id);
     this.refused.set(id, this.options.now());
     if (!known) this.changed();
@@ -9899,6 +9902,17 @@ var LoginTable = class {
   /** Ends a session's hold, so its requests are routed on Auto again. */
   releaseSession(key) {
     this.held.delete(key);
+  }
+  /**
+   * Calls `listener` after a reload of `config.json` that brought logins the config before it
+   * did not have, with their ids. The first read replaces the stand-in config, so it names every
+   * login; the usage poll is started after it and probes them all anyway.
+   */
+  onLoginsAdded(listener) {
+    this.addedListeners.add(listener);
+    return () => {
+      this.addedListeners.delete(listener);
+    };
   }
   /** Calls `listener` after every change of a login's usage, cooldown, sign-in or settings. */
   onChange(listener) {
@@ -11740,6 +11754,9 @@ function createDaemonApp(options) {
   return {
     async start() {
       table.load();
+      table.onLoginsAdded((ids) => {
+        void poller.probeMany(ids, "config");
+      });
       await tokens.prime(table.claudeLogins().map((login) => login.id));
       if (tuning.poll !== false) poller.start();
     },

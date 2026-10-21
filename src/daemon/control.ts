@@ -133,14 +133,12 @@ export function createControl(options: ControlOptions): Control {
         case CONTROL_PATHS.reload: {
           if (!allow(req, res, 'POST')) return
           req.resume()
+          // A login the reload adds is probed through the table's `onLoginsAdded` (`app.ts`).
           const result = table.reloadConfig()
           if (!result.ok) {
             answer(res, 500, failure(result.error))
             return
           }
-          // A login added since the last read has not been probed yet.
-          const fresh = table.logins().filter((login) => table.probedSignedIn(login.id) === null).map((login) => login.id)
-          if (fresh.length > 0) void poller.probeMany(fresh, 'config')
           answer(res, 200, ok())
           return
         }

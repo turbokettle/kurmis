@@ -331,7 +331,8 @@ daemon finishes the requests it has open.
   `content-encoding` is passed on with the body.
 - **Usage** is probed every 15 minutes for each signed-in login (and each login not probed
   yet), and on demand: the control API's `probe`, a stale reading, a token renewal, and a login
-  added to `config.json`. One probe per login runs at a time; a second request waits for it. A
+  that appears in `config.json` when the daemon reads it again, by a `reload` or because a
+  request found it changed (`onLoginsAdded` in `logins.ts`). One probe per login runs at a time; a second request waits for it. A
   failed probe keeps the previous windows and records the error on the snapshot. A probe that
   succeeds and finds the login signed in also gives the daemon the login's email, from which it
   sets an automatic alias ("Aliases", under "The data folder"). The daemon also
@@ -396,8 +397,11 @@ daemon finishes the requests it has open.
   a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
   does not read leaves the config the daemon has. A file that could not be read because another
   process held its lock for more than 500 ms is read again at the next check, even when its
-  contents stay the same. Until a config has been read, the daemon uses a stand-in with the
-  logins of plain claude and plain codex under new random ids, which it never saves.
+  contents stay the same. A login the new config has and the old one did not is probed at once.
+  A login the new config no longer has is dropped with its usage, cooldown, sign-in state and
+  refused token, and a probe or an answer of it that ends after the reload records nothing.
+  Until a config has been read, the daemon uses a stand-in with the logins of plain claude and
+  plain codex under new random ids, which it never saves.
 - **Test hooks.** `KURMIS_UPSTREAM_URL` replaces the Anthropic API origin
   (`https://api.anthropic.com`), `KURMIS_SECURITY_PROGRAM` the `security` program
   (`/usr/bin/security`) and `KURMIS_POWERSHELL_PROGRAM` PowerShell (see "Test hooks" below).

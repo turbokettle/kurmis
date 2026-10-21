@@ -232,6 +232,39 @@ describe('the config', () => {
     logins.reloadConfig()
     expect(logins.cooldown(WORK)).toBeNull()
   })
+
+  test('a probe or an answer of a removed login that ends after the reload keeps nothing', () => {
+    writeLogins({ claude: { [WORK]: {} } })
+    const logins = table()
+    writeLogins({})
+    logins.reloadConfig()
+    logins.setUsage(WORK, emptyAccountUsage(WORK, clock))
+    logins.setSignedIn(WORK, true)
+    logins.setCooldown(WORK, clock + 100)
+    logins.markRefused(WORK)
+    expect(logins.usage(WORK)).toBeNull()
+    expect(logins.probedSignedIn(WORK)).toBeNull()
+    expect(logins.cooldown(WORK)).toBeNull()
+    expect(logins.isRefused(WORK)).toBe(false)
+  })
+
+  test('tells the added-logins listeners which logins a reload brought, whichever way it was read again', () => {
+    writeLogins({})
+    const logins = table()
+    const added: string[][] = []
+    logins.onLoginsAdded((ids) => { added.push(ids) })
+    writeLogins({ claude: { [WORK]: {} }, codex: { [WORK_CODEX]: {} } })
+    clock += 2_000
+    logins.checkConfig()
+    expect(added).toEqual([[WORK, WORK_CODEX]])
+    // Same contents, a removal, and a change of settings bring no login.
+    logins.reloadConfig()
+    writeLogins({ claude: { [WORK]: {} } })
+    logins.reloadConfig()
+    writeLogins({ claude: { [WORK]: { routing: false } } })
+    logins.reloadConfig()
+    expect(added).toEqual([[WORK, WORK_CODEX]])
+  })
 })
 
 describe("the logins of plain claude and plain codex", () => {

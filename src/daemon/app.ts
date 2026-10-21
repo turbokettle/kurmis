@@ -115,6 +115,9 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
   return {
     async start() {
       table.load()
+      // From here on, a login that appears in a reloaded config.json is probed at once rather
+      // than at the next poll. The logins of the first read are probed by the poll's start.
+      table.onLoginsAdded((ids) => { void poller.probeMany(ids, 'config') })
       await tokens.prime(table.claudeLogins().map((login) => login.id))
       if (tuning.poll !== false) poller.start()
     },

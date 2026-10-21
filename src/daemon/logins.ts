@@ -65,6 +65,9 @@ export type Placement =
 /** What `reloadConfig` found. */
 export type ConfigReload = { ok: true; changed: boolean } | { ok: false; error: string }
 
+/** Called with the ids of the logins a reloaded config has and the config before it did not. */
+export type AddedLoginsListener = (ids: LoginId[]) => void
+
 export class LoginTable {
   /**
    * Until a config has been read, a stand-in with the logins of plain claude and plain codex
@@ -107,6 +110,7 @@ export class LoginTable {
   /** When each login's current cooldown was set; absent for one read from `state.json`. In memory only. */
   private readonly cooldownSetAt = new Map<string, number>()
   private readonly listeners = new Set<() => void>()
+  private readonly addedListeners = new Set<AddedLoginsListener>()
   private readonly writer: CoalescedWriter
   /** The files, fixed when the table is made, so a later change of `KURMIS_HOME` cannot move them. */
   private readonly configFile = configPath()
@@ -150,6 +154,7 @@ export class LoginTable {
       return { ok: false, error: `${this.configFile} could not be read: ${messageOf(error)}` }
     }
     if (stamp === this.stamp) return { ok: true, changed: false }
+    const before = this.config
     try {
       this.config = loadConfig(this.configFile, { timeoutMs: CONFIG_LOCK_TIMEOUT_MS })
     } catch (error) {
@@ -161,6 +166,7 @@ export class LoginTable {
       return { ok: false, error: messageOf(error) }
     }
     this.stamp = stamp
+    const added = this.config.logins.map((login) => login.id).filter((id) => findLogin(before, id) === undefined)
     const ids = new Set<string>(this.config.logins.map((login) => login.id))
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id)
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id)
@@ -171,6 +177,7 @@ export class LoginTable {
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id)
     this.options.log.write('config_loaded', { count: this.config.logins.length })
     this.changed()
+    if (added.length > 0) for (const listener of [...this.addedListeners]) listener(added)
     return { ok: true, changed: true }
   }
 
@@ -247,7 +254,8 @@ export class LoginTable {
   }
 
   setUsage(id: string, usage: AccountUsage): void {
-    if (!isLoginId(id)) return
+    // A login gone from the config (a probe or an answer that ended after the reload) keeps nothing.
+    if (!isLoginId(id) || this.find(id) === undefined) return
     this.state.usage.set(id, usage)
     this.save()
     this.changed()
@@ -259,7 +267,7 @@ export class LoginTable {
    */
   noteObservation(id: string, observation: UnifiedObservation): void {
     if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return
-    if (!isLoginId(id)) return
+    if (!isLoginId(id) || this.find(id) === undefined) return
     this.observations.set(id, observation)
     this.setUsage(id, usageFromUnifiedHeaders(id, this.usage(id), observation))
   }
@@ -285,7 +293,7 @@ export class LoginTable {
   }
 
   setCooldown(id: string, until: number | null): void {
-    if (!isLoginId(id)) return
+    if (!isLoginId(id) || this.find(id) === undefined) return
     if (until === null) {
       this.state.cooldowns.delete(id)
       this.cooldownSetAt.delete(id)
@@ -308,7 +316,7 @@ export class LoginTable {
   }
 
   setSignedIn(id: string, value: boolean): void {
-    if (this.signedIn.get(id) === value) return
+    if (this.signedIn.get(id) === value || this.find(id) === undefined) return
     this.signedIn.set(id, value)
     this.changed()
   }
@@ -347,6 +355,7 @@ export class LoginTable {
 
   /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
   markRefused(id: string): void {
+    if (this.find(id) === undefined) return
     const known = this.refused.has(id)
     this.refused.set(id, this.options.now())
     if (!known) this.changed()
@@ -431,6 +440,16 @@ export class LoginTable {
   /** Ends a session's hold, so its requests are routed on Auto again. */
   releaseSession(key: string): void {
     this.held.delete(key)
+  }
+
+  /**
+   * Calls `listener` after a reload of `config.json` that brought logins the config before it
+   * did not have, with their ids. The first read replaces the stand-in config, so it names every
+   * login; the usage poll is started after it and probes them all anyway.
+   */
+  onLoginsAdded(listener: AddedLoginsListener): () => void {
+    this.addedListeners.add(listener)
+    return () => { this.addedListeners.delete(listener) }
   }
 
   /** Calls `listener` after every change of a login's usage, cooldown, sign-in or settings. */
