@@ -48,6 +48,8 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   `src/data/lock.ts`, held for the whole command, because a sign-in can take minutes. A second
   run for the same login stops at once with a message naming the pid that holds it. A lock whose
   pid no longer runs, or that is older than 24 hours, is taken over.
+- `codex-merged/<name>.json` records what was last merged and copied into that home from the
+  default Codex home (see "Codex").
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
   names its own pid, so a replaced daemon never removes its successor's file. The CLI removes a
@@ -606,7 +608,10 @@ starts the daemon when it is not running, reads its status, and ranks the Codex 
 `chooseAccount`, as Claude's Auto ranks a new session. The rows come from the status: routing,
 limits and use-first from the login, signed in unless the daemon says it is not (an unknown state
 counts as signed in), no token expiry. A login the server refused (its usage says `rejected`)
-is passed over until the reset it named, even when no window reads 100%.
+is passed over until the reset it named, even when no window reads 100%. The usage says
+`rejected` when the plan's general limit (limit id `codex`) or the workspace's spending control
+has been reached. A limit that meters one model apart only stops that model, so reaching it does
+not make the login refused (`statusOf` in `src/core/codex-usage.ts`).
 
 - When at least two Codex logins could be chosen and one of them has usage that is missing or
   older than 20 minutes (the daemon's 15-minute probe interval plus 5), the wrapper asks the
@@ -623,41 +628,114 @@ of the starting environment, or `~/.codex`. A `CODEX_HOME` inside kurmis' own `c
 a login's home, inherited by a `kurmis codex` run from inside a session on that login; it is
 ignored and `~/.codex` is used. The decisions are the pure functions of `src/core/codex-home.ts`:
 
-- Each real folder of the default home is linked into the login's home, except scratch folders
-  (`tmp`, `.tmp`), links, and names that say they hold a credential or a database.
-- `AGENTS.md` is copied, and `config.toml` is merged without its secrets
-  (`src/core/codex-account-config.ts`). Both are read through a link, so a file that is a
-  symlink into a dotfiles folder still counts.
+- Each folder of the default home is linked into the login's home, and so is a link there that
+  leads to a folder (into a dotfiles folder, say); the login's link then leads to the link in the
+  default home. Left out are scratch folders (`tmp`, `.tmp`), every `.sandbox` folder of the
+  Windows sandbox (below), and names that say they hold a credential or a database
+  (`codexPrivateName`).
+- A link in the login's home that kurmis made and that leads to a folder no longer shared, or
+  leads nowhere, is removed first (`codexStaleLink`). A link that leads nowhere counts as kurmis'
+  when its target has the link's own name, which also catches links into a default home used
+  before. Other links are left alone.
+- `AGENTS.md` and `AGENTS.override.md` are copied. When the default home no longer has one of
+  them, a copy kurmis made is removed, so a removed `AGENTS.override.md` (which Codex reads
+  instead of `AGENTS.md`) stops overriding; a file kurmis did not put there stays.
+- `config.toml` is merged without its secrets (below). Both it and the copied files are read
+  through a link, so a file that is a symlink into a dotfiles folder still counts.
 - `auth.json` and every other file stay out, so each login keeps its own sign-in.
 
-A real folder, or a link to somewhere else, where a link should go is left as it is, with a
-warning. Every step that fails adds a warning to stderr and the start goes on. Only a home that
-cannot be created stops it. A login's `config.toml` that is not valid TOML is left as it is,
-because it may hold the login's own secrets.
+An empty real folder where a link should go (Codex made it before the default home had that
+folder) is replaced by the link. A folder with something in it, or a link to somewhere else, is
+left as it is with a warning, given once per folder. When two `kurmis codex` start on one login
+at the same moment, the one whose link creation fails with EEXIST reads the place again and
+finds the other's link. Every step that fails adds a warning to stderr and the start goes on.
+Only a home that cannot be created stops it.
+
+**What was merged.** `codex-merged/<name>.json` in the data folder records, for the login's
+home, the default home's `config.toml` without secrets as it was last merged in, a SHA-256 of
+each file last copied in, and the folders already warned about. It is kept outside the Codex
+home, written with mode 0600, rewritten only when it changes, and removed by `logout`. A home
+that is empty when a start begins (a new login) starts from an empty record, so a record left
+by an earlier login of the same name is not used.
+
+**The `config.toml` merge** (`src/core/codex-account-config.ts`). Codex writes to the
+`config.toml` of the home it runs with (a `/model` choice, `[notice]` keys, plugin and feature
+switches, trust), so the merge is three-way, against the last merged copy, one setting (a
+value, or a whole array) at a time:
+
+- A setting the default home has is taken from it, unless the default home's value is the one
+  last merged in and the login's file has another: then the login (or Codex in a session on it)
+  changed it, and that value stays until the default home's changes.
+- A setting the login's file has and the default home no longer has is removed when it was in
+  the last merged copy, and kept when it never was.
+- A table that loses its last setting that is not a secret goes as a whole, with its header and
+  the login's own secrets in it. Codex refuses to load a file where an MCP server has only an
+  `env` table left (`invalid transport`).
+- Without a last merged copy (the first start after kurmis began keeping one), every setting of
+  the login that is not a secret or trust counts as merged in before, which is what the earlier
+  two-way merge did: what the default home lacks is removed this once.
+- When the default home has no `config.toml`, the login's file and the record stay as they are.
+
+A secret is never copied from the default home, and a secret in the login's file is never
+changed or removed, except with its whole table. A key name marks the strings under it as
+secrets by its last word (`secretKeyName`): `token`, `secret`, `password`, `passphrase`,
+`authorization`, `cookie`, `apikey`, or `key` other than in `env_key` and `public_key`. So
+`experimental_bearer_token`, `bearer_token`, `access_token`, `client_secret` and `api_key` are
+secrets, while `bearer_token_env_var` and `env_key` (names of environment variables),
+`cli_auth_credentials_store` (a kind of store), `mcp_oauth_callback_port` (a port) and
+`model_auto_compact_token_limit` (a count) are not. The tables `env`, `set`, `http_headers`,
+`headers` and `query_params` hold secrets whatever their keys are called, and
+`client-private-key` (otel's path to a key file) is not a secret. A boolean, a number or a date
+is never a secret. A string is also a secret when its text looks like one (a bearer token, a
+known key format, a password in a URL, `--token <value>`), and an argument list when it passes
+a header or a token. The rule errs towards secrets: `features.network_proxy.credentials.<n>.env`
+holds names of variables and is still not copied. When the default home has a secret the login
+lacks, a warning says so. When a secret stands in the way of a setting (the login's value holds
+one, or the default home's array of tables holds one and differs from the login's in more than
+its secrets, such as a new `[[x]]` element), the login's stays and a warning names the setting,
+at every start until the two agree.
+
+The login's file keeps its layout and comments. The merge parses each file once and makes all
+its changes in one pass: a changed value is replaced where it stands, a removed key goes with
+its line, a removed table with its header, and a new key goes into the section that already
+defines its table, or under a new `[header]` at the end. A value from the default home is
+written the way the default home wrote it (a multi-line string stays multi-line); comments of
+the default home are not copied. Only a changed array of tables is then set one element at a
+time, and the result is checked to hold exactly the merged settings. A UTF-8 byte order mark at
+the start of either file is ignored. A login's `config.toml` that is not valid TOML is left as
+it is, because it may hold the login's own secrets.
 
 The login's `config.toml` is written to a temporary file beside it, and the file is read again
 just before the rename. When a Codex process changed it in the meantime, the merge is made
 again from the new contents, up to three times in all (`CODEX_CONFIG_MERGE_ATTEMPTS`); after
-that the file is left alone until the next start. The home is created with mode 0700 and
-`config.toml` written with 0600, because it may hold the login's own secrets.
+that the file is left alone until the next start, and the record is not updated. The home is
+created with mode 0700 and `config.toml` written with 0600, because it may hold the login's own
+secrets.
 
 **Hook and folder trust.** Codex keeps trust in the `config.toml` of the home it runs with:
-`hooks.state."<hook key>"` (`trusted_hash`, `enabled`) for a hook and `projects."<folder>"`
-(`trust_level`) for a folder. A session on a login asks for trust and Codex writes it into
-that login's file. The merge keeps those values across refreshes; the default home's values
-fill in the fields the login has not set. Where both have a value for the same hook or folder,
-`enabled = false` beats `true` and `"untrusted"` beats any other `trust_level`. For
-`trusted_hash` the login's own hash stays: a hash trusts exactly the version of the hook that
-hashes to it, so neither hash trusts more than the other. Taking the default home's would undo
-the login's own approval on every refresh, and dropping both would last only until the next
-refresh filled the default home's hash in.
+`hooks.state."<hook key>"` (`trusted_hash`, `trusted_content_hash`, `enabled`) for a hook and
+`projects."<folder>"` (`trust_level`) for a folder. A session on a login asks for trust and Codex
+writes it into that login's file. A trust value that came from the default home follows it, so
+trusting a folder again in `~/.codex` reaches the login. A trust value of the login's own (one
+that differs from the last merged copy, or every trust value on the first merge without one)
+stays when the default home drops it, and where the default home has a value for the same field,
+`enabled = false` beats `true` and `"untrusted"` beats any other `trust_level`. For the hashes
+the login's own stays: a hash trusts exactly the version of the hook that hashes to it, so
+neither hash trusts more than the other, and taking the default home's would undo the login's
+own approval on every refresh.
 
 This differs from the original router, which drops trust the login's file widened, because a model in a
 session could have written it. Kurmis has no window in which a person gives trust, and a model
 that can write a login's `config.toml` could as well write `~/.codex/config.toml`, whose trust
-reaches every login. One consequence: a folder marked untrusted or a hook switched off in a
-login's file stays so after the default home trusts it again. It has to be trusted again in a
+reaches every login. One consequence: a folder the login itself marked untrusted, or a hook it
+switched off, stays so after the default home trusts it. It has to be trusted again in a
 session on that login.
+
+**The Windows sandbox.** Codex's Windows sandbox (`codex-rs/windows-sandbox-rs`) keeps a setup
+marker in `CODEX_HOME/.sandbox` that is valid only together with the sandbox users' passwords in
+`.sandbox-secrets`, copies helper programs into `.sandbox-bin`, and its sandbox service refuses a
+`CODEX_HOME` whose `.sandbox` folders are links. So every `.sandbox` folder stays private to
+each login, and a link to one that an earlier kurmis made is removed.
 
 Removing a login's home must unlink its links first. A recursive delete that followed one
 would delete the folder of `~/.codex` it points to.
@@ -778,6 +856,14 @@ These are known and left as they are.
   `state.json` in that time, so the file holds whichever wrote last; the old daemon writes once
   more as it stops, and a change the new one made before that is lost from the file (not from
   the new daemon's memory) until the new daemon writes again.
+- **The Windows sandbox in elevated mode on several Codex logins.** Codex creates two sandbox
+  user accounts per machine and stores their passwords in the home it runs with. Its setup in
+  one home sets new passwords for the same accounts, so the passwords another login's home
+  holds stop working, and Codex there runs its setup again (with a UAC prompt, or through its
+  sandbox service when that is installed, which accepts only one home). Switching logins can
+  so cost a setup each time. Kurmis does not change the sandbox mode of a login. Codex's
+  unelevated sandbox mode (the `windows.sandbox` setting) uses no such accounts as far as its
+  code shows; that has not been tested.
 - **What counts as a usage limit.** A 429 counts as a usage-limit refusal when its
   `anthropic-ratelimit-unified-status` is `rejected` or it carries
   `anthropic-ratelimit-unified-representative-claim` or `anthropic-ratelimit-unified-overage-status`

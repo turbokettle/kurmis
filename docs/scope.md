@@ -17,14 +17,17 @@ machine after each larger change. Linux works where it costs nothing extra.
   subscription is billed.
 - **Codex:** the CLI has one variable, `CODEX_HOME`, and it moves the whole folder. So each login
   has its own home. Before every start, `config.toml` is merged in from `~/.codex` without its
-  secrets. TOML types are kept, and so are the comments in the login's own file; comments in
-  `~/.codex/config.toml` are not carried over. `AGENTS.md` is copied in, and the folders of
+  secrets, three ways: kurmis keeps a copy of what it last merged in, so a setting changed or
+  removed in `~/.codex` is changed or removed in the login, and what Codex wrote into the
+  login's own file (a `/model` choice, a notice, plugin switches, trust) stays. TOML types are
+  kept, and so are the comments in the login's own file; comments in `~/.codex/config.toml` are
+  not carried over. `AGENTS.md` and `AGENTS.override.md` are copied in, and the folders of
   `~/.codex` are linked in: a symlink on macOS, a directory junction on Windows. Scratch folders
-  (`tmp`, `.tmp`), links and anything whose name says it holds a credential or a database are
-  not linked. `auth.json` is never copied or linked. Hook and folder trust that a session on
-  the login gave stays in the login's `config.toml` across refreshes; the default home's trust
-  fills in what the login has not set, and where both set a value the more restrictive one
-  wins (a folder marked untrusted, a hook switched off).
+  (`tmp`, `.tmp`), the Windows sandbox's `.sandbox` folders and anything whose name says it holds
+  a credential or a database are not linked. `auth.json` is never copied or linked. Hook and
+  folder trust that a session on the login gave stays in the login's `config.toml` across
+  refreshes; where the default home and the login both set a value the more restrictive one wins
+  (a folder marked untrusted, a hook switched off).
 
 ## Claude routing
 

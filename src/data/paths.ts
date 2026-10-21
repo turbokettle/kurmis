@@ -122,3 +122,17 @@ export function loginLockPath(id: string): string {
   const checked = toLoginId(id)
   return join(kurmisHome(), 'locks', `${providerOfLoginId(checked)}-${nameOfLoginId(checked)}.lock`)
 }
+
+/**
+ * What kurmis last merged and copied into the home of the extra Codex login `id` from the
+ * default Codex home: `codex-merged/<name>.json`. It is kept outside the login's home, so
+ * Codex never reads it and deleting the home does not lose it by accident; `logout` removes
+ * it with the login. `src/cli/codex-home-files.ts` reads and writes it.
+ */
+export function codexMergedRecordPath(id: string): string {
+  const checked = toLoginId(id)
+  if (isDefaultLoginId(checked) || providerOfLoginId(checked) !== 'codex') {
+    throw new Error(`${checked} is not an extra Codex login.`)
+  }
+  return join(kurmisHome(), 'codex-merged', `${nameOfLoginId(checked)}.json`)
+}

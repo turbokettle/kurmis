@@ -21,7 +21,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { tomlValue } from '../../src/core/codex-account-config.ts'
 import { codexSourceHome, prepareCodexHome, writeIfUnchanged } from '../../src/cli/codex-home-files.ts'
-import { loginFolder } from '../../src/data/paths.ts'
+import { codexMergedRecordPath, loginFolder } from '../../src/data/paths.ts'
 
 const posixOnly = test.skipIf(process.platform === 'win32')
 
@@ -111,12 +111,13 @@ describe('prepareCodexHome', () => {
 
     expect(prepared.codexHome).toBe(home)
     expect(statSync(home).mode & 0o777).toBe(0o700)
-    for (const name of ['sessions', 'skills', 'log']) {
+    // rules is a link in the default home that leads to a folder, so it is shared through that link.
+    for (const name of ['sessions', 'skills', 'log', 'rules']) {
       expect(lstatSync(join(home, name)).isSymbolicLink(), name).toBe(true)
       expect(readlinkSync(join(home, name))).toBe(join(source, name))
     }
     expect(read(join(home, 'sessions', 'rollout.jsonl'))).toBe('shared\n')
-    expect(readdirSync(home).sort()).toEqual(['AGENTS.md', 'config.toml', 'log', 'sessions', 'skills'])
+    expect(readdirSync(home).sort()).toEqual(['AGENTS.md', 'config.toml', 'log', 'rules', 'sessions', 'skills'])
     expect(read(join(home, 'AGENTS.md'))).toBe('# house rules\n')
 
     const config = read(join(home, 'config.toml'))
@@ -228,12 +229,106 @@ describe('prepareCodexHome', () => {
     try {
       const prepared = await prepareCodexHome('codex:work', { env: {} })
       expect(prepared.codexHome).toBe(home)
-      expect(prepared.warnings.filter((line) => line.startsWith('Could not link'))).toHaveLength(3)
+      expect(prepared.warnings.filter((line) => line.startsWith('Could not link'))).toHaveLength(4)
       expect(prepared.warnings.some((line) => line.startsWith('Could not copy'))).toBe(true)
       expect(prepared.warnings.some((line) => line.startsWith('Could not refresh'))).toBe(true)
     } finally {
       chmodSync(home, 0o700)
     }
+  })
+})
+
+describe('prepareCodexHome over several starts', () => {
+  const source = (): string => join(root, 'home', '.codex')
+  const home = (): string => loginFolder('codex:work')
+
+  posixOnly('keeps what Codex wrote into the login\'s config.toml, and keeps the merged copy outside the home', async () => {
+    makeSourceHome(source())
+    await prepareCodexHome('codex:work', { env: {} })
+    const record = codexMergedRecordPath('codex:work')
+    expect(statSync(record).mode & 0o777).toBe(0o600)
+    expect(read(record)).not.toMatch(/CANARY/)
+    expect(record.startsWith(home())).toBe(false)
+
+    // A session on the login picks a model and dismisses a notice; the default home drops a setting.
+    const own = read(join(home(), 'config.toml')).replace('model = "gpt-a"', 'model = "gpt-mini"').concat('\n[notice]\nhide_full_access_warning = true\n')
+    writeFileSync(join(home(), 'config.toml'), own)
+    writeFileSync(join(source(), 'config.toml'), SOURCE_CONFIG.replace('approval_policy = "on-request"\n', ''))
+    await prepareCodexHome('codex:work', { env: {} })
+
+    const config = tomlValue(read(join(home(), 'config.toml')))
+    expect(config).toMatchObject({ model: 'gpt-mini', notice: { hide_full_access_warning: true } })
+    expect(config).not.toHaveProperty('approval_policy')
+  })
+
+  posixOnly('copies AGENTS.override.md, and removes the copy once the default home has none', async () => {
+    makeSourceHome(source())
+    writeFileSync(join(source(), 'AGENTS.override.md'), '# override\n')
+    await prepareCodexHome('codex:work', { env: {} })
+    expect(read(join(home(), 'AGENTS.override.md'))).toBe('# override\n')
+
+    rmSync(join(source(), 'AGENTS.override.md'))
+    const second = await prepareCodexHome('codex:work', { env: {} })
+    expect(existsSync(join(home(), 'AGENTS.override.md'))).toBe(false)
+    expect(second.warnings).toEqual([expect.stringMatching(/has a secret/)])
+
+    // A file kurmis did not put there stays.
+    writeFileSync(join(home(), 'AGENTS.override.md'), '# the login\'s own\n')
+    await prepareCodexHome('codex:work', { env: {} })
+    expect(read(join(home(), 'AGENTS.override.md'))).toBe('# the login\'s own\n')
+  })
+
+  posixOnly('removes links it made that lead nowhere or to a folder no longer shared, and leaves other links alone', async () => {
+    makeSourceHome(source())
+    mkdirSync(join(source(), 'memories'))
+    mkdirSync(join(source(), '.sandbox'))
+    await prepareCodexHome('codex:work', { env: {} })
+    expect(lstatSync(join(home(), 'memories')).isSymbolicLink()).toBe(true)
+    // A link an earlier kurmis made to the sandbox folder, which is private now.
+    symlinkSync(join(source(), '.sandbox'), join(home(), '.sandbox'), 'dir')
+    symlinkSync(join(root, 'nowhere', 'my-notes'), join(home(), 'notes'), 'dir')
+
+    rmSync(join(source(), 'memories'), { recursive: true })
+    const prepared = await prepareCodexHome('codex:work', { env: {} })
+
+    expect(existsSync(join(home(), 'memories'))).toBe(false)
+    expect(existsSync(join(home(), '.sandbox'))).toBe(false)
+    expect(existsSync(join(source(), '.sandbox'))).toBe(true)
+    expect(lstatSync(join(home(), 'notes')).isSymbolicLink()).toBe(true)
+    expect(prepared.warnings.filter((line) => !line.includes('has a secret'))).toEqual([])
+  })
+
+  posixOnly('replaces an empty folder Codex made with the link, and warns once about a folder with something in it', async () => {
+    makeSourceHome(source())
+    mkdirSync(join(home(), 'memories'), { recursive: true })
+    mkdirSync(join(home(), 'shell_snapshots'))
+    writeFileSync(join(home(), 'shell_snapshots', 'one.sh'), 'echo\n')
+    mkdirSync(join(source(), 'memories'))
+    mkdirSync(join(source(), 'shell_snapshots'))
+
+    const first = await prepareCodexHome('codex:work', { env: {} })
+    expect(readlinkSync(join(home(), 'memories'))).toBe(join(source(), 'memories'))
+    expect(first.warnings.filter((line) => line.includes('not linked'))).toEqual([expect.stringContaining(join(home(), 'shell_snapshots'))])
+
+    const second = await prepareCodexHome('codex:work', { env: {} })
+    expect(second.warnings.filter((line) => line.includes('not linked'))).toEqual([])
+    expect(read(join(home(), 'shell_snapshots', 'one.sh'))).toBe('echo\n')
+  })
+
+  posixOnly('gives no warning when two starts link the same folders at once', async () => {
+    makeSourceHome(source())
+    const both = await Promise.all([prepareCodexHome('codex:work', { env: {} }), prepareCodexHome('codex:work', { env: {} })])
+    for (const prepared of both) expect(prepared.warnings.filter((line) => /link/i.test(line))).toEqual([])
+    expect(readlinkSync(join(home(), 'sessions'))).toBe(join(source(), 'sessions'))
+  })
+
+  test('does not use a record left by an earlier login of the same name', async () => {
+    mkdirSync(join(root, 'home', '.kurmis', 'codex-merged'), { recursive: true })
+    writeFileSync(codexMergedRecordPath('codex:work'), JSON.stringify({ config: 'model = "stale"\n', copied: {}, conflicts: ['sessions'] }))
+    mkdirSync(source(), { recursive: true })
+    writeFileSync(join(source(), 'config.toml'), 'model = "gpt-a"\n')
+    await prepareCodexHome('codex:work', { env: {} })
+    expect(JSON.parse(read(codexMergedRecordPath('codex:work')))).toEqual({ config: 'model = "gpt-a"\n', copied: {}, conflicts: [] })
   })
 })
 

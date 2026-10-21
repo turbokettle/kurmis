@@ -122,8 +122,16 @@ Starts Codex on the login that ranks first by the same rules as Claude's Auto, o
 named with `--login`. Codex has no per-request routing, so the choice is made when it starts.
 When every login is at its limit, kurmis starts on the one that gets its usage back first and
 says when. Each extra Codex login has its own Codex home folder, which kurmis fills from
-`~/.codex` before every start: your `config.toml` (without secrets), `AGENTS.md`, and links to
-your other folders. Your sign-in (`auth.json`) is never copied.
+`~/.codex` before every start: your `config.toml` (without secrets), `AGENTS.md` and
+`AGENTS.override.md`, and links to your other folders. Your sign-in (`auth.json`) is never
+copied, and the Windows sandbox's `.sandbox` folders stay separate for each login.
+
+What Codex writes into a login's own `config.toml`, such as a `/model` choice, a dismissed
+notice or a folder you trusted, stays there. A setting you change or remove in
+`~/.codex/config.toml` is changed or removed in every login at its next start. Secrets
+(environment and header tables, tokens, passwords, API keys) are never copied; a login that
+needs one keeps its own in its `config.toml`, and kurmis says when the default home has one the
+login lacks.
 
 ### `kurmis status`
 
@@ -172,7 +180,8 @@ kurmis logout <id>
 Removes a login: it signs the login out with `claude auth logout` or `codex logout` (on macOS
 this is what removes its Keychain item; kurmis warns when it could not), removes it from
 kurmis' settings and deletes its folder. Links
-in a Codex login's folder are removed, never what they point to. The machine's own
+in a Codex login's folder are removed, never what they point to, and so is kurmis' record of
+what it merged into that folder. The machine's own
 `claude:default` and `codex:default` cannot be removed; sign them out with `claude auth logout`
 or `codex logout` if you want to.
 

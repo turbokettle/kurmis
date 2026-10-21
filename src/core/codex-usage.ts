@@ -191,15 +191,21 @@ function windowsOfBucket(bucket: v2.RateLimitSnapshot): NamedUsageWindow[] {
 }
 
 /**
- * Whether the account can still spend: `rejected` once a limit or the spending control has
- * been reached, else null. Codex has no "approaching" state of its own.
+ * Whether the account can still spend: `rejected` once the plan's general limit or the
+ * workspace's spending control has been reached, else null. Codex has no "approaching" state
+ * of its own.
+ *
+ * A bucket that meters one model apart (any limit id but `codex`) reaching its limit stops
+ * only that model, so it does not make the whole login refused; its windows still show how
+ * full it is. When no bucket is the general limit, every bucket counts, the same rule as
+ * `planUsageWindows` in `usage-rules.ts`. The spending control is set on the workspace, so
+ * it counts from any bucket.
  */
 function statusOf(buckets: readonly v2.RateLimitSnapshot[]): 'rejected' | null {
-  for (const bucket of buckets) {
-    if (bucket.spendControlReached === true) return 'rejected'
-    if (typeof bucket.rateLimitReachedType === 'string') return 'rejected'
-  }
-  return null
+  if (buckets.some((bucket) => bucket.spendControlReached === true)) return 'rejected'
+  const general = buckets.filter((bucket) => (bucket.limitId ?? CODEX_GENERAL_LIMIT_ID) === CODEX_GENERAL_LIMIT_ID)
+  const plan = general.length > 0 ? general : buckets
+  return plan.some((bucket) => typeof bucket.rateLimitReachedType === 'string') ? 'rejected' : null
 }
 
 function isSnapshot(value: v2.RateLimitSnapshot | undefined): value is v2.RateLimitSnapshot {
