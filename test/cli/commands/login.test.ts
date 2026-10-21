@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { ChildRunner } from '../../../src/cli/command-deps.ts'
+import { realPrepareCodexHome, type ChildRunner } from '../../../src/cli/command-deps.ts'
 import { createLoginCommand, freeLoginName, loginTarget, type LoginDeps } from '../../../src/cli/commands/login.ts'
 import type { ChildEnd, ChildSpec } from '../../../src/cli/wrapper.ts'
 import { addLogin, defaultConfig, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
@@ -257,6 +257,39 @@ describe('kurmis login codex', () => {
     expect(runner.specs[0]!.env.CODEX_HOME).toBe(loginFolder('codex:side'))
     expect(findLogin(loadConfig(), 'codex:side')).toBeDefined()
     expect(out.stdout()).toContain('Signed in codex:side.')
+  })
+
+  it('prepares the new home from the default one before codex login runs in it', async () => {
+    const defaultHome = join(home, '.codex')
+    mkdirSync(defaultHome, { recursive: true })
+    writeFileSync(join(defaultHome, 'config.toml'), 'model = "gpt-test"\n')
+    let configSeen: string | null = null
+    const runner = fakeRunner((spec) => {
+      configSeen = readFileSync(join(spec.env.CODEX_HOME!, 'config.toml'), 'utf8')
+      writeCodexAuth(spec.env.CODEX_HOME!)
+      return { kind: 'exit', code: 0 }
+    })
+    const prepared: string[] = []
+    const { login } = command(runner, {
+      prepareCodexHome: async (id, options) => {
+        prepared.push(id)
+        return await realPrepareCodexHome(id, options)
+      }
+    })
+    expect(await login.run(['codex', '--name', 'side'], collect({ PATH: '/usr/bin' }).context)).toBe(0)
+    expect(prepared).toEqual(['codex:side'])
+    expect(configSeen).toContain('model = "gpt-test"')
+  })
+
+  it('removes a new home and adds nothing when it cannot be prepared', async () => {
+    const runner = fakeRunner(exitWith(0))
+    const { login } = command(runner, { prepareCodexHome: async () => { throw new Error('disk full') } })
+    const out = collect({ PATH: '/usr/bin' })
+    expect(await login.run(['codex', '--name', 'side'], out.context)).toBe(1)
+    expect(out.stderr()).toContain('could not prepare the Codex home of codex:side: disk full')
+    expect(runner.specs).toEqual([])
+    expect(existsSync(loginFolder('codex:side'))).toBe(false)
+    expect(findLogin(loadConfig(), 'codex:side')).toBeUndefined()
   })
 
   it('adds nothing when codex login leaves no auth.json', async () => {

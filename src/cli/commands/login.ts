@@ -22,7 +22,7 @@ import { makePrivateDirSync } from '../../platform/files.ts'
 import { ProgramNotFoundError, type findProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
-import { realChildRunner, realDaemonClient, realFindProgram, reloadIfRunning, reloadText, type ChildRunner, type DaemonClient } from '../command-deps.ts'
+import { realChildRunner, realDaemonClient, realFindProgram, realPrepareCodexHome, reloadIfRunning, reloadText, type ChildRunner, type DaemonClient } from '../command-deps.ts'
 import { hasLocalCredentials } from './list.ts'
 
 export interface LoginDeps {
@@ -31,6 +31,12 @@ export interface LoginDeps {
   findProgram: typeof findProgram
   /** The user's home folder, where `~/.claude.json` and `~/.codex` are. */
   home: () => string
+  /**
+   * Prepares an extra Codex login's home before `codex login` runs in it, so the sign-in reads
+   * the same merged `config.toml` (for example where to keep the credentials) as the sessions
+   * started on it later.
+   */
+  prepareCodexHome: typeof realPrepareCodexHome
 }
 
 /** The first of `<provider>:2`, `<provider>:3`, ... that no login uses and that has no folder. */
@@ -87,6 +93,7 @@ export function createLoginCommand(deps: Partial<LoginDeps> = {}): Command {
   const runner = deps.runner ?? realChildRunner
   const find = deps.findProgram ?? realFindProgram
   const home = deps.home ?? homedir
+  const prepareCodexHome = deps.prepareCodexHome ?? realPrepareCodexHome
   return {
     name: 'login',
     summary: 'Sign in a new login, or sign an existing one in again',
@@ -147,6 +154,16 @@ Options:
         if (created && folder !== null) removeTreeSync(folder)
       }
       const notAdded = isNew ? ` ${id} was not added.` : ''
+
+      if (provider === 'codex' && !isDefault) {
+        try {
+          const prepared = await prepareCodexHome(id, { env: context.env })
+          for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`)
+        } catch (error) {
+          cleanUp()
+          return fail(context, `could not prepare the Codex home of ${id}: ${error instanceof Error ? error.message : String(error)}.${notAdded}`)
+        }
+      }
 
       const cliName = provider === 'claude' ? 'claude auth login' : 'codex login'
       writeLine(context.stdout, `Signing in ${id}${isNew ? ' (a new login)' : ''} with "${cliName}". Follow its steps.`)
