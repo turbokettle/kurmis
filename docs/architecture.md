@@ -845,9 +845,13 @@ each file last copied in, the target of each link kurmis made (or found leading 
 make it), and the folders already warned about. It is kept outside the Codex home, written with
 mode 0600, and rewritten only when it changes. `logout` removes it, and so does a `kurmis login`
 of a new login that fails; `logout` of a login of which only the record is left removes the
-record. A home
-that is empty when a start begins (a new login) starts from an empty record, so a record left
-by an earlier login of the same name is not used.
+record. A home that is empty when a start begins (a new login) starts from an empty record,
+whose merged copy is empty, and that record is written even when the merge does not land (the
+default home's `config.toml` does not parse, or the login's file kept changing). So a record
+left by an earlier login of the same name is not used, and a later merge never takes what
+Codex wrote into a new login's file for settings merged in before. A record that cannot be
+read or is damaged counts the same way: every setting of the login's file is its own and none
+is removed.
 
 **The `config.toml` merge** (`src/core/codex-account-config.ts`). Codex writes to the
 `config.toml` of the home it runs with (a `/model` choice, `[notice]` keys, plugin and feature
@@ -871,13 +875,13 @@ value, or a whole array) at a time:
   provider without its `name`. One the default home dropped since the last merge goes whole,
   with the login's own keys and secrets in it. One the login's file lacks as a whole stays out
   until the default home changes anything in it, and then comes in whole.
-- Without a last merged copy (the first start after kurmis began keeping one), every setting of
-  the login that is not a secret or trust counts as merged in before, which is what the earlier
-  two-way merge did: what the default home lacks is removed this once.
+- Without a last merged copy (only a home made by a kurmis that kept no record has none), every
+  setting of the login that is not a secret or trust counts as merged in before, which is what
+  the earlier two-way merge did: what the default home lacks is removed this once.
 - When the default home has no `config.toml`, the login's file stays as it is, and so does the
-  record, except that a record with no merged copy yet gets an empty one. So for a login made
-  before the user had a `config.toml`, everything Codex wrote into the login's file counts as
-  the login's own once the default home's file appears, and none of it is removed.
+  record, except that a record with no merged copy gets an empty one. So everything Codex wrote
+  into the login's file counts as the login's own once the default home's file appears, and
+  none of it is removed.
 
 A secret is never copied from the default home, and a secret in the login's file is never
 changed or removed, except with its whole table. A key name marks the strings under it as

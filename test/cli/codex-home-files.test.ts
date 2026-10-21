@@ -424,6 +424,42 @@ describe('prepareCodexHome: what a later start keeps', () => {
     expect(prepared.warnings).toEqual([])
   })
 
+  /** What sessions on the login write into its config.toml: Codex's own keys and an MCP server with a secret. */
+  const LOGIN_OWN = '[notice]\nhide_full_access_warning = true\n[mcp_servers.mine]\ncommand = "mine"\n[mcp_servers.mine.env]\nAPI_KEY = "LOGIN_CANARY"\n'
+  const LOGIN_OWN_VALUE = { notice: { hide_full_access_warning: true }, mcp_servers: { mine: { command: 'mine', env: { API_KEY: 'LOGIN_CANARY' } } } }
+
+  test("keeps the login's own settings when the first start could not merge the default home's config.toml", async () => {
+    mkdirSync(source(), { recursive: true })
+    writeFileSync(join(source(), 'config.toml'), 'model = \n')
+    const first = await prepareCodexHome('codex:work', { env: {} })
+    expect(first.warnings).toEqual([expect.stringMatching(/could not be merged/)])
+    writeFileSync(join(home(), 'config.toml'), LOGIN_OWN)
+    writeFileSync(join(source(), 'config.toml'), 'model = "gpt-a"\n')
+
+    await prepareCodexHome('codex:work', { env: {} })
+
+    expect(tomlValue(read(join(home(), 'config.toml')))).toEqual({ model: 'gpt-a', ...LOGIN_OWN_VALUE })
+  })
+
+  test("keeps the login's own settings when the record is damaged", async () => {
+    mkdirSync(source(), { recursive: true })
+    writeFileSync(join(source(), 'config.toml'), 'model = "gpt-a"\n')
+    await prepareCodexHome('codex:work', { env: {} })
+    writeFileSync(join(home(), 'config.toml'), `model = "gpt-a"\n${LOGIN_OWN}`)
+    writeFileSync(codexMergedRecordPath('codex:work'), '{"config": "model = ')
+
+    await prepareCodexHome('codex:work', { env: {} })
+
+    expect(tomlValue(read(join(home(), 'config.toml')))).toEqual({ model: 'gpt-a', ...LOGIN_OWN_VALUE })
+  })
+
+  test('records an empty merged copy for a new home even when nothing else changes', async () => {
+    mkdirSync(source(), { recursive: true })
+    writeFileSync(join(source(), 'config.toml'), 'model = \n')
+    await prepareCodexHome('codex:work', { env: {} })
+    expect(JSON.parse(read(codexMergedRecordPath('codex:work')))).toEqual({ config: '', copied: {}, links: {}, conflicts: [] })
+  })
+
   // A symlink to a file and a dangling symlink need Developer Mode or an administrator on Windows.
   test.runIf(canCreateSymlinks())("leaves the user's own links alone: one to a file in the default home, and one that leads nowhere", async () => {
     makeSourceHome(source())

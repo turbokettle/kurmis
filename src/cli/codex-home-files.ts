@@ -20,7 +20,7 @@
 // merge needs it), a hash of each file copied, the target of each link kurmis made or found
 // in place, and the folders already warned about. A home that is empty when the start begins
 // (a new login) starts from an empty record, so a record left by an earlier login of the same
-// name is not used.
+// name is not used, and that record is written even when the first merge does not land.
 //
 // `config.toml` and the copied files of the default home are read through a link, so a file
 // that is a symlink into a dotfiles folder is still used.
@@ -66,7 +66,11 @@ export interface PrepareCodexHomeOptions {
 
 /** What kurmis last merged and copied into a login's home (`codexMergedRecordPath`). */
 interface CodexMergedRecord {
-  /** The default home's `config.toml` without secrets, as last merged in; null before the first merge. */
+  /**
+   * The default home's `config.toml` without secrets, as last merged in. '' for a home that
+   * nothing has been merged into yet, so that the first merge counts every setting already in
+   * the login's file as its own. Null only for a home made by a kurmis that kept no record.
+   */
   config: string | null
   /** For each file copied in, the SHA-256 of the text kurmis last copied there. */
   copied: Record<string, string>
@@ -80,8 +84,9 @@ interface CodexMergedRecord {
   conflicts: string[]
 }
 
-function emptyRecord(): CodexMergedRecord {
-  return { config: null, copied: {}, links: {}, conflicts: [] }
+/** A record with nothing in it, `config` as given. */
+function emptyRecord(config: string | null): CodexMergedRecord {
+  return { config, copied: {}, links: {}, conflicts: [] }
 }
 
 /**
@@ -105,13 +110,17 @@ export async function prepareCodexHome(id: string, options: PrepareCodexHomeOpti
   const source = codexSourceHome(options.env, platform)
   const warnings: string[] = []
   const recordPath = codexMergedRecordPath(login)
-  const record = (await isEmptyFolder(home)) ? emptyRecord() : await readRecord(recordPath, warnings)
+  // A new home starts from an empty record, which is always written: without it, a home
+  // whose first merge did not land (the default home's file did not parse, the login's file
+  // kept changing) would look like one made before kurmis kept a record at the next start.
+  const isNew = await isEmptyFolder(home)
+  const record = isNew ? emptyRecord('') : await readRecord(recordPath, warnings)
   const next: CodexMergedRecord = { config: record.config, copied: { ...record.copied }, links: {}, conflicts: [] }
   await linkSharedFolders(source, home, platform, warnings, record, next)
   for (const file of CODEX_AGENTS_FILES) await copyAgents(source, home, file, warnings, record, next)
   await refreshConfig(source, home, warnings, record, next)
   next.conflicts.sort()
-  if (formatJson(next) !== formatJson(record)) {
+  if (isNew || formatJson(next) !== formatJson(record)) {
     try {
       await writeJsonFile(recordPath, next, { mode: PRIVATE_FILE_MODE })
     } catch (error) {
@@ -129,20 +138,30 @@ async function isEmptyFolder(folder: string): Promise<boolean> {
   }
 }
 
-/** The record of a login's home; an empty one when there is none or it is damaged. */
+/**
+ * The record of a login's home that is not new. When there is none, the home was made by a
+ * kurmis that kept no record, and `config` is null. When it cannot be read or is damaged,
+ * `config` is '': what was merged before is not known, so every setting in the login's file
+ * counts as its own and none is removed.
+ */
 async function readRecord(path: string, warnings: string[]): Promise<CodexMergedRecord> {
   let read
   try {
     read = await readJsonFile(path)
   } catch (error) {
-    warnings.push(`Could not read ${path}, so this start merges as if nothing had been merged before: ${errorText(error)}`)
-    return emptyRecord()
+    warnings.push(`Could not read ${path}, so this start keeps every setting of the login's config.toml: ${errorText(error)}`)
+    return emptyRecord('')
   }
-  if (read.status !== 'ok' || read.value === null || typeof read.value !== 'object') return emptyRecord()
+  if (read.status === 'missing') return emptyRecord(null)
+  if (read.status !== 'ok' || read.value === null || typeof read.value !== 'object' || Array.isArray(read.value)) {
+    warnings.push(`${path} is damaged, so this start keeps every setting of the login's config.toml.`)
+    return emptyRecord('')
+  }
   const value = read.value as Record<string, unknown>
   const conflicts = value['conflicts']
+  const config = value['config']
   return {
-    config: typeof value['config'] === 'string' ? value['config'] : null,
+    config: typeof config === 'string' ? config : config === null ? null : '',
     copied: stringRecord(value['copied']),
     links: stringRecord(value['links']),
     conflicts: Array.isArray(conflicts) ? conflicts.filter((name): name is string => typeof name === 'string') : []
