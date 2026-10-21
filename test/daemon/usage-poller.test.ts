@@ -106,6 +106,50 @@ describe('a probe', () => {
     expect(table.isRefused('claude:default')).toBe(false)
   })
 
+  test('that started before an answer\'s usage-limit refusal does not undo it', async () => {
+    writeLogins({})
+    let release: () => void = () => undefined
+    const reset = new Date(Date.now() + 3_600_000).toISOString()
+    // The probe measured the login with room left, before the refusal came.
+    const { table, poller } = setup((id) => new Promise((resolve) => {
+      release = () => { resolve({ ok: true, signedIn: true, usage: { ...usage(id, 40, reset), subscriptionType: 'max' } }) }
+    }))
+    const probing = poller.probe('claude:default', 'request')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    // A 429 that names no reset: the login is skipped until a probe says it is back.
+    table.noteObservation('claude:default', {
+      observedAt: Date.now(), status: 'rejected', resetsAt: null, representativeClaim: 'five_hour',
+      windows: { '5h': { utilization: 1, resetsAt: null, status: 'rejected' } }, overageStatus: null, overageDisabledReason: null
+    })
+    table.setCooldown('claude:default', Infinity)
+    table.markRefused('claude:default')
+    release()
+    await probing
+    const after = table.usage('claude:default')
+    expect(after?.status).toBe('rejected')
+    expect(after?.fiveHour?.utilization).toBe(100)
+    // What the headers do not carry comes from the probe.
+    expect(after?.subscriptionType).toBe('max')
+    expect(table.cooldown('claude:default')).toBe(Infinity)
+    expect(table.isRefused('claude:default')).toBe(true)
+  })
+
+  test('that started after an answer\'s refusal ends it as before', async () => {
+    writeLogins({})
+    const { table, poller } = setup((id) => Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 40) }))
+    table.noteObservation('claude:default', {
+      observedAt: Date.now() - 1_000, status: 'rejected', resetsAt: null, representativeClaim: 'five_hour',
+      windows: { '5h': { utilization: 1, resetsAt: null, status: 'rejected' } }, overageStatus: null, overageDisabledReason: null
+    })
+    table.setCooldown('claude:default', Infinity)
+    table.markRefused('claude:default')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    await poller.probe('claude:default', 'request')
+    expect(table.usage('claude:default')?.fiveHour?.utilization).toBe(40)
+    expect(table.cooldown('claude:default')).toBeNull()
+    expect(table.isRefused('claude:default')).toBe(false)
+  })
+
   test('for a stale reading is remembered for a minute, whether it succeeded or not', async () => {
     writeLogins({})
     let clock = 1_000_000

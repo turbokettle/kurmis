@@ -28,7 +28,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   accountsInScope, chooseAccount, effectivePin, isDefinitiveQuotaRejection, parseUnifiedHeaders, quotaCooldownUntil,
-  replayDecision, routeBlock, tokenIsFresh, usageFromUnifiedHeaders, type RouteAccount, type RouteSession
+  replayDecision, routeBlock, tokenIsFresh, type RouteAccount, type RouteSession
 } from '../core/account-router.ts'
 import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import {
@@ -471,9 +471,7 @@ export function createProxy(options: ProxyOptions): Proxy {
 
   /** Folds an answer's rate-limit headers into the login's usage, when it carries any. */
   function noteUsage(id: string, get: (name: string) => string | null): void {
-    const observation = parseUnifiedHeaders(get, now())
-    if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return
-    table.setUsage(id, usageFromUnifiedHeaders(id, table.usage(id), observation))
+    table.noteObservation(id, parseUnifiedHeaders(get, now()))
   }
 
   /**

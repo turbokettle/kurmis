@@ -221,7 +221,10 @@ older version, after that daemon finishes the requests it has open.
   yet), and on demand: the control API's `probe`, a stale reading, a token renewal, and a login
   added to `config.json`. One probe per login runs at a time; a second request waits for it. A
   failed probe keeps the previous windows and records the error on the snapshot. The daemon also
-  updates usage from the rate-limit headers of every answer it forwards. The code is
+  updates usage from the rate-limit headers of every answer it forwards. A probe describes the
+  login as it was when the probe started, so what an answer said after that wins: the last
+  answer's rate-limit headers are applied again on top of the probe's snapshot, and a cooldown
+  or a refused token recorded after the probe started is not ended by it. The code is
   `src/daemon/usage-poller.ts`, with the probes in `claude-probe.ts` and `codex-probe.ts`.
   A Claude probe is `claude -p` in stream-json mode, sending `initialize` and `get_usage`, with
   `claudeProbeEnv`, `--setting-sources=` (no settings file, so no `env` block or hook of the

@@ -6,7 +6,7 @@
 // table, so a change one of them makes (a cooldown, a probe's answer, a reloaded config) is seen
 // by the others at once. `onChange` tells listeners, which is how a request held for capacity
 // learns that the pool has changed.
-import type { RouteAccount } from '../core/account-router.ts'
+import { usageFromUnifiedHeaders, type RouteAccount, type UnifiedObservation } from '../core/account-router.ts'
 import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import type { AccountUsage } from '../core/claude-usage.ts'
 import { configStamp, defaultConfig, loadConfig, type KurmisConfig, type LoginSettings } from '../data/config.ts'
@@ -66,10 +66,19 @@ export class LoginTable {
   private readonly held = new Map<string, { login: LoginId; lastUsed: number }>()
   /**
    * Logins whose token Anthropic refused with a 401 on a request of a CLI that was started on
-   * another login, after the one renewal the proxy tries (`markRefused`). Routing treats them
-   * as signed out until a probe of the login succeeds. In memory only.
+   * another login, after the one renewal the proxy tries (`markRefused`), with when that was.
+   * Routing treats them as signed out until a probe of the login that started later succeeds.
+   * In memory only.
    */
-  private readonly refused = new Set<string>()
+  private readonly refused = new Map<string, number>()
+  /**
+   * The rate-limit headers of the last answer of each login (`noteObservation`). A probe that
+   * started before they arrived measured an older state, so they are applied again on top of
+   * its snapshot (`setProbeUsage`). In memory only; they hold no token or body.
+   */
+  private readonly observations = new Map<string, UnifiedObservation>()
+  /** When each login's current cooldown was set; absent for one read from `state.json`. In memory only. */
+  private readonly cooldownSetAt = new Map<string, number>()
   private readonly listeners = new Set<() => void>()
   private readonly writer: CoalescedWriter
   /** The files, fixed when the table is made, so a later change of `KURMIS_HOME` cannot move them. */
@@ -124,7 +133,9 @@ export class LoginTable {
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id)
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id)
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id)
-    for (const id of [...this.refused]) if (!ids.has(id)) this.refused.delete(id)
+    for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id)
+    for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id)
+    for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id)
     this.options.log.write('config_loaded', { count: this.config.logins.length })
     this.changed()
     return { ok: true, changed: true }
@@ -197,6 +208,31 @@ export class LoginTable {
     this.changed()
   }
 
+  /**
+   * Folds the rate-limit headers of one of the login's answers into its usage, and keeps them
+   * for `setProbeUsage`. Headers that say nothing about usage change nothing.
+   */
+  noteObservation(id: string, observation: UnifiedObservation): void {
+    if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return
+    if (!isLoginId(id)) return
+    this.observations.set(id, observation)
+    this.setUsage(id, usageFromUnifiedHeaders(id, this.usage(id), observation))
+  }
+
+  /**
+   * Stores a successful probe's snapshot. A probe that started at `startedAt` measured the login
+   * at that time or a little later, so when an answer's rate-limit headers arrived after it
+   * started, they count as newer and are
+   * applied again on top of the probe's snapshot: the probe fills in what the headers do not
+   * carry, and does not undo what they said.
+   */
+  setProbeUsage(id: string, usage: AccountUsage, startedAt: number): void {
+    const observation = this.observations.get(id)
+    this.setUsage(id, observation !== undefined && observation.observedAt > startedAt
+      ? usageFromUnifiedHeaders(id, usage, observation)
+      : usage)
+  }
+
   /** Until when routing skips the login: ms since epoch, `Infinity` for an unknown end, null for none. */
   cooldown(id: string, now = this.options.now()): number | null {
     const until = this.state.cooldowns.get(id as LoginId)
@@ -205,10 +241,20 @@ export class LoginTable {
 
   setCooldown(id: string, until: number | null): void {
     if (!isLoginId(id)) return
-    if (until === null) this.state.cooldowns.delete(id)
-    else this.state.cooldowns.set(id, until)
+    if (until === null) {
+      this.state.cooldowns.delete(id)
+      this.cooldownSetAt.delete(id)
+    } else {
+      this.state.cooldowns.set(id, until)
+      this.cooldownSetAt.set(id, this.options.now())
+    }
     this.save()
     this.changed()
+  }
+
+  /** When the login's cooldown was set by this daemon, or null (none, or one read from `state.json`). */
+  cooldownSince(id: string): number | null {
+    return this.cooldownSetAt.get(id) ?? null
   }
 
   /** Whether the last probe found the login signed in; null before its first probe. */
@@ -224,9 +270,9 @@ export class LoginTable {
 
   /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
   markRefused(id: string): void {
-    if (this.refused.has(id)) return
-    this.refused.add(id)
-    this.changed()
+    const known = this.refused.has(id)
+    this.refused.set(id, this.options.now())
+    if (!known) this.changed()
   }
 
   /** Whether `markRefused` holds for the login. */
@@ -234,9 +280,15 @@ export class LoginTable {
     return this.refused.has(id)
   }
 
-  /** Ends `markRefused`: a probe of the login succeeded. */
-  clearRefused(id: string): void {
-    if (!this.refused.delete(id)) return
+  /**
+   * Ends `markRefused`: a probe of the login succeeded. A probe that started at `probeStartedAt`
+   * ends only a refusal from before it or from the same millisecond; a refusal that came while
+   * it ran is newer and stays.
+   */
+  clearRefused(id: string, probeStartedAt = Infinity): void {
+    const at = this.refused.get(id)
+    if (at === undefined || at > probeStartedAt) return
+    this.refused.delete(id)
     this.changed()
   }
 

@@ -7,6 +7,11 @@
 // probe that finds the login signed in also ends `markRefused` (a token Anthropic refused). A
 // failed probe keeps the previous windows and records the error on the snapshot.
 //
+// A probe's answer describes the login as it was when the probe started, and a probe takes a
+// second or more. What a forwarded answer said in that time is newer and wins: its rate-limit
+// headers are applied again on top of the probe's snapshot (`setProbeUsage`), and a cooldown or
+// a refused token recorded since the probe started is not ended by it.
+//
 // A probe for a stale reading is not started again for the same login within
 // `STALE_PROBE_INTERVAL_MS` of the last one (`recentStaleProbes`), so a probe that keeps
 // failing does not run before every request.
@@ -147,11 +152,14 @@ export class UsagePoller {
     if (login.provider === 'claude') this.options.tokens.invalidate(id)
     const ms = now() - startedAt
     if (answer.ok) {
-      table.setUsage(id, answer.usage)
+      // The probe measured the login as it was when it started. What an answer said since then
+      // is newer: its rate-limit headers, a cooldown and a refused token stay.
+      table.setProbeUsage(id, answer.usage, startedAt)
       table.setSignedIn(id, answer.signedIn)
-      if (answer.signedIn) table.clearRefused(id)
+      if (answer.signedIn) table.clearRefused(id, startedAt)
       const before = table.cooldown(id)
-      const after = cooldownAfterProbe(before, answer.usage)
+      const setAt = table.cooldownSince(id)
+      const after = setAt !== null && setAt > startedAt ? before : cooldownAfterProbe(before, answer.usage)
       if (after !== before) {
         table.setCooldown(id, after)
         if (after === null) log.write('cooldown_ended', { login: logged })
