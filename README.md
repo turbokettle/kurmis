@@ -322,6 +322,7 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
 
 [docs/scope.md](docs/scope.md) says what kurmis does and leaves out, and
 [docs/architecture.md](docs/architecture.md) how it works.
+[docs/manual-testing.md](docs/manual-testing.md) lists the checks that need a real machine.
 
 ## Development
 
