@@ -32,6 +32,12 @@ describe('codex', () => {
   test('an extra login gets its CODEX_HOME, the default keeps the inherited one', () => {
     expect(codexLoginEnv('codex:work')['CODEX_HOME']).toBe(join(kurmisHome(), 'codex', 'work'))
     expect('CODEX_HOME' in codexLoginEnv('codex:default')).toBe(false)
+    expect('CODEX_HOME' in codexLoginEnv('codex:default', { CODEX_HOME: '/somewhere/else' })).toBe(false)
+  })
+
+  test('the default drops an inherited CODEX_HOME that is an extra login\'s home', () => {
+    const env = codexLoginEnv('codex:default', { CODEX_HOME: join(kurmisHome(), 'codex', 'work') })
+    expect('CODEX_HOME' in env && env['CODEX_HOME'] === undefined).toBe(true)
   })
 })
 

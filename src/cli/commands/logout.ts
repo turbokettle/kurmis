@@ -60,7 +60,7 @@ export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
     let problem: string
     try {
       const program = find(provider, { env })
-      const patch = provider === 'claude' ? claudeLoginEnv(id) : codexLoginEnv(id)
+      const patch = provider === 'claude' ? claudeLoginEnv(id) : codexLoginEnv(id, env)
       const cliArgs = provider === 'claude' ? ['auth', 'logout'] : ['logout']
       const result = await run(program.command, [...program.args, ...cliArgs], { timeoutMs: LOGOUT_TIMEOUT_MS, env: applyEnvPatch(env, patch) })
       if (result.code === 0) return null

@@ -167,7 +167,7 @@ Options:
 
       const cliName = provider === 'claude' ? 'claude auth login' : 'codex login'
       writeLine(context.stdout, `Signing in ${id}${isNew ? ' (a new login)' : ''} with "${cliName}". Follow its steps.`)
-      const env = applyEnvPatch(context.env, provider === 'claude' ? claudeLoginEnv(id) : codexLoginEnv(id))
+      const env = applyEnvPatch(context.env, provider === 'claude' ? claudeLoginEnv(id) : codexLoginEnv(id, context.env))
       const cliArgs = provider === 'claude' ? ['auth', 'login', '--claudeai'] : ['login']
       const end = await runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env })
 

@@ -9,7 +9,8 @@
 // kurmis CLI or daemon may itself have been started from inside a routed session (a shell in a
 // `kurmis claude` session), and a probe or a login sent through the proxy would loop back into it.
 import { CLAUDE_DEFAULT_ACCOUNT_ID, CODEX_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
-import { claudeDefaultProbeFolder, loginFolder } from './paths.ts'
+import { isKurmisCodexHome } from '../core/codex-choice.ts'
+import { claudeDefaultProbeFolder, loginFolder, providerFolder } from './paths.ts'
 
 export type EnvPatch = Record<string, string | undefined>
 
@@ -62,13 +63,22 @@ export function claudeProbeEnv(id: string): EnvPatch {
 
 /**
  * The environment of `codex login`, `codex logout` and the `codex app-server` usage probe on a
- * login: `CODEX_HOME` set to the login's folder for an extra login, and left as inherited for
- * `codex:default`. Wrapped Codex sessions on an extra login use the folder `prepareCodexHome`
- * prepares, which is the same one.
+ * login: `CODEX_HOME` set to the login's folder for an extra login. `codex:default` keeps the
+ * inherited `CODEX_HOME`, unless that is an extra login's home inside kurmis' own folder: a
+ * kurmis started from a shell inside a `kurmis codex` session on an extra login inherits it, and
+ * would otherwise act on that login. Wrapped Codex sessions on an extra login use the folder
+ * `prepareCodexHome` prepares, which is the same one.
  */
-export function codexLoginEnv(id: string): EnvPatch {
-  if (id === CODEX_DEFAULT_ACCOUNT_ID) return { ...NOT_INHERITED }
-  return { CODEX_HOME: loginFolder(id), ...NOT_INHERITED }
+export function codexLoginEnv(id: string, inherited: Readonly<Record<string, string | undefined>> = {},
+  platform: NodeJS.Platform = process.platform): EnvPatch {
+  if (id !== CODEX_DEFAULT_ACCOUNT_ID) return { CODEX_HOME: loginFolder(id), ...NOT_INHERITED }
+  const windows = platform === 'win32'
+  const home = windows
+    ? Object.entries(inherited).find(([name]) => name.toUpperCase() === 'CODEX_HOME')?.[1]
+    : inherited['CODEX_HOME']
+  return isKurmisCodexHome(home, providerFolder('codex'), windows)
+    ? { CODEX_HOME: undefined, ...NOT_INHERITED }
+    : { ...NOT_INHERITED }
 }
 
 /**

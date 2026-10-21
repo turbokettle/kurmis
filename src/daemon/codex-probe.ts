@@ -74,7 +74,7 @@ export async function probeCodexUsage(id: string, options: ProbeOptions): Promis
     return probeFailure(null, 'other', 'The codex program could not be looked up.')
   }
 
-  const env = applyEnvPatch(options.env, codexLoginEnv(id))
+  const env = applyEnvPatch(options.env, codexLoginEnv(id, options.env))
   const cwd = probeWorkFolder()
   try {
     makePrivateDirSync(cwd)

@@ -234,7 +234,7 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
 - **Working over ssh on a Mac.** A program started from an ssh session cannot read the login
   Keychain, which is where Claude Code keeps its tokens on macOS. So when kurmis has to start the
   daemon from an ssh session, it starts it through launchd in your desktop session instead,
-  which works while you are logged in at the Mac (the screen may be locked). If nobody is logged
+  which works while you are logged in at the Mac. If nobody is logged
   in at the Mac, start the daemon there once, or run `kurmis setup` there so it starts at login;
   `kurmis claude` over ssh then uses that daemon.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
