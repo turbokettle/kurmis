@@ -1064,8 +1064,9 @@ needs them.
   still gets the stand-in `test/setup.ts` set. For the same reason a daemon kurmis starts gets
   these variables, the guard and its log from the process's environment when the environment it
   is started with lacks them (`inheritedTestHooks`), and while the guard is on also `HOME`,
-  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN`, so it uses the test's
-  temporary home and not the real one. A stand-in that is a `.mjs` file runs through Node, as every
+  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN`, `KURMIS_CODEX_BIN` and
+  `KURMIS_UPSTREAM_URL`, so it uses the test's temporary home and API address and not the real
+  ones. A stand-in that is a `.mjs` file runs through Node, as every
   `.js` program does (`invocationFor` in `src/platform/run.ts`), since Windows cannot start such a
   file itself. `test/setup.ts` points them at:
   - `test/daemon/fake-security/security.mjs`, with its Keychain items in `$FAKE_SECURITY_DIR`;
@@ -1092,8 +1093,9 @@ needs them.
   installer's `~/.local/share/claude/versions`; and Node running a script that is one of these,
   such as `node …/@openai/codex/bin/codex.js`, which is how a `codex` on PATH that links to a
   `.js` file is started. It is passed on to every program kurmis starts, together with `HOME`,
-  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN` from the process's
-  environment where that program's environment lacks them. Each refusal is also written to the file
+  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN`, `KURMIS_CODEX_BIN` and
+  `KURMIS_UPSTREAM_URL` from the process's environment where that program's environment lacks
+  them. Each refusal is also written to the file
   `KURMIS_REFUSED_PROGRAMS_LOG` names, and `test/setup.ts` fails any test after which that file is
   not empty: a test whose code reached a real program fails even when the refusal let it pass.
 

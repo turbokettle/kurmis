@@ -66,10 +66,12 @@ export const REAL_CLI_PATHS: readonly RegExp[] = [
 
 /**
  * Variables a program started while the guard is on gets from this process's environment when
- * its own environment lacks them: the test's temporary home (`test/setup.ts`) and the programs
- * kurmis runs as `claude` and `codex`.
+ * its own environment lacks them: the test's temporary home (`test/setup.ts`), the programs
+ * kurmis runs as `claude` and `codex`, and the API address that stands in for Anthropic's, so
+ * a daemon a test starts with an environment of its own never reaches the network.
  */
-export const TEST_HOME_VARIABLES: readonly string[] = ['HOME', 'USERPROFILE', 'KURMIS_HOME', 'KURMIS_CLAUDE_BIN', 'KURMIS_CODEX_BIN']
+export const TEST_HOME_VARIABLES: readonly string[] = ['HOME', 'USERPROFILE', 'KURMIS_HOME', 'KURMIS_CLAUDE_BIN', 'KURMIS_CODEX_BIN',
+  'KURMIS_UPSTREAM_URL']
 
 /**
  * Why `command` with `args` may not be started, or null when it may. `args` matter when

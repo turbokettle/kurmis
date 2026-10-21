@@ -55,7 +55,8 @@ describe('the system program guard', () => {
       USERPROFILE: process.env.USERPROFILE,
       KURMIS_HOME: process.env.KURMIS_HOME,
       KURMIS_CLAUDE_BIN: process.env.KURMIS_CLAUDE_BIN,
-      KURMIS_CODEX_BIN: process.env.KURMIS_CODEX_BIN
+      KURMIS_CODEX_BIN: process.env.KURMIS_CODEX_BIN,
+      KURMIS_UPSTREAM_URL: process.env.KURMIS_UPSTREAM_URL
     })
     // A value the environment has, even an empty one, is kept.
     expect(withGuard({ HOME: '/elsewhere', KURMIS_CLAUDE_BIN: '' })).toMatchObject({ HOME: '/elsewhere', KURMIS_CLAUDE_BIN: '' })
@@ -135,13 +136,14 @@ describe('the guard against the real claude and codex run through Node', () => {
 })
 
 describe('a daemon a test starts with an environment of its own', () => {
-  it('gets the test home and the claude and codex of test/setup.ts, not the real home', () => {
+  it('gets the test home, the claude and codex and the API address of test/setup.ts, not the real ones', () => {
     const env = daemonEnvironment({})
     expect(env.HOME).toBe(process.env.HOME)
     expect(env.USERPROFILE).toBe(process.env.USERPROFILE)
     expect(env.KURMIS_HOME).toBe(process.env.KURMIS_HOME)
     expect(env.KURMIS_CLAUDE_BIN).toBe(process.env.KURMIS_CLAUDE_BIN)
     expect(env.KURMIS_CODEX_BIN).toBe(process.env.KURMIS_CODEX_BIN)
+    expect(env.KURMIS_UPSTREAM_URL).toBe('http://127.0.0.1:1')
     expect(env[GUARD_VARIABLE]).toBe('1')
   })
 
