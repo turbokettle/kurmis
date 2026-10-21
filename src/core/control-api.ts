@@ -66,6 +66,13 @@ export interface LoginStatus {
   block: RouteBlock | null
   /** Sessions whose last request this login served. Claude only. */
   sessions: number
+  /**
+   * The login's email from the profile its own CLI runs cached (`ClaudeIdentityReader`), or
+   * null when none is known. Claude only. For the person's own terminal; never logged.
+   */
+  email: string | null
+  /** A usage probe of this login is running now. */
+  probing: boolean
 }
 
 export interface StatusAnswer {
