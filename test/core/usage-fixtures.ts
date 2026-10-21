@@ -1,5 +1,4 @@
-// Usage snapshots and rate-limit reports shared by the tests of the usage modules. Copied from
-// the original router's `test/account-fixtures.ts`.
+// Usage snapshots and rate-limit reports shared by the tests of the usage modules.
 import type { AccountUsage, UsageWindow } from '../../src/core/claude-usage.ts'
 
 export function usageWindow(utilization: number, resetsAt: string | null = null): UsageWindow {

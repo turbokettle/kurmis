@@ -1,6 +1,5 @@
 // The environment a routed Claude CLI is started with (`docs/architecture.md`, "How a Claude
-// CLI reaches the daemon"). Replaces the original router's `routeEnvRows` in
-// `src/tools/claude/core/account-router.ts`.
+// CLI reaches the daemon").
 import { CLAUDE_DEFAULT_ACCOUNT_ID } from './accounts.ts'
 import { withRouteHeaders } from './route-headers.ts'
 

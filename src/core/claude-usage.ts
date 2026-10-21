@@ -1,6 +1,5 @@
 // Plan usage of one subscription login: the shape it is kept in, the table of windows a Claude
-// plan reports, and the rule for choosing between two snapshots. Copied from the original router's
-// `src/shared/claude-usage.ts`.
+// plan reports, and the rule for choosing between two snapshots.
 //
 // `AccountUsage` is the only shape a login's usage is kept in.
 //

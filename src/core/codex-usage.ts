@@ -1,5 +1,5 @@
 // Turns the `codex app-server` answer to `account/rateLimits/read` into the `AccountUsage`
-// shape the Claude side produces. Copied from the original router's `src/tools/claude/core/codex-usage.ts`.
+// shape the Claude side produces.
 //
 // The answer has one bucket kept for older clients (`rateLimits`) and `rateLimitsByLimitId`,
 // a map of every limit the plan meters. Each bucket has a `primary` and a `secondary` window

@@ -1,8 +1,6 @@
 // What preparing an extra Codex login's home decides: which entries of ~/.codex are linked,
 // merged, copied or left out, whether a link is in place, and what the login's config.toml
-// and AGENTS.md become. The cases follow the original router's tests of the same rules in
-// `test/unit/claude-main/codex-accounts.test.ts` and `codex-home-files.test.ts`; the file
-// work those tests also cover is not here.
+// and AGENTS.md become. The work on disk is tested in `test/cli/codex-home-files.test.ts`.
 import { describe, expect, test } from 'vitest'
 import { tomlValue } from '../../src/core/codex-account-config.ts'
 import {

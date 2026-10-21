@@ -1,8 +1,6 @@
 # What kurmis does
 
 Kurmis lets one person use several Claude Code and Codex subscription logins on one machine.
-It follows the account routing of the original router, but has no dependency on it. the original router is a
-private tool, and kurmis exists so that someone without it can do the same.
 
 ## Platforms
 
@@ -77,7 +75,7 @@ signs the request with that login's token.
 
 ## Not in kurmis
 
-These the original router features are left out because they depend on the rest of the original router:
+Kurmis does not do these things:
 
 - lending a login to another machine;
 - pausing a session at a limit and continuing it after the reset;

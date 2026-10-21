@@ -1,8 +1,6 @@
 /**
  * The `config.toml` an extra Codex login's home gets: the default home's settings without
- * its secrets, merged into the login's own file. Started from the original router's
- * `src/tools/claude/core/codex-account-config.ts`; the merge and the trust rules below differ
- * from the original router's.
+ * its secrets, merged into the login's own file.
  *
  * An extra Codex login runs with its own `CODEX_HOME` (`codex/<name>/` in the data folder).
  * Before every start its `config.toml` is merged again from `~/.codex/config.toml` with
@@ -66,8 +64,8 @@
  * default home drops it, and on the first merge without a last merged copy every trust field
  * of the login counts as its own.
  *
- * the original router drops the trust a login's own file gave, because a model in a session could have
- * written it there. Kurmis keeps it: kurmis has no window in which a person gives trust, and
+ * Kurmis keeps the trust a login's own file gives, even though a model in a session could have
+ * written it there: kurmis has no window in which a person gives trust, and
  * a model that can write the login's file can as well write `~/.codex/config.toml`, whose
  * trust reaches every login. Because the login's own restrictive values win, a folder the
  * login marked `"untrusted"` or a hook it switched off stays so until it is trusted again in

@@ -1,6 +1,5 @@
 // Where the proxy gets each Claude login's access token, and the reader for the
-// `.credentials.json` file the CLI writes on Windows and Linux. Copied from the original router's
-// `src/tools/claude/main/accounts/router/credentials.ts`.
+// `.credentials.json` file the CLI writes on Windows and Linux.
 //
 // The macOS Keychain reader is `KeychainCredentialsReader` in `keychain.ts`, and the Windows
 // Credential Manager reader `CredentialManagerReader` in `credential-manager.ts`.

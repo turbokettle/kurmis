@@ -1,7 +1,6 @@
 // The rules every reader of a usage snapshot shares: which windows count, which of them are the
 // plan's own, whether the login is out, and when it comes back. One definition each, so the
-// router, `kurmis status` and the Codex login choice cannot disagree about a login. Copied from
-// the original router's `src/tools/claude/core/usage-rules.ts`.
+// router, `kurmis status` and the Codex login choice cannot disagree about a login.
 import type { AccountProvider } from './accounts.ts'
 import { parseTime } from './countdown.ts'
 import {

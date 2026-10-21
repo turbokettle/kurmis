@@ -1,7 +1,6 @@
 // Turning the Codex app-server's `account/rateLimits/read` answer into a login's usage.
-// Copied from the original router's `test/unit/claude/codex-usage.test.ts`. The fixture has the shape of
-// an answer for a `prolite` plan, which meters one model apart from the general limit,
-// trimmed to the fields the conversion reads.
+// The fixture has the shape of an answer for a `prolite` plan, which meters one model apart from
+// the general limit, trimmed to the fields the conversion reads.
 import { describe, expect, test } from 'vitest'
 import {
   CODEX_GENERAL_LIMIT_ID,

@@ -1,7 +1,5 @@
 // Preparing an extra Codex login's `CODEX_HOME` before a Codex CLI starts on it, following the
-// decisions in `src/core/codex-home.ts` and `src/core/codex-account-config.ts`. The steps
-// started from the original router's `prepareSharedDirectories` (`codex-registry.ts`) and `CodexHomeFiles`
-// (`codex-home-files.ts`).
+// decisions in `src/core/codex-home.ts` and `src/core/codex-account-config.ts`.
 //
 // The login's home is `loginFolder(id)`. The default home it is prepared from is `CODEX_HOME`
 // of the environment the CLI was started with, or `~/.codex`. Each start:

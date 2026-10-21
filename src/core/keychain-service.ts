@@ -1,6 +1,4 @@
-// The name of a Claude login's macOS Keychain item. Copied from `keychainService` in the original router's
-// `src/tools/claude/main/accounts/router/keychain.ts`, with the CLI's NFC step and its
-// empty-string rule added.
+// The name of a Claude login's macOS Keychain item.
 //
 // On macOS the Claude CLI keeps a login's credentials record in a generic-password item whose
 // service name follows `CLAUDE_SECURESTORAGE_CONFIG_DIR`. Read from the bundled JavaScript of

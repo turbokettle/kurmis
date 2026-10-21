@@ -1,7 +1,6 @@
 // What preparing an extra Codex login's home before a start has to do, decided without
 // touching the disk. The code that lists `~/.codex`, links folders and writes files calls
-// these. The rules started from the original router's (`prepareSharedDirectories` in
-// `src/tools/claude/main/accounts/codex-registry.ts` and the refresh in `codex-home-files.ts`).
+// these.
 //
 // An extra login's `CODEX_HOME` is `codex/<name>/` in the data folder. `codex:default` has
 // none of its own and is never prepared. Before every start of `codex` on an extra login:
@@ -23,9 +22,9 @@
 // What kurmis last merged and copied into a login's home is kept outside it, in
 // `codex-merged/<name>.json` in the data folder (`src/cli/codex-home-files.ts`).
 //
-// A link, copy or merge that fails is reported and the start goes on. the original router refuses the
-// start when the login's own `config.toml` cannot be checked for trust; kurmis keeps the
-// login's own trust, so there is nothing to check and nothing to refuse.
+// A link, copy or merge that fails is reported and the start goes on. Kurmis keeps the login's
+// own trust, so it does not check the login's own `config.toml` for trust and never refuses a
+// start over it.
 //
 // Two rules for the code doing the file work, which no function here can enforce:
 //

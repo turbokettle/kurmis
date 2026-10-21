@@ -1,6 +1,5 @@
 // The usage probe of a Codex login: a short-lived `codex app-server` on the login's
-// `CODEX_HOME`, asked who it is signed in as and how much of its plan is used. The design
-// follows the original router's Codex account checks (`codex-registry.ts`, `codex-connection.ts`).
+// `CODEX_HOME`, asked who it is signed in as and how much of its plan is used.
 //
 // The wire is JSON-RPC without the `jsonrpc` field, one JSON value per line each way
 // (`test/fakes/codex/fake-codex.js` copies it from codex 0.163.0):
@@ -49,8 +48,7 @@ export type { ProbeOptions, ProbeResult } from './probe-result.ts'
  * How long a Codex probe may take in all, from the start of `codex app-server` to its exit. The
  * server starts in well under a second; `account/read` reads `auth.json` and may renew the
  * login's token, and `account/rateLimits/read` is one request to OpenAI. Thirty seconds leaves
- * room for a slow start and a slow network, and matches the Claude probe and the timeout TK
- * the original router gives an `account/read`.
+ * room for a slow start and a slow network, and matches the Claude probe.
  */
 export const CODEX_PROBE_TIMEOUT_MS = 30_000
 

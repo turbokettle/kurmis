@@ -24,8 +24,8 @@
 // The login item `kurmis setup` registers (`autostart.ts`) is a plist of the same shape in
 // `~/Library/LaunchAgents/`, which launchd loads at every login.
 //
-// The design follows the original router's one-shot launchd job. `KURMIS_LAUNCHCTL_PROGRAM` (a test hook)
-// names a stand-in for `/bin/launchctl`; tests use `test/platform/fake-launchctl/launchctl.mjs`.
+// `KURMIS_LAUNCHCTL_PROGRAM` (a test hook) names a stand-in for `/bin/launchctl`; tests use
+// `test/platform/fake-launchctl/launchctl.mjs`.
 import { randomBytes } from 'node:crypto'
 import { readdirSync, rmSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'

@@ -1,6 +1,5 @@
 // The usage probe of a Claude login: a short-lived `claude` in stream-json mode that answers
-// one `get_usage` control request. The design follows the original router's usage probe
-// (`usage-probe.ts` and the parts of `claude-process.ts` it uses).
+// one `get_usage` control request.
 //
 // The CLI answers `get_usage` before any user message and makes no model call, so a probe costs
 // the CLI's start (about a second) and one request to Anthropic's usage endpoint. Before that
@@ -66,7 +65,7 @@ export type { ProbeOptions, ProbeResult } from './probe-result.ts'
  * normally takes one to two seconds: about a second to start and a few hundred milliseconds for
  * the usage request. The rest is room for a slow start (a cold disk, a virus scanner looking at
  * `claude.exe` on Windows) and for a token renewal, which is one more request to Anthropic
- * before the usage request. Thirty seconds is what the original router's probe allows.
+ * before the usage request.
  */
 export const CLAUDE_PROBE_TIMEOUT_MS = 30_000
 

@@ -1,5 +1,4 @@
-// Reading what Claude says about plan usage into `AccountUsage`. Copied from the original router's
-// `src/tools/claude/core/usage.ts`.
+// Reading what Claude says about plan usage into `AccountUsage`.
 //
 // The `get_usage` control response of a usage probe reports every window as a percentage with
 // an ISO reset time. The rate-limit headers of a forwarded answer (`usageFromUnifiedHeaders` in

@@ -11,7 +11,7 @@
 //   job and ends every process in it when the session closes, detached ones included. So from
 //   an ssh session the daemon is created through WMI instead (`Win32_Process.Create`, run by
 //   PowerShell): WMI's own host process is its parent and it is in no job of the session.
-//   Measured with the original router on Windows 10: such a process outlives the ssh session. Terminals
+//   Measured on Windows 10: such a process outlives the ssh session. Terminals
 //   that put their children in a kill-on-close job (some IDE terminals) are not detected; a
 //   daemon started from one ends with it, and the next kurmis command starts it again.
 //

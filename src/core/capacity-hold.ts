@@ -1,7 +1,6 @@
 // What the proxy does when Anthropic has no room for a request, as opposed to a login whose
-// usage is used up (`replayDecision` in `account-router.ts`). Copied from the original router's
-// `src/tools/claude/core/capacity-hold.ts`, together with the per-session bookkeeping of
-// the original router's router proxy (`router/proxy.ts`), which kurmis keeps here as `CapacityCooling`.
+// usage is used up (`replayDecision` in `account-router.ts`). The per-session bookkeeping is
+// `CapacityCooling`.
 //
 // When Anthropic answers a request 529 (overloaded), or 429 without the headers of a usage
 // limit, the proxy does not pass the answer on. It leaves that login alone for a backoff that

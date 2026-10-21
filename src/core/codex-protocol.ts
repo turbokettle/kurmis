@@ -1,7 +1,7 @@
 // The fields of the `codex app-server` answer to `account/rateLimits/read` that kurmis
 // reads, written by hand.
 //
-// the original router generates the whole protocol from `codex app-server generate-ts` (Codex 0.163.0).
+// `codex app-server generate-ts` generates types for the whole protocol (Codex 0.163.0).
 // Kurmis reads only two answers, so only the fields its parsers read are written out here,
 // with the same names and nullability as the generated types. Fields the server sends that
 // nothing here reads are left out; each type says which. The other answer, `account/read`,
@@ -11,7 +11,7 @@
 // checking an answer. Nothing may cast a raw answer to one of them: the server can change,
 // so an answer is `unknown` until a parser has checked it.
 //
-// To read them under the namespace the original router uses: `import type * as v2 from './codex-protocol.ts'`.
+// To read them under one namespace: `import type * as v2 from './codex-protocol.ts'`.
 
 /**
  * One rate-limit window of a bucket. `usedPercent` is 0-100 and can pass 100. `resetsAt` is

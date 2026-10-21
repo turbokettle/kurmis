@@ -1,5 +1,4 @@
-// The proxy's decisions that are not I/O. Several cases are the pure halves of the original router's
-// integration tests of its router proxy (`test/integration/claude-tool/account-router-proxy.test.ts`).
+// The proxy's decisions that are not I/O.
 import { describe, expect, test } from 'vitest'
 import type { RouteAccount, RouteSession } from '../../src/core/account-router.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'

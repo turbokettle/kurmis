@@ -2,8 +2,7 @@
 // value that makes it send them.
 //
 // The CLI reads `ANTHROPIC_CUSTOM_HEADERS` as newline-separated `Name: value` lines and adds
-// each to every request its inference client sends (the original router's `src/tools/claude/PROTOCOL.md`,
-// "Request headers on an inference call"). Kurmis puts up to three headers there:
+// each to every request its inference client sends. Kurmis puts up to three headers there:
 // `x-kurmis-key` with the daemon's secret, `x-kurmis-login` when the CLI was started with
 // `--login`, which pins the session to that login, and `x-kurmis-started-on` naming the login
 // whose credentials the CLI was started on, or `none` when they are no kurmis login's. None of

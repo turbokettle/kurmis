@@ -1,5 +1,4 @@
-// Login ids and the per-login routing settings. Adapted from the original router's `src/shared/accounts.ts`
-// and the limit rules of `src/tools/claude/core/account-rows.ts`.
+// Login ids and the per-login routing settings.
 //
 // A login id carries its provider: `claude:<name>` or `codex:<name>`. Only `<name>` names the
 // login's folder on disk (`claude/<name>/`, `codex/<name>/` under the data folder), because a

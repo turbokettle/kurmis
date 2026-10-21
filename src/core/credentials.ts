@@ -1,5 +1,4 @@
-// Parsing a Claude login's OAuth credentials record. Copied from the original router's
-// `src/tools/claude/main/accounts/router/credentials.ts`.
+// Parsing a Claude login's OAuth credentials record.
 //
 // The Claude CLI keeps one JSON record per login: in `.credentials.json` on Linux, on Windows
 // there or (newer versions) in Windows Credential Manager, and on macOS in a Keychain item, or in

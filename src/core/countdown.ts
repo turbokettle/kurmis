@@ -1,5 +1,4 @@
 // How kurmis writes "how long until this happens", for `kurmis status` and the daemon's log.
-// Copied from the original router's `src/shared/countdown.ts` and `src/shared/duration.ts`.
 
 /** An ISO string, a millisecond count or a Date as milliseconds; null when it is not a time. */
 export function parseTime(value: string | number | Date | null | undefined): number | null {

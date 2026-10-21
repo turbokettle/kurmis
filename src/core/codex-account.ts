@@ -1,6 +1,4 @@
 // Who a Codex login is signed in as, from the `codex app-server` answer to `account/read`.
-// The rule for what counts as signed in is the original router's (`updateStatus` in
-// `src/tools/claude/main/accounts/codex-registry.ts`); the parsing is written for kurmis.
 //
 // The answer, on Codex 0.163.0:
 //
@@ -65,7 +63,7 @@ function text(value: unknown): string | null {
  * The JSON-RPC `result` of `account/read` checked into `CodexAccountRead`. Null when the
  * answer is not an object, or when `account` is neither null nor an object with a string
  * `type`, so a broken answer is never read as "signed out". A missing `account` reads as
- * signed out, as the original router reads it. Never throws.
+ * signed out. Never throws.
  */
 export function parseCodexAccountRead(result: unknown): CodexAccountRead | null {
   if (!isObject(result)) return null

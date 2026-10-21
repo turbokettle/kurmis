@@ -1,6 +1,6 @@
 // The routing proxy: one routed request of a Claude CLI, from its arrival to the end of the
 // answer. It applies the decisions of `src/core/proxy-rules.ts` in the order that file's header
-// lists, and keeps the per-request bookkeeping the original router's `router/proxy.ts` keeps:
+// lists, and keeps the per-request bookkeeping:
 //
 // 1. The key (`routeKeyMatches`), then the `x-kurmis-login` / `x-kurmis-started-on` headers. The
 //    body is read whole, because a request may be sent more than once (a replay); a body over

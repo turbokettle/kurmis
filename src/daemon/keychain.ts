@@ -1,5 +1,4 @@
-// Reading a Claude login's access token out of the macOS Keychain. Copied from the original router's
-// `src/tools/claude/main/accounts/router/keychain.ts`.
+// Reading a Claude login's access token out of the macOS Keychain.
 //
 // On macOS the CLI keeps a login's credentials record in a generic-password item instead of in
 // `.credentials.json`. The item is named after the `CLAUDE_SECURESTORAGE_CONFIG_DIR` the login's

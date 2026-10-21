@@ -1,7 +1,6 @@
 // The decisions of the routing proxy that are not I/O: which requests it routes, which headers
 // go upstream and back, how the body is changed, what it answers when no login can serve, and
-// how a usage probe ends a cooldown. Taken out of the original router's
-// `src/tools/claude/main/accounts/router/proxy.ts`, which keeps them inline with the HTTP code.
+// how a usage probe ends a cooldown.
 //
 // The order the proxy applies them in, for one request (the daemon's job):
 // 1. `requestKind`; a `route` request needs the key (`readRouteRequest`, `routeKeyMatches`).
@@ -118,8 +117,8 @@ export function downstreamResponseHeaders(upstream: Iterable<[string, string]>):
  * string with `device_id`, `account_uuid`, `session_id` and more. Only the `account_uuid` value
  * is replaced in the text, or added at the end of the object when it is missing, so every other
  * field keeps its bytes and its place. A value that is not a JSON object is left as it is.
- * the original router does this on every request and has measured that a conversation moved between logins
- * this way goes on working; whether the rewrite is needed at all was not measured.
+ * The proxy does this on every request. A conversation moved between logins this way has been
+ * measured to go on working; whether the rewrite is needed at all was not measured.
  */
 export function rewriteUserId(userId: string, accountUuid: string): string {
   let value: unknown

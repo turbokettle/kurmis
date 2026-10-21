@@ -1,6 +1,5 @@
 // The config.toml an extra Codex login's home gets: the default home's settings, never its
-// secrets, and the login's own secrets kept where they were. Copied from the original router's
-// `test/unit/claude/codex-account-config.test.ts`.
+// secrets, and the login's own secrets kept where they were.
 import { describe, expect, it } from 'vitest'
 import { mergeAccountConfig, publicAccountConfig, sameTomlSettings, tomlValue, validToml } from '../../src/core/codex-account-config.ts'
 
@@ -78,7 +77,7 @@ describe("an extra Codex login's config.toml", () => {
     })
 
     // A session on the login asks for trust and writes it into the login's own file. Kurmis
-    // keeps it, unlike the original router, which drops whatever widens.
+    // keeps it.
     it("keeps trust in the login's own file that widens what may run", () => {
       const own = [
         `[hooks.state.${JSON.stringify(hookKey)}]`,

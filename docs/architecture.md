@@ -11,11 +11,6 @@ global flag and links the package to the temporary clone, which npm then deletes
 ends up a broken link (seen with npm 11.9). This is why the script that writes the bundle is
 called `bundle`.
 
-Much of the routing logic is copied from the original router together with its tests. A copied module
-keeps the original router's behaviour unless this file or `scope.md` says otherwise. Code that exists only
-for the original router features kurmis leaves out (lending logins between machines, script runs, sessions
-that run as another user, the UI) is deleted, not stubbed.
-
 ## The data folder
 
 Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis` on Windows.
@@ -422,8 +417,7 @@ the Windows logon script and the command line of a start through WMI. How it is 
 - **Through launchd, on macOS from an ssh login** (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY`
   set) or wherever `security show-keychain-info login.keychain` fails. A process started from
   an ssh login is in the ssh session's audit session and cannot read the login Keychain, and
-  neither can its children, so such a daemon would sign nothing. The design follows TK
-  the original router's one-shot job. The CLI writes `launchd/kurmis.start.<random>.plist` (mode 0600)
+  neither can its children, so such a daemon would sign nothing. The CLI writes `launchd/kurmis.start.<random>.plist` (mode 0600)
   whose program is `<node> <bundle> daemon start --no-launchd`, with `RunAtLoad` and
   `AbandonProcessGroup`, no `KeepAlive`, and output to `/dev/null`, and loads it with
   `launchctl bootstrap gui/<uid> <plist>`. That `daemon start` runs in the user's GUI session,
@@ -457,7 +451,7 @@ the Windows logon script and the command line of a start through WMI. How it is 
   doubled), and a `Win32_ProcessStartup` with `ShowWindow` 0 so no console window shows. The
   script uses only what Constrained Language Mode allows (cmdlets, hashtables, a `[uint16]`
   cast, `Write-Output`), no `[Console]::` calls. WMI's own host process becomes the daemon's parent,
-  outside the session's job. Measured with the original router on Windows 10: such a process outlives the ssh
+  outside the session's job. Measured on Windows 10: such a process outlives the ssh
   session. The process gets the user's own environment from Windows, not the CLI's, so the kurmis
   variables that are set (`KURMIS_HOME` as an absolute path, and the test hooks; the same list the
   launchd job carries) go on its command line: `daemon run --env KURMIS_HOME=<path> …`, and
@@ -961,7 +955,7 @@ the login's own stays: a hash trusts exactly the version of the hook that hashes
 neither hash trusts more than the other, and taking the default home's would undo the login's
 own approval on every refresh.
 
-This differs from the original router, which drops trust the login's file widened, because a model in a
+Kurmis does not drop trust that the login's own file widened, even though a model in a
 session could have written it. Kurmis has no window in which a person gives trust, and a model
 that can write a login's `config.toml` could as well write `~/.codex/config.toml`, whose trust
 reaches every login. One consequence: a folder the login itself marked untrusted, or a hook it
@@ -1193,7 +1187,7 @@ These are known and left as they are.
 - **What counts as a usage limit.** A 429 counts as a usage-limit refusal when its
   `anthropic-ratelimit-unified-status` is `rejected` or it carries
   `anthropic-ratelimit-unified-representative-claim` or `anthropic-ratelimit-unified-overage-status`
-  (`isDefinitiveQuotaRejection`, the original router's rule). Any other 429 is treated as no capacity. This
+  (`isDefinitiveQuotaRejection`). Any other 429 is treated as no capacity. This
   has not been checked against a real usage-limit 429 from Anthropic yet.
 
 ## Code layout
@@ -1201,8 +1195,7 @@ These are known and left as they are.
 - `src/data/` holds the data folder: its paths, login ids, the JSON file helpers, the stores for
   `config.json`, `state.json` and `daemon.json`, the lock file around `config.json` changes
   (`lock.ts`), and the log writer. Both the CLI and the daemon use it.
-- `src/core/` holds pure logic with no I/O: routing, usage parsing, limits, the TOML merge. It
-  holds most of the code copied from the original router.
+- `src/core/` holds pure logic with no I/O: routing, usage parsing, limits, the TOML merge.
   - `accounts.ts`: login ids and the defaults for a new login (both limits 100%, opted in).
   - `account-router.ts`: which login serves a request, the 429 and 400 handling, and when the
     pool can serve again.

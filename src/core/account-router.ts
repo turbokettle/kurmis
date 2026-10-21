@@ -1,5 +1,5 @@
 // Which login serves the next request of a Claude session, and what an upstream answer means
-// for the login that gave it. Copied from the original router's `src/tools/claude/core/account-router.ts`.
+// for the login that gave it.
 //
 // `RouteAccount` is what the rules read of one login, `RouteSession` what they read of one
 // session. The daemon builds both from `config.json`, `state.json`, the token readers and the
