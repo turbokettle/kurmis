@@ -36,6 +36,22 @@ describe('the Codex rows', () => {
     ])
   })
 
+  test('pass over a login the server refused, below 100%, until the window it named resets', () => {
+    const refused = (resetsAt: string | null) => ({
+      ...codexUsage('codex:work', { fetchedAt: NOW, fiveHour: 40, fiveHourResetsAt: at(HOUR) }),
+      status: 'rejected' as const,
+      limited: resetsAt === null ? null : { window: 'codex:primary', utilization: 40, threshold: null, resetsAt }
+    })
+    const status = (usage: ReturnType<typeof refused>) => statusAnswer([
+      loginStatus('codex:default', { usage: codexUsage('codex:default', { fetchedAt: NOW, weekly: 90 }) }),
+      loginStatus('codex:work', { usage })
+    ])
+    expect(codexRouteAccounts(status(refused(at(HOUR))))[1]?.cooldownUntil).toBe(NOW + HOUR)
+    expect(codexRouteBlock(status(refused(at(HOUR))), 'codex:work', NOW)).toEqual({ kind: 'cooldown', until: NOW + HOUR })
+    expect(chooseCodexLogin(status(refused(at(HOUR))), NOW).login).toBe('codex:default')
+    expect(chooseCodexLogin(status(refused(at(HOUR))), NOW + 2 * HOUR).kind).toBe('ranked')
+  })
+
   test('count a login the daemon has not checked yet as signed in', () => {
     const [row] = codexRouteAccounts(statusAnswer([loginStatus('codex:default', { signedIn: null })]))
     expect(row?.loggedIn).toBe(true)

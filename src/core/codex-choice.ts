@@ -13,8 +13,10 @@ import {
   type RouteSession
 } from './account-router.ts'
 import { CODEX_DEFAULT_ACCOUNT_ID } from './accounts.ts'
+import type { AccountUsage } from './claude-usage.ts'
 import type { LoginStatus, StatusAnswer } from './control-api.ts'
 import { countdownIn } from './countdown.ts'
+import { resetsAtFromUsage } from './usage-rules.ts'
 
 /**
  * How old a Codex usage snapshot may be before `kurmis codex` asks for a new one: the daemon's
@@ -50,9 +52,22 @@ export function codexRouteAccounts(status: Pick<StatusAnswer, 'logins'>): RouteA
       fiveHourLimitPercent: login.fiveHourLimit,
       weeklyLimitPercent: login.weeklyLimit,
       useFirst: login.useFirst,
-      cooldownUntil: null
+      cooldownUntil: refusedUntil(login.usage)
     }
   })
+}
+
+/**
+ * Until when a Codex login is out although no window may read 100%: the server said the account
+ * may not spend (a limit was reached or the spending control is on). Codex has no proxy that
+ * would see a refusal, so this stands in for the cooldown a Claude login gets. Until its reset,
+ * or until a probe says otherwise when it names none (Infinity). Null when the server said nothing.
+ */
+function refusedUntil(usage: AccountUsage | null): number | null {
+  if (usage?.status !== 'rejected') return null
+  const reset = resetsAtFromUsage(usage)
+  const at = reset === null ? NaN : Date.parse(reset)
+  return Number.isFinite(at) ? at : Infinity
 }
 
 /** The session the choice is made for: a new one, at home on `codex:default`, on Auto. */
