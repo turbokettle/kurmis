@@ -1,7 +1,14 @@
 # Architecture
 
 Kurmis is TypeScript on Node. It is installed with `npm i -g` from git, and the built bundle is
-committed so the install runs no build step. [scope.md](scope.md) says what it does. This file
+committed so the install runs no build step.
+
+`package.json` must have no `build`, `prepare`, `prepack`, `preinstall`, `install` or
+`postinstall` script. When a git dependency has one of those, npm first runs `npm install` with
+the dev dependencies in a temporary clone. In a global install that nested run inherits the
+global flag and links the package to the temporary clone, which npm then deletes, so `kurmis`
+ends up a broken link (seen with npm 11.9). This is why the script that writes the bundle is
+called `bundle`. [scope.md](scope.md) says what it does. This file
 says how the parts fit together.
 
 Much of the routing logic is copied from the original router together with its tests. A copied module

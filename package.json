@@ -16,7 +16,7 @@
   },
   "packageManager": "pnpm@12.11.2",
   "scripts": {
-    "build": "node scripts/build.mjs",
+    "bundle": "node scripts/build.mjs",
     "test": "vitest run",
     "check": "tsc --noEmit && eslint ."
   },

@@ -55,5 +55,5 @@ kurmis help claude
 
 ## Development
 
-`pnpm install`, then `pnpm test`, `pnpm check` (type check and lint) and `pnpm build` (writes
+`pnpm install`, then `pnpm test`, `pnpm check` (type check and lint) and `pnpm bundle` (writes
 `dist/kurmis.cjs`, which is committed together with the change that produced it).
