@@ -74,10 +74,10 @@ describe('programs', () => {
   })
 
   it('runs reg.exe and wscript.exe from System32, unless the test hook names a reg', () => {
-    expect(regProgram({ SystemRoot: 'C:\\Windows' })).toBe('C:\\Windows\\System32\\reg.exe')
+    expect(regProgram({ SystemRoot: 'C:\\Windows' }, {})).toBe('C:\\Windows\\System32\\reg.exe')
     expect(regProgram({ KURMIS_REG_PROGRAM: '/tmp/reg.mjs' })).toBe('/tmp/reg.mjs')
     expect(regProgram()).toMatch(/fake-reg[\\/]reg\.mjs$/)
-    expect(wscriptPath({ SystemRoot: 'C:\\Windows' })).toBe('C:\\Windows\\System32\\wscript.exe')
+    expect(wscriptPath({ SystemRoot: 'C:\\Windows' }, {})).toBe('C:\\Windows\\System32\\wscript.exe')
   })
 })
 
@@ -145,7 +145,7 @@ describe('the logon script', () => {
     expect(windowsAutostartEnvironment({
       KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe', KURMIS_ENTRY: '',
       ANTHROPIC_API_KEY: 'sk-ant-api03-fake', Path: 'C:\\Windows', USERPROFILE: 'C:\\Users\\Example User'
-    })).toEqual({ KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe' })
+    }, {})).toEqual({ KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe' })
   })
 
   it('makes a relative KURMIS_HOME absolute, since the daemon starts in the profile folder', () => {
@@ -184,7 +184,7 @@ describe('registering through reg.exe', () => {
     expect(bytes.subarray(2).toString('utf16le')).toContain('shell.Environment("Process")("KURMIS_HOME") = "C:\\Users\\Zoë Example\\.kurmis"')
     expect(bytes.subarray(2).toString('utf16le')).toContain('shell.CurrentDirectory = "C:\\Users\\Zoë Example"')
     const query = await regFor()(regQueryArgs())
-    expect(parseRegQuery(query.stdout, 'kurmis')).toEqual({ type: 'REG_SZ', data: runValueData('C:\\Windows\\System32\\wscript.exe', scriptPath()) })
+    expect(parseRegQuery(query.stdout, 'kurmis')).toEqual({ type: 'REG_SZ', data: runValueData(wscriptPath(), scriptPath()) })
 
     const second = await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })
     expect(second).toEqual({ changed: false, where: RUN_ENTRY_DESCRIPTION })

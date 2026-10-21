@@ -22,6 +22,7 @@ import { realpathSync, statSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { runProgram, type RunResult } from './run.ts'
 import { refusedByGuard, withGuard } from './system-program-guard.ts'
+import { systemProgram } from './system-programs.ts'
 
 /** The test hook naming the bundle a daemon is started from. */
 export const ENTRY_VARIABLE = 'KURMIS_ENTRY'
@@ -198,11 +199,13 @@ export function wmiCreateScript(argv: readonly string[], cwd: string): string {
   ].join('\n')
 }
 
-/** `powershell.exe` in the Windows folder, and the arguments that run `script` without a profile. */
+/**
+ * `powershell.exe` in the Windows folder (or the stand-in `KURMIS_POWERSHELL_PROGRAM` names), and
+ * the arguments that run `script` without a profile.
+ */
 export function powerShellInvocation(script: string, env: NodeJS.ProcessEnv): { program: string; args: string[] } {
-  const root = env.SystemRoot ?? env.SYSTEMROOT ?? 'C:\\Windows'
   return {
-    program: `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+    program: systemProgram('powershell', env),
     args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
   }
 }

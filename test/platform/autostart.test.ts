@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { registerAutostart, unregisterAutostart } from '../../src/platform/autostart.ts'
 import { AUTOSTART_LABEL, autostartPlistPath, guiDomain, jobState, launchAgentsDir, launchctlFor } from '../../src/platform/launchd.ts'
-import { RUN_ENTRY_DESCRIPTION, parseRegQuery, regFor, regQueryArgs } from '../../src/platform/windows-autostart.ts'
+import { RUN_ENTRY_DESCRIPTION, parseRegQuery, regFor, regQueryArgs, wscriptPath } from '../../src/platform/windows-autostart.ts'
 
 const ENTRY = '/opt/example/lib/node_modules/kurmis/dist/kurmis.cjs'
 const NODE = '/opt/homebrew/bin/node'
@@ -125,7 +125,7 @@ describe('Windows logon entry', () => {
     const script = readFileSync(scriptPath()).subarray(2).toString('utf16le')
     expect(script).toContain('shell.Run """C:\\Program Files\\nodejs\\node.exe"" ""C:\\Users\\Example User\\AppData\\Roaming\\npm\\node_modules\\kurmis\\dist\\kurmis.cjs"" daemon start --no-launchd", 0, False')
     const value = parseRegQuery((await regFor()(regQueryArgs())).stdout, 'kurmis')
-    expect(value?.data).toBe(`C:\\Windows\\System32\\wscript.exe //B //Nologo ${scriptPath().includes(' ') ? `"${scriptPath()}"` : scriptPath()}`)
+    expect(value?.data).toBe(`${wscriptPath()} //B //Nologo ${scriptPath().includes(' ') ? `"${scriptPath()}"` : scriptPath()}`)
     expect(await registerAutostart(win())).toEqual({ changed: false, where: RUN_ENTRY_DESCRIPTION })
     expect(await unregisterAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     expect(existsSync(scriptPath())).toBe(false)

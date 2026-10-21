@@ -28,7 +28,8 @@ import type { DaemonLog, LogReason } from '../data/log.ts'
 import { isDefaultLoginId, parseLoginId } from '../data/login-id.ts'
 import { loginFolder } from '../data/paths.ts'
 import { CredentialsFileReader, type CredentialsSource } from './credentials.ts'
-import { KeychainCredentialsReader, SECURITY_PROGRAM, keychainHoldsSecret, type KeychainFailureKind } from './keychain.ts'
+import { systemProgram } from '../platform/system-programs.ts'
+import { KeychainCredentialsReader, keychainHoldsSecret, type KeychainFailureKind } from './keychain.ts'
 
 export interface TokenSourceOptions {
   /** `KURMIS_SECURITY_PROGRAM` (a test hook) names the `security` program; else `SECURITY_PROGRAM`. */
@@ -48,10 +49,12 @@ export interface TokenSource extends CredentialsSource {
   readonly keychain: boolean
 }
 
-/** The `security` program the daemon runs: `KURMIS_SECURITY_PROGRAM` when set and not empty, else `/usr/bin/security`. */
-export function securityProgramOf(env: NodeJS.ProcessEnv): string {
-  const override = env.KURMIS_SECURITY_PROGRAM
-  return override !== undefined && override !== '' ? override : SECURITY_PROGRAM
+/**
+ * The `security` program the daemon runs: `KURMIS_SECURITY_PROGRAM` from `env`, else from this
+ * process's environment, else `/usr/bin/security` (`systemProgram`).
+ */
+export function securityProgramOf(env: NodeJS.ProcessEnv, processEnv: NodeJS.ProcessEnv = process.env): string {
+  return systemProgram('security', env, processEnv)
 }
 
 /**

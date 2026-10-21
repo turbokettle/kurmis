@@ -61,8 +61,10 @@ afterEach(() => {
 
 test('the security program comes from KURMIS_SECURITY_PROGRAM, else /usr/bin/security', () => {
   expect(securityProgramOf({ KURMIS_SECURITY_PROGRAM: '/tmp/fake-security' })).toBe('/tmp/fake-security')
-  expect(securityProgramOf({ KURMIS_SECURITY_PROGRAM: '' })).toBe(SECURITY_PROGRAM)
-  expect(securityProgramOf({})).toBe(SECURITY_PROGRAM)
+  expect(securityProgramOf({ KURMIS_SECURITY_PROGRAM: '' }, {})).toBe(SECURITY_PROGRAM)
+  expect(securityProgramOf({}, {})).toBe(SECURITY_PROGRAM)
+  // An environment without the hook still gets the stand-in test/setup.ts names.
+  expect(securityProgramOf({})).toBe(process.env.KURMIS_SECURITY_PROGRAM)
 })
 
 test('an extra login uses its folder for both the item name and the file; the default login the plain item and ~/.claude', () => {

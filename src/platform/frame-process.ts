@@ -17,10 +17,10 @@
 // `node` process that starts the native `codex.exe`, and TerminateProcess on the `node` alone
 // would leave `codex.exe` running.
 import { spawn, type ChildProcess } from 'node:child_process'
-import { win32 } from 'node:path'
 import { clearTimeout, setTimeout } from 'node:timers'
 import { invocationFor } from './run.ts'
 import { refusedByGuard, withGuard } from './system-program-guard.ts'
+import { systemProgram } from './system-programs.ts'
 
 /** The longest single line kept while it is incomplete, unless told otherwise. */
 export const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024
@@ -103,18 +103,7 @@ export function treeKillCommand(
 ): { command: string; args: string[] } | null {
   if (platform !== 'win32') return null
   // The full path, so a `taskkill` earlier on PATH is never what runs.
-  const root = envValue(env, 'SystemRoot', true) ?? 'C:\\Windows'
-  return { command: win32.join(root, 'System32', 'taskkill.exe'), args: ['/PID', String(pid), '/T', '/F'] }
-}
-
-/** A variable by name; on Windows names are matched without regard to case. */
-function envValue(env: Readonly<Record<string, string | undefined>>, name: string, windows: boolean): string | undefined {
-  if (!windows) return env[name]
-  const upper = name.toUpperCase()
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === upper && value !== undefined && value !== '') return value
-  }
-  return undefined
+  return { command: systemProgram('taskkill', env), args: ['/PID', String(pid), '/T', '/F'] }
 }
 
 /**

@@ -33,13 +33,14 @@ import { join, resolve } from 'node:path'
 import { launchdJobFolder } from '../data/paths.ts'
 import { writeFileAtomic } from '../data/json-file.ts'
 import { PRIVATE_FILE_MODE } from './files.ts'
-import { GUARD_VARIABLE } from './system-program-guard.ts'
+import { GUARD_VARIABLE, REFUSAL_LOG_VARIABLE } from './system-program-guard.ts'
 import { runProgram, type RunResult } from './run.ts'
+import { inheritedTestHooks, realSystemProgram, SYSTEM_PROGRAM_VARIABLES, systemProgram } from './system-programs.ts'
 
-export const LAUNCHCTL_PROGRAM = '/bin/launchctl'
+export const LAUNCHCTL_PROGRAM = realSystemProgram('launchctl')
 
 /** The test hook naming a stand-in for `launchctl`. */
-export const LAUNCHCTL_VARIABLE = 'KURMIS_LAUNCHCTL_PROGRAM'
+export const LAUNCHCTL_VARIABLE = SYSTEM_PROGRAM_VARIABLES.launchctl
 
 /** How long one `launchctl` call may take. A `bootout` waits for the job's process to exit. */
 export const LAUNCHCTL_TIMEOUT_MS = 30_000
@@ -56,10 +57,12 @@ export const ONE_SHOT_LABEL_PREFIX = 'kurmis.start'
 /** The program a launchd job of kurmis runs after `<node> <bundle>`. */
 export const DAEMON_START_ARGS: readonly string[] = ['daemon', 'start', '--no-launchd']
 
-/** `KURMIS_LAUNCHCTL_PROGRAM` when it is set and not empty, otherwise `/bin/launchctl`. */
-export function launchctlProgram(env: NodeJS.ProcessEnv = process.env): string {
-  const named = env[LAUNCHCTL_VARIABLE]
-  return named !== undefined && named !== '' ? named : LAUNCHCTL_PROGRAM
+/**
+ * `KURMIS_LAUNCHCTL_PROGRAM` from `env`, else from `processEnv` (this process's environment),
+ * else `/bin/launchctl` (`systemProgram`).
+ */
+export function launchctlProgram(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): string {
+  return systemProgram('launchctl', env, processEnv)
 }
 
 /** Runs `launchctl` with these arguments and answers what happened. Never rejects. */
@@ -140,9 +143,9 @@ export const DAEMON_JOB_VARIABLES: readonly string[] = [
   'KURMIS_UPSTREAM_URL',
   'KURMIS_SECURITY_PROGRAM',
   'KURMIS_ENTRY',
-  'KURMIS_LAUNCHCTL_PROGRAM',
-  'KURMIS_REG_PROGRAM',
-  GUARD_VARIABLE
+  ...Object.values(SYSTEM_PROGRAM_VARIABLES).filter((name) => name !== 'KURMIS_SECURITY_PROGRAM'),
+  GUARD_VARIABLE,
+  REFUSAL_LOG_VARIABLE
 ]
 
 /** The PATH a job gets when the caller has none: Homebrew's folders and the system's. */
@@ -152,15 +155,17 @@ const FALLBACK_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:
  * The environment a launchd job of kurmis is given. launchd starts a job with almost no
  * environment, so the plist carries HOME, the caller's PATH (so the daemon finds `claude` the
  * way the caller does), `KURMIS_HOME` resolved to an absolute path, and the variables of
- * `DAEMON_JOB_VARIABLES` that are set.
+ * `DAEMON_JOB_VARIABLES` that are set. The stand-ins of a test are taken from `processEnv` when
+ * `env` lacks them (`inheritedTestHooks`).
  */
-export function daemonJobEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function daemonJobEnvironment(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {
     HOME: env.HOME !== undefined && env.HOME !== '' ? env.HOME : homedir(),
     PATH: env.PATH !== undefined && env.PATH !== '' ? env.PATH : FALLBACK_PATH
   }
+  const hooks = inheritedTestHooks(env, processEnv)
   for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name]
+    const value = env[name] || hooks[name]
     if (value === undefined || value === '') continue
     out[name] = name === 'KURMIS_HOME' ? resolve(value) : value
   }
@@ -202,26 +207,34 @@ export interface JobState {
   path: string | null
   /** The pid of the job's running process, or null when it runs none. */
   pid: number | null
+  /**
+   * The exit code of the job's last run, or null when it has not exited yet ("(never exited)")
+   * or launchctl does not say. launchd itself answers 78 (EX_CONFIG) when it could not start
+   * the program, for example one on a volume the job may not read.
+   */
+  lastExitCode: number | null
 }
 
 /**
  * Reads `launchctl print <domain>/<label>`. A job launchd does not have is answered with a
  * non-zero exit (113, "Could not find service"). Otherwise the job's own properties are the
- * lines indented by one tab, such as `path = …`, `state = running` and `pid = 501`; lines
- * indented deeper belong to its sub-dictionaries.
+ * lines indented by one tab, such as `path = …`, `state = running`, `pid = 501` and
+ * `last exit code = 78: EX_CONFIG`; lines indented deeper belong to its sub-dictionaries.
  */
 export function parseLaunchctlPrint(result: RunResult): JobState {
-  if (result.code !== 0) return { loaded: false, path: null, pid: null }
+  if (result.code !== 0) return { loaded: false, path: null, pid: null, lastExitCode: null }
   const top = new Map<string, string>()
   for (const match of result.stdout.matchAll(/^\t([^\t=][^=\n]*?) = (.*)$/gm)) {
     const key = match[1] ?? ''
     if (!top.has(key)) top.set(key, (match[2] ?? '').trim())
   }
   const pid = Number(top.get('pid'))
+  const exit = /^-?\d+/.exec(top.get('last exit code') ?? '')
   return {
     loaded: true,
     path: top.get('path') ?? null,
-    pid: top.get('state') === 'running' && Number.isSafeInteger(pid) && pid > 0 ? pid : null
+    pid: top.get('state') === 'running' && Number.isSafeInteger(pid) && pid > 0 ? pid : null,
+    lastExitCode: exit === null ? null : Number(exit[0])
   }
 }
 
@@ -298,6 +311,8 @@ export async function bootoutJob(label: string, launchctl: Launchctl = launchctl
 export interface OneShotJob {
   label: string
   plistPath: string
+  /** What launchd says about the job now: whether its program runs, and how its last run ended. */
+  state(): Promise<JobState>
   /** Unloads the job, ignoring a failure, and deletes its plist. Safe to call more than once. */
   remove(): Promise<void>
 }
@@ -375,6 +390,7 @@ export async function startThroughLaunchd(start: LaunchdStart): Promise<OneShotJ
   return {
     label,
     plistPath,
+    state: () => jobState(label, launchctl, start.uid),
     async remove() {
       if (removed) return
       removed = true

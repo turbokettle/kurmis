@@ -46,13 +46,14 @@ beforeEach(() => {
 
 describe('launchctl program', () => {
   it('is /bin/launchctl unless the test hook names another', () => {
-    expect(launchctlProgram({})).toBe(LAUNCHCTL_PROGRAM)
-    expect(launchctlProgram({ KURMIS_LAUNCHCTL_PROGRAM: '' })).toBe('/bin/launchctl')
+    expect(launchctlProgram({}, {})).toBe(LAUNCHCTL_PROGRAM)
+    expect(launchctlProgram({ KURMIS_LAUNCHCTL_PROGRAM: '' }, {})).toBe('/bin/launchctl')
     expect(launchctlProgram({ KURMIS_LAUNCHCTL_PROGRAM: '/tmp/fake.mjs' })).toBe('/tmp/fake.mjs')
   })
 
-  it('is the fake in every test', () => {
+  it('is the fake in every test, also for an environment that does not name it', () => {
     expect(launchctlProgram()).toMatch(/fake-launchctl[\\/]launchctl\.mjs$/)
+    expect(launchctlProgram({})).toMatch(/fake-launchctl[\\/]launchctl\.mjs$/)
   })
 
   it('names the GUI domain of a user', () => {
@@ -125,7 +126,7 @@ describe('daemonJobEnvironment', () => {
       CODEX_HOME: '/tmp/codex',
       KURMIS_SOMETHING_ELSE: 'x',
       TERM: 'xterm'
-    })
+    }, {})
     expect(env).toEqual({
       HOME: '/Users/example',
       PATH: '/opt/homebrew/bin:/usr/bin',
@@ -140,8 +141,17 @@ describe('daemonJobEnvironment', () => {
   })
 
   it('leaves out empty variables and gives a PATH and HOME when the caller has none', () => {
-    const env = daemonJobEnvironment({ KURMIS_HOME: '', KURMIS_CLAUDE_BIN: '' })
+    const env = daemonJobEnvironment({ KURMIS_HOME: '', KURMIS_CLAUDE_BIN: '' }, {})
     expect(env).toEqual({ HOME: homedir(), PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin' })
+  })
+
+  it("takes a test's stand-ins and the guard from this process when the caller's environment has none", () => {
+    const env = daemonJobEnvironment({ HOME: '/Users/example', KURMIS_REG_PROGRAM: '/tmp/reg.mjs' })
+    expect(env.KURMIS_REG_PROGRAM).toBe('/tmp/reg.mjs')
+    expect(env.KURMIS_LAUNCHCTL_PROGRAM).toBe(process.env.KURMIS_LAUNCHCTL_PROGRAM)
+    expect(env.KURMIS_POWERSHELL_PROGRAM).toBe(process.env.KURMIS_POWERSHELL_PROGRAM)
+    expect(env.KURMIS_REFUSE_SYSTEM_PROGRAMS).toBe('1')
+    expect(env.KURMIS_REFUSED_PROGRAMS_LOG).toBe(process.env.KURMIS_REFUSED_PROGRAMS_LOG)
   })
 })
 
@@ -163,10 +173,17 @@ describe('launchctl answers', () => {
     const out = 'gui/501/kurmis.daemon = {\n\tactive count = 1\n\tpath = /Users/example/Library/LaunchAgents/kurmis.daemon.plist\n' +
       '\tstate = running\n\tpid = 4242\n\tendpoints = {\n\t\tpid = 7\n\t}\n}\n'
     expect(parseLaunchctlPrint(result(0, out))).toEqual({
-      loaded: true, path: '/Users/example/Library/LaunchAgents/kurmis.daemon.plist', pid: 4242
+      loaded: true, path: '/Users/example/Library/LaunchAgents/kurmis.daemon.plist', pid: 4242, lastExitCode: null
     })
-    expect(parseLaunchctlPrint(result(0, 'x = {\n\tstate = not running\n\tpid = 5\n}\n'))).toEqual({ loaded: true, path: null, pid: null })
-    expect(parseLaunchctlPrint(result(113, '', 'Could not find service "x" in domain for port'))).toEqual({ loaded: false, path: null, pid: null })
+    expect(parseLaunchctlPrint(result(0, 'x = {\n\tstate = not running\n\tpid = 5\n}\n'))).toEqual({ loaded: true, path: null, pid: null, lastExitCode: null })
+    expect(parseLaunchctlPrint(result(113, '', 'Could not find service "x" in domain for port'))).toEqual({ loaded: false, path: null, pid: null, lastExitCode: null })
+  })
+
+  it("reads a job's last exit code, which launchd gives as 78 when it could not start the program", () => {
+    const exited = parseLaunchctlPrint(result(0, 'x = {\n\tstate = not running\n\tlast exit code = 78: EX_CONFIG\n\tsub = {\n\t\tlast exit code = 1\n\t}\n}\n'))
+    expect(exited.lastExitCode).toBe(78)
+    expect(parseLaunchctlPrint(result(0, 'x = {\n\tlast exit code = 0\n}\n')).lastExitCode).toBe(0)
+    expect(parseLaunchctlPrint(result(0, 'x = {\n\tlast exit code = (never exited)\n}\n')).lastExitCode).toBeNull()
   })
 
   it('tells "not loaded" and "no GUI domain" apart from other failures', () => {

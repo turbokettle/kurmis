@@ -15,6 +15,7 @@ import {
   wmiCreateScript
 } from '../../src/platform/detach.ts'
 import type { RunResult } from '../../src/platform/run.ts'
+import { realSystemProgram } from '../../src/platform/system-programs.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'kurmis-detach-'))
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
@@ -118,7 +119,9 @@ describe('the WMI start', () => {
 
   it('runs powershell from the Windows folder with the script encoded', () => {
     const { program, args } = powerShellInvocation('Write-Output 1', { SystemRoot: 'D:\\Windows' })
-    expect(program).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    // Every test has the stand-in; the real program is in the Windows folder.
+    expect(program).toBe(process.env.KURMIS_POWERSHELL_PROGRAM)
+    expect(realSystemProgram('powershell', { SystemRoot: 'D:\\Windows' })).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
     expect(args.slice(0, 5)).toEqual(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'])
     expect(Buffer.from(args[5] ?? '', 'base64').toString('utf16le')).toBe('Write-Output 1')
   })
@@ -137,6 +140,6 @@ describe('the WMI start', () => {
         return Promise.resolve(result({ stdout: 'pid 77' }))
       })
     expect(pid).toBe(77)
-    expect(calls[0]?.program).toMatch(/powershell\.exe$/)
+    expect(calls[0]?.program).toBe(process.env.KURMIS_POWERSHELL_PROGRAM)
   })
 })

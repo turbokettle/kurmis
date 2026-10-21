@@ -36,6 +36,7 @@ import { makePrivateDirSync } from './files.ts'
 import { windowsCommandLine } from './detach.ts'
 import { DAEMON_JOB_VARIABLES } from './launchd.ts'
 import { runProgram, type RunResult } from './run.ts'
+import { inheritedTestHooks, SYSTEM_PROGRAM_VARIABLES, systemProgram, systemRoot } from './system-programs.ts'
 import type { AutostartResult } from './autostart.ts'
 
 /** The registry key whose values Explorer runs at the user's logon. */
@@ -45,30 +46,23 @@ export const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 export const RUN_VALUE_NAME = 'kurmis'
 
 /** The test hook naming a stand-in for `reg.exe`. */
-export const REG_VARIABLE = 'KURMIS_REG_PROGRAM'
+export const REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg
 
 const REG_TIMEOUT_MS = 30_000
 
 /** Where the entry is, for the person to see. */
 export const RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`
 
-/** The Windows folder: `SystemRoot`, else `windir`, else `C:\Windows`. */
-export function systemRoot(env: NodeJS.ProcessEnv = process.env): string {
-  for (const name of ['SystemRoot', 'SYSTEMROOT', 'windir', 'WINDIR']) {
-    const value = env[name]
-    if (value !== undefined && value !== '') return value.replace(/[\\/]+$/, '')
-  }
-  return 'C:\\Windows'
+export { systemRoot }
+
+/** `KURMIS_REG_PROGRAM` (from `env`, else this process's environment), otherwise `<SystemRoot>\System32\reg.exe`. */
+export function regProgram(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): string {
+  return systemProgram('reg', env, processEnv)
 }
 
-/** `KURMIS_REG_PROGRAM` when it is set and not empty, otherwise `<SystemRoot>\System32\reg.exe`. */
-export function regProgram(env: NodeJS.ProcessEnv = process.env): string {
-  const named = env[REG_VARIABLE]
-  return named !== undefined && named !== '' ? named : `${systemRoot(env)}\\System32\\reg.exe`
-}
-
-export function wscriptPath(env: NodeJS.ProcessEnv = process.env): string {
-  return `${systemRoot(env)}\\System32\\wscript.exe`
+/** `KURMIS_WSCRIPT_PROGRAM` (as for `regProgram`), otherwise `<SystemRoot>\System32\wscript.exe`. */
+export function wscriptPath(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): string {
+  return systemProgram('wscript', env, processEnv)
 }
 
 /** Runs `reg.exe` with these arguments and answers what happened. Never rejects. */
@@ -125,10 +119,11 @@ export function vbsString(text: string): string {
  * passes on the command line. `KURMIS_HOME` is made absolute (Windows path rules, from the
  * current folder), since the daemon starts in another folder.
  */
-export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}
+  const hooks = inheritedTestHooks(env, processEnv)
   for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name]
+    const value = env[name] || hooks[name]
     if (value !== undefined && value !== '') out[name] = name === 'KURMIS_HOME' ? win32.resolve(value) : value
   }
   return out

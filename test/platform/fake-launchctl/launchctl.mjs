@@ -21,14 +21,18 @@
 //   bootout gui/<uid>/<label>     unloads the job; exits 3 ("Boot-out failed: 3: No such
 //                                 process") when it is not loaded. It does not end the job's
 //                                 process: kurmis' jobs set AbandonProcessGroup.
-//   print gui/<uid>/<label>       a loaded job's `path`, `state` and, while its process is
-//                                 alive, `pid`; exits 113 ("Could not find service") otherwise.
+//   print gui/<uid>/<label>       a loaded job's `path`, `state`, `last exit code` and, while
+//                                 its process is alive, `pid`; exits 113 ("Could not find
+//                                 service") otherwise.
 //   kickstart gui/<uid>/<label>   runs a loaded job's program again (with FAKE_LAUNCHCTL_RUN=1)
 //                                 unless its process is alive; exits 113 when it is not loaded.
 //
 // A domain that is not `gui/<digits>` exits 125, as launchctl answers a domain it cannot use.
 // FAKE_LAUNCHCTL_FAIL_BOOTSTRAP=<exit code> makes every bootstrap fail with that code; 125 is
-// what launchctl answers when nobody is logged in at the screen.
+// what launchctl answers when nobody is logged in at the screen. FAKE_LAUNCHCTL_JOB_EXIT=<code>
+// makes a job that bootstrap loads run nothing and count as exited with that code, which is
+// what `print` then shows as its `last exit code` (launchd answers 78 when it cannot start a
+// job's program).
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -174,12 +178,13 @@ if (command === 'bootstrap' && argv.length === 3) {
   const loaded = locked(() => {
     const state = readState()
     if (state[label] !== undefined) return false
-    state[label] = { plist: argv[2], pid: null }
+    const exitCode = Number(process.env.FAKE_LAUNCHCTL_JOB_EXIT)
+    state[label] = { plist: argv[2], pid: null, ...(process.env.FAKE_LAUNCHCTL_JOB_EXIT && Number.isInteger(exitCode) ? { exitCode } : {}) }
     writeState(state)
     return true
   })
   if (!loaded) fail(5, 'Bootstrap failed: 5: Input/output error\nTry re-running the command as root for richer errors.')
-  if (process.env.FAKE_LAUNCHCTL_RUN === '1' && plistValue(text, 'RunAtLoad') === true) {
+  if (process.env.FAKE_LAUNCHCTL_RUN === '1' && !process.env.FAKE_LAUNCHCTL_JOB_EXIT && plistValue(text, 'RunAtLoad') === true) {
     const pid = run(label, text)
     locked(() => {
       const state = readState()
@@ -214,6 +219,7 @@ if (command === 'bootstrap' && argv.length === 3) {
     `\tstate = ${running ? 'running' : 'not running'}`,
     '',
     ...(running ? [`\tpid = ${String(job.pid)}`] : []),
+    typeof job.exitCode === 'number' ? `\tlast exit code = ${String(job.exitCode)}${job.exitCode === 78 ? ': EX_CONFIG' : ''}` : '\tlast exit code = (never exited)',
     '\tenvironment = {',
     '\t\tXPC_SERVICE_NAME => ' + label,
     '\t}',
