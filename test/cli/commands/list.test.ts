@@ -1,10 +1,12 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createListCommand, hasLocalCredentials } from '../../../src/cli/commands/list.ts'
+import { codexKeepsSignInElsewhere, createListCommand, hasCredentials, hasLocalCredentials } from '../../../src/cli/commands/list.ts'
 import { addLogin, defaultConfig, saveConfig, updateLogin } from '../../../src/data/config.ts'
 import { kurmisHome, loginFolder } from '../../../src/data/paths.ts'
-import { writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth } from '../../fakes/index.ts'
+import { findProgram } from '../../../src/platform/programs.ts'
+import { runProgram } from '../../../src/platform/run.ts'
+import { FAKE_CODEX_SCRIPT, readCodexRecord, writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth, writeCodexKeyringAuth } from '../../fakes/index.ts'
 import { collect } from '../helpers.ts'
 
 const home = join(process.env.HOME!, 'list-home')
@@ -53,6 +55,76 @@ describe('hasLocalCredentials', () => {
     expect(hasLocalCredentials('codex:default', { CODEX_HOME: elsewhere }, home)).toBe(false)
     writeCodexAuth(elsewhere)
     expect(hasLocalCredentials('codex:default', { CODEX_HOME: elsewhere }, home)).toBe(true)
+  })
+})
+
+describe('a Codex login that keeps its sign-in in the keyring', () => {
+  const deps = { findProgram, runProgram }
+  const keyring = (): string => join(home, 'keyring')
+  const record = (): string => join(home, 'codex-record.jsonl')
+  /** The environment that makes kurmis find the fake codex, with its stand-in keyring, and `home` as the home folder. */
+  const fakeEnv = (): NodeJS.ProcessEnv => ({
+    HOME: home,
+    USERPROFILE: home,
+    KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT,
+    FAKE_CODEX_KEYRING_DIR: keyring(),
+    FAKE_CODEX_RECORD: record()
+  })
+  const keepInKeyring = (codexHome: string, store = 'keyring'): void => {
+    mkdirSync(codexHome, { recursive: true })
+    writeFileSync(join(codexHome, 'config.toml'), `model = "a"\ncli_auth_credentials_store = "${store}"\n`)
+  }
+
+  it('reads cli_auth_credentials_store from config.toml', () => {
+    const codexHome = join(home, 'codex-home')
+    expect(codexKeepsSignInElsewhere(codexHome)).toBe(false)
+    mkdirSync(codexHome)
+    writeFileSync(join(codexHome, 'config.toml'), 'model = "a"\n')
+    expect(codexKeepsSignInElsewhere(codexHome)).toBe(false)
+    writeFileSync(join(codexHome, 'config.toml'), 'cli_auth_credentials_store = "file"\n')
+    expect(codexKeepsSignInElsewhere(codexHome)).toBe(false)
+    for (const store of ['keyring', 'auto']) {
+      keepInKeyring(codexHome, store)
+      expect(codexKeepsSignInElsewhere(codexHome)).toBe(true)
+    }
+    writeFileSync(join(codexHome, 'config.toml'), 'model = \n')
+    expect(codexKeepsSignInElsewhere(codexHome)).toBe(true)
+  })
+
+  it('asks codex login status in the login\'s home', async () => {
+    keepInKeyring(loginFolder('codex:side'))
+    expect(await hasCredentials('codex:side', fakeEnv(), home, deps)).toBe(false)
+    writeCodexKeyringAuth(keyring(), loginFolder('codex:side'))
+    expect(await hasCredentials('codex:side', fakeEnv(), home, deps)).toBe(true)
+    const runs = readCodexRecord(record()).filter((line) => line.event === 'start')
+    expect(runs.map((line) => [line.event === 'start' && line.mode, line.event === 'start' && line.codexHome]))
+      .toEqual([['login-status', loginFolder('codex:side')], ['login-status', loginFolder('codex:side')]])
+  })
+
+  it('asks for codex:default in the default home, and starts no codex for a login that keeps auth.json', async () => {
+    keepInKeyring(join(home, '.codex'))
+    writeCodexKeyringAuth(keyring(), join(home, '.codex'))
+    expect(await hasCredentials('codex:default', fakeEnv(), home, deps)).toBe(true)
+    // An extra login's home inherited from a session on it is not the default home.
+    const inherited = { ...fakeEnv(), CODEX_HOME: loginFolder('codex:side') }
+    expect(await hasCredentials('codex:default', inherited, home, deps)).toBe(true)
+
+    rmSync(record(), { force: true })
+    mkdirSync(loginFolder('codex:file'), { recursive: true })
+    expect(await hasCredentials('codex:file', fakeEnv(), home, deps)).toBe(false)
+    writeCodexAuth(loginFolder('codex:file'))
+    expect(await hasCredentials('codex:file', fakeEnv(), home, deps)).toBe(true)
+    expect(readCodexRecord(record())).toEqual([])
+  })
+
+  it('shows such a login with credentials in kurmis list', async () => {
+    saveConfig(addLogin(defaultConfig(), 'codex:side'))
+    keepInKeyring(loginFolder('codex:side'))
+    writeCodexKeyringAuth(keyring(), loginFolder('codex:side'))
+    const out = collect(fakeEnv())
+    expect(await createListCommand({ home: () => home }).run(['--json'], out.context)).toBe(0)
+    const listed = JSON.parse(out.stdout()) as Array<{ id: string; credentials: boolean }>
+    expect(listed.find((login) => login.id === 'codex:side')?.credentials).toBe(true)
   })
 })
 

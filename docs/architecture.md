@@ -1214,11 +1214,16 @@ These are known and left as they are.
     left; a cooldown's end is shown in local time (`02:10`, with the date when it is on another
     day) with the time left after it.
   - `list [--json]`: the logins from `config.json` without the daemon, with the columns `ID LABEL
-    AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`. Credentials is a check of local files only: an
+    AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`. Credentials is a check of local files: an
     extra Claude login's `.credentials.json` or a `.claude.json` naming an account in its folder,
     `~/.claude/.credentials.json` or `~/.claude.json` for `claude:default`, and the existence of
-    `auth.json` for Codex (its fields are never read). `--json` prints the login settings with
-    `credentials: boolean` added.
+    `auth.json` in the Codex home for Codex (its fields are never read). A Codex login without
+    `auth.json` whose `config.toml` sets `cli_auth_credentials_store` to anything but `"file"`
+    keeps its sign-in in the Keychain or Credential Manager, so for it `codex login status` runs
+    in its home, with a 10-second deadline, and its exit code decides (`hasCredentials`). These
+    runs happen at the same time, and only for such logins, so a list of logins that keep
+    `auth.json` starts no program. `--json` prints the login settings with `credentials:
+    boolean` added.
   - `login claude|codex [--name <name>] [--label <text>]` adds a new login; without `--name` it
     takes the first free name of `2`, `3`, ... (`claude:2`). `login <id> [--label <text>]` signs
     an existing login in again, the default ones included (and adds an id that is new). First
@@ -1231,7 +1236,7 @@ These are known and left as they are.
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
     wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
-    local credentials are there; otherwise a folder this run created is removed (for Codex with
+    credentials are there, as `list` checks them; otherwise a folder this run created is removed (for Codex with
     its `codex-merged/` record) and nothing is added. The email is printed and never stored; the label defaults to the name. A running
     daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
     it may still hold the login as signed out from before and Auto would pass it over until

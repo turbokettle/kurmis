@@ -11,6 +11,7 @@ import {
   readCodexRecord,
   writeCodexApiKeyAuth,
   writeCodexAuth,
+  writeCodexKeyringAuth,
   writeCodexScenario,
   writeSharedCodexScenario
 } from './codex.ts'
@@ -113,6 +114,35 @@ describe('codex --version', () => {
     const run = spawnSync(installed.path, ['--version'], { encoding: 'utf8' })
     expect(run.status).toBe(0)
     expect(run.stdout).toBe(`codex-cli ${FAKE_CODEX_DEFAULT_VERSION}\n`)
+  })
+})
+
+describe('codex login status', () => {
+  function status(codexHome: string, keyring?: string): { code: number | null; stderr: string } {
+    const env = { ...process.env, CODEX_HOME: codexHome, ...(keyring === undefined ? {} : { FAKE_CODEX_KEYRING_DIR: keyring }) }
+    const run = spawnSync(process.execPath, [FAKE_CODEX_SCRIPT, 'login', 'status'], { encoding: 'utf8', env })
+    return { code: run.status, stderr: run.stderr }
+  }
+
+  it('exits 0 with auth.json and 1 without it, saying so on stderr', () => {
+    expect(status(join(dir, 'home'))).toEqual({ code: 1, stderr: 'Not logged in\n' })
+    writeCodexAuth(join(dir, 'home'))
+    expect(status(join(dir, 'home'))).toEqual({ code: 0, stderr: 'Logged in using ChatGPT\n' })
+  })
+
+  it('reads the stand-in keyring when config.toml keeps the sign-in there', () => {
+    const home = join(dir, 'home')
+    const keyring = join(dir, 'keyring')
+    writeCodexAuth(home)
+    writeFileSync(join(home, 'config.toml'), 'cli_auth_credentials_store = "keyring"\n')
+    expect(status(home, keyring).code).toBe(1)
+    writeCodexKeyringAuth(keyring, home)
+    expect(status(home, keyring).code).toBe(0)
+    // Another home's item is not this one's.
+    expect(status(join(dir, 'other'), keyring).code).toBe(1)
+    // auto takes the keyring item, and auth.json when there is none.
+    writeFileSync(join(home, 'config.toml'), "cli_auth_credentials_store = 'auto'\n")
+    expect(status(home, join(dir, 'empty-keyring')).code).toBe(0)
   })
 })
 
