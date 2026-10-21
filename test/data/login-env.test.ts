@@ -25,6 +25,12 @@ describe('claude', () => {
     expect(Object.keys(env)).toEqual(expect.arrayContaining(['CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']))
   })
 
+  test('forceCredentialManager adds CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1', () => {
+    expect(claudeLoginEnv('claude:work', true)).toEqual({ ...claudeLoginEnv('claude:work'), CLAUDE_CODE_FORCE_WINDOWS_CREDMAN: '1' })
+    expect(claudeLoginEnv('claude:default', true)['CLAUDE_CODE_FORCE_WINDOWS_CREDMAN']).toBe('1')
+    expect('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN' in claudeLoginEnv('claude:work')).toBe(false)
+  })
+
   test('the default login is probed in the probe folder with the default credentials', () => {
     const env = claudeProbeEnv('claude:default')
     expect(env['CLAUDE_CONFIG_DIR']).toBe(claudeDefaultProbeFolder())

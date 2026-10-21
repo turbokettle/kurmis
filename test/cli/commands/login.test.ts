@@ -8,7 +8,7 @@ import { addLogin, defaultConfig, findLogin, loadConfig, saveConfig } from '../.
 import { codexMergedRecordPath, configPath, kurmisHome, loginFolder, loginLockPath } from '../../../src/data/paths.ts'
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram } from '../../../src/platform/run.ts'
-import { FAKE_CLAUDE_SCRIPT, writeClaudeIdentity, writeCodexAuth } from '../../fakes/index.ts'
+import { FAKE_CLAUDE_SCRIPT, FAKE_CODEX_SCRIPT, writeClaudeIdentity, writeCodexAuth, writeCodexKeyringAuth } from '../../fakes/index.ts'
 import { collect, fakeDaemonClient, loginStatus, statusAnswer } from '../helpers.ts'
 
 const home = process.env.HOME!
@@ -139,6 +139,21 @@ describe('kurmis login claude', () => {
     expect(daemon.calls).toEqual(['findDaemon', 'requestReload', 'requestProbe:claude:2'])
     // The lock is released once the command is done.
     expect(existsSync(loginLockPath('claude:2'))).toBe(false)
+  })
+
+  it('signs a login whose record is in Credential Manager in with CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1', async () => {
+    const asked: Array<string | null> = []
+    const inCredentialManager = (folder: string | null): Promise<boolean> => {
+      asked.push(folder)
+      return Promise.resolve(folder === loginFolder('claude:held'))
+    }
+    const runner = fakeRunner(claudeSignsIn())
+    const { login } = command(runner, { inCredentialManager })
+    expect(await login.run(['claude', '--name', 'held'], collect(routedEnv).context)).toBe(0)
+    expect(await login.run(['claude', '--name', 'plain'], collect(routedEnv).context)).toBe(0)
+    expect(asked).toEqual([loginFolder('claude:held'), loginFolder('claude:plain')])
+    expect(runner.specs[0]!.env.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBe('1')
+    expect(runner.specs[1]!.env.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBeUndefined()
   })
 
   it('takes --name and --label, and the next login gets the next number', async () => {
@@ -376,6 +391,31 @@ describe('kurmis login codex', () => {
     expect(await login.run(['codex', '--name', 'side'], collect().context)).toBe(1)
     expect(existsSync(loginFolder('codex:side'))).toBe(false)
     expect(existsSync(codexMergedRecordPath('codex:side'))).toBe(false)
+  })
+
+  it('adds a login whose config.toml keeps the sign-in in the keyring once codex login status says it is signed in', async () => {
+    const defaultHome = join(home, '.codex')
+    mkdirSync(defaultHome, { recursive: true })
+    writeFileSync(join(defaultHome, 'config.toml'), 'cli_auth_credentials_store = "keyring"\n')
+    const keyring = join(home, 'keyring')
+    const env = { PATH: '/usr/bin', HOME: home, KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT, FAKE_CODEX_KEYRING_DIR: keyring }
+    // codex login keeps the sign-in in the keyring and writes no auth.json.
+    const signsIn = fakeRunner((spec) => {
+      writeCodexKeyringAuth(keyring, spec.env.CODEX_HOME!)
+      return { kind: 'exit', code: 0 }
+    })
+    const { login } = command(signsIn, { findProgram })
+    const out = collect(env)
+    expect(await login.run(['codex', '--name', 'side'], out.context)).toBe(0)
+    expect(existsSync(join(loginFolder('codex:side'), 'auth.json'))).toBe(false)
+    expect(findLogin(loadConfig(), 'codex:side')).toBeDefined()
+
+    // Without the keyring item it is not signed in, and nothing is added.
+    const { login: second } = command(fakeRunner(exitWith(0)), { findProgram })
+    const failed = collect(env)
+    expect(await second.run(['codex', '--name', 'other'], failed.context)).toBe(1)
+    expect(failed.stderr()).toContain('codex:other has no credentials')
+    expect(existsSync(loginFolder('codex:other'))).toBe(false)
   })
 
   it('signs codex:default in with CODEX_HOME as inherited', async () => {

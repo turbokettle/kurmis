@@ -240,10 +240,13 @@ is replaced with its length.
 `installFakeCodex(binDir)`. The wire format and the refusal messages were copied from the real
 codex 0.163.0.
 
-It does one of three things, depending on its arguments:
+It does one of four things, depending on its arguments:
 
 - `codex --version` (or `-V`) prints `codex-cli 0.163.0` and exits 0. `FAKE_CODEX_VERSION`
   changes the version.
+- `codex login status` writes `Logged in using ChatGPT` (or `Logged in using an API key`) to
+  stderr and exits 0 when it is signed in, and writes `Not logged in` and exits 1 when not, as
+  the real one does.
 - `codex app-server` (any further arguments are ignored) answers requests on stdin and stdout,
   as described below.
 - Any other command line, for example `codex resume --last`, prints one line that starts with
@@ -255,7 +258,7 @@ It does one of three things, depending on its arguments:
 ### Which login it is
 
 The fake uses `CODEX_HOME`, or `~/.codex` when it is not set. It reads nothing outside that
-folder.
+folder, except the stand-in keyring below.
 
 - `writeCodexAuth(codexHome, { email, planType, accountId, userId })` writes `auth.json` in the
   real file's shape. The email and plan are claims inside `tokens.id_token`, a JWT with no
@@ -263,6 +266,12 @@ folder.
   `codex-user@example.com`, `plus`, `fake-account-0001` and `fake-user-0001`.
 - `writeCodexApiKeyAuth(codexHome)` writes an API-key login.
 - With no `auth.json` the fake is signed out.
+- When the home's `config.toml` has a top-level `cli_auth_credentials_store = "keyring"`, the
+  sign-in is read from a stand-in for the system keyring instead: the folder that
+  `FAKE_CODEX_KEYRING_DIR` names, which holds one file per Codex home, named after a hash of the
+  home's path, as the real CLI names its keyring entry. With `"auto"` that file is read when it
+  exists and `auth.json` otherwise. `writeCodexKeyringAuth(keyringDir, codexHome, login)` writes
+  the file. Without `FAKE_CODEX_KEYRING_DIR` the keyring is empty.
 
 ### What the app-server answers
 
@@ -319,7 +328,7 @@ When `FAKE_CODEX_RECORD` names a file, the fake appends one JSON line to it per 
 nothing else to disk. Every line has the `pid`. `readCodexRecord(path)` returns the lines in
 order.
 
-- `{"event":"start","mode":"version"|"app-server"|"other","argv":[…],"codexHome":…,"authFile":true|false,"envNames":[…]}`:
+- `{"event":"start","mode":"version"|"app-server"|"login-status"|"other","argv":[…],"codexHome":…,"authFile":true|false,"envNames":[…]}`:
   `codexHome` is `CODEX_HOME` as the process got it, or `null` when it was not set. `authFile`
   says whether `auth.json` was there. `envNames` lists only the names of the variables that start
   with `CODEX_`, `OPENAI_`, `KURMIS_`, `ANTHROPIC_` or `CLAUDE_`, never their values.

@@ -124,6 +124,21 @@ describe('kurmis logout', () => {
     expect(findLogin(loadConfig(), 'claude:work')).toBeUndefined()
   })
 
+  it('on Windows runs claude auth logout with CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1, and names the credentials it may leave', async () => {
+    const folder = addWithFolder('claude:work')
+    const run = fakeRun({ code: 1 })
+    const logout = createLogoutCommand({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: run.runProgram, platform: 'win32' })
+    const out = collect()
+    expect(await logout.run(['claude:work'], out.context)).toBe(0)
+    expect(run.runs[0]!.env?.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBe('1')
+    expect(out.stderr()).toContain(`Windows credentials "${keychainService(folder)}/…" may be left`)
+    const elsewhere = fakeRun()
+    addWithFolder('claude:other')
+    await createLogoutCommand({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: elsewhere.runProgram, platform: 'darwin' })
+      .run(['claude:other'], collect().context)
+    expect(elsewhere.runs[0]!.env?.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBeUndefined()
+  })
+
   it('goes on when the CLI is missing or times out, with no Keychain note off macOS', async () => {
     addWithFolder('claude:a')
     const missing = createLogoutCommand({

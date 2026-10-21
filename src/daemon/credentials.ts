@@ -5,8 +5,8 @@
 // The macOS Keychain reader is `KeychainCredentialsReader` in `keychain.ts`, and the Windows
 // Credential Manager reader `CredentialManagerReader` in `credential-manager.ts`.
 // `createTokenSource` in `tokens.ts` puts them together: on macOS the Keychain item first and
-// this file when the item gives no token, on Windows Credential Manager for a login without
-// this file, on Linux this file only.
+// this file when the item gives no token, on Windows Credential Manager first and this file
+// when Credential Manager has no record, on Linux this file only.
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseCredentials, type ClaudeCredentials } from '../core/credentials.ts'
@@ -26,7 +26,11 @@ export interface CredentialsSource {
   read(id: string): ClaudeCredentials | null
   /** Reads these logins again where needed, so the next `read` is current. Never rejects. */
   prime(ids: readonly string[]): Promise<void>
-  /** Forgets what was read for one login, so the next `prime` or `read` reads it again. */
+  /**
+   * Has the next `prime` or `read` read the login again. A source that reads in `prime` goes on
+   * answering the old token from `read` until the new read has landed, and its next `prime`
+   * waits for that read.
+   */
   invalidate(id: string): void
   /** Forgets what was read for every login. */
   clear(): void

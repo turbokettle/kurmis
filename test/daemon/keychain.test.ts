@@ -117,6 +117,38 @@ test('two primes for one login share the run that is already going', async () =>
   expect(credentials.read(DEFAULT)?.accessToken).toBe('fake-token')
 })
 
+const secretWith = (token: string): string => JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt: 4_100_000_000_000 } })
+
+test('after invalidate the old token is answered until the new read lands', async () => {
+  const answers: Array<(secret: string) => void> = []
+  const credentials = reader({ run: () => new Promise<string>((done) => { answers.push(done) }) })
+  const first = credentials.prime([DEFAULT])
+  answers[0]?.(secretWith('fake-token-old'))
+  await first
+  credentials.invalidate(DEFAULT)
+  const second = credentials.prime([DEFAULT])
+  expect(answers).toHaveLength(2)
+  expect(credentials.read(DEFAULT)?.accessToken).toBe('fake-token-old')
+  answers[1]?.(secretWith('fake-token-new'))
+  await second
+  expect(credentials.read(DEFAULT)?.accessToken).toBe('fake-token-new')
+})
+
+test('a read that started before invalidate is not used, and a new read follows it', async () => {
+  const answers: Array<(secret: string) => void> = []
+  const credentials = reader({ run: () => new Promise<string>((done) => { answers.push(done) }) })
+  const first = credentials.prime([DEFAULT])
+  credentials.invalidate(DEFAULT)
+  const second = credentials.prime([DEFAULT])
+  // The read that is going on finishes with the token from before the CLI renewed it.
+  answers[0]?.(secretWith('fake-token-before'))
+  await first
+  await expect.poll(() => answers.length).toBe(2)
+  answers[1]?.(secretWith('fake-token-after'))
+  await second
+  expect(credentials.read(DEFAULT)?.accessToken).toBe('fake-token-after')
+})
+
 // Each of these is a login the proxy holds no token for.
 test('an item that is not in the Keychain reads as no token', async () => {
   const credentials = reader()

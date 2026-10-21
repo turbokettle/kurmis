@@ -125,7 +125,9 @@ When every login is at its limit, kurmis starts on the one that gets its usage b
 says when. Each extra Codex login has its own Codex home folder, which kurmis fills from
 `~/.codex` before every start: your `config.toml` (without secrets), `AGENTS.md` and
 `AGENTS.override.md`, and links to your other folders. Your sign-in (`auth.json`) is never
-copied, and the Windows sandbox's `.sandbox` folders stay separate for each login.
+copied, and the Windows sandbox's `.sandbox` folders stay separate for each login. A
+`cli_auth_credentials_store` setting in your `config.toml` reaches every login too, so with
+`"keyring"` each login keeps its own sign-in in the Keychain or Credential Manager.
 
 What Codex writes into a login's own `config.toml`, such as a `/model` choice, a dismissed
 notice or a folder you trusted, stays there, and so does a setting removed from it: it stays
@@ -155,7 +157,9 @@ kurmis list [--json]
 ```
 
 Lists the logins with their settings and whether credentials are on this machine. It does not
-need the daemon and does not check that the credentials still work; `kurmis status` does.
+need the daemon and does not check that the credentials still work; `kurmis status` does. For a
+Codex login whose `config.toml` keeps the sign-in in the Keychain or Credential Manager
+(`cli_auth_credentials_store = "keyring"` or `"auto"`), it asks `codex login status`.
 
 ### `kurmis set`
 
@@ -181,7 +185,8 @@ kurmis logout <id>
 ```
 
 Removes a login: it signs the login out with `claude auth logout` or `codex logout` (on macOS
-this is what removes its Keychain item; kurmis warns when it could not), removes it from
+this is what removes its Keychain item, on Windows its Windows Credential Manager record;
+kurmis warns when it could not), removes it from
 kurmis' settings and deletes its folder. Links
 in a Codex login's folder are removed, never what they point to, and so is kurmis' record of
 what it merged into that folder. The machine's own

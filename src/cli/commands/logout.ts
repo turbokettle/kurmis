@@ -3,10 +3,11 @@
 // 1. The login is removed from config.json (under the config lock) and a running daemon is told,
 //    so it stops routing to the login and probing it before its folder goes.
 // 2. `claude auth logout` or `codex logout` runs on the login, so the CLI removes what it keeps
-//    outside the folder (on macOS the Keychain item). A logout CLI that fails or is missing is
-//    reported and the removal goes on: the person asked for the login to be gone, and the
-//    credentials file, where there is one, goes with the folder anyway. On macOS the message
-//    names the Keychain item that may be left.
+//    outside the folder (on macOS the Keychain item, on Windows the Credential Manager record,
+//    which the CLI deletes only with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so it is set there).
+//    A logout CLI that fails or is missing is reported and the removal goes on: the person asked
+//    for the login to be gone, and the credentials file, where there is one, goes with the
+//    folder anyway. On macOS and Windows the message names the item that may be left.
 // 3. The login's folder is deleted without following links out of it (`removeTreeSync`): a
 //    Codex home links into `~/.codex`, and only the links are removed. For a Codex login the
 //    record of what was last merged into its home (`codexMergedRecordPath`) goes too.
@@ -67,7 +68,8 @@ export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
     let problem: string
     try {
       const program = find(provider, { env })
-      const patch = provider === 'claude' ? claudeLoginEnv(id) : codexLoginEnv(id, env)
+      // On Windows the CLI deletes the record in Credential Manager only with the switch on.
+      const patch = provider === 'claude' ? claudeLoginEnv(id, platform === 'win32') : codexLoginEnv(id, env)
       const cliArgs = provider === 'claude' ? ['auth', 'logout'] : ['logout']
       const result = await run(program.command, [...program.args, ...cliArgs], { timeoutMs: LOGOUT_TIMEOUT_MS, env: applyEnvPatch(env, patch) })
       if (result.code === 0) return null
@@ -76,9 +78,10 @@ export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
       if (!(error instanceof ProgramNotFoundError)) throw error
       problem = error.message
     }
-    const left = provider === 'claude' && platform === 'darwin'
-      ? ` Its Keychain item "${keychainService(folder)}" may be left; Keychain Access can delete it.`
-      : ''
+    const left = provider !== 'claude' ? ''
+      : platform === 'darwin' ? ` Its Keychain item "${keychainService(folder)}" may be left; Keychain Access can delete it.`
+        : platform === 'win32' ? ` Its Windows credentials "${keychainService(folder)}/…" may be left; Credential Manager can delete them.`
+          : ''
     return `"${cliName}" did not finish (${problem}); the login is removed anyway.${left}`
   }
 
@@ -134,7 +137,8 @@ Options:
     }
     const hasFolder = exists(folder)
     if (!listed && !hasFolder) {
-      // A failed `kurmis login` of a new Codex login can leave only the record of what was merged into its home.
+      // A failed `kurmis login` of a new Codex login can leave only the record of what was
+      // merged into its home.
       const record = provider === 'codex' ? codexMergedRecordPath(id) : null
       if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis list" shows them`)
       rmSync(record, { force: true })
@@ -143,7 +147,8 @@ Options:
     }
     const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null
 
-    // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the folder is gone.
+    // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the
+    // folder is gone.
     if (hasFolder || provider === 'claude') {
       const problem = await signOut(id, provider, folder, context.env)
       if (problem !== null) writeLine(context.stderr, `kurmis logout: ${problem}`)

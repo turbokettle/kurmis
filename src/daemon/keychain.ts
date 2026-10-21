@@ -162,12 +162,16 @@ export interface KeychainReadFailure {
 
 /**
  * The Keychain `CredentialsSource`. `prime` runs `security` for each login whose answer is older
- * than `KEYCHAIN_CACHE_MS`, one read per login at a time, and `read` answers from what the last
- * read found.
+ * than `KEYCHAIN_CACHE_MS`, or that was invalidated since, one read per login at a time, and
+ * `read` answers from what the last read found. After `invalidate`, `read` goes on answering the
+ * old token until the new read lands, and a read that started before `invalidate` is not used.
  */
 export class KeychainCredentialsReader implements CredentialsSource {
   private readonly cache = new Map<string, { readAt: number; value: ClaudeCredentials | null }>()
-  private readonly reading = new Map<string, Promise<void>>()
+  /** The read of each login going on now, with the `invalidations` count it started under. */
+  private readonly reading = new Map<string, { promise: Promise<void>; invalidated: number }>()
+  /** How often each login was invalidated. */
+  private readonly invalidations = new Map<string, number>()
   /** The logins whose failed read has been logged, until a read of one works. */
   private readonly failureLogged = new Set<string>()
   /**
@@ -188,28 +192,48 @@ export class KeychainCredentialsReader implements CredentialsSource {
     await Promise.all([...new Set(ids)].map((id) => this.refresh(id)))
   }
 
-  invalidate(id: string): void { this.cache.delete(id) }
+  invalidate(id: string): void {
+    this.invalidations.set(id, this.invalidatedCount(id) + 1)
+    const cached = this.cache.get(id)
+    if (cached !== undefined) this.cache.set(id, { ...cached, readAt: Number.NEGATIVE_INFINITY })
+  }
 
-  clear(): void { this.cache.clear() }
+  clear(): void {
+    this.cache.clear()
+    for (const id of this.reading.keys()) this.invalidations.set(id, this.invalidatedCount(id) + 1)
+  }
 
-  /** One read per login at a time; a second caller waits for the one already running. */
+  /**
+   * One read per login at a time; a second caller waits for the one already running. A read
+   * that started before the latest `invalidate` is waited for and then followed by a new one.
+   */
   private refresh(id: string): Promise<void> {
     const cached = this.cache.get(id)
     if (cached && this.now() - cached.readAt < KEYCHAIN_CACHE_MS) return Promise.resolve()
-    let running = this.reading.get(id)
-    if (!running) {
-      running = this.load(id).finally(() => { this.reading.delete(id) })
-      this.reading.set(id, running)
+    const invalidated = this.invalidatedCount(id)
+    const running = this.reading.get(id)
+    if (running !== undefined) {
+      return running.invalidated === invalidated ? running.promise : running.promise.then(() => this.refresh(id))
     }
-    return running
+    const promise = this.load(id, invalidated).finally(() => { this.reading.delete(id) })
+    this.reading.set(id, { promise, invalidated })
+    return promise
   }
 
-  private async load(id: string): Promise<void> {
+  private invalidatedCount(id: string): number { return this.invalidations.get(id) ?? 0 }
+
+  private async load(id: string, invalidated: number): Promise<void> {
     const timeoutMs = this.options.readTimeoutMs ?? KEYCHAIN_READ_TIMEOUT_MS
     const run = this.options.run ?? ((service: string) => readKeychainItem(this.options.securityProgram, service, timeoutMs))
     const service = keychainService(this.options.accounts.secureStorageDir(id))
+    // The answer of a read that started before the latest `invalidate` or `clear` is not kept.
+    const keep = (value: ClaudeCredentials | null): boolean => {
+      if (this.invalidatedCount(id) !== invalidated) return false
+      this.cache.set(id, { readAt: this.now(), value })
+      return true
+    }
     if (this.unanswered.has(service)) {
-      this.cache.set(id, { readAt: this.now(), value: null })
+      keep(null)
       return
     }
     let value: ClaudeCredentials | null = null
@@ -222,7 +246,7 @@ export class KeychainCredentialsReader implements CredentialsSource {
     } catch (error) {
       if (error instanceof KeychainReadError && error.timedOut) {
         this.unanswered.add(service)
-        this.cache.set(id, { readAt: this.now(), value: null })
+        keep(null)
         this.options.log?.(`reading login ${id} from the Keychain item "${service}" did not answer within ` +
           `${seconds(timeoutMs)} seconds, so the proxy holds no token for it, and this daemon will not read that item ` +
           'again until it restarts. A read that waits is usually a Keychain dialog: either a program other than the ' +
@@ -243,7 +267,7 @@ export class KeychainCredentialsReader implements CredentialsSource {
           : { text: `it threw: ${error instanceof Error ? error.message : String(error)}`, kind: 'failed', code: null }
       }
     }
-    this.cache.set(id, { readAt: this.now(), value })
+    if (!keep(value)) return
     if (failure === null) {
       this.failureLogged.delete(id)
     } else if (!this.failureLogged.has(id)) {

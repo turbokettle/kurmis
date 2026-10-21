@@ -1,8 +1,9 @@
 // Test-side helpers for the fake `codex` in test/fakes/codex/fake-codex.js: install it on a
 // PATH folder, give a CODEX_HOME a made-up login, script its rate limits, and read what it
 // recorded. test/fakes/README.md describes every setting.
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { installLauncher, type InstalledFake } from './launcher.ts'
 
@@ -38,6 +39,22 @@ export interface FakeCodexLogin {
  * them. The tokens are not real and work nowhere. Returns the file's path.
  */
 export function writeCodexAuth(codexHome: string, login: FakeCodexLogin = {}): string {
+  return writeJson(join(codexHome, 'auth.json'), authFileValue(login))
+}
+
+/**
+ * Writes the sign-in of a made-up ChatGPT login into the fake's stand-in keyring, the folder
+ * `keyringDir` that FAKE_CODEX_KEYRING_DIR names, as the item of `codexHome`. The fake reads it
+ * when the home's `config.toml` sets `cli_auth_credentials_store` to `keyring` or `auto`.
+ * Returns the item's path.
+ */
+export function writeCodexKeyringAuth(keyringDir: string, codexHome: string, login: FakeCodexLogin = {}): string {
+  const name = createHash('sha256').update(resolve(codexHome)).digest('hex').slice(0, 16)
+  return writeJson(join(keyringDir, `${name}.json`), authFileValue(login))
+}
+
+/** What `auth.json` holds for a made-up ChatGPT login. */
+function authFileValue(login: FakeCodexLogin): Record<string, unknown> {
   const email = login.email ?? 'codex-user@example.com'
   const accountId = login.accountId ?? 'fake-account-0001'
   const userId = login.userId ?? 'fake-user-0001'
@@ -50,12 +67,12 @@ export function writeCodexAuth(codexHome: string, login: FakeCodexLogin = {}): s
   }
   const idToken = unsignedJwt({ email, email_verified: true, 'https://api.openai.com/auth': openai, iat: now, exp: now + 3600 })
   const accessToken = unsignedJwt({ 'https://api.openai.com/auth': openai, iat: now, exp: now + 864000 })
-  return writeJson(join(codexHome, 'auth.json'), {
+  return {
     auth_mode: 'chatgpt',
     OPENAI_API_KEY: null,
     tokens: { id_token: idToken, access_token: accessToken, refresh_token: 'fake-refresh-token', account_id: accountId },
     last_refresh: new Date().toISOString()
-  })
+  }
 }
 
 /** Writes `<codexHome>/auth.json` for an API-key login, with a made-up key. Returns the file's path. */
@@ -128,7 +145,7 @@ export type FakeCodexRecord =
   | {
       pid: number
       event: 'start'
-      mode: 'version' | 'app-server' | 'other'
+      mode: 'version' | 'app-server' | 'login-status' | 'other'
       argv: string[]
       /** CODEX_HOME as the process got it, or null when it was not set. */
       codexHome: string | null

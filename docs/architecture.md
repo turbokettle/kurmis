@@ -273,37 +273,43 @@ older version, after that daemon finishes the requests it has open.
   (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read
   when the Keychain gives no token: the CLI falls back to the file when it cannot use the
   Keychain, for example in an ssh session. On Linux only the file is read. On Windows, newer
-  Claude Code versions (seen from 2.1.150) keep the record in Windows Credential Manager
-  instead, when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag
-  `tengu_windows_credman` is on in the `.claude.json` of the config folder the CLI runs with.
-  Such a CLI reads Credential Manager first and the file only when Credential Manager has
-  nothing, and deletes the file when it first writes the record to Credential Manager. The
-  daemon reads in the same order (`src/daemon/credential-manager.ts`,
-  `src/platform/windows-credentials.ts`). It lists the generic credentials named
-  `<Keychain item name>/<account>` and takes the account name Claude Code uses on macOS (the
-  user's name), else `claude-code-user`, else the only one there is, since the Windows build's
-  account name could not be checked. The blob is the same JSON as the file, or, when
-  `…#m` holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes a
-  record longer than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script
-  declares it with `Add-Type` and prints each name and blob as base64; one run reads up to a
-  few hundred logins, and more are split into runs that keep the command line within Windows'
-  32,767 characters. That needs PowerShell's full language mode: under Constrained Language
-  Mode `Add-Type` is refused, the read fails (logged once as `token_read_failed` for a login
-  without the file), and only the file is used. The first request after the daemon starts waits
-  for that read only for a login without the file. A usage probe of a login whose record was
-  found in Credential Manager runs with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`
-  (`probeEnvironment`): the probe's config folder is not the one a routed CLI runs with, so its
-  feature flag may be off, and then it would not see the record and would report the login
-  signed out. An extra login's file is in its folder, the default login's is
-  `~/.claude/.credentials.json`. A Keychain or Credential Manager answer is kept for a minute;
-  an old Credential Manager answer, and one after a usage probe, is read again in the
-  background while it goes on being used, since starting PowerShell takes a second or two, and
-  after a renewal the next request waits for the new read. A login whose file exists and for
-  which Credential Manager had no record is not looked up there again until its token is
-  refused or renewed, because the CLI deletes the file when it moves the record; so a machine
-  whose logins all use the file runs PowerShell once per login, not every minute. The file is read again when its size
-  or modification time changes. Tokens are never written anywhere. Only whether a record has a
-  refresh token is kept, never the refresh token itself.
+  Claude Code versions (seen from 2.1.150) keep the record in Windows Credential Manager instead,
+  when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag `tengu_windows_credman` is
+  on in the CLI's config file: `.config.json` in the config folder the CLI runs with when that
+  file is there and not empty, else `.claude.json` in `CLAUDE_CONFIG_DIR` or the home folder. Such
+  a CLI reads Credential Manager first and the file only when Credential Manager has nothing, and
+  deletes the file when it first writes the record to Credential Manager. The daemon reads in the
+  same order (`src/daemon/credential-manager.ts`, `src/platform/windows-credentials.ts`). It lists
+  the generic credentials named `<Keychain item name>/<account>` and takes the account name Claude
+  Code uses on macOS (the user's name), else `claude-code-user`, else the only one there is, since
+  the Windows build's account name could not be checked. The blob is the same JSON as the file,
+  or, when `…#m` holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes
+  a record longer than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script
+  declares it with `Add-Type` and prints each name and blob as base64; one run reads up to 247
+  logins, and more are split into runs that keep the command line within Windows' 32,767
+  characters. That needs PowerShell's full language mode: under Constrained Language Mode
+  `Add-Type` is refused, the read fails (logged once as `token_read_failed` for a login without
+  the file, or whose record was found there), and only the file is used. A failed read keeps the
+  token and the found state from before, and is tried again after 1, 2, 4, 8, then every 15
+  minutes. A request waits for a Credential Manager read only for a login that was not read yet,
+  or not since its token was refused or renewed, and only when the login has no file or its record
+  was found there; any other login is answered from the file meanwhile. A usage probe of a login
+  whose last read that worked found its record in Credential Manager runs with
+  `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`probeEnvironment`): the probe's config folder is not the
+  one a routed CLI runs with, so its feature flag may be off, and then it would not see the record
+  and would report the login signed out. An extra login's file is in its folder, the default
+  login's is `~/.claude/.credentials.json`. A Keychain or Credential Manager answer is kept for a
+  minute. An old Credential Manager answer, and one after a usage probe, is read again in the
+  background while it goes on being used, since starting PowerShell takes a second or two. After a
+  refused token or a renewal, the Keychain and Credential Manager readers go on answering the old
+  token until the new read lands, and the next request waits for that read; a read that started
+  before is not used. A login whose file exists and for which Credential Manager had no record is
+  looked up there again only every 15 minutes, or after its token was refused or renewed, so a
+  machine whose logins all use the file runs PowerShell every 15 minutes, not every minute. A
+  record can still appear while the file is there, when the CLI could not delete the file after
+  moving the record, or when a CLI with the flag off wrote the file after a record was made. The
+  file is read again when its size or modification time changes. Tokens are never written
+  anywhere. Only whether a record has a refresh token is kept, never the refresh token itself.
 - **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when
   a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
   does not read leaves the config the daemon has.
@@ -839,15 +845,22 @@ ignored and `~/.codex` is used. The decisions are the pure functions of `src/cor
   instead of `AGENTS.md`) stops overriding; a file kurmis did not put there stays.
 - `config.toml` is merged without its secrets (below). Both it and the copied files are read
   through a link, so a file that is a symlink into a dotfiles folder still counts.
-- `auth.json` and every other file stay out, so each login keeps its own sign-in.
+- `auth.json` and every other file stay out, so each login keeps its own sign-in. A
+  `cli_auth_credentials_store` in the default home's `config.toml` is merged in like any other
+  setting, so with `"keyring"` or `"auto"` Codex keeps each login's sign-in in the Keychain or
+  Credential Manager instead, in an entry of each Codex home's own, and the login's home has no
+  `auth.json`. `kurmis login` and `kurmis list` then ask `codex login status` (below).
 
 An empty real folder where a link should go (Codex made it before the default home had that
 folder) is replaced by the link. A folder with something in it, or a link to somewhere else, is
 left as it is with a warning, given once per folder. When two `kurmis codex` start on one login
 at the same moment, the one whose removal of the empty folder fails (the other removed it, or
-put its link there) or whose link creation fails with EEXIST reads the place again and finds
-the other's link. Every step that fails adds a warning to stderr and the start goes on.
-Only a home that cannot be created stops it.
+put its link there) or whose link creation fails with EEXIST or ENOENT reads the place again,
+after a short wait, and finds the other's link (`placeLink`). On Windows EBUSY, EPERM and
+EACCES count the same way: Windows makes a junction in steps (an empty folder first, then the
+link in it), so the other start can see that folder empty and remove it while it is being
+made. Every step that fails adds a warning to stderr and the start goes on. Only a home that
+cannot be created stops it.
 
 **What was merged.** `codex-merged/<name>.json` in the data folder records, for the login's
 home, the default home's `config.toml` without secrets as it was last merged in, a SHA-256 of
@@ -855,9 +868,13 @@ each file last copied in, the target of each link kurmis made (or found leading 
 make it), and the folders already warned about. It is kept outside the Codex home, written with
 mode 0600, and rewritten only when it changes. `logout` removes it, and so does a `kurmis login`
 of a new login that fails; `logout` of a login of which only the record is left removes the
-record. A home
-that is empty when a start begins (a new login) starts from an empty record, so a record left
-by an earlier login of the same name is not used.
+record. A home that is empty when a start begins (a new login) starts from an empty record,
+whose merged copy is empty, and that record is written even when the merge does not land (the
+default home's `config.toml` does not parse, or the login's file kept changing). So a record
+left by an earlier login of the same name is not used, and a later merge never takes what
+Codex wrote into a new login's file for settings merged in before. A record that cannot be
+read or is damaged counts the same way: every setting of the login's file is its own and none
+is removed.
 
 **The `config.toml` merge** (`src/core/codex-account-config.ts`). Codex writes to the
 `config.toml` of the home it runs with (a `/model` choice, `[notice]` keys, plugin and feature
@@ -868,43 +885,49 @@ value, or a whole array) at a time:
   last merged in and the login's file has another value, or lacks the setting: then the login
   (or Codex in a session on it) changed or deleted it, and that stays until the default home's
   value changes. These are the ordinary rules of a three-way merge. A login without a
-  `config.toml` gets the default home's settings again, so deleting the file starts it over.
+  `config.toml`, or with one that sets nothing (only comments and blank lines), gets the
+  default home's settings again, so deleting the file starts it over.
 - A setting the login's file has and the default home no longer has is removed when it was in
   the last merged copy, and kept when it never was. When the default home still has the setting
   but its value now holds a secret (a password added to a URL, an `env` table added to an
   element of an array of tables), the login's value stays and a warning names it (below).
 - A table that loses its last setting that is not a secret goes as a whole, with its header and
   the login's own secrets in it. Codex refuses to load a file where an MCP server has only an
-  `env` table left (`invalid transport`).
+  `env` table left (`invalid transport`). An MCP server that has only secrets and no `command`
+  or `url` in the login's file already (an earlier kurmis left it so), or a model provider with
+  only secrets and no `name`, goes too.
 - An MCP server (`mcp_servers.<name>`) and a model provider (`model_providers.<name>`) each
   count as one unit, because Codex refuses a server without its `command` or `url` and a
   provider without its `name`. One the default home dropped since the last merge goes whole,
   with the login's own keys and secrets in it. One the login's file lacks as a whole stays out
   until the default home changes anything in it, and then comes in whole.
-- Without a last merged copy (the first start after kurmis began keeping one), every setting of
-  the login that is not a secret or trust counts as merged in before, which is what the earlier
-  two-way merge did: what the default home lacks is removed this once.
+- Without a last merged copy (only a home made by a kurmis that kept no record has none), every
+  setting of the login that is not a secret or trust counts as merged in before, which is what
+  the earlier two-way merge did: what the default home lacks is removed this once.
 - When the default home has no `config.toml`, the login's file stays as it is, and so does the
-  record, except that a record with no merged copy yet gets an empty one. So for a login made
-  before the user had a `config.toml`, everything Codex wrote into the login's file counts as
-  the login's own once the default home's file appears, and none of it is removed.
+  record, except that a record with no merged copy gets an empty one. So everything Codex wrote
+  into the login's file counts as the login's own once the default home's file appears, and
+  none of it is removed.
 
-A secret is never copied from the default home, and a secret in the login's file is never
-changed or removed, except with its whole table. A key name marks the strings under it as
-secrets by its last word (`secretKeyName`): `token`, `secret`, `password`, `passphrase`,
-`authorization`, `cookie`, `apikey`, or `key` other than in `env_key` and `public_key`. So
+A secret is never copied from the default home, and a secret in the login's file is never changed
+or removed, except with its whole table. A key name marks the strings under it as secrets by its
+last word (`secretKeyName`): `token`, `secret`, `password`, `passphrase`, `authorization`,
+`cookie`, `apikey`, or `key` other than in `env_key` and `public_key`. So
 `experimental_bearer_token`, `bearer_token`, `access_token`, `client_secret` and `api_key` are
 secrets, while `bearer_token_env_var` and `env_key` (names of environment variables),
 `cli_auth_credentials_store` (a kind of store), `mcp_oauth_callback_port` (a port) and
-`model_auto_compact_token_limit` (a count) are not. The tables `env`, `set`, `http_headers`,
-`headers` and `query_params` hold secrets whatever their keys are called, and
+`model_auto_compact_token_limit` (a count) are not. The name a person gave an MCP server, a model
+provider, a profile, a folder or a hook is not read this way, so `[mcp_servers.aws-secrets]` and
+`[profiles.no-token]` are copied; the keys below the name still are. The tables `env`, `set`,
+`http_headers`, `headers` and `query_params` hold secrets whatever their keys are called, and
 `client-private-key` (otel's path to a key file) is not a secret. A boolean, a number or a date
 is never a secret. A string is also a secret when its text looks like one (a bearer token, a
-known key format, a password in a URL, `--token <value>`), and an argument list when it passes
-a header or a token. The rule errs towards secrets: `features.network_proxy.credentials.<n>.env`
+known key format, a password in a URL, `--token <value>`), and an argument list when it passes a
+header or a token. The rule errs towards secrets: `features.network_proxy.credentials.<n>.env`
 holds names of variables and is still not copied. When the default home has a secret the login
-lacks, a warning says so. When a secret stands in the way of a setting, the login's stays and a
-warning names the setting, at every start until the two agree. That is when the login's value
+lacks, a warning says so, at every start; a secret of an MCP server or model provider that the
+login deleted does not count. When a secret stands in the way of a setting, the login's stays and
+a warning names the setting, at every start until the two agree. That is when the login's value
 holds a secret, or when the default home's value holds one and differs from the login's in more
 than its secrets: an array of tables with a new `[[x]]` element, or one whose element gained an
 `env` table.
@@ -1199,7 +1222,8 @@ These are known and left as they are.
   - `credentials.ts`, `keychain-service.ts`: the `.credentials.json` format and the Keychain
     item name.
 - `src/daemon/` holds the proxy, the control API, the token readers (`credentials.ts` for the
-  file, `keychain.ts` for the macOS Keychain), the usage probes and the daemon's lifecycle.
+  file, `keychain.ts` for the macOS Keychain, `credential-manager.ts` for Windows Credential
+  Manager, put together in `tokens.ts`), the usage probes and the daemon's lifecycle.
 - `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and
   `dispatch.ts` picks the command and handles `--help`, `--version` and `help <command>`.
   `wrapper.ts` runs an interactive child, `wrapper-args.ts` splits the wrappers' arguments,
@@ -1224,11 +1248,16 @@ These are known and left as they are.
     left; a cooldown's end is shown in local time (`02:10`, with the date when it is on another
     day) with the time left after it.
   - `list [--json]`: the logins from `config.json` without the daemon, with the columns `ID LABEL
-    AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`. Credentials is a check of local files only: an
+    AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`. Credentials is a check of local files: an
     extra Claude login's `.credentials.json` or a `.claude.json` naming an account in its folder,
     `~/.claude/.credentials.json` or `~/.claude.json` for `claude:default`, and the existence of
-    `auth.json` for Codex (its fields are never read). `--json` prints the login settings with
-    `credentials: boolean` added.
+    `auth.json` in the Codex home for Codex (its fields are never read). A Codex login without
+    `auth.json` whose `config.toml` sets `cli_auth_credentials_store` to anything but `"file"`
+    keeps its sign-in in the Keychain or Credential Manager, so for it `codex login status` runs
+    in its home, with a 10-second deadline, and its exit code decides (`hasCredentials`). These
+    runs happen at the same time, and only for such logins, so a list of logins that keep
+    `auth.json` starts no program. `--json` prints the login settings with `credentials:
+    boolean` added.
   - `login claude|codex [--name <name>] [--label <text>]` adds a new login; without `--name` it
     takes the first free name of `2`, `3`, ... (`claude:2`). `login <id> [--label <text>]` signs
     an existing login in again, the default ones included (and adds an id that is new). First
@@ -1240,17 +1269,22 @@ These are known and left as they are.
     login's folder is created next (mode 0700), and for Codex prepared with `prepareCodexHome`,
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
-    wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
-    local credentials are there; otherwise a folder this run created is removed (for Codex with
-    its `codex-merged/` record) and nothing is added. The email is printed and never stored; the label defaults to the name. A running
-    daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
+    wrapper. On Windows a Claude login whose record is already in Credential Manager (one
+    PowerShell read, `holdsStoredRecord`) signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`,
+    so the new token replaces the record instead of going to a file the record hides. The
+    login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
+    credentials are there, as `list` checks them; otherwise a folder this run created is removed
+    (for Codex with its `codex-merged/` record) and nothing is added. The email is printed and
+    never stored; the label defaults to the name. A running daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
     it may still hold the login as signed out from before and Auto would pass it over until
     its next poll; none is started for this.
   - `logout <id>`: refuses the default logins. It holds the login's lock while it runs, and
-    stops at once when a `kurmis login` of the login holds it. It removes the login from `config.json`, tells a
-    running daemon to reload (so it stops probing the login), runs `claude auth logout` or
-    `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
-    item that may be left on macOS, and the removal goes on), and deletes the folder with
+    stops at once when a `kurmis login` of the login holds it. It removes the login from
+    `config.json`, tells a running daemon to reload (so it stops probing the login), runs `claude auth logout` or
+    `codex logout` on it with a 30-second deadline (on Windows `claude auth logout` gets
+    `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, without which the CLI deletes only the file and leaves
+    the record in Credential Manager; a failure is a warning, naming the Keychain item or the
+    Windows credentials that may be left, and the removal goes on), and deletes the folder with
     `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
     without following them. For a Codex login it also deletes `codex-merged/<name>.json`, and
     when that record is all that is left of the login, deleting it is all logout does.

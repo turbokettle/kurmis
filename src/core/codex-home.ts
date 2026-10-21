@@ -208,7 +208,8 @@ export interface CodexConfigRefresh {
    * The default home's settings without secrets, as merged in this time: the new last merged
    * copy, to be kept once the login's file holds the merge (it was written, or `keep` because
    * it held it already). Null when nothing was merged, and then the last merged copy stays
-   * as it was. '' when the default home has no `config.toml` and there is no last merged copy.
+   * as it was. '' when the default home has no `config.toml` and there is no last merged copy
+   * (a home made by a kurmis that kept no record).
    */
   merged: string | null
   /**
@@ -236,17 +237,17 @@ function errorText(error: unknown): string {
 /**
  * What to do with a login's `config.toml`. `source` is the text of `~/.codex/config.toml`
  * and `current` that of the login's, each null when the file does not exist. `lastMerged`
- * is the `merged` text of the last refresh that reached the login's file, or null when
- * there is none (a new login, or the first refresh since kurmis kept one).
+ * is the `merged` text of the last refresh that reached the login's file: '' for a new home,
+ * which nothing has been merged into yet, and null for a home made by a kurmis that kept no
+ * record, whose first refresh counts every setting of the login as merged in before.
  *
  * - With a default file, the login's becomes the three-way `mergeAccountConfig` of the three.
  * - With no default file, the login's file stays as it is, or absent, and so does the last
  *   merged copy. A default home that has no `config.toml` for a moment (it is being
  *   replaced, or `CODEX_HOME` named another folder for one start) removes nothing. When
- *   there is no last merged copy yet (a new login, made before the user had a
- *   `config.toml`), an empty one is answered as `merged`: without it, the first merge after
- *   the file appears would count every setting Codex wrote into the login's file as merged in
- *   before and remove what the default home lacks.
+ *   there is no last merged copy (null), an empty one is answered as `merged`: without it,
+ *   the first merge after the file appears would count every setting Codex wrote into the
+ *   login's file as merged in before and remove what the default home lacks.
  * - When the login's file is not valid TOML, or the default file cannot be merged, the
  *   login's file stays as it is, and `mergeFailure` says why. A broken login file is not
  *   replaced, because it may hold the login's own secrets.
@@ -258,7 +259,7 @@ function errorText(error: unknown): string {
 export function codexConfigRefresh(source: string | null, current: string | null, lastMerged: string | null): CodexConfigRefresh {
   const keep = (merged: string | null, missingSecrets: boolean, heldBack: string[], mergeFailure: string | null): CodexConfigRefresh =>
     ({ action: 'keep', content: null, merged, missingSecrets, heldBack, mergeFailure })
-  // With no default file and no last merged copy yet, an empty copy is recorded, so that the
+  // With no default file and no last merged copy, an empty copy is recorded, so that the
   // first merge once the file appears treats every setting of the login as its own.
   if (source === null) return keep(lastMerged === null ? '' : null, false, [], null)
   if (current !== null && !validToml(current)) return keep(null, false, [], "the login's config.toml is not valid TOML, so it was left as it is")

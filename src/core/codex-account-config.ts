@@ -27,10 +27,14 @@
  *   home still has it with a value that holds a secret, the login's stays (`heldBack`);
  * - a table that loses its last setting that is not a secret goes as a whole, the login's
  *   own secrets in it included. Codex refuses a file with an MCP server that has only an `env`
- *   table left, for example;
+ *   table left, for example, so such a server in the login's file goes even when it was so
+ *   before the merge (an earlier kurmis left it);
  * - an MCP server and a model provider are each one unit (`UNIT_TABLES`): one the default home
  *   dropped goes whole, and one the login's file lacks as a whole stays out until the default
  *   home changes any of it, then comes in whole.
+ *
+ * A login file that sets nothing (only comments and blank lines) is merged as a missing one:
+ * it gets every setting of the default home.
  *
  * With no last merged copy (the first merge after kurmis was updated to keep one), every
  * setting of the login's file that is not a secret or trust counts as merged in before, as
@@ -39,9 +43,11 @@
  *
  * **Secrets.** A secret is never copied from the default home, and a secret in the login's
  * file is never changed or removed by the merge, except with its whole table (`secretKeyName`
- * and `secretValue` say what counts). Where the login's secret stands in the way of a
- * setting of the default home, or the default home has a secret setting that differs from
- * the login's in more than its secrets, the login's stays and `heldBack` names the setting.
+ * and `secretValue` say what counts; the name of an MCP server, a model provider, a profile,
+ * a folder or a hook is not read as one, `nameIndex`). Where the login's secret stands in the
+ * way of a setting of the default home, or the default home has a secret setting that
+ * differs from the login's in more than its secrets, the login's stays and `heldBack` names
+ * the setting.
  *
  * **Trust.** Codex keeps trust in `hooks.state."<hook key>"` for a hook (`trusted_hash`,
  * `trusted_content_hash`, `enabled`) and `projects."<folder>"` for a folder (`trust_level`).
@@ -165,12 +171,27 @@ function trustValue(path: readonly PathKey[]): boolean {
   return false
 }
 
+/** Tables whose keys are names the person chose: MCP servers, model providers and profiles. */
+const NAMED_TABLES = new Set(['mcp_servers', 'model_providers', 'profiles'])
+
 /**
- * Whether a key on a path says the strings below it are secrets. A folder or hook key is not
- * read as one, so a repository called `deploy-token` is not a secret.
+ * Where a name the person chose sits in a path, or -1: a folder or hook key of a trust table
+ * (`trustNameIndex`), or the name of an MCP server, model provider or profile. As in a trust
+ * table, a value placed straight under `[mcp_servers]` has no such name.
+ */
+function nameIndex(path: readonly PathKey[]): number {
+  const trust = trustNameIndex(path)
+  if (trust !== -1) return trust
+  return path.length >= 3 && typeof path[0] === 'string' && NAMED_TABLES.has(path[0]) ? 1 : -1
+}
+
+/**
+ * Whether a key on a path says the strings below it are secrets. A name the person chose is
+ * not read as one (`nameIndex`), so a repository called `deploy-token` or an MCP server
+ * called `aws-secrets` is not a secret; the keys below it still are read.
  */
 function secretPath(path: readonly PathKey[]): boolean {
-  const name = trustNameIndex(path)
+  const name = nameIndex(path)
   return path.some((key, index) => index !== name && typeof key === 'string' && secretKeyName(key))
 }
 
@@ -1008,8 +1029,10 @@ export function mergeAccountConfig(source: string, target: string, lastMerged: s
   const sourceValues = typedValue(sourceAst)
   const targetValues = typedToml(targetText)
   const fromSource = publicSettings(sourceValues)
+  // A login file with no settings in it (none, or only comments and blank lines) gets every
+  // setting of the default home, as a missing file does.
   let base: Dict | null = null
-  if (lastMerged !== null && targetText !== '') {
+  if (lastMerged !== null && settingsOf(targetValues).length > 0) {
     try {
       base = typedToml(withoutBom(lastMerged))
     } catch {
@@ -1077,10 +1100,21 @@ export function mergeAccountConfig(source: string, target: string, lastMerged: s
     const now = at(desired, path)
     if (isTable(now) && !holdsOrdinarySetting(now, path)) removeAt(desired, path)
   }
-  // The default home's secrets: missing from the login, or kept apart from a change.
+  // A unit with only secrets left and without the key Codex needs goes too, even when the
+  // login's file had it so already: an earlier kurmis removed an MCP server's `command` and
+  // left its `env` table, and Codex refuses to load such a file.
+  for (const unit of unitPaths(desired)) {
+    const value = at(desired, unit)
+    if (!holdsOrdinarySetting(value, unit) && !UNIT_KEYS[unit[0]!]!.some((key) => own(value, key) !== undefined)) removeAt(desired, unit)
+  }
+  // The default home's secrets: missing from the login, or kept apart from a change. A secret
+  // of a unit the login does not have although the default home's has more than secrets (the
+  // login deleted the MCP server) is not missing.
   let missingSecrets = false
   for (const { path, value } of settingsOf(sourceValues)) {
     if (!secretSetting(path, value)) continue
+    const unit = unitOf(path)
+    if (unit !== null && at(desired, unit) === undefined && at(fromSource, unit) !== undefined) continue
     const kept = at(desired, path)
     if (kept === undefined) missingSecrets = true
     else if (!same(masked(value, secretPath(path)), masked(kept, secretPath(path)))) heldBack.push(dottedKey(path))
@@ -1101,6 +1135,9 @@ export function mergeAccountConfig(source: string, target: string, lastMerged: s
  * provider (`model_providers.<name>`), which it refuses without its `name`.
  */
 const UNIT_TABLES = new Set(['mcp_servers', 'model_providers'])
+
+/** For each of `UNIT_TABLES`, the keys of which a unit needs one for Codex to load it. */
+const UNIT_KEYS: Readonly<Record<string, readonly string[]>> = { mcp_servers: ['command', 'url'], model_providers: ['name'] }
 
 /** The path of the unit a setting is part of, or null when it is part of none. */
 function unitOf(path: readonly string[]): string[] | null {
