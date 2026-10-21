@@ -10,7 +10,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'kurmis-credentials-'))
   path = join(dir, CREDENTIALS_FILE_NAME)
 })
-afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+afterEach(() => { rmSync(dir, { recursive: true, force: true, maxRetries: 10 }) })
 
 const reader = (): CredentialsFileReader => new CredentialsFileReader({ credentialsDir: () => dir })
 const write = (token: string): void => {

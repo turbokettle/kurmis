@@ -62,14 +62,14 @@ function settings(): Record<string, unknown> {
 }
 
 beforeEach(() => {
-  rmSync(join(home, '.claude'), { recursive: true, force: true })
-  rmSync(kurmisHome, { recursive: true, force: true })
+  rmSync(join(home, '.claude'), { recursive: true, force: true, maxRetries: 10 })
+  rmSync(kurmisHome, { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(kurmisHome, { recursive: true })
   writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 1, port: PORT }))
 })
 
 afterEach(() => {
-  rmSync(join(home, '.claude'), { recursive: true, force: true })
+  rmSync(join(home, '.claude'), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('kurmis setup', () => {
@@ -153,7 +153,7 @@ describe('kurmis setup', () => {
       const undone = await run(command, ['--undo'])
       expect(undone.stderr).not.toContain('symbolic link')
     } finally {
-      rmSync(dotfiles, { recursive: true, force: true })
+      rmSync(dotfiles, { recursive: true, force: true, maxRetries: 10 })
     }
   })
 
@@ -268,7 +268,7 @@ describe('kurmis setup', () => {
     // Undo takes the line out with the other kurmis headers.
     expect((await run(command, ['--undo'], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
     expect(readFileSync(join(dir, 'settings.json'), 'utf8')).not.toContain('x-kurmis')
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
   })
 
   it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on claude:default', async () => {

@@ -49,7 +49,7 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
 })
 
 let specs = 0

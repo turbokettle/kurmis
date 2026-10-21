@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   createThroughWmi,
@@ -18,9 +18,10 @@ import {
 } from '../../src/platform/detach.ts'
 import type { RunResult } from '../../src/platform/run.ts'
 import { realSystemProgram } from '../../src/platform/system-programs.ts'
+import { canCreateSymlinks } from '../host.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'kurmis-detach-'))
-afterAll(() => rmSync(scratch, { recursive: true, force: true }))
+afterAll(() => rmSync(scratch, { recursive: true, force: true, maxRetries: 10 }))
 
 function result(patch: Partial<RunResult>): RunResult {
   return { stdout: '', stderr: '', code: 0, timedOut: false, outputTooLarge: false, error: null, ...patch }
@@ -37,7 +38,8 @@ describe('kurmisEntry', () => {
     expect(kurmisEntry({ env: {} })).toBeNull()
   })
 
-  it('resolves a symlinked bundle to its real file', () => {
+  // A symlink to a file needs Developer Mode or an administrator on Windows.
+  it.runIf(canCreateSymlinks())('resolves a symlinked bundle to its real file', () => {
     const real = join(scratch, 'real.cjs')
     writeFileSync(real, '')
     const link = join(scratch, 'link.cjs')
@@ -47,13 +49,18 @@ describe('kurmisEntry', () => {
 })
 
 describe('nodeForJobs', () => {
+  // These look at real files in the scratch folder, so they use this OS's PATH rules: `node.exe`
+  // and `;` on Windows, `node` and `:` elsewhere.
+  const platform = process.platform
+  const NODE = platform === 'win32' ? 'node.exe' : 'node'
+
   it('prefers the node on PATH when it is the same file as the running one', () => {
     const bin = join(scratch, 'bin')
     mkdirSync(bin, { recursive: true })
-    writeFileSync(join(bin, 'node'), '')
-    const realpath = (path: string): string => (path === join(bin, 'node') ? '/cellar/node/22.1.0/bin/node' : path)
-    expect(nodeForJobs({ env: { PATH: bin }, platform: 'darwin', execPath: '/cellar/node/22.1.0/bin/node', realpath, temporaryFolders: [] }))
-      .toBe(join(bin, 'node'))
+    writeFileSync(join(bin, NODE), '')
+    const realpath = (path: string): string => (path === join(bin, NODE) ? '/cellar/node/22.1.0/bin/node' : path)
+    expect(nodeForJobs({ env: { PATH: bin }, platform, execPath: '/cellar/node/22.1.0/bin/node', realpath, temporaryFolders: [] }))
+      .toBe(join(bin, NODE))
   })
 
   it("passes over a node on PATH in fnm's per-shell folder or a temporary folder", () => {
@@ -61,15 +68,15 @@ describe('nodeForJobs', () => {
     const lasting = join(scratch, 'fnm', 'aliases', 'default', 'bin')
     for (const folder of [multishell, lasting]) {
       mkdirSync(folder, { recursive: true })
-      writeFileSync(join(folder, 'node'), '')
+      writeFileSync(join(folder, NODE), '')
     }
     const real = '/fnm/node-versions/v22.1.0/installation/bin/node'
-    const realpath = (path: string): string => (path.endsWith('/node') ? real : path)
-    const env = { PATH: `${multishell}:${lasting}` }
-    expect(nodeForJobs({ env, platform: 'darwin', execPath: real, realpath, temporaryFolders: [] })).toBe(join(lasting, 'node'))
-    expect(nodeForJobs({ env: { PATH: multishell }, platform: 'darwin', execPath: real, realpath, temporaryFolders: [] })).toBe(real)
+    const realpath = (path: string): string => (path.endsWith(NODE) ? real : path)
+    const env = { PATH: [multishell, lasting].join(delimiter) }
+    expect(nodeForJobs({ env, platform, execPath: real, realpath, temporaryFolders: [] })).toBe(join(lasting, NODE))
+    expect(nodeForJobs({ env: { PATH: multishell }, platform, execPath: real, realpath, temporaryFolders: [] })).toBe(real)
     // The scratch folder is in the temporary folder, so with the real list every candidate is passed over.
-    expect(nodeForJobs({ env, platform: 'darwin', execPath: real, realpath })).toBe(real)
+    expect(nodeForJobs({ env, platform, execPath: real, realpath })).toBe(real)
   })
 
   it('tells temporary paths apart, Windows paths without regard to case', () => {
@@ -86,14 +93,14 @@ describe('nodeForJobs', () => {
   it('keeps the running node when the one on PATH is another', () => {
     const bin = join(scratch, 'other-bin')
     mkdirSync(bin, { recursive: true })
-    writeFileSync(join(bin, 'node'), '')
+    writeFileSync(join(bin, NODE), '')
     const realpath = (path: string): string => path
-    expect(nodeForJobs({ env: { PATH: bin }, platform: 'darwin', execPath: '/usr/local/bin/node22', realpath, temporaryFolders: [] }))
+    expect(nodeForJobs({ env: { PATH: bin }, platform, execPath: '/usr/local/bin/node22', realpath, temporaryFolders: [] }))
       .toBe('/usr/local/bin/node22')
   })
 
   it('keeps the running node when PATH has none', () => {
-    expect(nodeForJobs({ env: { PATH: join(scratch, 'empty') }, platform: 'linux', execPath: process.execPath }))
+    expect(nodeForJobs({ env: { PATH: join(scratch, 'empty') }, platform, execPath: process.execPath }))
       .toBe(process.execPath)
   })
 })

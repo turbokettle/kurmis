@@ -203,7 +203,8 @@ describe('kurmis codex and CODEX_HOME', () => {
   })
 
   test('codex:default drops a CODEX_HOME an outer kurmis codex session set for an extra login', async () => {
-    const h = harness()
+    // The home is a path of this machine, so the command has to compare it by this OS's rules.
+    const h = harness({}, { platform: process.platform })
     const out = collect({ CODEX_HOME: join(providerFolder('codex'), 'work'), PATH: '/usr/bin' })
     await createCodexCommand(h.deps).run(['--login', 'default'], out.context)
     expect(h.specs[0]?.env).toEqual({ PATH: '/usr/bin' })

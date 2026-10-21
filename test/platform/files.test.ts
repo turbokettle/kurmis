@@ -83,7 +83,7 @@ describe('restrictToUserSync', () => {
     const path = join(dir, 'settings.json')
     writeFileSync(path, '{}')
     chmodSync(path, mode)
-    return { path, done: () => rmSync(dir, { recursive: true, force: true }) }
+    return { path, done: () => rmSync(dir, { recursive: true, force: true, maxRetries: 10 }) }
   }
 
   it('clears the group and other bits and keeps the user\'s', () => {

@@ -11,7 +11,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(bin, { recursive: true, force: true })
+  rmSync(bin, { recursive: true, force: true, maxRetries: 10 })
 })
 
 it('writes an executable shell script that runs the fake with this Node on POSIX', () => {
@@ -21,7 +21,8 @@ it('writes an executable shell script that runs the fake with this Node on POSIX
   const text = readFileSync(installed.path, 'utf8')
   expect(text).toMatch(/^#!\/bin\/sh\nexec '/)
   expect(text).toContain("'/scripts/it'\\''s here.js' \"$@\"")
-  expect(statSync(installed.path).mode & 0o111).not.toBe(0)
+  // Windows has no execute bits; Node reports none.
+  if (process.platform !== 'win32') expect(statSync(installed.path).mode & 0o111).not.toBe(0)
 })
 
 it('writes a .cmd file on Windows', () => {

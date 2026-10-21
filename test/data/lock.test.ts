@@ -18,7 +18,7 @@ const folder = mkdtempSync(join(tmpdir(), 'kurmis-lock-test-'))
 const lockPath = join(folder, 'thing.lock')
 
 afterAll(() => {
-  rmSync(folder, { recursive: true, force: true })
+  rmSync(folder, { recursive: true, force: true, maxRetries: 10 })
 })
 
 beforeEach(() => {

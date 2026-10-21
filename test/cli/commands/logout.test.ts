@@ -9,6 +9,7 @@ import { findProgram, ProgramNotFoundError } from '../../../src/platform/program
 import { runProgram, type RunResult } from '../../../src/platform/run.ts'
 import { FAKE_CLAUDE_SCRIPT, readFakeClaudeRecord, writeClaudeCredentials } from '../../fakes/index.ts'
 import { collect, fakeDaemonClient } from '../helpers.ts'
+import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
 const home = process.env.HOME!
 
@@ -40,8 +41,8 @@ function addWithFolder(id: string): string {
 }
 
 beforeEach(() => {
-  rmSync(kurmisHome(), { recursive: true, force: true })
-  rmSync(join(home, '.codex'), { recursive: true, force: true })
+  rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
+  rmSync(join(home, '.codex'), { recursive: true, force: true, maxRetries: 10 })
   saveConfig(defaultConfig())
 })
 
@@ -93,8 +94,9 @@ describe('kurmis logout', () => {
     writeFileSync(join(own, 'AGENTS.md'), 'kept')
     const folder = addWithFolder('codex:side')
     writeFileSync(join(folder, 'auth.json'), '{}')
-    symlinkSync(join(own, 'sessions'), join(folder, 'sessions'), 'junction')
-    symlinkSync(join(own, 'AGENTS.md'), join(folder, 'AGENTS.md'), 'file')
+    linkFolder(join(own, 'sessions'), join(folder, 'sessions'))
+    // A symlink to a file needs Developer Mode or an administrator on Windows.
+    if (canCreateSymlinks()) symlinkSync(join(own, 'AGENTS.md'), join(folder, 'AGENTS.md'), 'file')
     mkdirSync(join(kurmisHome(), 'codex-merged'), { recursive: true })
     writeFileSync(codexMergedRecordPath('codex:side'), '{"config":null,"copied":{},"conflicts":[]}\n')
     const run = fakeRun()

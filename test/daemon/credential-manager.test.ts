@@ -37,7 +37,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true })
+  rmSync(home, { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('CredentialManagerReader', () => {

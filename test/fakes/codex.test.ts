@@ -38,7 +38,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
 })
 
 function startAppServer(env: Record<string, string | undefined>, command: readonly string[] = [process.execPath, FAKE_CODEX_SCRIPT]): AppServer {

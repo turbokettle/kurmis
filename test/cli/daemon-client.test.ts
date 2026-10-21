@@ -93,7 +93,7 @@ function usePort(port: number): void {
 }
 
 beforeEach(() => {
-  rmSync(kurmisHome(), { recursive: true, force: true })
+  rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(kurmisHome(), { recursive: true })
 })
 
@@ -245,7 +245,8 @@ describe('startDaemon', () => {
     usePort(daemon.port)
     const pid = await lingeringPid()
     writeDaemonFile({ pid, port: daemon.port, version: '1.2.3', startedAt: 1 })
-    const failure = startDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
+    // The platform is named, since the way to stop it that the message gives depends on it.
+    const failure = startDaemon({ env: {}, platform: 'linux', version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
     const message = await failure.catch((error: unknown) => (error as Error).message)
     expect(message).toContain(`refused the key in ${keyPath()}, and daemon.json names pid ${String(pid)} on that port`)
     expect(message).toContain('its key no longer matches the key file')
@@ -287,7 +288,7 @@ describe('starting through launchd', () => {
   const noBundle = (): string => join(kurmisHome(), 'no-such-bundle.cjs')
 
   beforeEach(() => {
-    rmSync(launchctlDir, { recursive: true, force: true })
+    rmSync(launchctlDir, { recursive: true, force: true, maxRetries: 10 })
     mkdirSync(launchctlDir, { recursive: true })
     rmSync(join(securityDir, 'calls.jsonl'), { force: true })
   })
@@ -462,15 +463,17 @@ describe('chooseStartMethod', () => {
 
 describe('daemonEnvironment', () => {
   it('drops what a routed session put in the environment', () => {
+    // An absolute path of this OS, which `resolve` leaves as it is (on Windows it adds a drive).
+    const home = resolve('/tmp/example')
     expect(daemonEnvironment({
       PATH: '/usr/bin',
-      KURMIS_HOME: '/tmp/example',
+      KURMIS_HOME: home,
       ANTHROPIC_BASE_URL: 'http://127.0.0.1:1',
       ANTHROPIC_CUSTOM_HEADERS: 'x-kurmis-key: abc',
       ANTHROPIC_API_KEY: 'example',
       ANTHROPIC_AUTH_TOKEN: 'example',
       CLAUDE_SECURESTORAGE_CONFIG_DIR: '/tmp/example/claude/work'
-    }, {})).toEqual({ PATH: '/usr/bin', KURMIS_HOME: '/tmp/example' })
+    }, {})).toEqual({ PATH: '/usr/bin', KURMIS_HOME: home })
   })
 
   it("adds this process's stand-ins and guard when the environment it is given has none", () => {

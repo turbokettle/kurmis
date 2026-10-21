@@ -58,14 +58,14 @@ function locked(work) {
       mkdirSync(lockDir)
       break
     } catch {
-      if (Date.now() > deadline) rmSync(lockDir, { recursive: true, force: true })
+      if (Date.now() > deadline) rmSync(lockDir, { recursive: true, force: true, maxRetries: 10 })
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)
     }
   }
   try {
     return work()
   } finally {
-    rmSync(lockDir, { recursive: true, force: true })
+    rmSync(lockDir, { recursive: true, force: true, maxRetries: 10 })
   }
 }
 

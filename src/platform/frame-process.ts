@@ -308,12 +308,15 @@ function killTree(child: ChildProcess, platform: NodeJS.Platform, env: NodeJS.Pr
   const fallback = (): void => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
   }
-  if (refusedByGuard(command.command, env) !== null) {
+  // Through `invocationFor`, so a stand-in script that a test names runs through Node; Windows
+  // cannot start a `.mjs` file itself.
+  const invocation = invocationFor(command.command, command.args)
+  if ('refused' in invocation || refusedByGuard(invocation.command, env) !== null) {
     fallback()
     return
   }
   try {
-    const taskkill = spawn(command.command, command.args, { stdio: 'ignore', shell: false, windowsHide: true, env: withGuard(env) })
+    const taskkill = spawn(invocation.command, invocation.args, { stdio: 'ignore', shell: false, windowsHide: true, env: withGuard(env) })
     taskkill.on('error', fallback)
     taskkill.on('exit', fallback)
   } catch {

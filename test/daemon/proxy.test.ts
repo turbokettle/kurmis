@@ -286,7 +286,7 @@ describe('a token about to expire', () => {
       expect(events(h, 'token_renewal_started')).toBe(0)
     } finally {
       vi.unstubAllEnvs()
-      rmSync(dir, { recursive: true, force: true })
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
     }
   }, 30_000)
 })

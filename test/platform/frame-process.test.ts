@@ -1,4 +1,5 @@
-import { resolve } from 'node:path'
+import { readFileSync, rmSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, test } from 'vitest'
 import {
@@ -129,6 +130,9 @@ test('a batch file is refused on every platform', async () => {
   }
 })
 
+// On macOS and Linux the whole process group is killed. On Windows that is taskkill's `/T`, which
+// the stand-in of test/setup.ts does not do (it ends only the one pid), so there the next test
+// checks only that taskkill is asked to end the tree.
 test.skipIf(process.platform === 'win32')('a kill takes the processes the program started with it', async () => {
   const { proc, frames } = start(['grandchild'])
   await waitFor(() => frames.length === 1)
@@ -137,6 +141,19 @@ test.skipIf(process.platform === 'win32')('a kill takes the processes the progra
   proc.kill()
   await proc.exited
   await waitFor(() => !isRunning(grandchild))
+})
+
+test('on Windows a kill asks taskkill to end the program\'s tree, and the program ends', async () => {
+  const calls = join(process.env.FAKE_TASKKILL_DIR ?? '', 'calls.jsonl')
+  rmSync(calls, { force: true })
+  const { proc } = start(['hang'], { platform: 'win32' })
+  const pid = proc.pid ?? 0
+  await sleep(100)
+  proc.kill()
+  expect(await proc.exited).toMatchObject({ end: 'killed' })
+  const lines = readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as unknown)
+  expect(lines).toEqual([['/PID', String(pid), '/T', '/F']])
+  expect(isRunning(pid)).toBe(false)
 })
 
 test('sending after the input is closed does nothing', async () => {

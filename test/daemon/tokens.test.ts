@@ -56,7 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs()
-  rmSync(dir, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
 })
 
 test('the security program comes from KURMIS_SECURITY_PROGRAM, else /usr/bin/security', () => {

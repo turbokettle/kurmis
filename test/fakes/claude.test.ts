@@ -22,7 +22,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  rmSync(root, { recursive: true, force: true })
+  rmSync(root, { recursive: true, force: true, maxRetries: 10 })
 })
 
 /** A clean environment: only what a test names, plus PATH, a home folder and the record file. */

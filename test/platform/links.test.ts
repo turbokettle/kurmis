@@ -1,5 +1,5 @@
-// Folder links: real symlinks in temporary folders on this machine, and the Windows branch
-// through the pure functions with Windows-shaped paths. Creating a junction needs Windows.
+// Folder links: real links in temporary folders on this machine (junctions on Windows, symlinks
+// elsewhere), and the Windows branch through the pure functions with Windows-shaped paths.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +12,7 @@ import {
   normaliseLinkTarget,
   readFolderLink
 } from '../../src/platform/links.ts'
+import { canCreateSymlinks } from '../host.ts'
 
 describe('the Windows parts, with Windows-shaped paths', () => {
   test('links folders with a junction on Windows and a directory symlink elsewhere', () => {
@@ -59,10 +60,10 @@ describe('links on this machine', () => {
   })
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
   })
 
-  test.skipIf(process.platform === 'win32')('links a folder so that its files show through the link', async () => {
+  test('links a folder so that its files show through the link', async () => {
     const source = join(dir, 'source')
     mkdirSync(source)
     writeFileSync(join(source, 'a.txt'), 'shared\n')
@@ -83,7 +84,8 @@ describe('links on this machine', () => {
     expect(await readFolderLink(join(dir, 'file'))).toEqual({ kind: 'other' })
   })
 
-  test.skipIf(process.platform === 'win32')('reads a relative or dangling symlink back as an absolute target', async () => {
+  // A symlink on Windows needs Developer Mode or an administrator; a junction cannot be relative.
+  test.runIf(canCreateSymlinks())('reads a relative or dangling symlink back as an absolute target', async () => {
     mkdirSync(join(dir, 'source'))
     symlinkSync('source', join(dir, 'relative'))
     symlinkSync(join(dir, 'gone'), join(dir, 'dangling'))
@@ -91,7 +93,7 @@ describe('links on this machine', () => {
     expect(await readFolderLink(join(dir, 'dangling'))).toEqual({ kind: 'link', target: join(dir, 'gone') })
   })
 
-  test.skipIf(process.platform === 'win32')('never replaces what is at the place', async () => {
+  test('never replaces what is at the place', async () => {
     mkdirSync(join(dir, 'source'))
     mkdirSync(join(dir, 'place'))
     await expect(linkFolder(join(dir, 'source'), join(dir, 'place'))).rejects.toMatchObject({ code: 'EEXIST' })
@@ -99,7 +101,10 @@ describe('links on this machine', () => {
   })
 
   test('throws a read error other than a missing place', async () => {
+    // Node refuses a path with a NUL in it on every OS.
+    await expect(readFolderLink(join(dir, 'bad\0name'))).rejects.toMatchObject({ code: 'ERR_INVALID_ARG_VALUE' })
+    // Windows answers ENOENT for a path below a file, which is a missing place there.
     writeFileSync(join(dir, 'file'), '')
-    await expect(readFolderLink(join(dir, 'file', 'below'))).rejects.toMatchObject({ code: 'ENOTDIR' })
+    if (process.platform !== 'win32') await expect(readFolderLink(join(dir, 'file', 'below'))).rejects.toMatchObject({ code: 'ENOTDIR' })
   })
 })

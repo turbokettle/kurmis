@@ -18,10 +18,10 @@ const mac = (env: NodeJS.ProcessEnv = process.env) => ({ env, platform: 'darwin'
 
 beforeEach(() => {
   for (const dir of [process.env.FAKE_LAUNCHCTL_DIR ?? '', process.env.FAKE_REG_DIR ?? '']) {
-    rmSync(dir, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
     mkdirSync(dir, { recursive: true })
   }
-  rmSync(launchAgentsDir(), { recursive: true, force: true })
+  rmSync(launchAgentsDir(), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('macOS login item', () => {
@@ -37,7 +37,7 @@ describe('macOS login item', () => {
     expect(text).toContain('<key>RunAtLoad</key>\n  <true/>')
     expect(text).toContain('<key>AbandonProcessGroup</key>\n  <true/>')
     expect(text).not.toContain('KeepAlive')
-    expect(statSync(autostartPlistPath()).mode & 0o777).toBe(0o644)
+    if (process.platform !== 'win32') expect(statSync(autostartPlistPath()).mode & 0o777).toBe(0o644)
     expect(launchctlCalls()).toEqual([
       ['print', `${guiDomain()}/${AUTOSTART_LABEL}`],
       ['bootstrap', guiDomain(), autostartPlistPath()]

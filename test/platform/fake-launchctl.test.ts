@@ -14,7 +14,7 @@ function writePlist(label: string): string {
 }
 
 beforeEach(() => {
-  rmSync(dir(), { recursive: true, force: true })
+  rmSync(dir(), { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(dir(), { recursive: true })
 })
 

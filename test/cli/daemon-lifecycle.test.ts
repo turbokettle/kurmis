@@ -229,7 +229,7 @@ describe('kurmis daemon', () => {
     const status = await kurmis(bundles.newer, home, ['daemon', 'status'])
     expect(status.code).toBe(1)
     expect(status.stdout).toContain(expected)
-    expect(status.stdout).toContain(`stop it with "kill ${String(pid)}"`)
+    expect(status.stdout).toContain(`stop it with "${process.platform === 'win32' ? `taskkill /PID ${String(pid)} /F` : `kill ${String(pid)}`}"`)
     const start = await kurmis(bundles.newer, home, ['daemon', 'start'])
     expect(start).toMatchObject({ code: 1 })
     expect(start.stderr).toContain(expected)
@@ -251,21 +251,24 @@ describe('kurmis daemon', () => {
     await waitUntil(() => !processExists(before), 10_000, 'the old daemon to exit')
   }, 60_000)
 
-  it('starts the daemon through launchd from an ssh login on macOS', async () => {
+  it.runIf(process.platform === 'win32')('tries WMI from an ssh login on Windows, and starts the daemon directly when it fails', async () => {
+    const { home } = await newHome()
+    const powershellDir = join(home, 'fake-powershell')
+    const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_POWERSHELL_DIR: powershellDir }
+    const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
+    expect(started.code).toBe(0)
+    expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 on')
+    // PowerShell is the stand-in of test/setup.ts, which records the call and fails.
+    expect(started.stderr).toContain('could not be started outside this ssh session')
+    expect(readFileSync(join(powershellDir, 'calls.jsonl'), 'utf8')).toContain('Win32_Process')
+    expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
+  }, 60_000)
+
+  it.runIf(process.platform === 'darwin')('starts the daemon through launchd from an ssh login on macOS', async () => {
     const { home } = await newHome()
     const launchctlDir = join(home, 'fake-launchctl')
     const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_LAUNCHCTL_RUN: '1', FAKE_LAUNCHCTL_DIR: launchctlDir }
     const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
-    if (process.platform !== 'darwin') {
-      expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 on')
-      if (process.platform === 'win32') {
-        // From ssh on Windows the start goes through WMI. PowerShell is the stand-in of
-        // test/setup.ts, which records the call and fails, so the daemon is started directly.
-        expect(started.stderr).toContain('could not be started outside this ssh session')
-        expect(readFileSync(join(process.env.FAKE_POWERSHELL_DIR ?? '', 'calls.jsonl'), 'utf8')).toContain('Win32_Process')
-      }
-      return
-    }
     expect(started).toMatchObject({ code: 0, stderr: '' })
     expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 through launchd')
     const calls = readFileSync(join(launchctlDir, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[])
@@ -278,8 +281,7 @@ describe('kurmis daemon', () => {
     expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
   }, 60_000)
 
-  it('starts the daemon directly with a warning when launchd refuses', async () => {
-    if (process.platform !== 'darwin') return
+  it.runIf(process.platform === 'darwin')('starts the daemon directly with a warning when launchd refuses', async () => {
     const { home } = await newHome()
     const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_LAUNCHCTL_FAIL_BOOTSTRAP: '125', FAKE_LAUNCHCTL_DIR: join(home, 'fake-launchctl') }
     const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)

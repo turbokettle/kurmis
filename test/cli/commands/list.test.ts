@@ -10,8 +10,8 @@ import { collect } from '../helpers.ts'
 const home = join(process.env.HOME!, 'list-home')
 
 beforeEach(() => {
-  rmSync(kurmisHome(), { recursive: true, force: true })
-  rmSync(home, { recursive: true, force: true })
+  rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
+  rmSync(home, { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(home, { recursive: true })
 })
 
