@@ -68,13 +68,10 @@ export interface StatusJsonBlock {
 }
 
 export interface StatusJsonLogin {
-  /**
-   * The login's id, which never changes. Null for the login plain claude or plain codex uses
-   * while `config.json` has no entry for it yet (`ReportLogin.noIdYet`).
-   */
-  id: string | null
-  /** The name the person sees and types for the login. Null when `id` is null. */
-  alias: string | null
+  /** The login's id, which never changes. */
+  id: string
+  /** The name the person sees and types for the login. */
+  alias: string
   provider: AccountProvider
   /** Whether this is the login a plain `claude` or a plain `codex` uses. */
   usedByPlainCli: boolean
@@ -138,21 +135,8 @@ export interface StatusJson {
 
 export type StatusSource = 'daemon' | 'files'
 
-/** A login of a `StatusReport`. */
-export interface ReportLogin extends LoginStatus {
-  /**
-   * True for the login plain claude or plain codex uses while `config.json` has no entry for it,
-   * so it has no id yet: `kurmis status` reads the file without writing it, and the first other
-   * command that reads it adds the entry with a new id. `id` and `alias` are then a stand-in
-   * (`noIdYetStandIn`) that no login id or alias can be, and the JSON gives null for both.
-   */
-  noIdYet?: boolean
-}
-
-/** The stand-in id and alias of a `ReportLogin` with `noIdYet`: `-claude` or `-codex`. */
-export function noIdYetStandIn(provider: AccountProvider): string {
-  return `-${provider}`
-}
+/** A login of a `StatusReport`: the daemon's status of it, or the same built from the files. */
+export type ReportLogin = LoginStatus
 
 /** What `kurmis status` shows, put together from the daemon or from the files. */
 export interface StatusReport {
@@ -212,8 +196,8 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
     source: report.source,
     globalRouting: report.globalRouting,
     logins: report.logins.map((login) => ({
-      id: login.noIdYet === true ? null : login.id,
-      alias: login.noIdYet === true ? null : login.alias,
+      id: login.id,
+      alias: login.alias,
       provider: login.provider,
       usedByPlainCli: login.usedByPlainCli,
       email: login.email ?? null,
@@ -248,7 +232,6 @@ export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }):
   const warnings: string[] = []
   const ordered = [...answer.logins.filter((login) => login.usedByPlainCli), ...answer.logins.filter((login) => !login.usedByPlainCli)]
   const firsts: ReportLogin[] = []
-  const named = answer.logins.filter((login) => login.noIdYet !== true)
   for (const login of ordered) {
     if (login.email === null || login.email.trim() === '') continue
     const kept = firsts.find((first) => first.provider === login.provider && isSameClaudeAccount(first, login))
@@ -256,11 +239,9 @@ export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }):
       firsts.push(login)
       continue
     }
-    const keptName = !kept.usedByPlainCli ? kept.alias
-      : kept.noIdYet === true ? plainCliLoginText(kept.provider)
-        : `${kept.alias}, ${plainCliLoginText(kept.provider)},`
+    const keptName = kept.usedByPlainCli ? `${kept.alias}, ${plainCliLoginText(kept.provider)},` : kept.alias
     warnings.push(`${login.alias} and ${keptName} are the same ${PROVIDER_NAMES[login.provider]} account (${kept.email!}), ` +
-      `so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, login)}" removes ${login.alias}.`)
+      `so they use one subscription. "kurmis logout ${loginArgument(answer, login)}" removes ${login.alias}.`)
   }
   return warnings
 }
@@ -331,13 +312,9 @@ const WIDTH = 80
 /** Window names longer than this are cut, so the columns after them stay on the line. */
 const MAX_LABEL_WIDTH = 24
 
-/**
- * The first line of a login: its alias, its product and its id, without the id while the alias
- * is the id. The login plain claude or plain codex uses without an id yet is named as such.
- */
+/** The first line of a login: its alias, its product and its id, without the id while the alias is the id. */
 function loginTitle(login: StatusJsonLogin): string {
   const product = PROVIDER_NAMES[login.provider]
-  if (login.id === null || login.alias === null) return `${plainCliLoginText(login.provider)} (${product}, no id yet)`
   return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`
 }
 
@@ -346,12 +323,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   const lines = login.email === null ? [title]
     : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`]
       : [title, `  ${login.email}`]
-  if (login.id === null) {
-    lines.push(...wrap('config.json has no entry for it yet. The first kurmis command other than "kurmis status" that ' +
-      'reads config.json adds one, with an id.', '  ', '  '))
-  } else if (login.usedByPlainCli) {
-    lines.push(`  ${plainCliLoginText(login.provider)}`)
-  }
+  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`)
   const facts = [
     login.credentials !== null
       ? login.credentials ? 'credentials on this machine' : 'no credentials on this machine'

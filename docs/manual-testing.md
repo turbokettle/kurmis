@@ -30,9 +30,9 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis statu
 
 1. **The logins plain claude and plain codex use get their alias.** Start from an empty data
    folder, with no daemon running. Run `kurmis status` first: it says the daemon is not running
-   and starts none (`kurmis daemon status` still says so after it), and the data folder is still
-   empty or missing after it. Those two logins are there, each shown as "the login plain claude
-   uses (Claude, no id yet)" or the same for Codex. Each shows `credentials on this machine` when
+   and starts none (`kurmis daemon status` still says so after it), and the data folder holds
+   only `config.json` after it. Those two logins are there, each with an id and marked "the login
+   plain claude uses" or "the login plain codex uses". Each shows `credentials on this machine` when
    plain `claude` or plain `codex` is signed in. Then run `kurmis daemon start` and `kurmis status`, which waits
    for the daemon's first usage probe. After it, each of them should have the alias made from
    its email (`me@example.com` gives `me-example`).
@@ -143,8 +143,8 @@ Run this last, since it removes the logins added above.
    on the logins they used before.
 5. The extra logins' Keychain items (macOS) or Credential Manager records (Windows) are gone,
    and every file in `~/.codex` is still there.
-6. `kurmis status` exits 0, shows the logins plain claude and plain codex use without an id, and
-   creates no data folder.
+6. `kurmis status` exits 0, shows the logins plain claude and plain codex use with new ids, and
+   creates a data folder that holds only `config.json`.
 
 ### Codex
 1. `kurmis codex exec "Reply ok"` answers, on the login `kurmis status` named in its last line.

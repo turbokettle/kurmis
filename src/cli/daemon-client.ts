@@ -199,7 +199,7 @@ export async function findDaemon(options: DaemonClientOptions, timeoutMs?: numbe
   }
   let port: number
   try {
-    // Read without writing: `kurmis status` looks for the daemon and must change no file.
+    // Read without writing, so that looking for the daemon changes no file.
     port = readConfig().port
   } catch {
     return null

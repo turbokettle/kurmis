@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, test } from 'vitest'
 import { createStatusCommand, nothingProbedYet, type StatusDeps } from '../../../src/cli/commands/status.ts'
@@ -239,33 +239,45 @@ describe('kurmis status with the daemon not running', () => {
     expect(out.stdout()).toContain('The kurmis daemon is not running.')
   })
 
-  test('writes nothing in a data folder that is gone, and shows the logins of plain claude and plain codex without an id', async () => {
+  test('in a data folder that is gone, adds the logins of plain claude and plain codex to a new config.json, with ids', async () => {
     writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
     const out = collect({ HOME: home })
     // The real globalRoutingState, which reads config.json for the port.
     expect(await createStatusCommand({ daemon: fakeDaemonClient({ running: false }), home: () => home, now: () => NOW })
-      .run([], out.context)).toBe(0)
-    expect(existsSync(kurmisHome())).toBe(false)
-    expect(out.stdout()).toContain('the login plain claude uses (Claude, no id yet)  own@example.com\n' +
-      '  config.json has no entry for it yet. The first kurmis command other than\n  "kurmis status" that reads config.json adds one, with an id.\n')
-    expect(out.stdout()).toContain('the login plain codex uses (Codex, no id yet)')
-    const json = collect({ HOME: home })
-    expect(await command({ daemon: fakeDaemonClient({ running: false }) }).run(['--json'], json.context)).toBe(0)
-    expect((JSON.parse(json.stdout()) as StatusJson).logins.map((login) => [login.id, login.alias, login.provider, login.usedByPlainCli]))
-      .toEqual([[null, null, 'claude', true], [null, null, 'codex', true]])
-    expect(existsSync(kurmisHome())).toBe(false)
+      .run(['--json'], out.context)).toBe(0)
+    expect(readdirSync(kurmisHome())).toEqual(['config.json'])
+    const saved = (JSON.parse(readFileSync(configPath(), 'utf8')) as { logins: { id: string; provider: string; usedByPlainCli: boolean }[] }).logins
+    expect(saved.map((login) => [login.provider, login.usedByPlainCli])).toEqual([['claude', true], ['codex', true]])
+    const shown = (JSON.parse(out.stdout()) as StatusJson).logins
+    expect(shown.map((login) => [login.id, login.alias, login.provider, login.usedByPlainCli]))
+      .toEqual(saved.map((login) => [login.id, login.id, login.provider, true]))
+    expect(shown[0]?.email).toBe('own@example.com')
+    // The ids stay the same from then on, and the text names no login without an id.
+    const text = collect({ HOME: home })
+    expect(await command({ daemon: fakeDaemonClient({ running: false }) }).run([], text.context)).toBe(0)
+    expect(text.stdout()).toContain(`${saved[0]!.id} (Claude)  own@example.com\n  the login plain claude uses\n`)
+    expect(text.stdout()).not.toContain('no id yet')
+    expect(text.stdout()).not.toContain('no entry')
   })
 
-  test('leaves a config.json without the logins of plain claude and plain codex as it is', async () => {
+  test('adds the logins of plain claude and plain codex to a config.json without them, and keeps the rest', async () => {
     mkdirSync(kurmisHome(), { recursive: true })
-    const text = JSON.stringify({ version: 2, port: 30001, logins: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
-    writeFileSync(configPath(), text)
+    writeFileSync(configPath(), JSON.stringify({ version: 2, port: 30001, logins: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] }))
     const out = collect({})
     expect(await createStatusCommand({ daemon: fakeDaemonClient({ running: false }), home: () => home, now: () => NOW })
       .run(['--json'], out.context)).toBe(0)
-    expect(readFileSync(configPath(), 'utf8')).toBe(text)
+    const saved = JSON.parse(readFileSync(configPath(), 'utf8')) as { port: number; logins: { id: string }[] }
+    expect(saved.port).toBe(30001)
+    expect(saved.logins).toHaveLength(3)
     expect(readdirSync(kurmisHome())).toEqual(['config.json'])
-    expect((JSON.parse(out.stdout()) as StatusJson).logins.map((login) => login.id)).toEqual([null, null, 'workclaude'])
+    expect((JSON.parse(out.stdout()) as StatusJson).logins.map((login) => login.id)).toEqual(saved.logins.map((login) => login.id))
+  })
+
+  test('adds the logins of plain claude and plain codex while a daemon runs too, and does not start one', async () => {
+    const daemon = fakeDaemonClient()
+    expect(await command({ daemon }).run([], collect({}).context)).toBe(0)
+    expect(daemon.calls).not.toContain('ensureDaemon')
+    expect((JSON.parse(readFileSync(configPath(), 'utf8')) as { logins: unknown[] }).logins).toHaveLength(2)
   })
 
   test('a broken config.json is an error', async () => {

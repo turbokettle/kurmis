@@ -147,9 +147,9 @@ SYSTEM and Administrators.
 
 **Reading files.** `loadConfig` adds the login of plain claude or plain codex, with a new id, when
 the config has none, a missing `config.json` included, and saves the file under its lock, so every
-reader sees the same id from then on. `readConfig` reads the file without writing it, for the
-commands that must change nothing: `kurmis status`, `findDaemon` (which `status` calls) and the
-part of `setup --pause` and `--uninstall-and-logout` that reads before anything is removed. A `config.json` that is not JSON or has a wrong field is an
+reader sees the same id from then on. `kurmis status` reads it this way too. `readConfig` reads
+the file without writing it, for the readers that must change nothing: `findDaemon` and the part
+of `setup --pause` and `--uninstall-and-logout` that reads before anything is removed. A `config.json` that is not JSON or has a wrong field is an
 error that names the file and the field. So is one whose `version` is not 2: a version-1 file is
 refused with a message that says to delete it and add the extra logins again with `kurmis login
 claude` and `kurmis login codex`. Two logins with the same id, a second `usedByPlainCli` login of a
@@ -1467,13 +1467,11 @@ These are known and left as they are.
     blocks and the Codex start are left out then, because they depend on the sign-in and on
     usage the daemon reads again when it starts.
 
-    `status` writes nothing in the data folder: it reads `config.json` with `readConfig`, so
-    after an uninstall, or before any other command ran, no data folder is created. While
-    `config.json` has no entry for the login plain claude or plain codex uses, that login is
-    shown as "the login plain claude uses (Claude, no id yet)", with default settings and its
-    credentials and email from the files, and the JSON gives `id` and `alias` null for it
-    (`noIdYet` in `src/cli/status-format.ts`). The first other command that reads `config.json`
-    gives it an id.
+    `status` reads `config.json` with `loadConfig`, before it looks for the daemon, as the other
+    commands do. So when the file has no entry for the login plain claude or plain codex uses
+    (before the first command, or after an uninstall), status adds it with a new id and saves
+    the file, creating the data folder when it is gone. A `config.json` that cannot be read is
+    reported only when the logins are shown from the files. Status writes no other file.
 
     The text starts with the daemon's version, pid, port and uptime, or a line that says the
     daemon is not running and names the commands that start it (`kurmis claude`, `kurmis codex`
@@ -1595,8 +1593,7 @@ These are known and left as they are.
   `config.json` and `state.json`: no daemon runs or answers its status request, or the one that
   runs answers in another control API version, and then `daemon` is not null. `globalRouting` is `on`, `paused` or `off`.
   The logins come in `config.json` order, those of plain claude and plain codex first. `id` never
-  changes; `alias` is what the person types. Both are null for the login plain claude or plain
-  codex uses while `config.json` has no entry for it (`status` writes nothing). `email` is shown, never stored. For a Codex login it
+  changes; `alias` is what the person types. `email` is shown, never stored. For a Codex login it
   comes from the daemon's last probe, so it is null with `source` `files`. `codexStart.login` is
   an id. `warnings` holds a sentence for each login that is the same account as another login of
   its provider, and one when `globalRouting` is `on` and `daemon` is null. `signedIn` is what the daemon found: null when the daemon has not looked yet,

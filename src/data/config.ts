@@ -5,7 +5,8 @@
 // The login plain claude uses and the login plain codex uses are always in a loaded config,
 // first and in the order of `LOGIN_PROVIDERS`. `loadConfig` adds one with a new id when the file
 // has none, and saves the file then, so that every reader sees the same id. `readConfig` reads
-// the file without writing it, for `kurmis status`, and so may answer a config without them.
+// the file without writing it, for the readers that must change nothing, and so may answer a
+// config without them.
 //
 // No email is stored here. An automatic alias is made from one (`automaticAlias`), and the
 // email itself is read when it is needed from where the provider's CLI keeps it.
@@ -274,8 +275,8 @@ function readConfigFile(path: string): KurmisConfig {
 }
 
 /**
- * Reads `config.json` without writing anything, for a command that must not change the data
- * folder (`kurmis status`). The logins of plain claude and plain codex are in the result only
+ * Reads `config.json` without writing anything, for a reader that must not change the data
+ * folder (`findDaemon`, and `kurmis setup` before it removes anything). The logins of plain claude and plain codex are in the result only
  * when the file has them, so the result may have neither. A missing file reads as a config with
  * no logins and the default port. A file that is not JSON, or has a wrong field, is a
  * `ConfigError`, as for `loadConfig`.

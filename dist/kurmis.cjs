@@ -14782,9 +14782,6 @@ var import_node_os15 = require("node:os");
 
 // src/cli/status-format.ts
 var STATUS_JSON_FORMAT = 5;
-function noIdYetStandIn(provider) {
-  return `-${provider}`;
-}
 function daemonReport(answer2, globalRouting, version) {
   return {
     daemon: daemonOf(answer2),
@@ -14816,8 +14813,8 @@ function statusJson(report, now, options) {
     source: report.source,
     globalRouting: report.globalRouting,
     logins: report.logins.map((login) => ({
-      id: login.noIdYet === true ? null : login.id,
-      alias: login.noIdYet === true ? null : login.alias,
+      id: login.id,
+      alias: login.alias,
       provider: login.provider,
       usedByPlainCli: login.usedByPlainCli,
       email: login.email ?? null,
@@ -14841,7 +14838,6 @@ function sameAccountWarnings(answer2) {
   const warnings = [];
   const ordered2 = [...answer2.logins.filter((login) => login.usedByPlainCli), ...answer2.logins.filter((login) => !login.usedByPlainCli)];
   const firsts = [];
-  const named = answer2.logins.filter((login) => login.noIdYet !== true);
   for (const login of ordered2) {
     if (login.email === null || login.email.trim() === "") continue;
     const kept = firsts.find((first) => first.provider === login.provider && isSameClaudeAccount(first, login));
@@ -14849,8 +14845,8 @@ function sameAccountWarnings(answer2) {
       firsts.push(login);
       continue;
     }
-    const keptName = !kept.usedByPlainCli ? kept.alias : kept.noIdYet === true ? plainCliLoginText(kept.provider) : `${kept.alias}, ${plainCliLoginText(kept.provider)},`;
-    warnings.push(`${login.alias} and ${keptName} are the same ${PROVIDER_NAMES2[login.provider]} account (${kept.email}), so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, login)}" removes ${login.alias}.`);
+    const keptName = kept.usedByPlainCli ? `${kept.alias}, ${plainCliLoginText(kept.provider)},` : kept.alias;
+    warnings.push(`${login.alias} and ${keptName} are the same ${PROVIDER_NAMES2[login.provider]} account (${kept.email}), so they use one subscription. "kurmis logout ${loginArgument(answer2, login)}" removes ${login.alias}.`);
   }
   return warnings;
 }
@@ -14900,17 +14896,12 @@ var WIDTH = 80;
 var MAX_LABEL_WIDTH = 24;
 function loginTitle(login) {
   const product = PROVIDER_NAMES2[login.provider];
-  if (login.id === null || login.alias === null) return `${plainCliLoginText(login.provider)} (${product}, no id yet)`;
   return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`;
 }
 function loginLines(login, now, labelWidth) {
   const title = loginTitle(login);
   const lines = login.email === null ? [title] : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`] : [title, `  ${login.email}`];
-  if (login.id === null) {
-    lines.push(...wrap('config.json has no entry for it yet. The first kurmis command other than "kurmis status" that reads config.json adds one, with an id.', "  ", "  "));
-  } else if (login.usedByPlainCli) {
-    lines.push(`  ${plainCliLoginText(login.provider)}`);
-  }
+  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`);
   const facts = [
     login.credentials !== null ? login.credentials ? "credentials on this machine" : "no credentials on this machine" : login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
     login.routing ? "routing on" : "routing off",
@@ -15082,16 +15073,16 @@ this kurmis or to stop the daemon with "kurmis daemon stop". When the daemon doe
 request, or this kurmis cannot read its answer, the logins come from config.json as above,
 with a note on stderr.
 
-Status changes no file. While config.json has no entry for the login plain claude or plain
-codex uses (before the first other kurmis command, or after an uninstall), that login is shown
-without an id. It exits 0 whether or not the daemon runs.
+When config.json has no entry for the login plain claude or plain codex uses (before the first
+kurmis command, or after an uninstall), status adds it with a new id, as every other command
+does. It changes no other file, and exits 0 whether or not the daemon runs.
 
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and
                "source" says whether the logins come from the daemon or from the files. Each
                login has "alias", "id", "provider", "usedByPlainCli" (whether plain claude
                or plain codex uses it), "signedIn" (from the daemon) and "credentials"
-               (from the files); "id" and "alias" are null for a login without an id yet.
+               (from the files).
                "warnings" holds the warnings.
   -h, --help   Show this help.`;
 function createStatusCommand(overrides = {}) {
@@ -15122,6 +15113,13 @@ function nothingProbedYet(status2) {
 async function runStatus(args, context, deps) {
   const parsed = parseCommandArgs("status", args, { json: { type: "boolean" } }, context);
   if (typeof parsed === "number") return parsed;
+  let config;
+  try {
+    config = loadConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    config = error;
+  }
   const globalRouting = deps.globalRouting(context.env);
   let connection;
   try {
@@ -15132,7 +15130,7 @@ async function runStatus(args, context, deps) {
   }
   let report;
   if (connection === null) {
-    const files = await reportFromFiles(null, globalRouting, context, deps);
+    const files = await reportFromFiles(config, null, globalRouting, context, deps);
     if (files === null) return EXIT_FAILURE;
     report = files;
   } else {
@@ -15145,11 +15143,11 @@ async function runStatus(args, context, deps) {
       status2 = null;
     }
     if (status2 === null) {
-      const files = await reportFromFiles(null, globalRouting, context, deps);
+      const files = await reportFromFiles(config, null, globalRouting, context, deps);
       if (files === null) return EXIT_FAILURE;
       report = files;
     } else if (status2.apiVersion !== CONTROL_API_VERSION) {
-      const files = await reportFromFiles(status2, globalRouting, context, deps);
+      const files = await reportFromFiles(config, status2, globalRouting, context, deps);
       if (files === null) return EXIT_FAILURE;
       report = files;
     } else {
@@ -15172,26 +15170,19 @@ async function firstProbe(connection, status2, context, deps) {
   writeLine(context.stderr, probed.kind === "timeout" ? `kurmis status: the first usage probe did not finish within ${String(deps.probeWaitMs / 1e3)} s; showing what the daemon has.` : `kurmis status: the usage probe failed (${messageOf5(probed.error)}); showing what the daemon has.`);
   return status2;
 }
-async function reportFromFiles(daemon, globalRouting, context, deps) {
-  let config;
-  try {
-    config = readConfig();
-  } catch (error) {
-    if (!(error instanceof ConfigError)) throw error;
-    writeLine(context.stderr, `kurmis status: ${error.message}`);
+async function reportFromFiles(config, daemon, globalRouting, context, deps) {
+  if (config instanceof ConfigError) {
+    writeLine(context.stderr, `kurmis status: ${config.message}`);
     return null;
   }
   const now = deps.now();
   const state = loadState(now).state;
   const home = deps.home();
-  const shown = withPlainCliLogins(config);
-  const logins = shown.map(({ login, noIdYet }) => {
-    const cooldown = noIdYet ? void 0 : state.cooldowns.get(login.id);
+  const logins = config.logins.map((login) => {
+    const cooldown = state.cooldowns.get(login.id);
     const claude = login.provider === "claude" ? readClaudeIdentity(login, home) : null;
     let sessions = 0;
-    if (!noIdYet) {
-      for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++;
-    }
+    for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++;
     return {
       id: login.id,
       provider: login.provider,
@@ -15202,18 +15193,17 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
       weeklyLimit: login.weeklyLimit,
       useFirst: login.useFirst,
       signedIn: null,
-      usage: noIdYet ? null : state.usage.get(login.id) ?? null,
+      usage: state.usage.get(login.id) ?? null,
       cooldownUntil: cooldown === void 0 ? null : Number.isFinite(cooldown) ? cooldown : "unknown",
       block: null,
       sessions,
       // A Codex login's email is known only to a running daemon, from its last usage probe.
       email: claude?.email ?? null,
       organizationUuid: claude?.organizationUuid ?? null,
-      probing: false,
-      ...noIdYet ? { noIdYet: true } : {}
+      probing: false
     };
   });
-  const checks = await Promise.all(shown.map(async ({ login }) => [login.id, await hasCredentials(login, context.env, home, deps)]));
+  const checks = await Promise.all(config.logins.map(async (login) => [login.id, await hasCredentials(login, context.env, home, deps)]));
   return {
     daemon: daemon === null ? null : daemonOf(daemon),
     source: "files",
@@ -15222,14 +15212,6 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
     globalRouting,
     version: deps.version
   };
-}
-function withPlainCliLogins(config) {
-  const own2 = LOGIN_PROVIDERS.map((provider) => {
-    const found = config.logins.find((login) => login.usedByPlainCli && login.provider === provider);
-    if (found !== void 0) return { login: found, noIdYet: false };
-    return { login: newLoginSettings({ id: noIdYetStandIn(provider), provider, usedByPlainCli: true }), noIdYet: true };
-  });
-  return [...own2, ...config.logins.filter((login) => !login.usedByPlainCli).map((login) => ({ login, noIdYet: false }))];
 }
 function messageOf5(error) {
   return error instanceof Error ? error.message : String(error);

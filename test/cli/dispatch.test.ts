@@ -1,4 +1,4 @@
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { COMMANDS } from '../../src/cli/commands/index.ts'
 import { runCli } from '../../src/cli/dispatch.ts'
@@ -86,14 +86,15 @@ describe('kurmis status without a daemon', () => {
     rmSync(configPath(), { force: true })
   })
 
-  it('shows the logins of plain claude and plain codex without an id, and writes no config, when there is none', async () => {
+  it('gives the logins of plain claude and plain codex ids in a new config.json when there is none', async () => {
     const result = await run('status')
     expect(result.code).toBe(0)
     expect(result.stdout).toMatch(/^The kurmis daemon is not running\./)
-    expect(result.stdout).toContain('the login plain claude uses (Claude, no id yet)\n')
-    expect(result.stdout).toContain('the login plain codex uses (Codex, no id yet)\n')
-    expect(result.stdout).toContain('"kurmis status" that reads config.json adds one, with an id.\n  no credentials on this machine, routing on')
-    expect(existsSync(configPath())).toBe(false)
+    expect(existsSync(configPath())).toBe(true)
+    const [claude, codex] = (JSON.parse(readFileSync(configPath(), 'utf8')) as { logins: { id: string }[] }).logins
+    expect(result.stdout).toContain(`${claude!.id} (Claude)\n  the login plain claude uses\n  no credentials on this machine, routing on`)
+    expect(result.stdout).toContain(`${codex!.id} (Codex)\n  the login plain codex uses\n`)
+    expect(result.stdout).not.toContain('no id yet')
   })
 
   it('shows stored logins and settings, also as JSON', async () => {

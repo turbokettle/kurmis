@@ -82,7 +82,8 @@ signs the request with that login's token.
   on, and exit with the CLI's exit code.
 - `kurmis status`, with `--json`, shows every login with its settings and usage, whether the
   background process runs, and whether global routing (`kurmis setup`) is on, paused or off. It
-  never starts the background process and changes no file. While that process is not running,
+  never starts the background process. It changes no file, except that it adds the logins of
+  plain `claude` and plain `codex` to `config.json` when the file has none. While that process is not running,
   the usage shown is the last it read.
 - `kurmis login` and `logout` manage logins, and `kurmis set` changes a login's routing opt-in,
   limits, use-first and alias. Every command takes a login by its alias or its id.

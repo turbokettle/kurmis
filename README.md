@@ -191,12 +191,12 @@ kurmis status [--json]
 
 Shows every login by its alias, with its id (when the alias is not the id), its settings and
 its usage, whether the daemon is running, and whether global routing (`kurmis setup`) is on,
-paused or off, with the command that changes it. It never starts the daemon, it changes no file,
-and it exits 0 whether the daemon runs or not.
+paused or off, with the command that changes it. It never starts the daemon, and it exits 0
+whether the daemon runs or not. Like every other command, it gives the logins plain `claude` and
+plain `codex` use their ids in `~/.kurmis/config.json` when the file has none yet; it changes no
+other file.
 
-The login plain `claude` uses and the login plain `codex` uses are marked as such. Before any
-other kurmis command has run, and after an uninstall, they are shown without an id; the first
-other command that reads `~/.kurmis/config.json` gives them one. A warning at the top says when
+The login plain `claude` uses and the login plain `codex` uses are marked as such. A warning at the top says when
 two Claude logins, or two Codex logins, are the same account, because both then use one
 subscription. Another warning says when global routing is on but the daemon is not running,
 because a plain `claude` then cannot reach Anthropic.
