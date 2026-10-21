@@ -1,7 +1,14 @@
 # Architecture
 
 Kurmis is TypeScript on Node. It is installed with `npm i -g` from git, and the built bundle is
-committed so the install runs no build step. [scope.md](scope.md) says what it does. This file
+committed so the install runs no build step.
+
+`package.json` must have no `build`, `prepare`, `prepack`, `preinstall`, `install` or
+`postinstall` script. When a git dependency has one of those, npm first runs `npm install` with
+the dev dependencies in a temporary clone. In a global install that nested run inherits the
+global flag and links the package to the temporary clone, which npm then deletes, so `kurmis`
+ends up a broken link (seen with npm 11.9). This is why the script that writes the bundle is
+called `bundle`. [scope.md](scope.md) says what it does. This file
 says how the parts fit together.
 
 Much of the routing logic is copied from the original router together with its tests. A copied module
@@ -12,29 +19,80 @@ that run as another user, the UI) is deleted, not stubbed.
 ## The data folder
 
 Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis` on Windows.
-`KURMIS_HOME` moves it, and every test runs with it set to a temporary folder.
+`KURMIS_HOME` moves it, and every test runs with it set to a temporary folder. The code is in
+`src/data/`.
 
-- `config.json` holds the logins and their settings: id, provider, label, opt-in, the two limits
-  and use-first. The CLI writes it, and the daemon reloads it when it changes.
-- `claude/<id>/` is the config folder of an extra Claude login. On Windows it holds the
-  login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain, under a name
-  derived from this folder's path.
-- `codex/<id>/` is the `CODEX_HOME` of an extra Codex login.
+- `config.json` holds the daemon's port and the logins with their settings: id, provider, label,
+  opt-in, the two limits and use-first. The CLI writes it, and the daemon reloads it when its
+  contents change (`configStamp`, a hash of the file).
+- `claude/<name>/` is the config folder of an extra Claude login, where `<name>` is the part
+  of the id after `claude:`. On Windows it holds the login's `.credentials.json`. On macOS the
+  CLI keeps the secret in the Keychain, under a name derived from this folder's path.
+- `codex/<name>/` is the `CODEX_HOME` of an extra Codex login.
 - `daemon.json` holds the running daemon's pid, port, version and the secret clients send.
   Only the user can read it.
 - `state.json` holds the daemon's usage snapshots, cooldowns and which login each session is on,
   so a daemon restart keeps them.
-- `daemon.log` is the daemon's log. It never holds a token, a request body or an email.
+- `daemon.log` is the daemon's log. It never holds a token, a request body or an email. At 5 MB
+  it is renamed to `daemon.log.1`, replacing the previous one.
 
 The machine's own logins are `claude:default` and `codex:default`. They are always listed and
-cannot be removed. A CLI on them runs with the environment left as it was inherited, apart from
-the routing variables.
+cannot be removed, and they have no folder here. A CLI on them runs with the environment left as
+it was inherited, apart from the routing variables.
+
+**Login ids** are `claude:<name>` and `codex:<name>`. A name is 1 to 32 lowercase letters,
+digits, `-` and `_`, starting with a letter or digit, and not a Windows device name such as
+`con` or `nul`. So a name is always a safe folder name, and the path functions check it again.
+
+**Writing files.** Every JSON file is written to a temp file in the same folder, flushed to the
+disk and renamed over the old one, so a reader sees the old file or the new one, never half of
+each. On Windows a rename fails while another program has the file open, so it is retried for
+about a second. On macOS and Linux the data folder is created with mode 0700 and `daemon.json`
+and `daemon.log` with 0600. Windows ignores those modes; there the files are protected by the
+access list they inherit from `%USERPROFILE%`, which only lets in the user, SYSTEM and
+Administrators.
+
+**Reading files.** A missing `config.json` means the defaults. A `config.json` that is not JSON,
+has a wrong field or has a `version` newer than this kurmis is an error that names the file and
+the field. A damaged `state.json` never stops the daemon: an entry that does not check out is
+dropped and the rest is kept, and a file that is not JSON reads as empty.
+
+```json
+// config.json
+{
+  "version": 1,
+  "port": 28411,
+  "logins": [
+    { "id": "claude:default", "provider": "claude", "label": "default", "routing": true,
+      "fiveHourLimit": 100, "weeklyLimit": 100, "useFirst": false },
+    { "id": "claude:work", "provider": "claude", "label": "Work", "routing": true,
+      "fiveHourLimit": 90, "weeklyLimit": 100, "useFirst": true }
+  ]
+}
+
+// state.json; a cooldown of null means "until further notice" (Infinity in memory)
+{
+  "version": 1,
+  "usage": { "claude:work": { "accountId": "claude:work", "provider": "claude", "...": "AccountUsage" } },
+  "cooldowns": { "claude:work": 1768489200000, "claude:default": null },
+  "sessions": { "0b7c0a52-1111-4222-8333-944445555666": { "login": "claude:work", "lastUsed": 1768478400000 } }
+}
+
+// daemon.json
+{ "pid": 4242, "port": 28411, "version": "0.1.0", "secret": "<64 hex characters>", "startedAt": 1768478400000 }
+```
+
+Session placements are dropped after 7 days without a request, and beyond the newest 2000. The
+daemon saves `state.json` through `createCoalescedWriter`, which writes at most once per
+interval however often the state changes.
 
 ## The daemon
 
 One daemon per user. It serves the proxy and the control API on one `127.0.0.1` port. The port
-is fixed so that `settings.json` can name it. It defaults to a value set in `config.json`, and
-a busy port is an error that says how to change it. Starting it again replaces a daemon of an
+is fixed so that `settings.json` can name it. It is `port` in `config.json`, 28411 when that is
+not set, and a busy port is an error that says how to change it. 28411 is below the range every
+OS hands out for outgoing connections (32768 and up on Linux, 49152 and up on macOS and Windows),
+and no common tool uses it. Starting it again replaces a daemon of an
 older version, after that daemon finishes the requests it has open.
 
 - **The control API** is on paths under `/_kurmis/`. It lets the CLI read status, ask for a
@@ -69,6 +127,13 @@ older version, after that daemon finishes the requests it has open.
   default was named;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
   itself and no subscription would be billed.
+
+**Kurmis' own options come first.** `kurmis claude` and `kurmis codex` read their options
+(`--login <id>`, `--help`) from the front of the argument list and stop at the first argument
+they do not know. That argument and everything after it go to the CLI unchanged. `--` also ends
+kurmis' options and is dropped, so `kurmis claude -- --help` shows claude's own help, while
+`kurmis claude --help` shows kurmis'. `--login` takes a full id or just the name, so
+`--login work` means `claude:work` under `kurmis claude`. The code is `src/cli/wrapper-args.ts`.
 
 On Auto, the CLI is started on a login that has credentials here, normally `claude:default`.
 The proxy signs each request with the login it picks. When that is the login the CLI was
@@ -105,12 +170,24 @@ the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it 
 
 ## Code layout
 
+- `src/data/` holds the data folder: its paths, login ids, the JSON file helpers, the stores for
+  `config.json`, `state.json` and `daemon.json`, and the log writer. Both the CLI and the daemon
+  use it.
 - `src/core/` holds pure logic with no I/O: routing, usage parsing, limits, the TOML merge. It
   holds most of the code copied from the original router.
 - `src/daemon/` holds the proxy, the control API, the token readers, the usage probes and the
   daemon's lifecycle.
-- `src/cli/` holds the commands and the wrapper.
-- `src/platform/` holds what differs per OS: finding programs, junctions, detaching, autostart.
+- `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and
+  `dispatch.ts` picks the command and handles `--help`, `--version` and `help <command>`. Each
+  command is one module in `src/cli/commands/` exporting a `Command`: its name, a one-line
+  summary, its help text and `run(args, context)`, which returns the exit code (0 done, 1
+  failed, 2 wrong command line). The commands are `claude`, `codex`, `status [--json]`,
+  `list [--json]`, `login <id>`, `logout <id>`, `setup [--undo]` and
+  `daemon start|stop|status|run`, where `daemon run` runs the daemon in the foreground and is
+  what `daemon start` launches in the background.
+- `src/version.ts` holds the version, which the build takes from `package.json`.
+- `src/platform/` holds what differs per OS: finding programs, junctions, detaching, autostart,
+  and the file rename retry and file modes.
 - `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude`, `codex app-server` and
   Anthropic's API. No test reaches the network or the user's real `~/.claude`, `~/.codex` or
   Keychain.

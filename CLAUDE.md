@@ -2,7 +2,7 @@
 
 Read `docs/scope.md` and `docs/architecture.md` before changing anything.
 
-- `pnpm test` runs the tests, `pnpm build` writes `dist/kurmis.cjs`, and `pnpm check` runs the
+- `pnpm test` runs the tests, `pnpm bundle` writes `dist/kurmis.cjs`, and `pnpm check` runs the
   type check and lint. Commit `dist/` together with the source change that produced it.
 - **Tests never touch the real machine.** Every test sets `KURMIS_HOME` and `HOME` to a
   temporary folder, uses the fakes in `test/fakes/`, and makes no network call. Nothing may read
