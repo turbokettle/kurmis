@@ -151,7 +151,10 @@ const status: Handler = async (args, context) => {
     writeLine(context.stdout, `The kurmis daemon ${answer.version} runs on ${address(answer.port)}, pid ${String(answer.pid)}, ` +
       `since ${new Date(answer.startedAt).toISOString()}, with ${String(answer.logins.length)} logins.`)
     const order = compareVersions(answer.version, kurmisVersion)
-    if (order === -1) writeLine(context.stdout, `This kurmis is ${kurmisVersion}; the next kurmis command replaces the daemon.`)
+    if (order === -1) {
+      writeLine(context.stdout, `This kurmis is ${kurmisVersion}; the next "kurmis claude", "kurmis codex", "kurmis setup" ` +
+        'or "kurmis daemon start" replaces the daemon.')
+    }
     if (order === 1) writeLine(context.stdout, `This kurmis is ${kurmisVersion}, older than the daemon.`)
     return EXIT_OK
   } catch (error) {

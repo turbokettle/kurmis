@@ -148,7 +148,7 @@ describe('the kurmis daemon, end to end', () => {
     const status = await world.kurmis(['daemon', 'status'])
     expect(status.code).toBe(0)
     expect(status.stdout).toContain(`The kurmis daemon ${OLDER_VERSION} runs on`)
-    expect(status.stdout).toContain(`This kurmis is ${PACKAGE_VERSION}; the next kurmis command replaces the daemon.`)
+    expect(status.stdout).toContain(`This kurmis is ${PACKAGE_VERSION}; the next "kurmis claude", "kurmis codex", "kurmis setup" or "kurmis daemon start" replaces the daemon.`)
     // `daemon status` only looks.
     expect(daemonOf(world).pid).toBe(old.pid)
 
@@ -261,6 +261,16 @@ describe('the kurmis daemon, end to end', () => {
     expect(await ask(SESSION_C)).toBe('served by work')
 
     expect((await world.kurmis(['daemon', 'stop'])).code).toBe(0)
+    // Without a daemon, status shows what state.json kept and starts none.
+    const stopped = await world.status()
+    expect(stopped).toMatchObject({ daemon: null, source: 'files' })
+    expect(world.daemonInfo()).toBeNull()
+    const stoppedById = new Map(stopped.logins.map((login) => [login.id, login]))
+    expect(stoppedById.get(work.id)?.sessions).toBe(2)
+    expect(stoppedById.get(OWN_CLAUDE)?.usage?.windows.find((window) => window.key === 'five_hour')?.utilization).toBe(100)
+    expect(stoppedById.get(OWN_CLAUDE)?.blocked).toBeNull()
+
+    expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
     const status = await world.status()
     const byId = new Map(status.logins.map((login) => [login.id, login]))
     const cooldownEnd = new Date(Math.floor(resetsAt / 1000) * 1000).toISOString()

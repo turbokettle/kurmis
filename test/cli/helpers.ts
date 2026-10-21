@@ -1,10 +1,11 @@
 // Shared helpers for the command tests: an output collector, a fake daemon client and a status
 // answer builder. Every id, alias and email here is made up.
-import type { LoginStatus, StatusAnswer } from '../../src/core/control-api.ts'
+import { CONTROL_API_VERSION, type LoginStatus, type StatusAnswer } from '../../src/core/control-api.ts'
 import type { CliContext } from '../../src/cli/command.ts'
 import type { DaemonClient } from '../../src/cli/command-deps.ts'
 import type { DaemonConnection } from '../../src/cli/daemon-client.ts'
 import { DaemonError } from '../../src/cli/daemon-client.ts'
+import { daemonReport, type StatusReport } from '../../src/cli/status-format.ts'
 import type { LoginRef } from '../../src/data/login-id.ts'
 import { OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
 
@@ -59,7 +60,7 @@ export function loginStatus(login: LoginRef & { alias?: string }, patch: Partial
 export function statusAnswer(logins: LoginStatus[], patch: Partial<StatusAnswer> = {}): StatusAnswer {
   return {
     ok: true,
-    apiVersion: 1,
+    apiVersion: CONTROL_API_VERSION,
     version: '0.1.0',
     pid: FAKE_CONNECTION.pid,
     port: FAKE_CONNECTION.port,
@@ -67,6 +68,11 @@ export function statusAnswer(logins: LoginStatus[], patch: Partial<StatusAnswer>
     logins,
     ...patch
   }
+}
+
+/** A status report of the daemon's answer, global routing off and this kurmis of the daemon's version, unless `patch` says otherwise. */
+export function daemonStatus(answer: StatusAnswer, patch: Partial<StatusReport> = {}): StatusReport {
+  return { ...daemonReport(answer, 'off', answer.version), ...patch }
 }
 
 export interface FakeDaemonClient extends DaemonClient {
@@ -83,6 +89,10 @@ export interface FakeDaemonOptions {
   probed?: StatusAnswer
   /** Makes `ensureDaemon` throw a `DaemonError` with this message. */
   ensureFails?: string
+  /** Makes `findDaemon` throw a `DaemonError` with this message. */
+  findFails?: string
+  /** Makes `readStatus` throw a `DaemonError` with this message. */
+  readFails?: string
   /** Makes `requestReload` throw a `DaemonError` with this message. */
   reloadFails?: string
 }
@@ -95,6 +105,7 @@ export function fakeDaemonClient(options: FakeDaemonOptions = {}): FakeDaemonCli
     calls,
     async findDaemon() {
       calls.push('findDaemon')
+      if (options.findFails !== undefined) throw new DaemonError(options.findFails)
       return options.running === false ? null : FAKE_CONNECTION
     },
     async ensureDaemon() {
@@ -104,6 +115,7 @@ export function fakeDaemonClient(options: FakeDaemonOptions = {}): FakeDaemonCli
     },
     async readStatus() {
       calls.push('readStatus')
+      if (options.readFails !== undefined) throw new DaemonError(options.readFails)
       return status
     },
     async requestProbe(_connection, logins) {

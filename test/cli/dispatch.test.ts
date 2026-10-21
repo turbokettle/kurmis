@@ -17,7 +17,7 @@ async function run(...argv: string[]): Promise<{ code: number; stdout: string; s
   return { code, stdout, stderr }
 }
 
-const NAMES = ['claude', 'codex', 'status', 'list', 'set', 'login', 'logout', 'setup', 'daemon']
+const NAMES = ['claude', 'codex', 'status', 'set', 'login', 'logout', 'setup', 'daemon']
 
 describe('dispatch', () => {
   it('has every command from the docs', () => {
@@ -81,44 +81,38 @@ describe('dispatch', () => {
   })
 })
 
-describe('kurmis list', () => {
+describe('kurmis status without a daemon', () => {
   beforeEach(() => {
     rmSync(configPath(), { force: true })
   })
 
-  it('lists the logins of plain claude and plain codex, with new ids, when there is no config', async () => {
-    const result = await run('list')
+  it('shows the logins of plain claude and plain codex, with new ids, when there is no config', async () => {
+    const result = await run('status')
     expect(result.code).toBe(0)
+    expect(result.stdout).toMatch(/^The kurmis daemon is not running\./)
     // Each of the logins of plain claude and plain codex has a new id of 10 letters and digits, which is also its alias.
-    const [ownClaude, ownCodex] = [...new Set(result.stdout.match(/\b[a-z0-9]{10}\b/g))]
-    expect(ownClaude).toBeDefined()
-    expect(result.stdout.replaceAll(ownClaude!, 'OWN-CLAUDE').replaceAll(ownCodex!, 'OWN-CODEX0')).toBe([
-      'PROVIDER  ALIAS       ID          AUTO  FIVE-HOUR  WEEKLY  USE-FIRST  CREDENTIALS',
-      'claude    OWN-CLAUDE  OWN-CLAUDE  on    100%       100%    off        no',
-      'codex     OWN-CODEX0  OWN-CODEX0  on    100%       100%    off        no',
-      '',
-      'OWN-CLAUDE is the login plain claude uses.',
-      'OWN-CODEX0 is the login plain codex uses.',
-      ''
-    ].join('\n'))
+    const ids = [...result.stdout.matchAll(/^([a-z0-9]{10}) \((Claude|Codex), id \1\)$/gm)].map((match) => match[2])
+    expect(ids).toEqual(['Claude', 'Codex'])
+    expect(result.stdout).toContain('  the login plain claude uses\n  no credentials on this machine, routing on')
+    expect(result.stdout).toContain('  the login plain codex uses\n  no credentials on this machine, routing on')
   })
 
-  it('lists stored logins and settings, also as JSON', async () => {
-    const config = writeTestConfig({
+  it('shows stored logins and settings, also as JSON', async () => {
+    writeTestConfig({
       extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example', useFirst: true }],
       ownCodex: { routing: false, weeklyLimit: 75 }
     })
-    const table = await run('list')
-    expect(table.stdout).toContain('claude    work-example  workclaude  on    100%       100%    on         no')
-    expect(table.stdout).toContain(`codex     ${OWN_CODEX}    ${OWN_CODEX}  off   100%       75%     off        no`)
-    expect(table.stdout).toContain(`${OWN_CLAUDE} is the login plain claude uses`)
-    const json = await run('list', '--json')
-    expect(JSON.parse(json.stdout)).toEqual(config.logins.map((login) => ({ ...login, credentials: false })))
+    const text = await run('status')
+    expect(text.stdout).toContain('work-example (Claude, id workclaude)\n  no credentials on this machine, routing on, limits 100% 5 hour, 100% weekly,\n  use first')
+    expect(text.stdout).toContain(`${OWN_CODEX} (Codex, id ${OWN_CODEX})\n  the login plain codex uses\n  no credentials on this machine, routing off, limits 100% 5 hour, 75% weekly`)
+    const json = JSON.parse((await run('status', '--json')).stdout) as { daemon: unknown; logins: Array<{ id: string; credentials: boolean }> }
+    expect(json.daemon).toBeNull()
+    expect(json.logins.map((login) => [login.id, login.credentials])).toEqual([[OWN_CLAUDE, false], [OWN_CODEX, false], ['workclaude', false]])
   })
 
   it('reports a broken config.json', async () => {
     writeFileSync(configPath(), '{"version": 7}')
-    const result = await run('list')
+    const result = await run('status')
     expect(result.code).toBe(1)
     expect(result.stderr).toContain('newer kurmis')
   })

@@ -1,6 +1,6 @@
 // Who a Claude login is: the `oauthAccount` block the CLI caches in a config folder's
 // `.claude.json`. The proxy needs the account uuid for `metadata.user_id` (`rewriteUserId` in
-// `src/core/proxy-rules.ts`), `kurmis list` and `status` show the email, and the login's automatic
+// `src/core/proxy-rules.ts`), `kurmis login` and `status` show the email, and the login's automatic
 // alias is made from it (`followEmail` in `config.ts`).
 //
 // The block is read only from a config folder that this login's own CLI runs write, so it can

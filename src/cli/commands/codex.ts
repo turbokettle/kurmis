@@ -49,7 +49,7 @@ asked for each login's usage, and started first when it is not running.
 
 Options (only before the first argument kurmis does not know):
   --login <login>   Start on this Codex login. <login> is the login's alias or its id, as
-                    "kurmis list" shows them, for example --login work-example. Only Codex
+                    "kurmis status" shows them, for example --login work-example. Only Codex
                     logins are looked at, so a Claude login with the same alias does not count.
   -h, --help        Show this help.
   --                Pass everything after it to codex, even arguments kurmis knows.
@@ -132,7 +132,7 @@ async function preparedHome(named: string | null, context: CliContext, deps: Cod
   if (named !== null) {
     const resolved = resolveLogin(config, named, 'codex')
     if ('error' in resolved) {
-      writeLine(context.stderr, `kurmis codex: ${resolved.error}. "kurmis list" shows the logins, and "kurmis login codex" adds one.`)
+      writeLine(context.stderr, `kurmis codex: ${resolved.error}. "kurmis status" shows the logins, and "kurmis login codex" adds one.`)
       return null
     }
     login = resolved.login

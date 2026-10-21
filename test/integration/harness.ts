@@ -176,7 +176,9 @@ export interface World {
 /** The parts of `kurmis status --json` the tests read. */
 export interface StatusJson {
   format: number
-  daemon: { version: string; pid: number; port: number; startedAt: string }
+  daemon: null | { version: string; pid: number; port: number; startedAt: string; older: boolean }
+  source: 'daemon' | 'files'
+  globalRouting: 'on' | 'paused' | 'off'
   logins: Array<{
     id: string
     alias: string
@@ -184,6 +186,7 @@ export interface StatusJson {
     machineOwn: boolean
     email: string | null
     signedIn: boolean | null
+    credentials: boolean | null
     probing: boolean
     routing: boolean
     fiveHourLimit: number

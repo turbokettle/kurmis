@@ -49,7 +49,7 @@ subscriptions with `kurmis login`:
 kurmis login claude                 # opens the browser to sign in a new Claude login
 kurmis login claude --alias side    # the same, with the alias side
 kurmis login codex                  # a new Codex login
-kurmis list                         # every login and its settings
+kurmis status                       # every login, its settings and its usage
 ```
 
 Each login has a random id, such as `k3v9q2m7xa`, and an alias, which is the name you see and
@@ -62,10 +62,9 @@ Then use `kurmis claude` and `kurmis codex` where you used `claude` and `codex`:
 kurmis claude                       # an interactive session, routed
 kurmis claude -p "explain this"     # every claude argument works as before
 kurmis codex                        # Codex on the login with the most room
-kurmis status                       # how much each login has used
 ```
 
-The daemon starts by itself the first time a command needs it.
+`kurmis claude` and `kurmis codex` start the daemon when it is not running.
 
 ## Commands
 
@@ -171,27 +170,35 @@ login lacks.
 kurmis status [--json]
 ```
 
-Shows each login by its alias, with its id and the account's email when the daemon knows it. The
-login plain `claude` uses and the login plain `codex` uses are marked as such. For each login it
-shows the five-hour and weekly usage with the time until each resets, its limits, whether routing
-may use it and how many sessions it serves. A line starting with "passed over" says why Auto, or
-`kurmis codex`, would skip that login now (signed out, at its limit, cooling down after a
-usage-limit answer). The last line says which login `kurmis codex` would start on. A warning at the
-top says when an extra Claude login is the same account as the login plain `claude` uses, or an
-extra Codex login the same account as the login plain `codex` uses, because both then use one
-subscription. `--json` prints the same as JSON, in a shape that stays stable (see
-`docs/architecture.md`).
+Shows every login by its alias, with its id, its settings and its usage, whether the daemon is
+running, and whether global routing (`kurmis setup`) is on, paused or off, with the command that
+changes it. It never starts the daemon, and it exits 0 whether the daemon runs or not.
 
-### `kurmis list`
+The login plain `claude` uses and the login plain `codex` uses are marked as such. A warning at
+the top says when an extra Claude login is the same account as the login plain `claude` uses, or
+an extra Codex login the same account as the login plain `codex` uses, because both then use one
+subscription. Another warning says when global routing is on but the daemon is not running,
+because a plain `claude` then cannot reach Anthropic.
 
-```sh
-kurmis list [--json]
-```
+While the daemon runs, the status comes from it. For each login it shows the account's email,
+whether the login is signed in, the five-hour and weekly usage with the time until each resets,
+its limits, whether routing may use it and how many sessions it serves. A line starting with
+"passed over" says why Auto, or `kurmis codex`, would skip that login now (signed out, at its
+limit, cooling down after a usage-limit answer). The last line says which login `kurmis codex`
+would start on. When the daemon runs an older kurmis than the one you run, `status` says so: the
+next command that starts the daemon replaces it.
 
-Lists the logins with their settings and whether credentials are on this machine. It does not
-need the daemon and does not check that the credentials still work; `kurmis status` does. For a
-Codex login whose `config.toml` keeps the sign-in in the Keychain or Credential Manager
-(`cli_auth_credentials_store = "keyring"` or `"auto"`), it asks `codex login status`.
+While the daemon is not running, the first line says so and names the commands that start it:
+`kurmis claude`, `kurmis codex` without `--login`, `kurmis setup` and `kurmis daemon start`. The
+logins and their settings come from `~/.kurmis/config.json`. The usage is the last the daemon
+read, with how long ago it read it. Kurmis cannot tell then whether a login is signed in, so it
+shows whether the login's credentials are on this machine instead. That check looks at files
+and does not show that the credentials still work. For a Codex login whose `config.toml` keeps
+the sign-in in the Keychain or Credential Manager (`cli_auth_credentials_store = "keyring"` or
+`"auto"`), it asks `codex login status`. Codex logins show no email then, so the warning about
+one subscription covers Claude logins only.
+
+`--json` prints the same as JSON (see `docs/architecture.md` for its shape).
 
 ### `kurmis set`
 
@@ -247,7 +254,8 @@ a plain `claude`, and the Claude Code extensions in your editor, use kurmis too:
 - it saves a copy of the file as `settings.json.kurmis-backup` before it adds kurmis' settings
   (a later setup that only updates them keeps that copy);
 - it makes the daemon start when you log in (a launch agent on macOS, a logon entry on
-  Windows). On Linux there is no start at login; the next kurmis command starts the daemon.
+  Windows). On Linux there is no start at login; the next `kurmis claude` or `kurmis codex`
+  starts the daemon.
 
 A plain `claude` then runs on Auto. Restart Claude Code sessions and editors that were already
 open. If the file already points `ANTHROPIC_BASE_URL` at another proxy, setup stops and changes
@@ -288,18 +296,19 @@ restart them after any of these.
 Keychain, so the logins whose token is in the Keychain are not routed. `kurmis status` shows
 them without a token. Run `kurmis setup` in a terminal at the screen: the daemon then runs in
 your desktop session, starts again at each login, and kurmis commands over ssh use it. Without
-setup, run any kurmis command once in a terminal at the screen before you work over ssh. When a
-daemon started from ssh already runs, `kurmis daemon restart` at the screen replaces it. After
-an update, the first kurmis command replaces the older daemon with one started from where that
-command runs, so run it at the screen too.
+setup, run `kurmis daemon start` once in a terminal at the screen before you work over ssh. When
+a daemon started from ssh already runs, `kurmis daemon restart` at the screen replaces it. After
+an update, the first command that starts the daemon (`kurmis claude`, `kurmis codex`,
+`kurmis setup` or `kurmis daemon start`) replaces the older daemon with one started from where
+that command runs, so run it at the screen too.
 
 On Windows, a daemon started from an ssh session ends when that session ends, and the next
-kurmis command starts it again. After `kurmis setup`, the daemon started at logon keeps running
-and ssh sessions use it.
+`kurmis claude` or `kurmis codex` starts it again. After `kurmis setup`, the daemon started at
+logon keeps running and ssh sessions use it.
 
 On macOS, launchd may not be able to start the login item when Node, kurmis or the kurmis data
-folder is on an external volume. Then the daemon does not start at login, and the next kurmis
-command starts it.
+folder is on an external volume. Then the daemon does not start at login, and the next
+`kurmis claude` or `kurmis codex` starts it.
 
 ### `kurmis daemon`
 
@@ -307,8 +316,8 @@ command starts it.
 kurmis daemon start|stop|restart|status|run
 ```
 
-You seldom need these: the other commands start the daemon when they need it, and a newer
-kurmis replaces an older daemon by itself. `kurmis daemon status` shows whether it runs, its pid
+You seldom need these: `kurmis claude`, `kurmis codex` and `kurmis setup` start the daemon when
+they need it, and replace a daemon of an older kurmis. `kurmis daemon status` shows whether it runs, its pid
 and port; `stop` stops it after it finishes the requests it has open, waiting at most 30
 seconds for them; `stop --now` stops it at once and cuts those requests, and an open Claude
 session then sees a dropped connection and retries the request; `restart` stops it and starts a
@@ -369,8 +378,8 @@ to run `npm uninstall -g kurmis`.
   programs installed with npm.
 - **Windows: setup says the logon entry was not written because of Windows Script Host.** The
   logon entry starts the daemon without a console window through `wscript.exe`. When Windows
-  Script Host is missing or turned off, setup writes no entry, warns and still exits 0; the next
-  kurmis command starts the daemon anyway.
+  Script Host is missing or turned off, setup writes no entry, warns and still exits 0;
+  `kurmis claude` and `kurmis codex` start the daemon anyway.
 - **"config.json … was written by an older kurmis (config version 1)".** This kurmis reads only
   version 2 of `config.json`. Delete `~/.kurmis/config.json`, then add the extra logins again
   with `kurmis login claude` and `kurmis login codex`.

@@ -41,8 +41,8 @@ machine after each larger change. Linux works where it costs nothing extra.
 
 ## Claude routing
 
-One background process per user runs an HTTP proxy on the loopback address. The `kurmis` CLI
-starts it when it is not running. A Claude CLI reaches it through `ANTHROPIC_BASE_URL`. That
+One background process per user runs an HTTP proxy on the loopback address. `kurmis claude`,
+`kurmis codex` and `kurmis setup` start it when it is not running. A Claude CLI reaches it through `ANTHROPIC_BASE_URL`. That
 includes IDE extensions, through `settings.json`. For each request the proxy picks a login and
 signs the request with that login's token.
 
@@ -78,9 +78,11 @@ signs the request with that login's token.
 
 - `kurmis claude …` and `kurmis codex …` start the CLI with the terminal attached, pass Ctrl-C
   on, and exit with the CLI's exit code.
-- `kurmis status`, with `--json`, shows each login's usage.
-- `kurmis login`, `logout` and `list` manage logins, and `kurmis set` changes a login's routing
-  opt-in, limits, use-first and alias. Every command takes a login by its alias or its id.
+- `kurmis status`, with `--json`, shows every login with its settings and usage, whether the
+  background process runs, and whether global routing (`kurmis setup`) is on, paused or off. It
+  never starts the background process. Without it, the usage is the last that process read.
+- `kurmis login` and `logout` manage logins, and `kurmis set` changes a login's routing opt-in,
+  limits, use-first and alias. Every command takes a login by its alias or its id.
 - `kurmis setup` routes every Claude Code on the machine through kurmis by editing the user's
   `settings.json`. `kurmis setup --pause` takes kurmis' settings out of that file and keeps the
   rest. `kurmis setup --uninstall-and-logout` removes everything kurmis set up, signs out every

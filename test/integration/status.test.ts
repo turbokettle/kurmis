@@ -107,16 +107,30 @@ describe('kurmis status, end to end', () => {
     // Nothing has told kurmis the emails of the logins of plain claude and plain codex yet.
     expect([world.configLogin(OWN_CLAUDE).alias, world.configLogin(OWN_CODEX).alias]).toEqual([OWN_CLAUDE, OWN_CODEX])
 
-    // Nothing has started a daemon yet: `status` starts one and waits for its first probes.
+    // Nothing has started a daemon yet, and `status` starts none: it shows the files.
+    const offline = await statusJson(world)
     expect(world.daemonInfo()).toBeNull()
+    expect(offline).toMatchObject({ format: 3, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
+    expect(offline.logins.map((login) => [login.id, login.signedIn, login.credentials, login.usage, login.blocked])).toEqual([
+      [OWN_CLAUDE, null, true, null, null], [OWN_CODEX, null, true, null, null], [work.id, null, true, null, null], [spare.id, null, true, null, null]
+    ])
+    // Claude emails come from the profile files; a Codex login's only a running daemon knows.
+    expect(offline.logins.map((login) => login.email)).toEqual(['default@example.com', null, 'work@example.com', null])
+    const offlineText = await world.kurmis(['status'])
+    expect(offlineText.stdout).toMatch(/^The kurmis daemon is not running\. /)
+    expect(offlineText.stdout).toContain(`work-example (Claude, id ${work.id})  work@example.com\n  credentials on this machine, routing on`)
+
     const startedAround = Date.now()
+    expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
     const status = await probedStatus(world)
     const daemon = world.daemonInfo()
     expect(daemon).not.toBeNull()
 
-    expect(status.format).toBe(2)
-    expect(status.daemon).toEqual({ version: PACKAGE_VERSION, pid: daemon?.pid, port: world.port, startedAt: new Date(daemon?.startedAt ?? 0).toISOString() })
-    expect(Math.abs(Date.parse(status.daemon.startedAt) - startedAround)).toBeLessThan(MINUTE_MS)
+    expect(status).toMatchObject({ format: 3, source: 'daemon', globalRouting: 'off' })
+    expect(status.daemon).toEqual({
+      version: PACKAGE_VERSION, pid: daemon?.pid, port: world.port, startedAt: new Date(daemon?.startedAt ?? 0).toISOString(), older: false
+    })
+    expect(Math.abs(Date.parse(status.daemon?.startedAt ?? '') - startedAround)).toBeLessThan(MINUTE_MS)
     expect(status.logins.map((login) => [login.id, login.machineOwn])).toEqual([[OWN_CLAUDE, true], [OWN_CODEX, true], [work.id, false], [spare.id, false]])
     expect(status.warnings).toEqual([])
     for (const login of status.logins) {
@@ -203,6 +217,7 @@ describe('kurmis status, end to end', () => {
     const spare = await world.addClaudeLogin('spare@example.com')
     writeClaudeScenario(spare.folder, { getUsage: 'error' })
 
+    expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
     const first = await probedStatus(world)
     expect(loginOf(first, OWN_CLAUDE)).toMatchObject({
       alias: OWN_CLAUDE, machineOwn: true, signedIn: false, email: null, blocked: { kind: 'signed-out', until: null }, usage: { windows: [], error: null }

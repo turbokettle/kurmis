@@ -257,7 +257,7 @@ describe('kurmis setup', () => {
   })
 
   it('counts a machine where no logon entry can be written as done, with a warning', async () => {
-    const warning = 'The logon entry was not written: C:\\Windows\\System32\\wscript.exe does not exist. The next kurmis command starts the daemon anyway.'
+    const warning = 'The logon entry was not written: C:\\Windows\\System32\\wscript.exe does not exist. The next "kurmis claude" or "kurmis codex" starts the daemon anyway.'
     const { command } = setup({}, fakeAutostart({ noEntryPossible: true, warning }), 'win32')
     const result = await run(command, [])
     expect(result.code).toBe(0)
@@ -280,7 +280,7 @@ describe('kurmis setup', () => {
   })
 
   it('counts a platform without autostart as done, with a warning', async () => {
-    const unsupported = 'Starting the daemon at login is not supported on this platform; the next kurmis command starts it.'
+    const unsupported = 'Starting the daemon at login is not supported on this platform; the next "kurmis claude" or "kurmis codex" starts it.'
     const { command } = setup({}, fakeAutostart({ warning: unsupported }), 'linux')
     const result = await run(command, [])
     expect(result.code).toBe(0)

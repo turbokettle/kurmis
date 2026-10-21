@@ -3,7 +3,6 @@ import type { Command } from '../command.ts'
 import { claudeCommand } from './claude.ts'
 import { codexCommand } from './codex.ts'
 import { daemonCommand } from './daemon.ts'
-import { listCommand } from './list.ts'
 import { loginCommand } from './login.ts'
 import { logoutCommand } from './logout.ts'
 import { setCommand } from './set.ts'
@@ -14,7 +13,6 @@ export const COMMANDS: readonly Command[] = [
   claudeCommand,
   codexCommand,
   statusCommand,
-  listCommand,
   setCommand,
   loginCommand,
   logoutCommand,

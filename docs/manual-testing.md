@@ -26,21 +26,22 @@ never holds tokens or request bodies, so it can be shared.
 ## On every platform
 
 ### Logins
-The checks below call the extra Claude login `<t1>`: use the alias `kurmis list` shows for it.
+The checks below call the extra Claude login `<t1>`: use the alias `kurmis status` shows for it.
 
 1. **The logins plain claude and plain codex use get their alias.** Start from an empty data
-   folder. Run `kurmis list` first: those two logins are there, each with its id as its alias
-   and a line under the table that says which plain CLI uses it. Then run
-   `kurmis status`, which waits for the daemon's first usage probe. After it, `kurmis list`
-   should show each of them with the alias made from its email (`me@example.com` gives
-   `me-example`).
+   folder, with no daemon running. Run `kurmis status` first: it says the daemon is not running
+   and starts none (`kurmis daemon status` still says so after it). Those two logins are there,
+   each with its id as its alias and a line that says which plain CLI uses it. Each shows
+   `credentials on this machine` when plain `claude` or plain `codex` is signed in. Then run `kurmis daemon start` and `kurmis status`, which waits
+   for the daemon's first usage probe. After it, each of them should have the alias made from
+   its email (`me@example.com` gives `me-example`).
 2. **A new login gets its alias from the email.** `kurmis login claude` opens the browser. Sign
    in with a second subscription. Expect the email printed, then `Added <alias> (id <id>)`, with
-   the alias made from the email. `kurmis list` should show it with credentials `yes`, and
-   `kurmis status` should show its email, plan and usage within a minute.
+   the alias made from the email. `kurmis status` should show its email, `signed in`, its plan
+   and its usage within a minute.
 3. **The same account twice.** Run `kurmis login claude` again and sign in to the account of
-   `<t1>`. Expect a message that the email is already `<t1>`, exit code 0, no new row in
-   `kurmis list`, and no new folder in the data folder's `claude/`. Do the same with the account
+   `<t1>`. Expect a message that the email is already `<t1>`, exit code 0, no new login in
+   `kurmis status`, and no new folder in the data folder's `claude/`. Do the same with the account
    of the login plain claude uses: the message should name that login. On macOS,
    check that no new `Claude Code-credentials-<8 hex digits>` Keychain item is left.
 4. **An extra login of the account plain claude uses.** This needs a spare Claude account B
@@ -60,7 +61,7 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis list`
    for `claude:<alias>` or `codex:<alias>`. `kurmis claude --login <alias>` and
    `kurmis codex --login <alias>` should each start on their own provider's login without the
    prefix.
-7. `kurmis set <t1> --alias test-t1 --weekly 90`, then `kurmis list`. Expect the alias `test-t1`
+7. `kurmis set <t1> --alias test-t1 --weekly 90`, then `kurmis status`. Expect the alias `test-t1`
    and the limit, and `daemon.log` showing `config_loaded`. Run `kurmis login test-t1`: the
    alias should stay `test-t1`.
 8. `daemon.log` should hold login ids only: search it for the aliases and the emails of the
@@ -146,8 +147,13 @@ Run this last, since it removes the logins added above.
    count before and after).
 
 ### Daemon
-1. `kurmis daemon stop`, then `kurmis status`. The status command starts the daemon again.
-2. Install a newer build over the running one, then run any command. Expect
+1. `kurmis daemon stop`, then `kurmis status`. It exits 0, says the daemon is not running, and
+   shows each login's last usage with how long ago it was read. `kurmis daemon status` still
+   says the daemon is not running. With global routing on (after `kurmis setup`), `status` also
+   warns that a plain `claude` cannot reach Anthropic. `kurmis claude -p "Reply ok"` starts the
+   daemon again.
+2. Install a newer build over the running one, then run `kurmis status`. It should say the
+   daemon runs an older kurmis and leave it running. Then run `kurmis claude -p "Reply ok"`. Expect
    `daemon_replacing_older` in `daemon.log`, and an interactive session that was open keeps
    working.
 3. Close the terminal that started the daemon. The daemon keeps running.
@@ -194,7 +200,8 @@ Run this last, since it removes the logins added above.
 - **Daemon survives.** Start the daemon from a terminal, close the terminal window, and check
   `kurmis daemon status` in a new one. No console window should stay open for the daemon.
 - **Started from ssh.** Without setup, over OpenSSH, `kurmis daemon start`, then disconnect and
-  reconnect. The daemon should be gone, and the next kurmis command starts it again.
+  reconnect. The daemon should be gone, and the next `kurmis claude` or `kurmis codex` starts it
+  again.
 - **Autostart.** After `kurmis setup`, sign out and in. The daemon starts with no window
   showing. Also check: a user folder with non-ASCII letters or a `%` in its path, and Windows
   Script Host turned off (`HKCU\Software\Microsoft\Windows Script Host\Settings`, value

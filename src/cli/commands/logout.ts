@@ -113,7 +113,7 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
       // A sign-in of a new Codex login that stopped half-way can leave only the record of what
       // was merged into its home.
       const record = login.provider === 'codex' ? codexMergedRecordPath(login) : null
-      if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis list" shows the logins`)
+      if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis status" shows the logins`)
       rmSync(record, { force: true })
       writeLine(context.stdout, `Deleted the record of what was merged into the Codex home of ${id}, which ${id} left behind.`)
       return EXIT_OK
@@ -208,7 +208,7 @@ function logoutTarget(config: KurmisConfig, text: string): LogoutTarget {
     const recordOnly = refs.filter((login) => login.provider === 'codex' && exists(codexMergedRecordPath(login)))
     if (recordOnly.length > 0) return { kind: 'logins', logins: recordOnly }
   }
-  return { kind: 'error', usage: false, message: `${resolved.error}; "kurmis list" shows the logins` }
+  return { kind: 'error', usage: false, message: `${resolved.error}; "kurmis status" shows the logins` }
 }
 
 export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
@@ -221,7 +221,7 @@ export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
 Signs a login out with "claude auth logout" or "codex logout", removes it from kurmis and
 deletes its folder in the kurmis data folder. A running daemon stops using it at once.
 
-<login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
+<login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
 Codex login have the same alias, put claude: or codex: in front, for example
 codex:work-example.
 

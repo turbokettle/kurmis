@@ -89,7 +89,7 @@ export function createSetCommand(deps: Partial<SetDeps> = {}): Command {
 Changes the settings of a login and prints them. A running daemon uses them at once. Give at
 least one option.
 
-<login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
+<login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
 Codex login have the same alias, put claude: or codex: in front, for example
 claude:work-example.
 
@@ -127,7 +127,7 @@ Example:
       try {
         const config: KurmisConfig = loadConfig()
         const resolved = resolveLogin(config, parsed.positionals[0]!)
-        if ('error' in resolved) return usageError('set', `${resolved.error}; "kurmis list" shows the logins`, context)
+        if ('error' in resolved) return usageError('set', `${resolved.error}; "kurmis status" shows the logins`, context)
         const target = resolved.login
         if (patch.alias !== undefined) {
           const problem = aliasProblem(config, target, patch.alias)

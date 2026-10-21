@@ -187,6 +187,23 @@ describe('kurmis daemon', () => {
     expect(daemonInfo(home)?.pid).toBe(now?.pid)
   }, 60_000)
 
+  it('kurmis status shows an older daemon without replacing it, and starts none when none runs', async () => {
+    const { home } = await newHome()
+    const none = await kurmis(bundles.newer, home, ['status', '--json'])
+    expect(none.code, none.stderr).toBe(0)
+    expect(JSON.parse(none.stdout)).toMatchObject({ daemon: null, source: 'files' })
+    expect(daemonInfo(home)).toBeNull()
+
+    expect((await kurmis(bundles.older, home, ['daemon', 'start'])).code).toBe(0)
+    const pid = daemonInfo(home)?.pid
+    const status = await kurmis(bundles.newer, home, ['status', '--json'])
+    expect(status.code, status.stderr).toBe(0)
+    expect(JSON.parse(status.stdout)).toMatchObject({ source: 'daemon', daemon: { version: '0.4.0', pid, older: true } })
+    const text = await kurmis(bundles.newer, home, ['status'])
+    expect(text.stdout).toContain('It runs an older kurmis than this one (0.5.0).')
+    expect(daemonInfo(home)).toMatchObject({ pid, version: '0.4.0' })
+  }, 60_000)
+
   it('never lets an older kurmis replace a newer daemon', async () => {
     const { home } = await newHome()
     await kurmis(bundles.newer, home, ['daemon', 'start'])

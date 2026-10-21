@@ -310,7 +310,7 @@ describe('kurmis claude --login', () => {
     const h = harness()
     const out = collect()
     expect(await createClaudeCommand(h.deps).run(['--login', 'nobody'], out.context)).toBe(1)
-    expect(out.stderr()).toBe('kurmis claude: there is no Claude login called "nobody". "kurmis list" shows the logins, and "kurmis login claude" adds one.\n')
+    expect(out.stderr()).toBe('kurmis claude: there is no Claude login called "nobody". "kurmis status" shows the logins, and "kurmis login claude" adds one.\n')
     expect(h.daemon.calls).toEqual([])
   })
 

@@ -2,7 +2,7 @@
 // `/_kurmis/` of the daemon's port. Every request needs the key; one without it gets 403 and
 // no body, the same as a proxied request.
 //
-// `status` shows each login's email, for `kurmis status` and `kurmis list` on the person's own
+// `status` shows each login's email, for `kurmis status` and `kurmis login` on the person's own
 // terminal: a Claude login's from its identity file, a Codex login's from its last usage probe,
 // which the daemon keeps in memory only. The control API answers only on 127.0.0.1 and only with
 // the key, which only the user can read. The email is never logged.

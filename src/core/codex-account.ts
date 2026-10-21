@@ -10,9 +10,9 @@
 // `requiresOpenaiAuth` follows the configured model provider, not the sign-in. The answer
 // never carries a token.
 //
-// The email is personal data. It may be shown by `kurmis list`, which prints to the user's
-// own terminal, and nowhere else: it must never reach `daemon.log`, `state.json`, an error
-// message or a test fixture with a real address.
+// The email is personal data. It may be shown by `kurmis status` and `kurmis login`, which print
+// to the user's own terminal, and nowhere else: it must never reach `daemon.log`, `state.json`,
+// an error message or a test fixture with a real address.
 
 /** How a Codex home is signed in, as `account/read` named it. */
 export type CodexSignIn =
@@ -21,7 +21,7 @@ export type CodexSignIn =
       type: 'chatgpt'
       /** The plan, such as `plus`, `pro` or `prolite`; null when the answer had none. */
       planType: string | null
-      /** For display by `kurmis list` only. Never log or store it. */
+      /** For display on the user's terminal only. Never log or store it. */
       email: string | null
     }
   /** An OpenAI API key, which is billed per use rather than by a subscription. */
@@ -46,7 +46,7 @@ export interface CodexLoginStatus {
   loggedIn: boolean
   /** The plan for a ChatGPT sign-in, `api key` for an API key, else null. */
   subscriptionType: string | null
-  /** For display by `kurmis list` only. Never log or store it. */
+  /** For display on the user's terminal only. Never log or store it. */
   email: string | null
 }
 

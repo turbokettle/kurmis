@@ -1,5 +1,6 @@
-// What `kurmis status` prints: the daemon's status answer as text for a terminal, or as the JSON
-// of `kurmis status --json`. Pure: the caller passes the answer and the time.
+// What `kurmis status` prints: the logins as the daemon reports them, or as `config.json` and
+// `state.json` hold them when no daemon runs, as text for a terminal or as the JSON of
+// `kurmis status --json`. Pure: the caller passes the report and the time.
 //
 // The JSON is not the control API's `StatusAnswer` as it came. That answer carries each login's
 // usage in kurmis' internal snapshot shape, which differs between Claude and Codex and may change
@@ -14,9 +15,11 @@ import type { LoginStatus, StatusAnswer } from '../core/control-api.ts'
 import { resetsInText, spanText } from '../core/countdown.ts'
 import { routeBlockText } from '../core/proxy-rules.ts'
 import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '../core/usage-rules.ts'
+import { shouldReplace } from '../daemon/lifecycle.ts'
+import type { GlobalRoutingState } from './global-routing.ts'
 
 /** Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added. */
-export const STATUS_JSON_FORMAT = 2
+export const STATUS_JSON_FORMAT = 3
 
 export interface StatusJsonWindow {
   /** The provider's key for the window: `five_hour`, `seven_day`, `codex:primary`, ... */
@@ -68,8 +71,14 @@ export interface StatusJsonLogin {
   machineOwn: boolean
   /** The login's email as its own CLI cached it; null when unknown. Shown, never stored. */
   email: string | null
-  /** Whether the login has credentials here; null when the daemon has not looked yet. */
+  /** Whether the daemon found the login signed in; null when no daemon reported it or it has not looked yet. */
   signedIn: boolean | null
+  /**
+   * With `source` `files`: whether the login's credentials are on this machine, from its files
+   * and, for a Codex login that keeps its sign-in in the keyring, `codex login status`. Null
+   * with `source` `daemon`.
+   */
+  credentials: boolean | null
   /** Whether a usage probe of the login is running now. */
   probing: boolean
   routing: boolean
@@ -89,7 +98,19 @@ export interface StatusJsonLogin {
 
 export interface StatusJson {
   format: typeof STATUS_JSON_FORMAT
-  daemon: { version: string; pid: number; port: number; startedAt: string }
+  /**
+   * The daemon that answered, or null when none runs. `older` says that it runs an older kurmis
+   * than this one, so the next command that starts the daemon replaces it.
+   */
+  daemon: { version: string; pid: number; port: number; startedAt: string; older: boolean } | null
+  /**
+   * Where the logins come from: `daemon`, the daemon's status answer; `files`, `config.json` and
+   * the usage the daemon last wrote to `state.json`, when no daemon runs or this kurmis cannot
+   * read its answer.
+   */
+  source: StatusSource
+  /** Whether a plain claude goes through kurmis (`kurmis setup`). */
+  globalRouting: GlobalRoutingState
   /** The logins in `config.json` order, the logins of plain claude and plain codex first. */
   logins: StatusJsonLogin[]
   /**
@@ -100,9 +121,37 @@ export interface StatusJson {
   /**
    * Sentences about something the person may want to change: an extra login signed in to the
    * same account as the login plain claude or plain codex uses, which makes both use one
-   * subscription.
+   * subscription, and global routing that is on while no daemon runs.
    */
   warnings: string[]
+}
+
+export type StatusSource = 'daemon' | 'files'
+
+/** What `kurmis status` shows, put together from the daemon or from the files. */
+export interface StatusReport {
+  /** The daemon that answered, or null when none runs. */
+  daemon: { version: string; pid: number; port: number; startedAt: number } | null
+  /** Where `logins` come from (`StatusJson.source`). */
+  source: StatusSource
+  logins: LoginStatus[]
+  /** With `source` `files`: whether each login's credentials are on this machine, by login id. */
+  credentials: ReadonlyMap<string, boolean>
+  globalRouting: GlobalRoutingState
+  /** This kurmis' version, which tells whether the daemon is older. */
+  version: string
+}
+
+/** A report of the daemon's status answer. */
+export function daemonReport(answer: StatusAnswer, globalRouting: GlobalRoutingState, version: string): StatusReport {
+  return {
+    daemon: { version: answer.version, pid: answer.pid, port: answer.port, startedAt: answer.startedAt },
+    source: 'daemon',
+    logins: answer.logins,
+    credentials: new Map(),
+    globalRouting,
+    version
+  }
 }
 
 export interface StatusFormatOptions {
@@ -113,33 +162,47 @@ export interface StatusFormatOptions {
 }
 
 /** The status as `kurmis status --json` prints it. */
-export function statusJson(answer: StatusAnswer, now: number, options: StatusFormatOptions): StatusJson {
+export function statusJson(report: StatusReport, now: number, options: StatusFormatOptions): StatusJson {
+  const daemon = report.daemon
+  const fromDaemon = report.source === 'daemon'
   return {
     format: STATUS_JSON_FORMAT,
-    daemon: { version: answer.version, pid: answer.pid, port: answer.port, startedAt: isoTime(answer.startedAt) },
-    logins: answer.logins.map((login) => ({
+    daemon: daemon === null ? null : {
+      version: daemon.version,
+      pid: daemon.pid,
+      port: daemon.port,
+      startedAt: isoTime(daemon.startedAt),
+      older: shouldReplace(daemon.version, report.version)
+    },
+    source: report.source,
+    globalRouting: report.globalRouting,
+    logins: report.logins.map((login) => ({
       id: login.id,
       alias: login.alias,
       provider: login.provider,
       machineOwn: login.machineOwn,
       email: login.email ?? null,
-      signedIn: login.signedIn,
+      signedIn: fromDaemon ? login.signedIn : null,
+      credentials: fromDaemon ? null : report.credentials.get(login.id) ?? false,
       probing: login.probing === true,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
       weeklyLimit: login.weeklyLimit,
       useFirst: login.useFirst,
       usage: login.usage === null ? null : usageJson(login, login.usage, now),
-      blocked: blockJson(answer, login, now, options),
+      blocked: fromDaemon ? blockJson(report, login, now, options) : null,
       sessions: login.provider === 'claude' ? login.sessions : null
     })),
-    codexStart: codexStart(answer, now),
-    warnings: sameAccountWarnings(answer)
+    codexStart: fromDaemon ? codexStart(report, now) : null,
+    warnings: [...sameAccountWarnings(report), ...(report.globalRouting === 'on' && daemon === null ? [NO_DAEMON_WARNING] : [])]
   }
 }
 
+const NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, so a plain claude and the Claude Code ' +
+  'editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.'
+
 /** How to name a login of the status on a command line: its alias, or `<provider>:<alias>` when another login has it too. */
-function loginArgument(answer: StatusAnswer, login: LoginStatus): string {
+function loginArgument(answer: Pick<StatusAnswer, 'logins'>, login: LoginStatus): string {
   const shared = answer.logins.some((other) => other.id !== login.id && other.alias === login.alias)
   return shared ? `${login.provider}:${login.alias}` : login.alias
 }
@@ -149,7 +212,7 @@ function loginArgument(answer: StatusAnswer, login: LoginStatus): string {
  * the same for Codex, compared without regard to case: both are then signed in to one account
  * and use one subscription.
  */
-export function sameAccountWarnings(answer: StatusAnswer): string[] {
+export function sameAccountWarnings(answer: Pick<StatusAnswer, 'logins'>): string[] {
   const warnings: string[] = []
   for (const own of answer.logins.filter((login) => login.machineOwn && login.email !== null)) {
     const email = own.email!.trim().toLowerCase()
@@ -166,18 +229,15 @@ export function sameAccountWarnings(answer: StatusAnswer): string[] {
 const PRODUCT_NAMES: Record<AccountProvider, string> = { claude: 'Claude', codex: 'Codex' }
 
 /** The status as `kurmis status` prints it, ending in a newline. Fits 80 columns. */
-export function formatStatus(answer: StatusAnswer, now: number, options: StatusFormatOptions): string {
-  const json = statusJson(answer, now, options)
+export function formatStatus(report: StatusReport, now: number, options: StatusFormatOptions): string {
+  const json = statusJson(report, now, options)
   // The text gives times in local time; the JSON keeps them as ISO strings.
   json.logins.forEach((login, index) => {
-    const source = answer.logins[index]
-    const block = source === undefined ? null : routeBlockOf(answer, source, now)
+    const source = report.logins[index]
+    const block = source === undefined ? null : routeBlockOf(report, source, now)
     if (login.blocked !== null && block !== null) login.blocked.text = blockText(block, now, options, true)
   })
-  const lines: string[] = [
-    `kurmis daemon ${answer.version}, pid ${String(answer.pid)}, port ${String(answer.port)}, ` +
-      `running for ${spanText(now - answer.startedAt)}`
-  ]
+  const lines = [...daemonLines(json, report, now), ...wrap(GLOBAL_ROUTING_TEXT[json.globalRouting], '', '')]
   const labelWidth = Math.min(MAX_LABEL_WIDTH, Math.max(0, ...json.logins.flatMap((login) =>
     (login.usage?.windows ?? []).map((window) => window.label.length))))
   for (const warning of json.warnings) lines.push('', ...wrap(`Warning: ${warning}`, '', '  '))
@@ -189,6 +249,38 @@ export function formatStatus(answer: StatusAnswer, now: number, options: StatusF
       (json.codexStart.note === null ? '' : ` ${json.codexStart.note}`), '', ''))
   }
   return `${lines.join('\n')}\n`
+}
+
+/** What starts the daemon, for the text that says it is not running or will be replaced. */
+const DAEMON_STARTERS = '"kurmis claude", "kurmis codex" without --login, "kurmis setup" and "kurmis daemon start"'
+
+/** The lines about the daemon at the top of the text. */
+function daemonLines(json: StatusJson, report: StatusReport, now: number): string[] {
+  const daemon = report.daemon
+  if (daemon === null) {
+    return wrap(`The kurmis daemon is not running. ${DAEMON_STARTERS} each start it. The logins below come from ` +
+      'config.json, with the usage the daemon read last.', '', '')
+  }
+  const lines = [`kurmis daemon ${daemon.version}, pid ${String(daemon.pid)}, port ${String(daemon.port)}, ` +
+    `running for ${spanText(now - daemon.startedAt)}`]
+  if (json.daemon?.older === true) {
+    lines.push(...wrap(`It runs an older kurmis than this one (${report.version}). The next ` +
+      `${DAEMON_STARTERS.replace(' and ', ' or ')} replaces it.`, '', ''))
+  }
+  if (report.source === 'files') {
+    lines.push(...wrap('This kurmis cannot read its status, so the logins below come from config.json, with the ' +
+      'usage the daemon read last.', '', ''))
+  }
+  return lines
+}
+
+const GLOBAL_ROUTING_TEXT: Record<GlobalRoutingState, string> = {
+  on: 'Global routing is on: a plain claude and the Claude Code editor extensions go through kurmis. ' +
+    '"kurmis setup --pause" pauses it.',
+  paused: 'Global routing is paused: only Claude Code started with "kurmis claude" goes through kurmis. ' +
+    '"kurmis setup" turns it on again.',
+  off: 'Global routing is off: only Claude Code started with "kurmis claude" goes through kurmis. ' +
+    '"kurmis setup" turns it on.'
 }
 
 /** The text output's width. */
@@ -205,7 +297,9 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
     lines.push(`  the login plain ${login.provider} uses`)
   }
   const facts = [
-    login.signedIn === null ? 'sign-in not checked yet' : login.signedIn ? 'signed in' : 'signed out',
+    login.credentials !== null
+      ? login.credentials ? 'credentials on this machine' : 'no credentials on this machine'
+      : login.signedIn === null ? 'sign-in not checked yet' : login.signedIn ? 'signed in' : 'signed out',
     login.routing ? 'routing on' : 'routing off',
     `limits ${String(login.fiveHourLimit)}% 5 hour, ${String(login.weeklyLimit)}% weekly`
   ]
@@ -213,7 +307,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   if (login.sessions !== null) facts.push(login.sessions === 1 ? '1 session' : `${String(login.sessions)} sessions`)
   if (login.usage?.plan) facts.push(`plan ${login.usage.plan}`)
   if (login.probing) facts.push('reading usage now')
-  lines.push(...wrap(facts.join(', '), '  ', '  '))
+  lines.push(...wrapList(facts, '  '))
   if (login.usage === null) {
     lines.push('  usage not read yet')
   } else {
@@ -266,11 +360,11 @@ function usageJson(login: LoginStatus, usage: AccountUsage, now: number): Status
 }
 
 /** Why routing would pass the login over now: the daemon's answer for Claude, the Codex choice's rule for Codex. */
-function routeBlockOf(answer: StatusAnswer, login: LoginStatus, now: number): RouteBlock | null {
+function routeBlockOf(answer: Pick<StatusAnswer, 'logins'>, login: LoginStatus, now: number): RouteBlock | null {
   return login.provider === 'codex' ? codexRouteBlock(answer, login.id, now) : login.block
 }
 
-function blockJson(answer: StatusAnswer, login: LoginStatus, now: number, options: StatusFormatOptions): StatusJsonBlock | null {
+function blockJson(answer: Pick<StatusAnswer, 'logins'>, login: LoginStatus, now: number, options: StatusFormatOptions): StatusJsonBlock | null {
   const block = routeBlockOf(answer, login, now)
   if (block === null) return null
   let until: string | null = null
@@ -311,7 +405,7 @@ export function localTimeText(at: number, now: number, timeZone?: string): strin
   return date === `${today.year ?? ''}-${today.month ?? ''}-${today.day ?? ''}` ? clock : `${date} ${clock}`
 }
 
-function codexStart(answer: StatusAnswer, now: number): StatusJson['codexStart'] {
+function codexStart(answer: Pick<StatusAnswer, 'logins'>, now: number): StatusJson['codexStart'] {
   if (!answer.logins.some((login) => login.provider === 'codex')) return null
   const choice: CodexChoice = chooseCodexLogin(answer, now)
   const alias = answer.logins.find((login) => login.id === choice.login)?.alias ?? choice.login
@@ -322,12 +416,30 @@ function isoTime(at: number): string {
   return Number.isFinite(at) ? new Date(at).toISOString() : String(at)
 }
 
+/** Items joined with commas into lines of at most `WIDTH` columns, each with `indent` in front; an item is never split. */
+function wrapList(items: readonly string[], indent: string): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const [index, item] of items.entries()) {
+    const text = index < items.length - 1 ? `${item},` : item
+    if (line !== '' && indent.length + line.length + 1 + text.length > WIDTH) {
+      lines.push(indent + line)
+      line = text
+    } else {
+      line = line === '' ? text : `${line} ${text}`
+    }
+  }
+  lines.push(indent + line)
+  return lines
+}
+
 /** Words joined into lines of at most `WIDTH` columns: the first with `first` in front, the rest with `rest`. */
 function wrap(text: string, first: string, rest: string): string[] {
   const lines: string[] = []
   let line = first
   let empty = true
-  for (const word of text.split(' ')) {
+  // A command in double quotes, such as "kurmis setup", is kept on one line.
+  for (const word of text.match(/"[^"]*"\S*|\S+/g) ?? []) {
     if (!empty && line.length + 1 + word.length > WIDTH) {
       lines.push(line)
       line = rest + word

@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { normaliseLinkTarget } from '../../src/platform/links.ts'
 import { readClaudeCredentials, writeClaudeIdentity, writeCodexAuth } from '../fakes/index.ts'
-import { createWorld, OWN_CLAUDE, OWN_CODEX, type World } from './harness.ts'
+import { createWorld, OWN_CLAUDE, OWN_CODEX, type StatusJson, type World } from './harness.ts'
 
 /** A new login's id: 10 lowercase letters and digits. */
 const NEW_ID = /^[a-z0-9]{10}$/
@@ -31,7 +31,7 @@ function claudeLoginDirs(world: World): Array<string | null> {
   return world.claudeRecord().flatMap((line) => (line.kind === 'login' ? [line.credentialsDir] : []))
 }
 
-describe('kurmis login, set, list and logout', () => {
+describe('kurmis login, set, status and logout', () => {
   it('adds a Claude login in a folder named by its new id, with an alias made from the email, and keeps the email out of config.json', async () => {
     const world = await createWorld()
     const added = await world.kurmis(['login', 'claude'], { env: { FAKE_CLAUDE_EMAIL: 'work@example.com' } })
@@ -65,25 +65,22 @@ describe('kurmis login, set, list and logout', () => {
     expect(world.configLogin(second.id)).toMatchObject({ alias: 'spare', aliasSetByUser: true })
     expect(loginIds(world)).toEqual([OWN_CLAUDE, OWN_CODEX, id, second.id])
 
-    const listed = await world.kurmis(['list', '--json'])
+    const listed = await world.kurmis(['status', '--json'])
     expect(listed.code, listed.stderr).toBe(0)
-    const logins = JSON.parse(listed.stdout) as Array<Record<string, unknown>>
-    expect(logins.map((login) => [login.alias, login.id, login.machineOwn, login.credentials])).toEqual([
-      [OWN_CLAUDE, OWN_CLAUDE, true, false],
-      [OWN_CODEX, OWN_CODEX, true, false],
-      ['work-example', id, false, true],
-      ['spare', second.id, false, true]
+    const status = JSON.parse(listed.stdout) as StatusJson
+    expect(status).toMatchObject({ daemon: null, source: 'files' })
+    expect(status.logins.map((login) => [login.alias, login.id, login.machineOwn, login.credentials, login.email])).toEqual([
+      [OWN_CLAUDE, OWN_CLAUDE, true, false, null],
+      [OWN_CODEX, OWN_CODEX, true, false, null],
+      ['work-example', id, false, true, 'work@example.com'],
+      ['spare', second.id, false, true, 'second@example.com']
     ])
-    expect(listed.stdout).not.toContain('example.com')
 
-    const table = await world.kurmis(['list'])
-    expect(table.code, table.stderr).toBe(0)
-    const lines = table.stdout.trimEnd().split('\n')
-    expect(lines[0]!.split(/\s+/)).toEqual(['PROVIDER', 'ALIAS', 'ID', 'AUTO', 'FIVE-HOUR', 'WEEKLY', 'USE-FIRST', 'CREDENTIALS'])
-    expect(lines.find((line) => line.includes(id!))!.split(/\s+/)).toEqual(['claude', 'work-example', id, 'on', '100%', '100%', 'off', 'yes'])
-    // The lines under the table mark the logins of plain claude and plain codex.
-    expect(lines).toContain(`${OWN_CLAUDE} is the login plain claude uses.`)
-    expect(lines).toContain(`${OWN_CODEX} is the login plain codex uses.`)
+    const text = await world.kurmis(['status'])
+    expect(text.code, text.stderr).toBe(0)
+    expect(text.stdout).toContain(`work-example (Claude, id ${id!})  work@example.com\n  credentials on this machine, routing on`)
+    expect(text.stdout).toContain(`${OWN_CLAUDE} (Claude, id ${OWN_CLAUDE})\n  the login plain claude uses\n  no credentials on this machine`)
+    expect(text.stdout).toContain(`${OWN_CODEX} (Codex, id ${OWN_CODEX})\n  the login plain codex uses\n`)
 
     // None of these commands needs or starts the daemon.
     expect(world.daemonInfo()).toBeNull()
@@ -199,15 +196,13 @@ describe('kurmis login, set, list and logout', () => {
     expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ machineOwn: true, alias: 'own-example', aliasSetByUser: false })
     expect(loginIds(world)).toEqual([OWN_CLAUDE, OWN_CODEX])
     expect(configText(world)).not.toContain('example.com')
-    const listed = JSON.parse((await world.kurmis(['list', '--json'])).stdout) as Array<{ id: string; alias: string; credentials: boolean }>
-    expect(listed.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ alias: 'own-example', credentials: true })
+    const listed = await world.status()
+    expect(listed.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ alias: 'own-example', credentials: true })
   }, 60_000)
 
   it("gives the logins of plain claude and plain codex new ids when config.json has none, and refuses a config.json of an older version", async () => {
     const world = await createWorld({ ownLogins: false })
-    const listed = await world.kurmis(['list', '--json'])
-    expect(listed.code, listed.stderr).toBe(0)
-    const logins = JSON.parse(listed.stdout) as Array<{ id: string; alias: string; provider: string; machineOwn: boolean }>
+    const logins = (await world.status()).logins
     expect(logins.map((login) => [login.provider, login.machineOwn])).toEqual([['claude', true], ['codex', true]])
     for (const login of logins) {
       expect(login.id).toMatch(NEW_ID)
@@ -217,12 +212,12 @@ describe('kurmis login, set, list and logout', () => {
     // The ids were saved, so every later command sees the same ones.
     expect(world.readConfig()).toMatchObject({ version: 2, port: world.port })
     expect(loginIds(world)).toEqual(logins.map((login) => login.id))
-    const again = JSON.parse((await world.kurmis(['list', '--json'])).stdout) as Array<{ id: string }>
+    const again = (await world.status()).logins
     expect(again.map((login) => login.id)).toEqual(logins.map((login) => login.id))
 
     const old = '{"version":1,"logins":[{"id":"claude:work"}]}'
     writeFileSync(join(world.data, 'config.json'), old)
-    const refused = await world.kurmis(['list'])
+    const refused = await world.kurmis(['status'])
     expect(refused.code).toBe(1)
     expect(refused.stderr).toContain('was written by an older kurmis (config version 1)')
     expect(configText(world)).toBe(old)

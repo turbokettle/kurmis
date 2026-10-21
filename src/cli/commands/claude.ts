@@ -71,7 +71,7 @@ The daemon is started first when it is not running.
 
 Options (only before the first argument kurmis does not know):
   --login <login>   Keep the session on one Claude login, whatever its limits say. <login> is
-                    the login's alias or its id, as "kurmis list" shows them, for example
+                    the login's alias or its id, as "kurmis status" shows them, for example
                     --login work-example. Only Claude logins are looked at, so a Codex login
                     with the same alias does not count. Without --login the session is on Auto.
   -h, --help        Show this help.
@@ -148,7 +148,7 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
   if (parsed.login !== null) {
     const resolved = resolveLogin(config, parsed.login, 'claude')
     if ('error' in resolved) {
-      return fail(`${resolved.error}. "kurmis list" shows the logins, and "kurmis login claude" adds one.`)
+      return fail(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login claude" adds one.`)
     }
     pinned = resolved.login
   }

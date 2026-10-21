@@ -1,13 +1,12 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { codexKeepsSignInElsewhere, createListCommand, hasCredentials, hasLocalCredentials } from '../../../src/cli/commands/list.ts'
-import { kurmisHome, loginFolder } from '../../../src/data/paths.ts'
-import { findProgram } from '../../../src/platform/programs.ts'
-import { runProgram } from '../../../src/platform/run.ts'
-import { FAKE_CODEX_SCRIPT, readCodexRecord, writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth, writeCodexKeyringAuth } from '../../fakes/index.ts'
-import { claudeRef, codexRef, OWN_CLAUDE, OWN_CLAUDE_REF, OWN_CODEX, OWN_CODEX_REF, writeTestConfig } from '../../logins.ts'
-import { collect } from '../helpers.ts'
+import { codexKeepsSignInElsewhere, hasCredentials, hasLocalCredentials } from '../../src/cli/local-credentials.ts'
+import { kurmisHome, loginFolder } from '../../src/data/paths.ts'
+import { findProgram } from '../../src/platform/programs.ts'
+import { runProgram } from '../../src/platform/run.ts'
+import { FAKE_CODEX_SCRIPT, readCodexRecord, writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth, writeCodexKeyringAuth } from '../fakes/index.ts'
+import { claudeRef, codexRef, OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
 
 const A = claudeRef('logina')
 const B = claudeRef('loginb')
@@ -15,7 +14,7 @@ const C = claudeRef('loginc')
 const SIDE = codexRef('sidecodex1')
 const FILE = codexRef('filecodex1')
 
-const home = join(process.env.HOME!, 'list-home')
+const home = join(process.env.HOME!, 'credentials-home')
 
 beforeEach(() => {
   rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
@@ -122,58 +121,4 @@ describe('a Codex login that keeps its sign-in in the keyring', () => {
     expect(await hasCredentials(FILE, fakeEnv(), home, deps)).toBe(true)
     expect(readCodexRecord(record())).toEqual([])
   })
-
-  it('shows such a login with credentials in kurmis list', async () => {
-    writeTestConfig({ extras: [{ id: SIDE.id, provider: 'codex' }] })
-    keepInKeyring(loginFolder(SIDE))
-    writeCodexKeyringAuth(keyring(), loginFolder(SIDE))
-    const out = collect(fakeEnv())
-    expect(await createListCommand({ home: () => home }).run(['--json'], out.context)).toBe(0)
-    const listed = JSON.parse(out.stdout()) as Array<{ id: string; credentials: boolean }>
-    expect(listed.find((login) => login.id === SIDE.id)?.credentials).toBe(true)
-  })
 })
-
-describe('kurmis list', () => {
-  it('shows the provider, alias, id, the settings under the names of the set options, and the credentials', async () => {
-    writeTestConfig({
-      extras: [
-        { id: 'workclaude', provider: 'claude', alias: 'work-example', fiveHourLimit: 90, useFirst: true },
-        { id: SIDE.id, provider: 'codex', routing: false }
-      ],
-      ownClaude: { weeklyLimit: 75 },
-      ownCodex: { alias: 'work-example' }
-    })
-    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
-    writeCodexAuth(join(home, '.codex'))
-
-    const out = collect({})
-    expect(await createListCommand({ home: () => home }).run([], out.context)).toBe(0)
-    expect(out.stdout()).toBe([
-      'PROVIDER  ALIAS         ID          AUTO  FIVE-HOUR  WEEKLY  USE-FIRST  CREDENTIALS',
-      `claude    ${OWN_CLAUDE}    ${OWN_CLAUDE}  on    100%       75%     off        no`,
-      `codex     work-example  ${OWN_CODEX}  on    100%       100%    off        yes`,
-      'claude    work-example  workclaude  on    90%        100%    on         yes',
-      'codex     sidecodex1    sidecodex1  off   100%       100%    off        no',
-      '',
-      `${OWN_CLAUDE} is the login plain claude uses.`,
-      'work-example is the login plain codex uses.',
-      ''
-    ].join('\n'))
-    expect(out.stdout()).not.toContain('example.com')
-  })
-
-  it('prints the settings, alias, id, machineOwn and a credentials field as JSON', async () => {
-    const config = writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude' }] })
-    writeClaudeCredentials(loginFolder(claudeRef('workclaude')))
-    const out = collect({})
-    expect(await createListCommand({ home: () => home }).run(['--json'], out.context)).toBe(0)
-    const listed = JSON.parse(out.stdout()) as Array<Record<string, unknown>>
-    expect(listed).toEqual(config.logins.map((login) => ({ ...login, credentials: login.id === 'workclaude' })))
-    expect(listed.map((login) => [login.id, login.alias, login.provider, login.machineOwn])).toEqual([
-      [OWN_CLAUDE, OWN_CLAUDE, 'claude', true], [OWN_CODEX, OWN_CODEX, 'codex', true], ['workclaude', 'workclaude', 'claude', false]
-    ])
-    expect(listed[0]).not.toHaveProperty('label')
-  })
-})
-

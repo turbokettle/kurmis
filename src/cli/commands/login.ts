@@ -20,9 +20,9 @@
 // the CLI wrote (`readClaudeIdentity`; `~/.claude.json` for plain claude's login), for Codex
 // from `codex app-server` (`readCodexEmail`). The email is shown on the terminal and written
 // nowhere. It gives the login's automatic alias (`followEmail`) unless `--alias` sets one. When
-// a new sign-in is an account that is already a kurmis login of the same provider, the machine's
-// own login included, the new folder is signed out again and deleted, and the command says which
-// login that account already is.
+// a new sign-in is an account that is already a kurmis login of the same provider, the login
+// plain claude or plain codex uses included, the new folder is signed out again and deleted,
+// and the command says which login that account already is.
 //
 // The run holds the login's lock (`login-lock.ts`) from before it creates the folder until it is
 // done, so a `kurmis logout` of the same login stops at once instead of deleting the folder.
@@ -63,7 +63,7 @@ import type { FileLock } from '../../data/lock.ts'
 import { LoginBusyError, lockLogin } from '../login-lock.ts'
 import { loginArgument, machineOwnText, PROVIDER_NAMES } from '../login-names.ts'
 import { leftBehindText, signOutLogin } from '../sign-out.ts'
-import { hasCredentials } from './list.ts'
+import { hasCredentials } from '../local-credentials.ts'
 
 export interface LoginDeps {
   daemon: DaemonClient
@@ -109,7 +109,7 @@ export function loginTarget(argument: string, config: KurmisConfig): LoginTarget
   if (isLoginProvider(argument)) return { kind: 'new', provider: argument }
   const resolved = resolveLogin(config, argument)
   if ('error' in resolved) {
-    return { error: `${resolved.error}. "kurmis login claude" or "kurmis login codex" adds a new login, and "kurmis list" shows the logins there are` }
+    return { error: `${resolved.error}. "kurmis login claude" or "kurmis login codex" adds a new login, and "kurmis status" shows the logins there are` }
   }
   return { kind: 'existing', login: resolved.login }
 }
@@ -365,7 +365,7 @@ the sign-in page in the browser.
   kurmis login work-example   Signs the login work-example in again, for example after it was
                               signed out. This works for the logins of plain claude and plain codex too.
 
-<login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
+<login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
 Codex login have the same alias, put claude: or codex: in front, for example
 claude:work-example.
 
