@@ -12285,9 +12285,9 @@ var daemonCommand = {
   summary: "Start, stop or show the background process",
   usage: `Usage: kurmis daemon <start|stop|restart|status|run>
 
-The daemon is the background process that routes Claude requests. "kurmis claude", "kurmis
-codex" without --login and "kurmis setup" start it when it is not running, so "kurmis daemon
-start" is seldom needed.
+The daemon is the background process that routes Claude requests. "kurmis claude",
+"kurmis codex" without --login and "kurmis setup" start it when it is not running, so
+"kurmis daemon start" is seldom needed.
 
   start                   Start it in the background, replacing one of an older version.
                           A daemon of the same version is replaced too when its control API
@@ -12304,9 +12304,9 @@ start" is seldom needed.
   run                     Run it in this terminal instead of the background (what "start"
                           launches).
 
-On macOS, a daemon started from an ssh login cannot read the login Keychain. Run "kurmis
-setup" in a terminal at the screen: the daemon then runs in your desktop session, starts
-again at each login, and ssh sessions use it.
+On macOS, a daemon started from an ssh login cannot read the login Keychain. Run
+"kurmis setup" in a terminal at the screen: the daemon then runs in your desktop session,
+starts again at each login, and ssh sessions use it.
 
 Options:
   -h, --help              Show this help.`,
