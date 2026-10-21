@@ -213,15 +213,20 @@ A plain `claude` then runs on Auto. Restart Claude Code sessions and editors tha
 open. If the file already points `ANTHROPIC_BASE_URL` at another proxy, setup stops and changes
 nothing.
 
-`claude:default` is the login in `~/.claude`. When `CLAUDE_CONFIG_DIR` is set, a plain `claude`
-signs in with the login in that folder instead, which kurmis does not know, so kurmis never
-signs its requests as `claude:default`: they go to your extra logins only. `kurmis claude` is
-not affected; it always starts claude on the login it names, `claude:default` included.
+`claude:default` is the login in `~/.claude`. When you run setup with `CLAUDE_CONFIG_DIR` set,
+it writes `$CLAUDE_CONFIG_DIR/settings.json`, which only a `claude` with that variable reads.
+Such a `claude` signs in with the login in that folder, which kurmis does not know, so kurmis
+never signs its requests as `claude:default`: they go to your extra logins only. A `claude` with
+`CLAUDE_CONFIG_DIR` set that reads `~/.claude/settings.json` from a setup run without the
+variable is not told apart from a plain one (see "Known limits" in
+[docs/architecture.md](docs/architecture.md)). `kurmis claude` is not affected; it always starts
+claude on the login it names, `claude:default` included.
 
 On macOS and Windows, setup stops when `CLAUDE_CONFIG_DIR` names `~/.claude` itself: Claude
 Code keeps separate credentials for a `claude` started with the variable set, even to that
-folder, and both kinds of `claude` read `~/.claude/settings.json`. Unset the variable and run
-setup again.
+folder, and both kinds of `claude` read `~/.claude/settings.json`. On every platform it also
+stops when `$CLAUDE_CONFIG_DIR/settings.json` is a link to `~/.claude/settings.json`, for the
+same reason. Unset the variable and run setup again.
 
 Setup also warns when the file's `env` sets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, which make a plain

@@ -738,7 +738,10 @@ for itself, so kurmis keeps `claude:default` fixed and makes sure no request is 
   `namesDefaultClaudeFolder`), and says to unset the variable and run setup again. The file it
   would write is `~/.claude/settings.json`, which every plain `claude` reads too, with or
   without the variable, and those two kinds of CLI have different credentials, so no
-  `x-kurmis-started-on` in that file is right for both. `kurmis setup --undo` still runs.
+  `x-kurmis-started-on` in that file is right for both. For the same reason setup refuses, on
+  every platform, a `CLAUDE_CONFIG_DIR` naming another folder whose `settings.json` is a link to
+  `~/.claude/settings.json`, compared with every link resolved, one whose target does not exist
+  yet included (`sharesDefaultSettingsFile`). `kurmis setup --undo` still runs.
 - `kurmis claude` with `CLAUDE_CONFIG_DIR` naming `~/.claude` starts claude on
   `claude:default`'s credentials as above, which are the ones a `claude` without the variable
   uses, and its note says that the variable would otherwise give claude a Keychain item (or

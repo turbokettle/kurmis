@@ -342,6 +342,33 @@ describe('kurmis setup', () => {
     }
   })
 
+  it.runIf(canCreateSymlinks())('refuses a CLAUDE_CONFIG_DIR whose settings.json is a link to ~/.claude/settings.json', async () => {
+    const dir = join(home, '.claude-work')
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    mkdirSync(dir, { recursive: true })
+    try {
+      for (const exists of [true, false]) {
+        // A link whose target does not exist yet counts too: setup would create that target.
+        rmSync(settingsPath, { force: true })
+        if (exists) writeFileSync(settingsPath, '{}\n')
+        rmSync(join(dir, 'settings.json'), { force: true })
+        symlinkSync(join('..', '.claude', 'settings.json'), join(dir, 'settings.json'))
+        for (const platform of ['darwin', 'win32', 'linux'] as const) {
+          const { client, autostart, command } = setup({}, fakeAutostart(), platform)
+          const result = await run(command, [], { CLAUDE_CONFIG_DIR: dir })
+          expect(result.code).toBe(1)
+          expect(result.stderr).toContain(`${join(dir, 'settings.json')} is a link to the default Claude Code settings file ${settingsPath}.`)
+          expect(result.stderr).toContain('Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again')
+          expect(client.calls).toEqual([])
+          expect(autostart.calls).toEqual([])
+          expect(existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : null).toBe(exists ? '{}\n' : null)
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+
   it('accepts a CLAUDE_CONFIG_DIR that names ~/.claude on Linux, where it reads the same credentials', async () => {
     const { command } = setup({}, fakeAutostart(), 'linux')
     const result = await run(command, [], { CLAUDE_CONFIG_DIR: join(home, '.claude') })
