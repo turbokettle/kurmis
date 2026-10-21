@@ -27,13 +27,15 @@ spawn('claude', ['--version'], { env: { ...env, PATH: `${binDir}${delimiter}${en
 
 On POSIX the launcher is `<binDir>/claude`, a shell script that runs the fake with the Node that
 runs the tests. On Windows it is `<binDir>\claude.cmd`, which only a test that goes through
-`cmd.exe` itself can use. Kurmis refuses to start `.cmd` shims and looks for `claude.exe` and for
-codex's `node <entry>.js` (docs/architecture.md, "Windows"). A Windows test of kurmis therefore
-needs a way to hand kurmis the program to start: for example a test-only override that names
-`installed.command` (`[node, script]`). A real `claude.exe` cannot be faked without building a
-Node single-executable application, which these fakes do not do. For codex, a fake npm layout
-(a `codex.cmd` shim next to a package folder whose entry is the fake script) would let kurmis'
-own shim resolution be tested.
+`cmd.exe` itself can use; kurmis never starts `.cmd` shims (docs/architecture.md, "Windows").
+
+Kurmis does not start the launcher either. While the guard `test/setup.ts` turns on is set
+(`src/platform/system-program-guard.ts`), kurmis refuses every program whose file name is
+`claude` or `codex`, the launcher included, and the test fails. So a test that has kurmis start
+a fake names the fake's script in `KURMIS_CLAUDE_BIN` or `KURMIS_CODEX_BIN` (a `.js` file, which
+kurmis runs through Node, on every OS). The launcher is for tests that start it themselves, and
+for tests of how kurmis finds a program on PATH that do not start it. A real `claude.exe` cannot
+be faked without building a Node single-executable application, which these fakes do not do.
 
 ## Fake Anthropic API
 
@@ -237,7 +239,7 @@ is replaced with its length.
 
 `test/fakes/codex/fake-codex.js` is a stand-in for the `codex` command. Tests start it as
 `[process.execPath, FAKE_CODEX_SCRIPT, ...args]`, or put it on `PATH` as `codex` with
-`installFakeCodex(binDir)`. The wire format and the refusal messages were copied from the real
+`installFakeCodex(binDir)`; kurmis itself starts it only through `KURMIS_CODEX_BIN` (above). The wire format and the refusal messages were copied from the real
 codex 0.163.0.
 
 It does one of four things, depending on its arguments:

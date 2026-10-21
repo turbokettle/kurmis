@@ -71,9 +71,10 @@ process.env.KURMIS_TASKKILL_PROGRAM = join(fakeWindows, 'taskkill.mjs')
 process.env.FAKE_TASKKILL_DIR = join(home, 'fake-taskkill')
 process.env.KURMIS_WSCRIPT_PROGRAM = join(fakeWindows, 'wscript.mjs')
 
-// No test may start a real launchctl, security, PowerShell, reg, taskkill, wscript, claude or
-// codex, even through an environment it built itself: kurmis refuses them while this is set
-// (src/platform/system-program-guard.ts), and passes it on to every program it starts.
+// No test may start a real launchctl, security, PowerShell, reg, taskkill, wscript, cscript,
+// wmic, schtasks, cmd, claude or codex, even through an environment it built itself: kurmis
+// refuses them while this is set (`GUARDED_PROGRAMS` in src/platform/system-program-guard.ts),
+// and passes it on to every program it starts.
 process.env.KURMIS_REFUSE_SYSTEM_PROGRAMS = '1'
 
 // The guard writes every program it refused to this file, and a test after which it is not

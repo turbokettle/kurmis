@@ -88,7 +88,10 @@ const IDLE_CLOSE_INTERVAL_MS = 1_000
 /** How long a stop waits for `app.start()` to finish before it gives up on `app.close()`. */
 const START_WAIT_MS = 10_000
 
-/** How long a stop waits for `app.close()`, which writes `state.json`. */
+/**
+ * How long a stop waits for `app.close()`, which kills the usage probes that still run, waits for
+ * their processes to exit and writes `state.json`.
+ */
 const CLOSE_WAIT_MS = 10_000
 
 const STOP_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
