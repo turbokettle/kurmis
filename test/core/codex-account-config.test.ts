@@ -1,7 +1,8 @@
 // The config.toml an extra Codex login's home gets: the default home's settings, never its
-// secrets, and the login's own secrets kept where they were.
+// secrets, and the login's own secrets kept where they were. Copied from the original router's
+// `test/unit/claude/codex-account-config.test.ts`.
 import { describe, expect, it } from 'vitest'
-import { mergeAccountConfig, publicAccountConfig, sameTomlSettings, tomlValue } from '../../src/core/codex-account-config.ts'
+import { filterAccountTrust, mergeAccountConfig, publicAccountConfig, sameTomlSettings, tomlValue } from '../../src/core/codex-account-config.ts'
 
 /**
  * The settings of a file, with tables that hold nothing left out. A dropped value can leave
@@ -49,8 +50,8 @@ describe("an extra Codex login's config.toml", () => {
   })
 
   describe('trust', () => {
-    // Where Codex 0.159.1 keeps it: hooks.state."<hook key>".trusted_hash and
-    // projects."<folder>".trust_level (CODEX-PROTOCOL.md section 25).
+    // Where Codex keeps it: hooks.state."<hook key>".trusted_hash and
+    // projects."<folder>".trust_level.
     const hookKey = 'file:C:\\repo\\secrets-tool\\.codex\\hooks.json:pre_tool_use:0:0'
     const loginOwn = [
       `[hooks.state.${JSON.stringify(hookKey)}]`,
@@ -60,40 +61,36 @@ describe("an extra Codex login's config.toml", () => {
       'trust_level = "untrusted"',
       ''
     ].join('\n')
-    // The hash a person trusted from the window on this login, as the original router recorded it.
-    const recorded = new Map([[hookKey, 'sha256:login']])
 
-    it("keeps a hook hash the original router recorded, and a folder marked untrusted, from the login's own home", () => {
-      const result = mergeAccountConfig('model = "next"\n', loginOwn, recorded)
-      expect(tomlValue(result.content)).toEqual({
+    it("keeps a folder marked untrusted from the login's own home, and drops its own hook hash", () => {
+      const result = mergeAccountConfig('model = "next"\n', loginOwn)
+      expect(settingsOf(result.content)).toEqual({
         model: 'next',
-        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:login' } } },
         projects: { 'e:\\login-only': { trust_level: 'untrusted' } }
       })
       expect(result.missingSecrets).toBe(false)
     })
 
-    // A session can write its login's home, so trust there that the original router did not record may
-    // have been written by a model. Only what narrows stays.
-    it("drops trust in the login's own file that the original router did not record", () => {
-      const forged = [
+    // A session can write its login's home, so trust there may have been written by a model.
+    // Only what narrows stays.
+    it("drops trust in the login's own file that widens what may run", () => {
+      const own = [
         `[hooks.state.${JSON.stringify(hookKey)}]`,
-        'trusted_hash = "sha256:forged"',
+        'trusted_hash = "sha256:own"',
         '[hooks.state."file:/repo/.codex/hooks.json:stop:0:0"]',
-        'trusted_hash = "sha256:unrecorded"',
+        'trusted_hash = "sha256:other"',
         'enabled = true',
         '[hooks.state."file:/repo/.codex/hooks.json:stop:1:0"]',
         'enabled = false',
-        "[projects.'e:\\forged']",
+        "[projects.'e:\\own']",
         'trust_level = "trusted"',
         ''
       ].join('\n')
-      const result = mergeAccountConfig('model = "next"\n', forged, recorded)
+      const result = mergeAccountConfig('model = "next"\n', own)
       expect(settingsOf(result.content)).toEqual({
         model: 'next',
         hooks: { state: { 'file:/repo/.codex/hooks.json:stop:1:0': { enabled: false } } }
       })
-      // With nothing recorded, no hash of the login's own stays.
       expect(settingsOf(mergeAccountConfig('', loginOwn).content)).toEqual({ projects: { 'e:\\login-only': { trust_level: 'untrusted' } } })
     })
 
@@ -115,11 +112,10 @@ describe("an extra Codex login's config.toml", () => {
         'enabled = false',
         ''
       ].join('\n')
-      const result = mergeAccountConfig(source, loginOwn, recorded)
-      expect(tomlValue(result.content)).toEqual({
+      const result = mergeAccountConfig(source, loginOwn)
+      expect(settingsOf(result.content)).toEqual({
         hooks: {
           state: {
-            [hookKey]: { trusted_hash: 'sha256:login' },
             'file:/repo/.codex/hooks.json:stop:0:0': { trusted_hash: 'sha256:default', enabled: false }
           }
         },
@@ -127,29 +123,38 @@ describe("an extra Codex login's config.toml", () => {
       })
     })
 
-    it("keeps the login's own value where both homes name the same hook or folder", () => {
+    it("keeps the login's own narrowing value where both homes name the same hook or folder", () => {
       const source = [
         `[hooks.state.${JSON.stringify(hookKey)}]`,
-        'trusted_hash = "sha256:older"',
-        'enabled = false',
+        'trusted_hash = "sha256:default"',
+        'enabled = true',
         '',
         "[projects.'e:\\login-only']",
         'trust_level = "trusted"',
         ''
       ].join('\n')
-      const result = mergeAccountConfig(source, loginOwn, recorded)
+      const target = [
+        `[hooks.state.${JSON.stringify(hookKey)}]`,
+        'trusted_hash = "sha256:login"',
+        'enabled = false',
+        '',
+        "[projects.'e:\\login-only']",
+        'trust_level = "untrusted"',
+        ''
+      ].join('\n')
+      const result = mergeAccountConfig(source, target)
       expect(tomlValue(result.content)).toEqual({
-        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:login', enabled: false } } },
+        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:default', enabled: false } } },
         projects: { 'e:\\login-only': { trust_level: 'untrusted' } }
       })
       // A second refresh changes nothing.
-      expect(mergeAccountConfig(source, result.content, recorded).content).toBe(result.content)
+      expect(mergeAccountConfig(source, result.content).content).toBe(result.content)
     })
 
     it('still removes a setting of the login that the default home dropped', () => {
-      const result = mergeAccountConfig('', `model = "old"\n${loginOwn}`, recorded)
+      const result = mergeAccountConfig('', `model = "old"\n${loginOwn}`)
       expect(tomlValue(result.content)).not.toHaveProperty('model')
-      expect(tomlValue(result.content)).toHaveProperty(['hooks', 'state', hookKey, 'trusted_hash'], 'sha256:login')
+      expect(tomlValue(result.content)).toHaveProperty(['projects', 'e:\\login-only', 'trust_level'], 'untrusted')
     })
 
     // A folder or hook key may look like a secret and is still copied. That exception is for
@@ -197,36 +202,70 @@ describe("an extra Codex login's config.toml", () => {
     })
   })
 
+  // Used when the default home has no config.toml to merge: the login keeps its settings and
+  // loses only the trust that widens.
+  describe("checking only the login's own trust", () => {
+    it('drops widening trust and keeps everything else as it was written', () => {
+      const text = [
+        '# the login\'s own file',
+        'model = "gpt-old"',
+        '[hooks.state."k"]',
+        'trusted_hash = "sha256:own" # trusted in a terminal',
+        'enabled = false',
+        "[projects.'e:\\a']",
+        'trust_level = "trusted"',
+        "[projects.'e:\\b']",
+        'trust_level = "untrusted"',
+        ''
+      ].join('\n')
+      const filtered = filterAccountTrust(text)
+      expect(settingsOf(filtered)).toEqual({
+        model: 'gpt-old',
+        hooks: { state: { k: { enabled: false } } },
+        projects: { 'e:\\b': { trust_level: 'untrusted' } }
+      })
+      expect(filtered.startsWith('# the login\'s own file\nmodel = "gpt-old"\n')).toBe(true)
+      expect(filterAccountTrust(filtered)).toBe(filtered)
+    })
+
+    it('leaves a file without trust byte for byte', () => {
+      const text = 'model = "m" # mine\n[mcp_servers.demo.env]\nTOKEN = "LOGIN_CANARY"\n'
+      expect(filterAccountTrust(text)).toBe(text)
+    })
+
+    it('throws on a file that is not TOML, without repeating it', () => {
+      expect(() => filterAccountTrust('hooks = [\nSECRET_CANARY')).toThrow(/^config\.toml is not valid TOML$/)
+    })
+  })
+
   // TOML lets a table be written as a [header], as dotted keys, or as an inline table. A
   // table defined by dotted keys or inline cannot be given a [header] later, so a new key
   // has to go where the table already is.
   describe('tables written as dotted keys or inline tables', () => {
-    const source = '[hooks.state."k"]\ntrusted_hash = "sha256:default"\nenabled = false\n'
-    const wanted = { hooks: { state: { k: { trusted_hash: 'sha256:own', enabled: false } } } }
-    const own = new Map([['k', 'sha256:own']])
+    const source = '[hooks.state."k"]\ntrusted_hash = "sha256:default"\n'
+    const wanted = { hooks: { state: { k: { trusted_hash: 'sha256:default', enabled: false } } } }
 
     it.each([
-      ['dotted keys at the top', 'hooks.state.k.trusted_hash = "sha256:own"\n'],
-      ['dotted keys under [hooks]', '[hooks]\nstate.k.trusted_hash = "sha256:own"\n'],
-      ['dotted keys under [hooks.state]', '[hooks.state]\nk.trusted_hash = "sha256:own"\n'],
-      ['an inline table for the hook', 'hooks.state.k = { trusted_hash = "sha256:own" }\n'],
-      ['an inline table for hooks.state', '[hooks]\nstate = { k = { trusted_hash = "sha256:own" } }\n'],
-      ['one inline table for everything', 'hooks = { state = { k = { trusted_hash = "sha256:own" } } }\n']
-    ])('keeps a hook trusted with %s and adds the default home\'s enabled beside it', (_form, target) => {
-      const result = mergeAccountConfig(source, target, own)
+      ['dotted keys at the top', 'hooks.state.k.enabled = false\n'],
+      ['dotted keys under [hooks]', '[hooks]\nstate.k.enabled = false\n'],
+      ['dotted keys under [hooks.state]', '[hooks.state]\nk.enabled = false\n'],
+      ['an inline table for the hook', 'hooks.state.k = { enabled = false }\n'],
+      ['an inline table for hooks.state', '[hooks]\nstate = { k = { enabled = false } }\n'],
+      ['one inline table for everything', 'hooks = { state = { k = { enabled = false } } }\n']
+    ])('keeps a hook switched off with %s and adds the default home\'s hash beside it', (_form, target) => {
+      const result = mergeAccountConfig(source, target)
       expect(tomlValue(result.content)).toEqual(wanted)
       // A second refresh changes nothing.
-      expect(mergeAccountConfig(source, result.content, own).content).toBe(result.content)
+      expect(mergeAccountConfig(source, result.content).content).toBe(result.content)
     })
 
     it('adds a second hook beside an inline hooks.state', () => {
       const result = mergeAccountConfig(
         '[hooks.state."k2"]\ntrusted_hash = "sha256:two"\n',
-        'hooks.state = { k = { trusted_hash = "sha256:own" } }\n',
-        own
+        'hooks.state = { k = { enabled = false } }\n'
       )
       expect(tomlValue(result.content)).toEqual({
-        hooks: { state: { k: { trusted_hash: 'sha256:own' }, k2: { trusted_hash: 'sha256:two' } } }
+        hooks: { state: { k: { enabled: false }, k2: { trusted_hash: 'sha256:two' } } }
       })
     })
 

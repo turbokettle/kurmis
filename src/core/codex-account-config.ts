@@ -1,28 +1,26 @@
 /**
  * The `config.toml` an extra Codex login's home gets: the default home's settings without
  * anything that looks like a secret, with the secrets that login's own copy already has
- * kept in place.
+ * kept in place. Copied from the original router's `src/tools/claude/core/codex-account-config.ts`.
  *
- * A login added in the original router runs with its own `CODEX_HOME` under
- * `<ROUTER_HOME>/claude/codex-accounts/<id>`. Its directories link to the default home's,
- * and its `config.toml` and `AGENTS.md` are copies refreshed before every start
- * (`../main/accounts/codex-home-files.ts`). A secret such as an MCP server's `env` table or
- * a bearer header is not copied; a login that needs one keeps its own.
+ * An extra Codex login runs with its own `CODEX_HOME` (`codex/<name>/` in the data folder).
+ * Before every start its `config.toml` is made again from `~/.codex/config.toml` with
+ * `mergeAccountConfig` (`codex-home.ts` says when). A secret, such as an MCP server's `env`
+ * table or a bearer header, is never copied; a login that needs one keeps its own. Layout,
+ * comments and TOML types (integer or float, the kind of date) are kept.
  *
  * Codex keeps trust in the `config.toml` of the home it runs with: `hooks.state."<hook key>"`
  * for a hook (`trusted_hash`, `enabled`) and `projects."<folder>"` for a folder
- * (`trust_level`) (CODEX-PROTOCOL.md section 25). The default home's trust is copied like
- * any other setting. Of the login's own trust values, only these stay:
+ * (`trust_level`). The default home's trust is copied like any other setting. Of the
+ * login's own trust values, only the two that narrow stay:
  *
- * - a `trusted_hash` that the original router recorded when a person trusted that hook at that hash from
- *   the window (`RecordedHookTrust`);
  * - `enabled = false`, which switches a hook off;
  * - `trust_level = "untrusted"`.
  *
- * Every other trust value in the login's file is dropped. A session can write that file, so
- * a value the original router did not record may have been written by a model, and keeping it would
- * widen every later session on the login. The two narrowing values can only stop
- * something from running, so they stay whoever wrote them.
+ * Every other trust value in the login's file is dropped. A Codex session can write that
+ * file, so a value there may have been written by a model, and keeping it would widen every
+ * later session on the login. The two narrowing values can only stop something from running,
+ * so they stay whoever wrote them. Trust given in the default home reaches every login.
  */
 import { parseTOML, type AST } from 'toml-eslint-parser'
 
@@ -31,7 +29,11 @@ const OPAQUE_KEY = /^(env|environment|set|http_headers|headers|env_http_headers|
 const SECRET_KEY = /(?:api.?key|secret|password|credential|access.?token|refresh.?token|authorization|oauth|private.?key)/i
 const SECRET_TEXT = /(?:\bBearer\s+\S+|\b(?:sk|ghp|github_pat|xox[baprs])[-_][a-z\d_-]{8,}|-----BEGIN [\w ]*PRIVATE KEY-----|https?:\/\/[^\s/@:]*:[^\s/@]+@|[?&](?:token|key|secret|signature|password)=[^&#\s]+|(?:api[_-]?key|secret|password|authorization|access[_-]?token)\s*[=:]\s*["']?[^\s,"'}]+)/i
 
-export function secretLooking(text: string): boolean {
+/**
+ * Whether a text looks like it holds a secret: a bearer token, a known key format, a private
+ * key, a password in a URL and the like.
+ */
+function secretLooking(text: string): boolean {
   return SECRET_TEXT.test(text) || /--(?:token|api-key|password|secret)(?:[=\s]+)\S+/i.test(text)
 }
 
@@ -42,10 +44,7 @@ function opaqueKey(key: string): boolean {
 /** One key of a path: a table's key, or the index of an element of an array of tables. */
 type PathKey = string | number
 
-/**
- * The tables Codex keeps trust in, one per folder or hook, and the fields of each that hold
- * trust (CODEX-PROTOCOL.md section 25).
- */
+/** The tables Codex keeps trust in, one per folder or hook, and the fields of each that hold trust. */
 const TRUST_TABLES: ReadonlyArray<{ parent: readonly string[]; fields: readonly PathKey[] }> = [
   { parent: ['projects'], fields: ['trust_level'] },
   { parent: ['hooks', 'state'], fields: ['trusted_hash', 'enabled'] }
@@ -125,19 +124,12 @@ function trustValue(path: readonly PathKey[]): boolean {
 }
 
 /**
- * The hook trust the original router wrote into one login's home when a person trusted a hook from the
- * window: each hook key with the hash that person trusted. the original router keeps it in a file of its
- * own, outside the login's home (`../main/accounts/codex-hook-trust-record.ts`).
+ * Whether a trust value of the login's own file stays: only a value that narrows does.
+ * `path` is one trust field, as `trustValue` accepts it.
  */
-export type RecordedHookTrust = ReadonlyMap<string, string>
-
-/**
- * Whether a trust value of the login's own file stays: a hook hash the original router recorded, or a
- * value that only narrows. `path` is one trust field, as `trustValue` accepts it.
- */
-function keepsOwnTrust(path: readonly PathKey[], value: unknown, recorded: RecordedHookTrust): boolean {
+function keepsOwnTrust(path: readonly PathKey[], value: unknown): boolean {
   const field = path.at(-1)
-  if (field === 'trusted_hash') return typeof value === 'string' && recorded.get(String(path.at(-2))) === value
+  if (field === 'trusted_hash') return false
   if (field === 'enabled') return value === false
   return value === 'untrusted'
 }
@@ -564,16 +556,16 @@ export function publicAccountConfig(text: string): string {
 /**
  * The login's `config.toml` made to hold the default home's settings: every public value
  * set, every public value the default no longer has removed, and every secret the login
- * already had kept. The login's trust values that `keepsOwnTrust` accepts are kept as well,
- * and win over the default home's for the same hook or folder; the rest are dropped.
+ * already had kept. The login's narrowing trust values are kept as well, and win over the
+ * default home's for the same hook or folder; the rest of its trust is dropped.
  * `missingSecrets` says the default home has a secret the login lacks, such as an MCP
  * server's `env` table.
+ *
+ * `source` is the default home's file and `target` the login's ('' when it has none).
+ * Throws when either is not valid TOML, or when the login's own secrets and trust cannot be
+ * kept in place. No message names a value from either file.
  */
-export function mergeAccountConfig(
-  source: string,
-  target: string,
-  recorded: RecordedHookTrust = new Map()
-): { content: string; missingSecrets: boolean } {
+export function mergeAccountConfig(source: string, target: string): { content: string; missingSecrets: boolean } {
   const targetValues = typedToml(target)
   const kept = (entry: TomlEntry): boolean => opaquePath(entry.path, inlineEntry(entry)) || protectedValue(at(targetValues, entry.path))
   const targetEntries = settings(parseToml(target))
@@ -582,7 +574,7 @@ export function mergeAccountConfig(
   for (const entry of targetEntries) {
     if (inlineEntry(entry) || !trustValue(entry.path) || kept(entry)) continue
     const value = at(targetValues, entry.path)
-    if (keepsOwnTrust(entry.path, value, recorded)) publicSource = patchToml(publicSource, entry.path, value)
+    if (keepsOwnTrust(entry.path, value)) publicSource = patchToml(publicSource, entry.path, value)
   }
   const values = typedToml(publicSource)
   const preserve = (current: unknown, incoming: unknown, path: string[]): unknown => {
@@ -623,12 +615,12 @@ export function mergeAccountConfig(
 }
 
 /**
- * The login's `config.toml` with only its trust checked: every trust value `keepsOwnTrust`
- * refuses is taken out, and everything else stays byte for byte. Used when the default
- * home's `config.toml` is missing or unreadable, so the login still never starts with
- * trust the original router did not record.
+ * The login's `config.toml` with only its trust checked: every trust value that does not
+ * narrow is taken out, and everything else stays byte for byte. Used when the default
+ * home's `config.toml` is missing or cannot be merged, so the login still never starts with
+ * trust its own file gave it. Throws when `text` is not valid TOML.
  */
-export function filterAccountTrust(text: string, recorded: RecordedHookTrust = new Map()): string {
+export function filterAccountTrust(text: string): string {
   const values = typedToml(text)
   let content = text
   // Last in the file first, for the same reason as in `mergeAccountConfig`.
@@ -636,7 +628,7 @@ export function filterAccountTrust(text: string, recorded: RecordedHookTrust = n
     const drop = settings(parseToml(content)).filter((entry) => {
       if (inlineEntry(entry) || !trustValue(entry.path)) return false
       const value = at(values, entry.path)
-      return !protectedValue(value) && !keepsOwnTrust(entry.path, value, recorded)
+      return !protectedValue(value) && !keepsOwnTrust(entry.path, value)
     })
     const last = drop.sort((a, b) => entryStart(b) - entryStart(a))[0]
     if (last === undefined) return content
