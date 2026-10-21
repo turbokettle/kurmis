@@ -30,6 +30,19 @@ process.env.KURMIS_SECURITY_PROGRAM = join(dirname(fileURLToPath(import.meta.url
 process.env.FAKE_SECURITY_DIR = join(home, 'fake-keychain')
 mkdirSync(process.env.FAKE_SECURITY_DIR, { recursive: true })
 
+// The same for launchd and the Windows registry: `launchctl` and `reg.exe` are stand-ins that
+// keep their jobs and values in the temporary home. They start no program unless a test sets
+// FAKE_LAUNCHCTL_RUN=1.
+process.env.KURMIS_LAUNCHCTL_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), 'platform', 'fake-launchctl', 'launchctl.mjs')
+process.env.FAKE_LAUNCHCTL_DIR = join(home, 'fake-launchctl')
+mkdirSync(process.env.FAKE_LAUNCHCTL_DIR, { recursive: true })
+delete process.env.FAKE_LAUNCHCTL_RUN
+delete process.env.FAKE_LAUNCHCTL_FAIL_BOOTSTRAP
+process.env.KURMIS_REG_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), 'platform', 'fake-reg', 'reg.mjs')
+process.env.FAKE_REG_DIR = join(home, 'fake-reg')
+mkdirSync(process.env.FAKE_REG_DIR, { recursive: true })
+delete process.env.FAKE_REG_FAIL
+
 afterAll(() => {
   rmSync(home, { recursive: true, force: true })
 })
