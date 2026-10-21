@@ -62,10 +62,10 @@ function rateLimitInfo(overrides: Record<string, unknown> = {}): Record<string, 
 
 describe('the get_usage answer', () => {
   test('every window comes back as a percentage with an ISO reset time', () => {
-    const usage = usageFromGetUsage('claude:work', getUsageAnswer(), NOW)
+    const usage = usageFromGetUsage('workclaude', getUsageAnswer(), NOW)
 
     expect(usage).toMatchObject({
-      accountId: 'claude:work',
+      accountId: 'workclaude',
       fetchedAt: NOW,
       source: 'probe',
       subscriptionType: 'max',
@@ -91,30 +91,30 @@ describe('the get_usage answer', () => {
   })
 
   test('a logged-out CLI answers with no windows at all', () => {
-    const usage = usageFromGetUsage('claude:default', {
+    const usage = usageFromGetUsage('ownclaude1', {
       subscription_type: null,
       rate_limits_available: false,
       rate_limits: null
     }, NOW)
 
     expect(usage).toEqual({
-      ...emptyAccountUsage('claude:default', NOW),
+      ...emptyAccountUsage('ownclaude1', NOW),
       subscriptionType: null,
       rateLimitsAvailable: false
     })
   })
 
   test('an answer that is not an object at all still gives a usable snapshot', () => {
-    expect(usageFromGetUsage('claude:default', 'nonsense', NOW)).toEqual(emptyAccountUsage('claude:default', NOW))
+    expect(usageFromGetUsage('ownclaude1', 'nonsense', NOW)).toEqual(emptyAccountUsage('ownclaude1', NOW))
   })
 })
 
 describe('a rate-limit report', () => {
   test('fractions become percentages and unix seconds become ISO', () => {
-    const usage = usageFromRateLimitEvent('claude:work', null, rateLimitInfo(), NOW)
+    const usage = usageFromRateLimitEvent('workclaude', null, rateLimitInfo(), NOW)
 
     expect(usage).toMatchObject({
-      accountId: 'claude:work',
+      accountId: 'workclaude',
       fetchedAt: NOW,
       source: 'session',
       rateLimitsAvailable: true,
@@ -126,8 +126,8 @@ describe('a rate-limit report', () => {
   })
 
   test('only the windows the event carries are replaced', () => {
-    const probed = usageFromGetUsage('claude:work', getUsageAnswer(), NOW)
-    const folded = usageFromRateLimitEvent('claude:work', probed, rateLimitInfo({ status: 'rejected' }), NOW + 1000)
+    const probed = usageFromGetUsage('workclaude', getUsageAnswer(), NOW)
+    const folded = usageFromRateLimitEvent('workclaude', probed, rateLimitInfo({ status: 'rejected' }), NOW + 1000)
 
     // The five-hour window is the event's; everything the event says nothing
     // about is still the probe's.
@@ -147,7 +147,7 @@ describe('a rate-limit report', () => {
       utilization: 0.815,
       resetsAt: 1_788_379_200
     }
-    const usage = usageFromRateLimitEvent('claude:work', null, info, NOW)
+    const usage = usageFromRateLimitEvent('workclaude', null, info, NOW)
 
     expect(usage.sevenDay).toEqual({ utilization: 81.5, resetsAt: '2026-09-02T20:00:00.000Z' })
     expect(usage.fiveHour).toBeNull()
@@ -155,14 +155,14 @@ describe('a rate-limit report', () => {
   })
 
   test('a failed probe stops being reported once live numbers arrive', () => {
-    const failed: AccountUsage = { ...emptyAccountUsage('claude:work', NOW), error: 'usage probe timed out' }
-    expect(usageFromRateLimitEvent('claude:work', failed, rateLimitInfo(), NOW).error).toBeNull()
+    const failed: AccountUsage = { ...emptyAccountUsage('workclaude', NOW), error: 'usage probe timed out' }
+    expect(usageFromRateLimitEvent('workclaude', failed, rateLimitInfo(), NOW).error).toBeNull()
   })
 })
 
 describe('the window a rate-limit report was about', () => {
   test('it is the one the event named, with the figures beside it', () => {
-    expect(usageFromRateLimitEvent('claude:work', null, rateLimitInfo(), NOW)).toMatchObject({
+    expect(usageFromRateLimitEvent('workclaude', null, rateLimitInfo(), NOW)).toMatchObject({
       fiveHour: { utilization: 22, resetsAt: '2026-09-01T23:50:00.000Z' },
       sevenDay: { utilization: 4, resetsAt: '2026-09-02T20:00:00.000Z' },
       sevenDayOverage: null,
@@ -178,14 +178,14 @@ describe('the window a rate-limit report was about', () => {
   })
 
   test('an event with nothing readable in it leaves every field empty', () => {
-    expect(usageFromRateLimitEvent('claude:work', null, { status: 'made up' }, NOW))
-      .toEqual({ ...emptyAccountUsage('claude:work', NOW), source: 'session' })
+    expect(usageFromRateLimitEvent('workclaude', null, { status: 'made up' }, NOW))
+      .toEqual({ ...emptyAccountUsage('workclaude', NOW), source: 'session' })
   })
 
   // The warning that made this necessary: it was about the seven-day window that
   // counts extra usage, at 96%, while the five-hour window sat at 2%.
   test('it keeps the window the warning named, and the window itself', () => {
-    const usage = usageFromRateLimitEvent('claude:work', null, OVERAGE_WARNING, NOW)
+    const usage = usageFromRateLimitEvent('workclaude', null, OVERAGE_WARNING, NOW)
 
     expect(usage.limited).toEqual({
       window: 'seven_day_overage_included',
@@ -200,7 +200,7 @@ describe('the window a rate-limit report was about', () => {
   })
 
   test('a window this build has never heard of is still the one it reports', () => {
-    const usage = usageFromRateLimitEvent('claude:work', null, {
+    const usage = usageFromRateLimitEvent('workclaude', null, {
       status: 'rejected',
       rateLimitType: 'thirty_day_something',
       utilization: 1.02
@@ -215,7 +215,7 @@ describe('the window a rate-limit report was about', () => {
   })
 
   test('a rejection that names a window without a percentage still says when it resets', () => {
-    const usage = usageFromRateLimitEvent('claude:work', null, {
+    const usage = usageFromRateLimitEvent('workclaude', null, {
       status: 'rejected',
       rateLimitType: 'five_hour',
       resetsAt: 1_788_306_600
@@ -229,7 +229,7 @@ describe('the window a rate-limit report was about', () => {
 describe('the status a probe carries over', () => {
   /** The account as the overage warning above left it. */
   function warned(): AccountUsage {
-    return usageFromRateLimitEvent('claude:work', null, OVERAGE_WARNING, NOW)
+    return usageFromRateLimitEvent('workclaude', null, OVERAGE_WARNING, NOW)
   }
 
   /** A `get_usage` answer whose windows are given as percentages. */
@@ -238,7 +238,7 @@ describe('the status a probe carries over', () => {
   }
 
   test('the warning stands while the window it was about is still over the threshold', () => {
-    const usage = usageFromGetUsage('claude:work', probe({
+    const usage = usageFromGetUsage('workclaude', probe({
       five_hour: { utilization: 2, resets_at: '2026-09-13T02:40:00.000Z' },
       seven_day_overage_included: { utilization: 97, resets_at: '2026-09-14T18:00:00.000Z' }
     }), NOW, warned())
@@ -249,7 +249,7 @@ describe('the status a probe carries over', () => {
   })
 
   test('it goes once the probe measures that window under the threshold', () => {
-    const usage = usageFromGetUsage('claude:work', probe({
+    const usage = usageFromGetUsage('workclaude', probe({
       seven_day_overage_included: { utilization: 12, resets_at: '2026-09-21T18:00:00.000Z' }
     }), NOW, warned())
 
@@ -259,25 +259,25 @@ describe('the status a probe carries over', () => {
 
   test('it goes once that window has reset, whatever the probe measured', () => {
     const after = Date.parse('2026-09-14T18:00:01.000Z')
-    const usage = usageFromGetUsage('claude:work', probe({}), after, warned())
+    const usage = usageFromGetUsage('workclaude', probe({}), after, warned())
 
     expect(usage.status).toBeNull()
     expect(usage.limited).toBeNull()
   })
 
   test('a window the probe did not measure leaves the status where it was', () => {
-    const rejected = usageFromRateLimitEvent('claude:work', null, {
+    const rejected = usageFromRateLimitEvent('workclaude', null, {
       status: 'rejected',
       rateLimitType: 'thirty_day_something',
       utilization: 1.02
     }, NOW)
-    const usage = usageFromGetUsage('claude:work', probe({ five_hour: { utilization: 3 } }), NOW, rejected)
+    const usage = usageFromGetUsage('workclaude', probe({ five_hour: { utilization: 3 } }), NOW, rejected)
 
     expect(usage.status).toBe('rejected')
     expect(usage.limited?.window).toBe('thirty_day_something')
   })
 
   test('an account nothing has reported for gets no status at all', () => {
-    expect(usageFromGetUsage('claude:work', probe({ five_hour: { utilization: 3 } }), NOW).status).toBeNull()
+    expect(usageFromGetUsage('workclaude', probe({ five_hour: { utilization: 3 } }), NOW).status).toBeNull()
   })
 })

@@ -206,7 +206,7 @@ describe('kurmis daemon', () => {
     expect((await kurmis(bundles.newer, home, ['daemon', 'start'])).code).toBe(0)
     const pid = daemonInfo(home)?.pid ?? 0
     const moved = await freePort()
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1, port: moved }))
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 2, port: moved }))
     const start = await kurmis(bundles.older, home, ['daemon', 'start'])
     expect(start.code).toBe(1)
     expect(start.stderr).toContain(`The kurmis daemon 0.5.0 runs on port ${String(port)}, but ${join(home, 'config.json')} names port ` +

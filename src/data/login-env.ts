@@ -11,9 +11,9 @@
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { CLAUDE_DEFAULT_ACCOUNT_ID, CODEX_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
+import type { LoginRef } from './login-id.ts'
 import { isKurmisCodexHome } from '../core/codex-choice.ts'
-import { claudeDefaultProbeFolder, loginFolder, providerFolder } from './paths.ts'
+import { loginFolder, ownClaudeProbeFolder, providerFolder } from './paths.ts'
 
 export type EnvPatch = Record<string, string | undefined>
 
@@ -41,7 +41,7 @@ export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CRED
  * login runs with its folder as the whole config folder (`CLAUDE_CONFIG_DIR`), so the CLI writes
  * the login's profile (`oauthAccount`) into that folder's `.claude.json`, and on macOS names the
  * Keychain item after the folder, exactly as a routed CLI started with
- * `CLAUDE_SECURESTORAGE_CONFIG_DIR=<folder>` looks it up. `claude:default` runs with both
+ * `CLAUDE_SECURESTORAGE_CONFIG_DIR=<folder>` looks it up. The machine's own login runs with both
  * variables removed, so the CLI acts on `~/.claude` and `~/.claude.json` as usual. Naming
  * `~/.claude` instead would make the CLI look for `.claude.json` inside it.
  *
@@ -53,12 +53,12 @@ export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CRED
  * as fallback: `auth logout` deletes both, and `auth login` writes the record and deletes the
  * file when there was no record before (Claude Code 2.1.306, read from its bundled source).
  */
-export function claudeLoginEnv(id: string, forceCredentialManager = false): EnvPatch {
+export function claudeLoginEnv(login: LoginRef, forceCredentialManager = false): EnvPatch {
   const force: EnvPatch = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: '1' } : {}
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
+  if (login.machineOwn) {
     return { CLAUDE_CONFIG_DIR: undefined, CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
   }
-  return { CLAUDE_CONFIG_DIR: loginFolder(id), CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
+  return { CLAUDE_CONFIG_DIR: loginFolder(login), CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
 }
 
 /**
@@ -67,29 +67,29 @@ export function claudeLoginEnv(id: string, forceCredentialManager = false): EnvP
  * and takes about ten seconds against the user's own, and so that the probe writes nothing into
  * `~/.claude.json`.
  *
- * For `claude:default` that moves the credentials too, so `CLAUDE_SECURESTORAGE_CONFIG_DIR` is set
+ * For the machine's own login that moves the credentials too, so `CLAUDE_SECURESTORAGE_CONFIG_DIR` is set
  * to the empty string, which the CLI reads as "the default credentials": `~/.claude/.credentials.json`
  * and the Keychain item with the plain name. Any other value, even the path of `~/.claude`, would
  * name a hashed Keychain item no login ever wrote (`keychain-service.ts`).
  */
-export function claudeProbeEnv(id: string): EnvPatch {
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return { CLAUDE_CONFIG_DIR: claudeDefaultProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: '', ...NOT_INHERITED }
+export function claudeProbeEnv(login: LoginRef): EnvPatch {
+  if (login.machineOwn) {
+    return { CLAUDE_CONFIG_DIR: ownClaudeProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: '', ...NOT_INHERITED }
   }
-  return claudeLoginEnv(id)
+  return claudeLoginEnv(login)
 }
 
 /**
  * The environment of `codex login`, `codex logout` and the `codex app-server` usage probe on a
- * login: `CODEX_HOME` set to the login's folder for an extra login. `codex:default` keeps the
+ * login: `CODEX_HOME` set to the login's folder for an extra login. The machine's own login keeps the
  * inherited `CODEX_HOME`, unless that is an extra login's home inside kurmis' own folder: a
  * kurmis started from a shell inside a `kurmis codex` session on an extra login inherits it, and
  * would otherwise act on that login. Wrapped Codex sessions on an extra login use the folder
  * `prepareCodexHome` prepares, which is the same one.
  */
-export function codexLoginEnv(id: string, inherited: Readonly<Record<string, string | undefined>> = {},
+export function codexLoginEnv(login: LoginRef, inherited: Readonly<Record<string, string | undefined>> = {},
   platform: NodeJS.Platform = process.platform): EnvPatch {
-  if (id !== CODEX_DEFAULT_ACCOUNT_ID) return { CODEX_HOME: loginFolder(id), ...NOT_INHERITED }
+  if (!login.machineOwn) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED }
   const windows = platform === 'win32'
   const home = windows
     ? Object.entries(inherited).find(([name]) => name.toUpperCase() === 'CODEX_HOME')?.[1]
@@ -101,7 +101,7 @@ export function codexLoginEnv(id: string, inherited: Readonly<Record<string, str
 
 /**
  * Whether a Claude CLI started with `env` and without `CLAUDE_SECURESTORAGE_CONFIG_DIR` reads
- * credentials other than `claude:default`'s, because `env` sets `CLAUDE_CONFIG_DIR`. The CLI then
+ * credentials other than the machine's own login's, because `env` sets `CLAUDE_CONFIG_DIR`. The CLI then
  * names its Keychain item (and on Windows its Credential Manager entry) after that value, so any
  * value that is not empty is another store on macOS and Windows, the path of `~/.claude` too. On
  * Linux only the file counts, which is the same one when the folder is `~/.claude` itself

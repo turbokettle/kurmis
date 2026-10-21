@@ -1,11 +1,13 @@
 // Who a Claude login is: the `oauthAccount` block the CLI caches in a config folder's
 // `.claude.json`. The proxy needs the account uuid for `metadata.user_id` (`rewriteUserId` in
-// `src/core/proxy-rules.ts`), and `kurmis list` and `status` show the email.
+// `src/core/proxy-rules.ts`), `kurmis list` and `status` show the email, and the login's automatic
+// alias is made from it (`followEmail` in `config.ts`).
 //
 // The block is read only from a config folder that this login's own CLI runs write, so it can
 // never name another login: the login's folder for an extra login (written by `claude auth login`
-// and by its usage probes), and the probe folder for `claude:default` (written by its probes).
-// The shared `~/.claude.json` is read for `claude:default` only before its first probe has
+// and by its usage probes), and the probe folder for the machine's own login (written by its
+// probes).
+// The shared `~/.claude.json` is read for the machine's own login only before its first probe has
 // written the probe folder's file, as a last resort: a routed CLI writes there too, but always
 // on behalf of the machine's own login.
 //
@@ -14,8 +16,8 @@
 import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
-import { claudeDefaultProbeFolder, loginFolder } from './paths.ts'
+import type { LoginRef } from './login-id.ts'
+import { loginFolder, ownClaudeProbeFolder } from './paths.ts'
 
 /** The CLI's own cache of its profile, inside a config folder or at `~/.claude.json`. */
 export const CLAUDE_PROFILE_FILE = '.claude.json'
@@ -29,13 +31,14 @@ export interface ClaudeIdentity {
 
 /**
  * The files the identity of a login is read from, best first: for an extra login only its own
- * folder's `.claude.json`, for `claude:default` the probe folder's and then `~/.claude.json`.
+ * folder's `.claude.json`, for the machine's own login the probe folder's and then
+ * `~/.claude.json`.
  */
-export function claudeIdentityFiles(id: string, home: string = homedir()): string[] {
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return [join(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), join(home, CLAUDE_PROFILE_FILE)]
+export function claudeIdentityFiles(login: LoginRef, home: string = homedir()): string[] {
+  if (login.machineOwn) {
+    return [join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), join(home, CLAUDE_PROFILE_FILE)]
   }
-  return [join(loginFolder(id), CLAUDE_PROFILE_FILE)]
+  return [join(loginFolder(login), CLAUDE_PROFILE_FILE)]
 }
 
 /** The `oauthAccount` block of a `.claude.json`, or null when there is none or it names nobody. */
@@ -72,8 +75,8 @@ export class ClaudeIdentityReader {
   constructor(private readonly home: () => string = homedir) {}
 
   /** The login's identity from the first of its files that names somebody, or null. */
-  read(id: string): ClaudeIdentity | null {
-    for (const file of claudeIdentityFiles(id, this.home())) {
+  read(login: LoginRef): ClaudeIdentity | null {
+    for (const file of claudeIdentityFiles(login, this.home())) {
       const value = this.readFile(file)
       if (value !== null) return value
     }
@@ -99,6 +102,6 @@ export class ClaudeIdentityReader {
 }
 
 /** One read, without a cache, for the CLI. */
-export function readClaudeIdentity(id: string, home: string = homedir()): ClaudeIdentity | null {
-  return new ClaudeIdentityReader(() => home).read(id)
+export function readClaudeIdentity(login: LoginRef, home: string = homedir()): ClaudeIdentity | null {
+  return new ClaudeIdentityReader(() => home).read(login)
 }

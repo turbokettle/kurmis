@@ -278,8 +278,8 @@ async function runSetup(undo: boolean, deps: SetupDeps, context: CliContext): Pr
   reportFile(result, undo, context)
   if (!undo && configDirHasOwnCredentials(context.env, deps.platform)) {
     writeLine(context.stdout, 'CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that ' +
-      'folder, which is not kurmis\' claude:default. Kurmis sends its requests only to the extra logins and never signs them ' +
-      'as claude:default. "kurmis claude" still starts on claude:default.')
+      'folder, which is not the machine\'s own Claude login. Kurmis sends its requests only to the extra logins and never ' +
+      'signs them as the machine\'s own Claude login. "kurmis claude" still starts on the machine\'s own Claude login.')
   }
 
   const ok = await autostartStep(undo, deps, context)

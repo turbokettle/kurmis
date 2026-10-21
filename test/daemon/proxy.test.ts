@@ -15,6 +15,7 @@ import { createProxy } from '../../src/daemon/proxy.ts'
 import type { ProbeFunction } from '../../src/daemon/usage-poller.ts'
 import { fakeToken, reply, writeClaudeCredentials } from '../fakes/index.ts'
 import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
+import { claudeRef, OWN_CLAUDE } from '../logins.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
@@ -22,6 +23,7 @@ const S2 = '22222222-2222-4222-8222-222222222222'
 const S3 = '33333333-3333-4333-8333-333333333333'
 const DEFAULT = fakeToken('default')
 const WORK = fakeToken('work')
+const WORK_ID = 'workclaude'
 const BAD_REQUEST = '{"type":"error","error":{"type":"invalid_request_error","message":"no"}}'
 
 let harness: Harness | null = null
@@ -31,12 +33,12 @@ afterEach(async () => {
   harness = null
 })
 
-/** A harness with `claude:default` and `claude:work`, both signed in with a file. */
+/** A harness with the machine's own Claude login and `WORK_ID`, both signed in with a file. */
 async function twoLogins(options: Parameters<typeof startHarness>[0] = {},
   credentials: { default?: Parameters<typeof writeClaudeCredentials>[1] } = {}): Promise<Harness> {
-  harness = await startHarness({ logins: { 'claude:work': {} }, ...options })
+  harness = await startHarness({ claude: { [WORK_ID]: {} }, ...options })
   writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT, ...credentials.default })
-  writeClaudeCredentials(loginFolder('claude:work'), { accessToken: WORK })
+  writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
   return harness
 }
 
@@ -58,14 +60,14 @@ function events(h: Harness, event: string): number {
   return h.log.filter((line) => line.event === event).length
 }
 
-/** Marks `claude:work` "use first", so every Auto session that can moves to it. */
+/** Marks `WORK_ID` "use first", so every Auto session that can moves to it. */
 function useWorkFirst(): void {
-  saveConfig(updateLogin(loadConfig(), 'claude:work', { useFirst: true }))
+  saveConfig(updateLogin(loadConfig(), WORK_ID, { useFirst: true }))
 }
 
 /**
- * S1 is placed on claude:default, then moves to claude:work (marked "use first"), which answers
- * 400, so S1 is sent back to claude:default and held there. claude:default can serve throughout.
+ * S1 is placed on the machine's own login, then moves to WORK_ID (marked "use first"), which answers
+ * 400, so S1 is sent back to the machine's own login and held there. The machine's own login can serve throughout.
  */
 async function holdS1OnDefault(h: Harness): Promise<void> {
   expect((await messages(h, S1)).status).toBe(200)
@@ -73,7 +75,7 @@ async function holdS1OnDefault(h: Harness): Promise<void> {
   h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
   expect((await messages(h, S1)).status).toBe(200)
   expect(bearers(h)).toEqual([DEFAULT, WORK, DEFAULT])
-  // Held: the next request stays on claude:default although claude:work comes first.
+  // Held: the next request stays on the machine's own login although WORK_ID comes first.
   expect((await messages(h, S1)).status).toBe(200)
   expect(bearers(h).at(-1)).toBe(DEFAULT)
 }
@@ -101,13 +103,13 @@ describe('a 401', () => {
     const answer = await messages(h, S1)
     expect(answer.status).toBe(200)
     expect(bearers(h)).toEqual([WORK, WORK, DEFAULT])
-    expect((await status(h)).find((login) => login.id === 'claude:work')?.block?.kind).toBe('signed-out')
-    // A new session would go to claude:work, marked "use first", but it is passed over now.
+    expect((await status(h)).find((login) => login.id === WORK_ID)?.block?.kind).toBe('signed-out')
+    // A new session would go to WORK_ID, marked "use first", but it is passed over now.
     expect((await messages(h, S2)).status).toBe(200)
     expect(bearers(h).at(-1)).toBe(DEFAULT)
     // A probe that succeeds ends that.
-    expect((await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: ['claude:work'] } })).status).toBe(200)
-    expect((await status(h)).find((login) => login.id === 'claude:work')?.block).toBeNull()
+    expect((await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: [WORK_ID] } })).status).toBe(200)
+    expect((await status(h)).find((login) => login.id === WORK_ID)?.block).toBeNull()
     expect((await messages(h, S3)).status).toBe(200)
     expect(bearers(h).at(-1)).toBe(WORK)
   }, 30_000)
@@ -115,7 +117,7 @@ describe('a 401', () => {
   test('from a login without a refresh token goes to the next login at once', async () => {
     const h = await twoLogins({}, { default: { refreshToken: null } })
     h.api.scriptFor(DEFAULT, reply.unauthorized())
-    const answer = await messages(h, S1, { 'x-kurmis-started-on': 'claude:work' })
+    const answer = await messages(h, S1, { 'x-kurmis-started-on': WORK_ID })
     expect(answer.status).toBe(200)
     expect(bearers(h)).toEqual([DEFAULT, WORK])
   })
@@ -126,16 +128,16 @@ describe('a 401', () => {
     expect((await messages(h, S1)).status).toBe(401)
     expect(bearers(h)).toEqual([DEFAULT, DEFAULT])
     h.api.scriptFor(WORK, reply.unauthorized(), reply.unauthorized())
-    expect((await messages(h, S2, { 'x-kurmis-login': 'claude:work' })).status).toBe(401)
+    expect((await messages(h, S2, { 'x-kurmis-login': WORK_ID })).status).toBe(401)
     expect(bearers(h)).toEqual([DEFAULT, DEFAULT, WORK, WORK])
   }, 30_000)
 
   test('with no login left to try is the proxy\'s 599, not the 401', async () => {
-    harness = await startHarness({ logins: { 'claude:work': {} } })
+    harness = await startHarness({ claude: { [WORK_ID]: {} } })
     writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT, refreshToken: null })
     harness.api.scriptFor(DEFAULT, reply.unauthorized())
-    // Started on claude:work, which has no token here and the request no authorization header.
-    const answer = await messages(harness, S1, { 'x-kurmis-started-on': 'claude:work' })
+    // Started on WORK_ID, which has no token here and the request no authorization header.
+    const answer = await messages(harness, S1, { 'x-kurmis-started-on': WORK_ID })
     expect(answer.status).toBe(599)
     expect(bearers(harness)).toEqual([DEFAULT])
   })
@@ -144,14 +146,14 @@ describe('a 401', () => {
 describe('the hold after a pin-back', () => {
   test('ends when the held login is cooling down, and the request goes on Auto', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is on claude:default
+    expect((await messages(h, S1)).status).toBe(200) // S1 is on the machine's own login
     h.api.scriptFor(DEFAULT, reply.quota({ resetsAt: Date.now() + 3_600_000 }))
-    expect((await messages(h, S2)).status).toBe(200) // claude:default is cooling, S2 is on claude:work
+    expect((await messages(h, S2)).status).toBe(200) // the machine's own login is cooling, S2 is on WORK_ID
     h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
-    // S1 moves to claude:work, which answers 400; the pin-back tries claude:default once.
+    // S1 moves to WORK_ID, which answers 400; the pin-back tries the machine's own login once.
     expect((await messages(h, S1)).status).toBe(200)
     expect(bearers(h)).toEqual([DEFAULT, DEFAULT, WORK, WORK, DEFAULT])
-    // claude:default is still cooling, so the hold ends and S1 goes where Auto sends it.
+    // The machine's own login is still cooling, so the hold ends and S1 goes where Auto sends it.
     expect((await messages(h, S1)).status).toBe(200)
     expect(bearers(h).at(-1)).toBe(WORK)
     expect(events(h, 'session_hold_ended')).toBe(1)
@@ -177,7 +179,7 @@ describe('the hold after a pin-back', () => {
 
   test('back to a previous login that is signed out gives the CLI the 400', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is on claude:default
+    expect((await messages(h, S1)).status).toBe(200) // S1 is on the machine's own login
     rmSync(join(h.home, '.claude', '.credentials.json'))
     h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
     const answer = await messages(h, S1)
@@ -188,7 +190,7 @@ describe('the hold after a pin-back', () => {
 
   test('that meets a usage limit on the previous login gives the CLI that 429, not the 400 again', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is on claude:default
+    expect((await messages(h, S1)).status).toBe(200) // S1 is on the machine's own login
     useWorkFirst()
     h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
     h.api.scriptFor(DEFAULT, reply.quota({ claim: 'seven_day', resetsAt: Date.now() + 3_600_000 }))
@@ -202,7 +204,7 @@ describe('the hold after a pin-back', () => {
 describe('a CLI whose credentials are no kurmis login\'s (x-kurmis-started-on: none)', () => {
   const none = { 'x-kurmis-started-on': 'none', authorization: 'Bearer cli-own-token' }
 
-  test('is never signed as claude:default, and its own header is never forwarded', async () => {
+  test("is never signed as the machine's own login, and its own header is never forwarded", async () => {
     const h = await twoLogins()
     expect((await messages(h, S1, none)).status).toBe(200)
     expect((await messages(h, S2, none)).status).toBe(200)
@@ -221,6 +223,7 @@ describe('a CLI whose credentials are no kurmis login\'s (x-kurmis-started-on: n
     expect(answer.status).toBe(599)
     expect(answer.text).toContain('CLAUDE_CONFIG_DIR')
     expect(answer.text).toContain('kurmis login claude')
+    expect(answer.text).toContain("which is not this machine's own Claude sign-in")
     expect(harness.api.apiRequests()).toHaveLength(0)
   })
 })
@@ -318,7 +321,9 @@ describe('a request body that is too large', () => {
   test('is answered 413 also for a client that sends its whole body before it reads the answer', async () => {
     const log: string[] = []
     // Nothing but the key and the body is looked at before a body that is too large is refused.
-    const proxy = createProxy({ key: KEY, table: {} as never, tokens: {} as never, identity: {} as never, poller: {} as never,
+    // The table only names the machine's own Claude login: the body is refused before anything else is read.
+    const table = { ownLogin: () => ({ id: OWN_CLAUDE }) }
+    const proxy = createProxy({ key: KEY, table: table as never, tokens: {} as never, identity: {} as never, poller: {} as never,
       upstream: {} as never, log: { write: (event) => { log.push(event) } }, now: Date.now, maxBodyBytes: 1_000 })
     server = createServer((req, res) => { void proxy.handle(req, res) })
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))

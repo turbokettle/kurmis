@@ -4,7 +4,8 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { ClaudeIdentityReader, parseClaudeIdentity, readClaudeIdentity } from '../../src/data/identity.ts'
-import { claudeDefaultProbeFolder, loginFolder } from '../../src/data/paths.ts'
+import { loginFolder, ownClaudeProbeFolder } from '../../src/data/paths.ts'
+import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
 
 function profile(uuid: string, email: string): string {
   return JSON.stringify({ numStartups: 3, oauthAccount: { accountUuid: uuid, emailAddress: email,
@@ -23,21 +24,23 @@ describe('parsing', () => {
   })
 })
 
+const WORK = claudeRef('workclaude')
+
 describe('reading', () => {
   test('an extra login reads only its own folder', () => {
     writeFileSync(join(homedir(), '.claude.json'), profile('uuid-shared', 'shared@example.com'))
-    expect(readClaudeIdentity('claude:work')).toBeNull()
-    mkdirSync(loginFolder('claude:work'), { recursive: true })
-    writeFileSync(join(loginFolder('claude:work'), '.claude.json'), profile('uuid-work', 'work@example.com'))
-    expect(readClaudeIdentity('claude:work')?.accountUuid).toBe('uuid-work')
+    expect(readClaudeIdentity(WORK)).toBeNull()
+    mkdirSync(loginFolder(WORK), { recursive: true })
+    writeFileSync(join(loginFolder(WORK), '.claude.json'), profile('uuid-work', 'work@example.com'))
+    expect(readClaudeIdentity(WORK)?.accountUuid).toBe('uuid-work')
   })
 
-  test('the default login prefers the probe folder and falls back to ~/.claude.json', () => {
+  test("the machine's own login prefers the probe folder and falls back to ~/.claude.json", () => {
     writeFileSync(join(homedir(), '.claude.json'), profile('uuid-shared', 'shared@example.com'))
     const reader = new ClaudeIdentityReader()
-    expect(reader.read('claude:default')?.accountUuid).toBe('uuid-shared')
-    mkdirSync(claudeDefaultProbeFolder(), { recursive: true })
-    writeFileSync(join(claudeDefaultProbeFolder(), '.claude.json'), profile('uuid-probe', 'own@example.com'))
-    expect(reader.read('claude:default')?.accountUuid).toBe('uuid-probe')
+    expect(reader.read(OWN_CLAUDE_REF)?.accountUuid).toBe('uuid-shared')
+    mkdirSync(ownClaudeProbeFolder(), { recursive: true })
+    writeFileSync(join(ownClaudeProbeFolder(), '.claude.json'), profile('uuid-probe', 'own@example.com'))
+    expect(reader.read(OWN_CLAUDE_REF)?.accountUuid).toBe('uuid-probe')
   })
 })

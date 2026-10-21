@@ -4,7 +4,6 @@
 // `RouteAccount` is what the rules read of one login, `RouteSession` what they read of one
 // session. The daemon builds both from `config.json`, `state.json`, the token readers and the
 // usage snapshots, and keeps the results (cooldowns, the login a session is on) itself.
-import { accountProviderOf, CLAUDE_DEFAULT_ACCOUNT_ID, defaultAccountIdFor } from './accounts.ts'
 import { isoFromSeconds, type AccountUsage, type NamedUsageWindow, type UsageStatus } from './claude-usage.ts'
 import { usageFromRateLimitEvent } from './usage.ts'
 import { busiestPlanWindow, isSevenDayWindow, planUsageWindows, usageAsOf } from './usage-rules.ts'
@@ -150,9 +149,9 @@ export interface RouteAccount {
 /** What the routing rules read of one session. */
 export interface RouteSession {
   /**
-   * The login the session's CLI was started on: its pinned login, or `claude:default` on Auto.
-   * Ties in the ranking go to it. A Codex choice passes `codex:default`, which also makes
-   * `effectivePin` fall back to the Codex default login.
+   * The login the session's CLI was started on: its pinned login, or the machine's own login of
+   * the provider on Auto. Ties in the ranking go to it, and an Auto session with no pool runs on
+   * it (`effectivePin`).
    */
   homeAccountId: string
   /** The login that served the previous request; change it only after an answer is accepted. */
@@ -278,21 +277,22 @@ function sevenDayResetTime(account: RouteAccount): number {
 
 /**
  * The login a session is held to, if any. A pinned session names its own. An Auto session with
- * no login opted in has no pool to choose from, so it runs on the default login as if pinned
- * there, rather than being told the pool is out of usage. An Auto session whose pool exists but
- * is exhausted keeps null and gets the pool's usage-limit answer.
- *
- * The default login is the one of the provider of `session.homeAccountId`.
+ * no login opted in has no pool to choose from, so it runs on `session.homeAccountId`, the
+ * machine's own login, as if pinned there, rather than being told the pool is out of usage. An
+ * Auto session whose pool exists but is exhausted keeps null and gets the pool's usage-limit
+ * answer.
  */
 export function effectivePin(session: RouteSession, accounts: readonly RouteAccount[]): string | null {
   if (session.pinnedAccountId != null) return session.pinnedAccountId
   if (accounts.some((account) => account.autoRoute)) return null
-  return defaultAccountIdFor(accountProviderOf(session.homeAccountId) ?? 'claude')
+  return session.homeAccountId
 }
 
 /** What `autoStartLogin` reads of a login. */
 export interface StartableLogin {
   id: string
+  /** The machine's own sign-in. The list has exactly one such login. */
+  machineOwn: boolean
   loggedIn: boolean
   autoRoute: boolean
 }
@@ -306,16 +306,17 @@ export interface StartableLogin {
  * Otherwise `preferred` (the login that served the session last), then the first signed-in
  * login of the pool. When the pool has logins but none of them is signed in, `preferred` is
  * taken when it is in the pool, else the pool's first login: the CLI then fails to sign in on a
- * pool login, which is the problem to fix. With no pool at all, the default login stays, because
- * `effectivePin` holds such a session to it.
+ * pool login, which is the problem to fix. With no pool at all, the machine's own login stays,
+ * because `effectivePin` holds such a session to it.
  */
 export function autoStartLogin(accounts: readonly StartableLogin[], preferred?: string | null): string {
-  const own = accounts.find((account) => account.id === CLAUDE_DEFAULT_ACCOUNT_ID)
-  if (own === undefined || own.loggedIn) return CLAUDE_DEFAULT_ACCOUNT_ID
+  const own = accounts.find((account) => account.machineOwn)
+  if (own === undefined) throw new Error("autoStartLogin: the list has no login of the machine's own sign-in")
+  if (own.loggedIn) return own.id
   const pool = accounts.filter((account) => account.autoRoute)
   const signedIn = pool.filter((account) => account.loggedIn)
   const from = signedIn.length > 0 ? signedIn : pool
-  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? CLAUDE_DEFAULT_ACCOUNT_ID
+  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? own.id
 }
 
 /**
@@ -498,10 +499,10 @@ export function accountsInScope(session: RouteSession, accounts: readonly RouteA
  * before it signs with it, and a token lasts only a few hours, so counting its expiry would
  * hide nearly every reset.
  *
- * `homeAccountId` names the provider whose default login an empty pool falls back to.
+ * `homeAccountId` is the login an empty pool falls back to: the machine's own login on Auto.
  */
-export function poolReadyAt(accounts: readonly RouteAccount[], now: number, pinnedAccountId?: string | null,
-  homeAccountId: string = CLAUDE_DEFAULT_ACCOUNT_ID): number | null {
+export function poolReadyAt(accounts: readonly RouteAccount[], now: number, pinnedAccountId: string | null | undefined,
+  homeAccountId: string): number | null {
   const session: RouteSession = { homeAccountId, currentAccountId: null, pinnedAccountId }
   const pinned = effectivePin(session, accounts)
   let earliest = Infinity

@@ -16,7 +16,7 @@ import { routeBlockText } from '../core/proxy-rules.ts'
 import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '../core/usage-rules.ts'
 
 /** Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added. */
-export const STATUS_JSON_FORMAT = 1
+export const STATUS_JSON_FORMAT = 2
 
 export interface StatusJsonWindow {
   /** The provider's key for the window: `five_hour`, `seven_day`, `codex:primary`, ... */
@@ -59,9 +59,13 @@ export interface StatusJsonBlock {
 }
 
 export interface StatusJsonLogin {
+  /** The login's id, which never changes. */
   id: string
+  /** The name the person sees and types for the login. */
+  alias: string
   provider: AccountProvider
-  label: string
+  /** Whether this is the machine's own sign-in of the provider, the one a plain `claude` or `codex` uses. */
+  machineOwn: boolean
   /** The login's email as its own CLI cached it; null when unknown. Shown, never stored. */
   email: string | null
   /** Whether the login has credentials here; null when the daemon has not looked yet. */
@@ -86,10 +90,19 @@ export interface StatusJsonLogin {
 export interface StatusJson {
   format: typeof STATUS_JSON_FORMAT
   daemon: { version: string; pid: number; port: number; startedAt: string }
-  /** The logins in `config.json` order, the two default logins first. */
+  /** The logins in `config.json` order, the machine's own logins first. */
   logins: StatusJsonLogin[]
-  /** The login `kurmis codex` without `--login` would start on now, and its note; null with no Codex login. */
-  codexStart: { login: string; note: string | null } | null
+  /**
+   * The login `kurmis codex` without `--login` would start on now (`login` is its id), and its
+   * note; null with no Codex login.
+   */
+  codexStart: { login: string; alias: string; note: string | null } | null
+  /**
+   * Sentences about something the person may want to change: an extra login signed in to the
+   * same account as the machine's own login of its provider, which makes both use one
+   * subscription.
+   */
+  warnings: string[]
 }
 
 export interface StatusFormatOptions {
@@ -106,8 +119,9 @@ export function statusJson(answer: StatusAnswer, now: number, options: StatusFor
     daemon: { version: answer.version, pid: answer.pid, port: answer.port, startedAt: isoTime(answer.startedAt) },
     logins: answer.logins.map((login) => ({
       id: login.id,
+      alias: login.alias,
       provider: login.provider,
-      label: login.label,
+      machineOwn: login.machineOwn,
       email: login.email ?? null,
       signedIn: login.signedIn,
       probing: login.probing === true,
@@ -119,9 +133,37 @@ export function statusJson(answer: StatusAnswer, now: number, options: StatusFor
       blocked: blockJson(answer, login, now, options),
       sessions: login.provider === 'claude' ? login.sessions : null
     })),
-    codexStart: codexStart(answer, now)
+    codexStart: codexStart(answer, now),
+    warnings: sameAccountWarnings(answer)
   }
 }
+
+/** How to name a login of the status on a command line: its alias, or `<provider>:<alias>` when another login has it too. */
+function loginArgument(answer: StatusAnswer, login: LoginStatus): string {
+  const shared = answer.logins.some((other) => other.id !== login.id && other.alias === login.alias)
+  return shared ? `${login.provider}:${login.alias}` : login.alias
+}
+
+/**
+ * A warning for each extra login whose email is that of the machine's own login of its provider,
+ * compared without regard to case: both are then signed in to one account and use one
+ * subscription.
+ */
+export function sameAccountWarnings(answer: StatusAnswer): string[] {
+  const warnings: string[] = []
+  for (const own of answer.logins.filter((login) => login.machineOwn && login.email !== null)) {
+    const email = own.email!.trim().toLowerCase()
+    for (const extra of answer.logins) {
+      if (extra.machineOwn || extra.provider !== own.provider || extra.email?.trim().toLowerCase() !== email) continue
+      const product = PRODUCT_NAMES[own.provider]
+      warnings.push(`${extra.alias} and ${own.alias}, this machine's own ${product} sign-in, are the same ${product} account ` +
+        `(${own.email!}), so they use one subscription. "kurmis logout ${loginArgument(answer, extra)}" removes ${extra.alias}.`)
+    }
+  }
+  return warnings
+}
+
+const PRODUCT_NAMES: Record<AccountProvider, string> = { claude: 'Claude', codex: 'Codex' }
 
 /** The status as `kurmis status` prints it, ending in a newline. Fits 80 columns. */
 export function formatStatus(answer: StatusAnswer, now: number, options: StatusFormatOptions): string {
@@ -138,11 +180,12 @@ export function formatStatus(answer: StatusAnswer, now: number, options: StatusF
   ]
   const labelWidth = Math.min(MAX_LABEL_WIDTH, Math.max(0, ...json.logins.flatMap((login) =>
     (login.usage?.windows ?? []).map((window) => window.label.length))))
+  for (const warning of json.warnings) lines.push('', ...wrap(`Warning: ${warning}`, '', '  '))
   for (const login of json.logins) {
     lines.push('', ...loginLines(login, now, labelWidth))
   }
   if (json.codexStart !== null) {
-    lines.push('', ...wrap(`kurmis codex would start on ${json.codexStart.login}.` +
+    lines.push('', ...wrap(`kurmis codex would start on ${json.codexStart.alias}.` +
       (json.codexStart.note === null ? '' : ` ${json.codexStart.note}`), '', ''))
   }
   return `${lines.join('\n')}\n`
@@ -154,9 +197,13 @@ const WIDTH = 80
 const MAX_LABEL_WIDTH = 24
 
 function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): string[] {
-  const name = login.id.slice(login.id.indexOf(':') + 1)
-  const title = login.label === name ? login.id : `${login.id}  "${login.label}"`
-  const lines = [login.email === null ? title : `${title}  ${login.email}`]
+  const title = `${login.alias} (${PRODUCT_NAMES[login.provider]}, id ${login.id})`
+  const lines = login.email === null ? [title]
+    : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`]
+      : [title, `  ${login.email}`]
+  if (login.machineOwn) {
+    lines.push(`  this machine's own ${PRODUCT_NAMES[login.provider]} sign-in, the account a plain "${login.provider}" uses`)
+  }
   const facts = [
     login.signedIn === null ? 'sign-in not checked yet' : login.signedIn ? 'signed in' : 'signed out',
     login.routing ? 'routing on' : 'routing off',
@@ -267,7 +314,8 @@ export function localTimeText(at: number, now: number, timeZone?: string): strin
 function codexStart(answer: StatusAnswer, now: number): StatusJson['codexStart'] {
   if (!answer.logins.some((login) => login.provider === 'codex')) return null
   const choice: CodexChoice = chooseCodexLogin(answer, now)
-  return { login: choice.login, note: choice.note }
+  const alias = answer.logins.find((login) => login.id === choice.login)?.alias ?? choice.login
+  return { login: choice.login, alias, note: choice.note }
 }
 
 function isoTime(at: number): string {

@@ -67,7 +67,7 @@ beforeEach(() => {
   rmSync(join(home, '.claude'), { recursive: true, force: true, maxRetries: 10 })
   rmSync(kurmisHome, { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(kurmisHome, { recursive: true })
-  writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 1, port: PORT }))
+  writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 2, port: PORT }))
 })
 
 afterEach(() => {
@@ -232,7 +232,7 @@ describe('kurmis setup', () => {
   })
 
   it('writes nothing when the daemon runs on another port than config.json names', async () => {
-    writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 1, port: 30003 }))
+    writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 2, port: 30003 }))
     const { command } = setup()
     const result = await run(command, [])
     expect(result.code).toBe(1)
@@ -297,7 +297,7 @@ describe('kurmis setup', () => {
     expect(result.stdout).toContain(`Claude Code settings: ${join(dir, 'settings.json')}`)
     expect(existsSync(join(dir, 'settings.json'))).toBe(true)
     expect(existsSync(settingsPath)).toBe(false)
-    // A CLI that reads that file signs in with the login in that folder, not claude:default.
+    // A CLI that reads that file signs in with the login in that folder, not the machine's own Claude login.
     const env = (JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')) as { env: Record<string, string> }).env
     expect(env['ANTHROPIC_CUSTOM_HEADERS']).toMatch(/\nx-kurmis-started-on: none$/)
     expect(result.stdout).toContain('CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder')
@@ -383,7 +383,7 @@ describe('kurmis setup', () => {
     expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis')
   })
 
-  it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on claude:default', async () => {
+  it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on the machine\'s own login', async () => {
     const { command } = setup()
     expect((await run(command, [])).code).toBe(0)
     expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis-started-on')

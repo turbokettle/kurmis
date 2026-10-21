@@ -1,81 +1,67 @@
-// Login ids as a checked type. The id rules themselves (`claude:<name>`, `codex:<name>`, and
-// which names are safe folder names) are in `src/core/accounts.ts`; this file adds the
-// `LoginId` type that the stores and the log accept.
-import { ACCOUNT_PROVIDERS, DEFAULT_LOGIN_NAME, isLoginName, type AccountProvider } from '../core/accounts.ts'
-
-export { DEFAULT_LOGIN_NAME }
+// Login ids as a checked type, and how a new one is made.
+//
+// A login id is a random string of lowercase letters and digits, made once when kurmis first
+// knows about the login (`newLoginId`) and never changed. It names the login's folder in the data
+// folder (`claude/<id>/`, `codex/<id>/`), its entries in `state.json` and the log. Ids are unique
+// across both providers, so an id alone names one login. Which provider a login belongs to, and
+// whether it is the machine's own sign-in, is recorded with the login in `config.json`
+// (`LoginRef`), not in the id.
+import { randomInt } from 'node:crypto'
+import { ACCOUNT_PROVIDERS, isLoginIdText, type AccountProvider } from '../core/accounts.ts'
 
 export type LoginProvider = AccountProvider
 
 export const LOGIN_PROVIDERS: readonly LoginProvider[] = ACCOUNT_PROVIDERS
 
 /**
- * A string that has been checked to be a valid login id. Only `parseLoginId`, `toLoginId`,
- * `loginId` and `isLoginId` produce one, so code that writes a login id to a file or the log
- * cannot be handed an arbitrary string by mistake.
+ * A string that has been checked to be a valid login id. Only `toLoginId`, `isLoginId` and
+ * `newLoginId` produce one, so code that writes a login id to a file or the log cannot be handed
+ * an arbitrary string by mistake.
  */
 export type LoginId = string & { readonly __loginId: true }
 
-/** Whether `name` can be the name half of a login id, and so a folder name on every OS. */
-export const isValidLoginName = isLoginName
+/** What code needs to know about a login to find its credentials and folders. */
+export interface LoginRef {
+  id: LoginId
+  provider: LoginProvider
+  /**
+   * The machine's own sign-in of the provider: the credentials of a plain `claude` (`~/.claude`)
+   * or a plain `codex` (`~/.codex`). It has no folder in the data folder, and kurmis never signs
+   * it out.
+   */
+  machineOwn: boolean
+}
+
+/** The number of characters in an id `newLoginId` makes. */
+export const NEW_LOGIN_ID_LENGTH = 10
+
+const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 
 export function isLoginProvider(value: unknown): value is LoginProvider {
   return value === 'claude' || value === 'codex'
 }
 
-export interface ParsedLoginId {
-  id: LoginId
-  provider: LoginProvider
-  name: string
-}
-
-/** `claude:work` -> `{ provider: 'claude', name: 'work' }`; null for anything that is not a valid id. */
-export function parseLoginId(text: unknown): ParsedLoginId | null {
-  if (typeof text !== 'string') return null
-  const colon = text.indexOf(':')
-  if (colon < 0) return null
-  const provider = text.slice(0, colon)
-  const name = text.slice(colon + 1)
-  if (!isLoginProvider(provider) || !isValidLoginName(name)) return null
-  return { id: text as LoginId, provider, name }
-}
-
 export function isLoginId(text: unknown): text is LoginId {
-  return parseLoginId(text) !== null
+  return typeof text === 'string' && isLoginIdText(text)
 }
 
 /** The id as a `LoginId`, or an error naming what is wrong with it. */
 export function toLoginId(text: string): LoginId {
-  const parsed = parseLoginId(text)
-  if (parsed === null) {
-    throw new Error(
-      `"${text}" is not a login id. A login id is claude:<name> or codex:<name>, where the name ` +
-        'is 1 to 32 lowercase letters, digits, "-" or "_".'
-    )
+  if (!isLoginId(text)) {
+    throw new Error(`"${text}" is not a login id. A login id is 1 to 32 lowercase letters and digits.`)
   }
-  return parsed.id
+  return text
 }
 
-/** The id made of a provider and a name; throws when the name is not valid. */
-export function loginId(provider: LoginProvider, name: string): LoginId {
-  return toLoginId(`${provider}:${name}`)
-}
-
-export function defaultLoginId(provider: LoginProvider): LoginId {
-  return `${provider}:${DEFAULT_LOGIN_NAME}` as LoginId
-}
-
-/** `claude:default` and `codex:default`, the machine's own logins, in list order. */
-export const DEFAULT_LOGIN_IDS: readonly LoginId[] = LOGIN_PROVIDERS.map(defaultLoginId)
-
-export function isDefaultLoginId(id: string): boolean {
-  return DEFAULT_LOGIN_IDS.includes(id as LoginId)
-}
-
-export function providerOfLoginId(id: LoginId): LoginProvider {
-  return id.startsWith('codex:') ? 'codex' : 'claude'
-}
-
-export function nameOfLoginId(id: LoginId): string {
-  return id.slice(id.indexOf(':') + 1)
+/**
+ * A new random id, from the operating system's secure random source, that is none of `taken`.
+ * `taken` holds the ids of every login of both providers.
+ */
+export function newLoginId(taken: Iterable<string> = []): LoginId {
+  const used = new Set(taken)
+  for (;;) {
+    let id = ''
+    for (let index = 0; index < NEW_LOGIN_ID_LENGTH; index++) id += ID_ALPHABET[randomInt(ID_ALPHABET.length)]
+    if (!used.has(id) && isLoginIdText(id)) return id as LoginId
+  }
 }

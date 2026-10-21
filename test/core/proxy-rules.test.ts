@@ -8,6 +8,7 @@ import {
   whyPassedOver, withoutExpiringTokens
 } from '../../src/core/proxy-rules.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
+import { OWN_CLAUDE } from '../logins.ts'
 
 const NOW = 1_789_560_000_000
 const RESET = NOW + 60 * 60_000
@@ -24,7 +25,7 @@ function usage(id: string, patch: Partial<AccountUsage>): AccountUsage {
   return { ...emptyAccountUsage(id, NOW), rateLimitsAvailable: true, ...patch }
 }
 
-const auto: RouteSession = { homeAccountId: 'claude:default', currentAccountId: null }
+const auto: RouteSession = { homeAccountId: OWN_CLAUDE, currentAccountId: null }
 
 describe('which requests the proxy routes', () => {
   test('the three inference endpoints, and nothing else under the base URL', () => {
@@ -51,7 +52,7 @@ describe('the request sent upstream', () => {
 
   test('signs for the chosen login, drops kurmis\' headers and the replaced ones, and keeps the rest', () => {
     const { headers, body } = upstreamRequest({
-      'x-kurmis-key': 'secret', 'x-kurmis-login': 'claude:work', authorization: 'Bearer cli-token',
+      'x-kurmis-key': 'secret', 'x-kurmis-login': 'workclaude', authorization: 'Bearer cli-token',
       'x-api-key': 'sk-example', host: '127.0.0.1:1234', 'content-length': '999', 'accept-encoding': 'gzip',
       connection: 'keep-alive, x-private', 'x-private': 'drop', 'keep-alive': 'timeout=5',
       'anthropic-beta': ['oauth-2025-04-20', 'other'], 'x-claude-code-session-id': 'abc'
@@ -135,8 +136,8 @@ test('the answer passed back has no hop-by-hop or length headers, and keeps its 
 describe('the answer when no login can serve', () => {
   test('an exhausted pool is a 429 naming the next login\'s blocking window and its reset', () => {
     const rows = [
-      account('claude:default', { usage: usage('claude:default', { fiveHour: { utilization: 95, resetsAt: iso(RESET + 1000) } }) }),
-      account('claude:work', { usage: usage('claude:work', { sevenDay: { utilization: 95, resetsAt: iso(RESET) } }) })
+      account(OWN_CLAUDE, { usage: usage(OWN_CLAUDE, { fiveHour: { utilization: 95, resetsAt: iso(RESET + 1000) } }) }),
+      account('workclaude', { usage: usage('workclaude', { sevenDay: { utilization: 95, resetsAt: iso(RESET) } }) })
     ]
     const answer = refusalAnswer(auto, rows, NOW)
     expect(answer).toMatchObject({ kind: 'pool-limit', status: 429, resetAt: RESET })
@@ -150,7 +151,7 @@ describe('the answer when no login can serve', () => {
   })
 
   test('an unknown pool reset is still a usage limit', () => {
-    const rows = ['claude:default', 'claude:work'].map((id) =>
+    const rows = [OWN_CLAUDE, 'workclaude'].map((id) =>
       account(id, { usage: usage(id, { fiveHour: { utilization: 95, resetsAt: null } }) }))
     const answer = poolLimitAnswer(auto, rows, NOW)
     expect(answer.resetAt).toBeNull()
@@ -160,17 +161,17 @@ describe('the answer when no login can serve', () => {
   })
 
   test('a pinned session is measured to 100% of its own login', () => {
-    const pinned: RouteSession = { ...auto, pinnedAccountId: 'claude:work' }
+    const pinned: RouteSession = { ...auto, pinnedAccountId: 'workclaude' }
     const rows = [
-      account('claude:default'),
-      account('claude:work', { usage: usage('claude:work', { fiveHour: { utilization: 100, resetsAt: iso(RESET) } }) })
+      account(OWN_CLAUDE),
+      account('workclaude', { usage: usage('workclaude', { fiveHour: { utilization: 100, resetsAt: iso(RESET) } }) })
     ]
     expect(poolLimitAnswer(pinned, rows, NOW)).toMatchObject({ resetAt: RESET,
       headers: { 'anthropic-ratelimit-unified-representative-claim': 'five_hour' } })
   })
 
   test('a pool with nothing the proxy can sign for is the proxy\'s own 599, not a usage limit', () => {
-    const rows = [account('claude:default', { credentialsReadable: false }), account('claude:work', { loggedIn: false })]
+    const rows = [account(OWN_CLAUDE, { credentialsReadable: false }), account('workclaude', { loggedIn: false })]
     const answer = refusalAnswer(auto, rows, NOW)
     expect(answer).toMatchObject({ kind: 'no-signer', status: ROUTER_REFUSAL_STATUS, resetAt: null })
     expect(answer).toMatchObject(noSignerAnswer())
@@ -180,8 +181,8 @@ describe('the answer when no login can serve', () => {
   test('a login whose token could not be renewed is not counted as room', () => {
     // Its room would answer "now" for a pool that cannot serve.
     const rows = [
-      account('claude:default', { tokenExpiresAt: NOW + 60_000 }),
-      account('claude:work', { usage: usage('claude:work', { fiveHour: { utilization: 95, resetsAt: iso(RESET) } }) })
+      account(OWN_CLAUDE, { tokenExpiresAt: NOW + 60_000 }),
+      account('workclaude', { usage: usage('workclaude', { fiveHour: { utilization: 95, resetsAt: iso(RESET) } }) })
     ]
     expect(withoutExpiringTokens(rows, NOW, auto).map((row) => row.credentialsReadable)).toEqual([false, true])
     expect(refusalAnswer(auto, rows, NOW)).toMatchObject({ kind: 'pool-limit', resetAt: RESET })
@@ -189,16 +190,16 @@ describe('the answer when no login can serve', () => {
   })
 
   test('a pinned login whose token is expiring keeps its reset and loses only its room', () => {
-    const pinned: RouteSession = { ...auto, pinnedAccountId: 'claude:work' }
-    const full = account('claude:work', { tokenExpiresAt: NOW + 60_000,
-      usage: usage('claude:work', { fiveHour: { utilization: 100, resetsAt: iso(RESET) } }) })
+    const pinned: RouteSession = { ...auto, pinnedAccountId: 'workclaude' }
+    const full = account('workclaude', { tokenExpiresAt: NOW + 60_000,
+      usage: usage('workclaude', { fiveHour: { utilization: 100, resetsAt: iso(RESET) } }) })
     expect(withoutExpiringTokens([full], NOW, pinned)[0]?.credentialsReadable).toBe(true)
     expect(withoutExpiringTokens([{ ...full, usage: null }], NOW, pinned)[0]?.credentialsReadable).toBe(false)
   })
 })
 
 describe('a cooldown with no known end', () => {
-  const probe = (patch: Partial<AccountUsage>): AccountUsage => usage('claude:work', { source: 'probe', ...patch })
+  const probe = (patch: Partial<AccountUsage>): AccountUsage => usage('workclaude', { source: 'probe', ...patch })
 
   test('ends at the reset a successful probe names', () => {
     expect(cooldownAfterProbe(Infinity, probe({ status: 'rejected', fiveHour: { utilization: 100, resetsAt: iso(RESET) } })))
@@ -227,31 +228,31 @@ describe('the logins to probe again before choosing', () => {
     account(id, { usage: usage(id, { fiveHour: { utilization: 95, resetsAt: iso(NOW - 1000) } }), ...patch })
 
   test('are those the session may use whose busiest window has reset, once per request', () => {
-    const rows = [expired('claude:default'), expired('claude:off', { autoRoute: false }),
-      account('claude:ahead', { usage: usage('claude:ahead', { fiveHour: { utilization: 95, resetsAt: iso(RESET) } }) }),
-      expired('claude:out', { loggedIn: false }), account('claude:none')]
-    expect(staleUsageLogins(auto, rows, NOW, new Set())).toEqual(['claude:default'])
-    expect(staleUsageLogins(auto, rows, NOW, new Set(['claude:default']))).toEqual([])
-    expect(staleUsageLogins({ ...auto, pinnedAccountId: 'claude:off' }, rows, NOW, new Set())).toEqual(['claude:off'])
+    const rows = [expired(OWN_CLAUDE), expired('offclaude', { autoRoute: false }),
+      account('aheadclaude', { usage: usage('aheadclaude', { fiveHour: { utilization: 95, resetsAt: iso(RESET) } }) }),
+      expired('outclaude', { loggedIn: false }), account('noneclaude')]
+    expect(staleUsageLogins(auto, rows, NOW, new Set())).toEqual([OWN_CLAUDE])
+    expect(staleUsageLogins(auto, rows, NOW, new Set([OWN_CLAUDE]))).toEqual([])
+    expect(staleUsageLogins({ ...auto, pinnedAccountId: 'offclaude' }, rows, NOW, new Set())).toEqual(['offclaude'])
   })
 })
 
 describe('why a login was passed over, for the log', () => {
-  const context = { pinned: false, attempted: new Set<string>(), keychain: false, startedOn: 'claude:default' }
+  const context = { pinned: false, attempted: new Set<string>(), keychain: false, startedOn: OWN_CLAUDE }
 
   test('names each block in plain words', () => {
-    expect(whyPassedOver(account('claude:work', { autoRoute: false }), context, NOW)).toBe('not opted in to routing')
-    expect(whyPassedOver(account('claude:work', { cooldownUntil: Infinity }), context, NOW))
+    expect(whyPassedOver(account('workclaude', { autoRoute: false }), context, NOW)).toBe('not opted in to routing')
+    expect(whyPassedOver(account('workclaude', { cooldownUntil: Infinity }), context, NOW))
       .toBe('cooling down until a usage probe says it is back')
-    expect(whyPassedOver(account('claude:work', { cooldownUntil: RESET }), context, NOW)).toBe(`cooling down until ${iso(RESET)}`)
-    expect(whyPassedOver(account('claude:work', { usage: usage('claude:work', { fiveHour: { utilization: 95.4, resetsAt: null } }) }),
+    expect(whyPassedOver(account('workclaude', { cooldownUntil: RESET }), context, NOW)).toBe(`cooling down until ${iso(RESET)}`)
+    expect(whyPassedOver(account('workclaude', { usage: usage('workclaude', { fiveHour: { utilization: 95.4, resetsAt: null } }) }),
       context, NOW)).toBe('at its limit, the 5 hour window is at 95% of 90%')
-    expect(whyPassedOver(account('claude:work'), { ...context, attempted: new Set(['claude:work']) }, NOW))
+    expect(whyPassedOver(account('workclaude'), { ...context, attempted: new Set(['workclaude']) }, NOW))
       .toBe('already tried for this request')
   })
 
   test('a pinned session ignores the opt-in and is measured to 100%', () => {
-    const row = account('claude:work', { autoRoute: false, usage: usage('claude:work', { fiveHour: { utilization: 95, resetsAt: null } }) })
+    const row = account('workclaude', { autoRoute: false, usage: usage('workclaude', { fiveHour: { utilization: 95, resetsAt: null } }) })
     expect(whyPassedOver(row, { ...context, pinned: true }, NOW)).toBe('usable now, so it had room only after the choice was made')
   })
 
@@ -259,9 +260,9 @@ describe('why a login was passed over, for the log', () => {
     expect(routeBlockText({ kind: 'no-credentials' }, false, false, 'linux')).toBe('no token, its .credentials.json did not read')
     expect(routeBlockText({ kind: 'no-credentials' }, false, false, 'win32'))
       .toBe('no token, neither Windows Credential Manager nor its .credentials.json gave one')
-    expect(whyPassedOver(account('claude:default', { credentialsReadable: false }), { ...context, keychain: true }, NOW))
+    expect(whyPassedOver(account(OWN_CLAUDE, { credentialsReadable: false }), { ...context, keychain: true }, NOW))
       .toContain('carried no authorization header of its own')
-    expect(whyPassedOver(account('claude:work', { credentialsReadable: false }), { ...context, keychain: true }, NOW))
+    expect(whyPassedOver(account('workclaude', { credentialsReadable: false }), { ...context, keychain: true }, NOW))
       .toContain('signs only for the login it was started on')
   })
 })

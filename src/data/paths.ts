@@ -2,13 +2,7 @@
 // changes KURMIS_HOME or HOME sees the change.
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import {
-  isDefaultLoginId,
-  nameOfLoginId,
-  providerOfLoginId,
-  toLoginId,
-  type LoginProvider
-} from './login-id.ts'
+import { toLoginId, type LoginProvider, type LoginRef } from './login-id.ts'
 
 /**
  * The data folder: `KURMIS_HOME` when it is set and not empty, otherwise `.kurmis` in the
@@ -56,15 +50,15 @@ export function configLockPath(): string {
 }
 
 /**
- * The config folder (`CLAUDE_CONFIG_DIR`) of the usage probe of `claude:default`. A probe on the
- * user's own `~/.claude` would walk its transcripts and write into `~/.claude.json`, so it gets
- * this folder instead, and its credentials are pointed back at the default place with an empty
- * `CLAUDE_SECURESTORAGE_CONFIG_DIR` (`claudeProbeEnv` in `login-env.ts`). The CLI caches the
- * login's profile in `.claude.json` here, which is where the daemon reads the default login's
- * account uuid.
+ * The config folder (`CLAUDE_CONFIG_DIR`) of the usage probe of the machine's own Claude login.
+ * A probe on the user's own `~/.claude` would walk its transcripts and write into
+ * `~/.claude.json`, so it gets this folder instead, and its credentials are pointed back at the
+ * default place with an empty `CLAUDE_SECURESTORAGE_CONFIG_DIR` (`claudeProbeEnv` in
+ * `login-env.ts`). The CLI caches the login's profile in `.claude.json` here, which is where the
+ * daemon reads that login's account uuid and email.
  */
-export function claudeDefaultProbeFolder(): string {
-  return join(kurmisHome(), 'probe', 'claude-default')
+export function ownClaudeProbeFolder(): string {
+  return join(kurmisHome(), 'probe', 'claude-own')
 }
 
 /**
@@ -92,39 +86,36 @@ export function providerFolder(provider: LoginProvider): string {
 }
 
 /**
- * The folder of an extra login: `claude/<name>/` (its `CLAUDE_SECURESTORAGE_CONFIG_DIR`) or
- * `codex/<name>/` (its `CODEX_HOME`). The id is checked again here, so a name with a slash or
- * `..` in it can never produce a path. The default logins have no folder here, since they use
- * the machine's own `~/.claude` and `~/.codex`; asking for one is an error.
+ * The folder of an extra login: `claude/<id>/` (its `CLAUDE_SECURESTORAGE_CONFIG_DIR`) or
+ * `codex/<id>/` (its `CODEX_HOME`). The id is checked again here, so a slash or `..` can never
+ * produce a path. The machine's own logins have no folder here, since they use `~/.claude` and
+ * `~/.codex`; asking for one is an error.
  */
-export function loginFolder(id: string): string {
-  const checked = toLoginId(id)
-  if (isDefaultLoginId(checked)) {
-    throw new Error(`${checked} is the machine's own login and has no folder in the kurmis data folder.`)
+export function loginFolder(login: LoginRef): string {
+  const id = toLoginId(login.id)
+  if (login.machineOwn) {
+    throw new Error(`${id} is the machine's own ${login.provider} sign-in and has no folder in the kurmis data folder.`)
   }
-  return join(providerFolder(providerOfLoginId(checked)), nameOfLoginId(checked))
+  return join(providerFolder(login.provider), id)
 }
 
 /**
  * The lock file that one `kurmis login` or `kurmis logout` of a login holds while it runs
- * (`src/cli/login-lock.ts`): `locks/claude-work.lock` for `claude:work`. It is outside the
- * login's folder, because the folder is created and deleted under it.
+ * (`src/cli/login-lock.ts`): `locks/<id>.lock`. It is outside the login's folder, because the
+ * folder is created and deleted under it.
  */
 export function loginLockPath(id: string): string {
-  const checked = toLoginId(id)
-  return join(kurmisHome(), 'locks', `${providerOfLoginId(checked)}-${nameOfLoginId(checked)}.lock`)
+  return join(kurmisHome(), 'locks', `${toLoginId(id)}.lock`)
 }
 
 /**
- * What kurmis last merged and copied into the home of the extra Codex login `id` from the
- * default Codex home: `codex-merged/<name>.json`. It is kept outside the login's home, so
- * Codex never reads it and deleting the home does not lose it by accident; `logout` removes
- * it with the login. `src/cli/codex-home-files.ts` reads and writes it.
+ * What kurmis last merged and copied into the home of an extra Codex login from the default
+ * Codex home: `codex-merged/<id>.json`. It is kept outside the login's home, so Codex never
+ * reads it and deleting the home does not lose it by accident; `logout` removes it with the
+ * login. `src/cli/codex-home-files.ts` reads and writes it.
  */
-export function codexMergedRecordPath(id: string): string {
-  const checked = toLoginId(id)
-  if (isDefaultLoginId(checked) || providerOfLoginId(checked) !== 'codex') {
-    throw new Error(`${checked} is not an extra Codex login.`)
-  }
-  return join(kurmisHome(), 'codex-merged', `${nameOfLoginId(checked)}.json`)
+export function codexMergedRecordPath(login: LoginRef): string {
+  const id = toLoginId(login.id)
+  if (login.machineOwn || login.provider !== 'codex') throw new Error(`${id} is not an extra Codex login.`)
+  return join(kurmisHome(), 'codex-merged', `${id}.json`)
 }

@@ -20,20 +20,23 @@ const LOGIN_LOCK_WAIT_MS = 500
 
 /** Another `kurmis login` or `kurmis logout` of the same login is running. */
 export class LoginBusyError extends Error {
-  constructor(readonly id: string, readonly path: string, pid: number | null) {
-    super(`another "kurmis login" or "kurmis logout" of ${id} is running now${pid === null ? '' : ` (pid ${String(pid)})`}. ` +
+  constructor(readonly id: string, readonly path: string, pid: number | null, name: string = id) {
+    super(`another "kurmis login" or "kurmis logout" of ${name} is running now${pid === null ? '' : ` (pid ${String(pid)})`}. ` +
       `Wait for it to end and try again. If none is running, delete ${path}.`)
     this.name = 'LoginBusyError'
   }
 }
 
-/** Takes the lock of login `id`, or throws `LoginBusyError` when another run holds it. */
-export function lockLogin(id: string): FileLock {
+/**
+ * Takes the lock of login `id`, or throws `LoginBusyError` when another run holds it. `name` is
+ * what the message calls the login: its alias, or the id when it has none yet.
+ */
+export function lockLogin(id: string, name: string = id): FileLock {
   const path = loginLockPath(id)
   try {
     return acquireFileLockSync(path, { timeoutMs: LOGIN_LOCK_WAIT_MS, staleMs: LOGIN_LOCK_STALE_MS })
   } catch (error) {
-    if (error instanceof LockTimeoutError) throw new LoginBusyError(id, path, error.holder?.pid ?? null)
+    if (error instanceof LockTimeoutError) throw new LoginBusyError(id, path, error.holder?.pid ?? null, name)
     throw error
   }
 }

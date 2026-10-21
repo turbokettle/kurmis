@@ -23,6 +23,7 @@ import { tomlValue } from '../../src/core/codex-account-config.ts'
 import { codexSourceHome, placeLink, prepareCodexHome, retryableLinkError, writeIfUnchanged } from '../../src/cli/codex-home-files.ts'
 import { codexMergedRecordPath, loginFolder } from '../../src/data/paths.ts'
 import { linkFolder as realLinkFolder, normaliseLinkTarget } from '../../src/platform/links.ts'
+import { claudeRef, codexRef, OWN_CODEX_REF } from '../logins.ts'
 import { canCreateSymlinks, linkFolder } from '../host.ts'
 
 // Windows has no folder permissions that chmod could change.
@@ -94,29 +95,31 @@ function read(path: string): string {
   return readFileSync(path, 'utf8')
 }
 
+const WORK = codexRef('workcodex1')
+
 describe('prepareCodexHome', () => {
-  test('answers null for the default login and touches nothing', async () => {
-    const prepared = await prepareCodexHome('codex:default', { env: {} })
+  test('answers null for the machine\'s own login and touches nothing', async () => {
+    const prepared = await prepareCodexHome(OWN_CODEX_REF, { env: {} })
     expect(prepared).toEqual({ codexHome: null, warnings: [] })
     expect(existsSync(join(root, 'home', '.kurmis'))).toBe(false)
   })
 
-  test('throws for an id that is not a Codex login', async () => {
-    await expect(prepareCodexHome('claude:work', { env: {} })).rejects.toThrow(/not a Codex login/)
-    await expect(prepareCodexHome('codex:../x', { env: {} })).rejects.toThrow()
+  test('throws for a login that is not a Codex login, or an id that is not an id', async () => {
+    await expect(prepareCodexHome({ ...claudeRef('workclaude'), alias: 'work-example' }, { env: {} })).rejects.toThrow('work-example is not a Codex login.')
+    await expect(prepareCodexHome(codexRef('../x'), { env: {} })).rejects.toThrow()
   })
 
   test('throws only when the home cannot be created', async () => {
     writeFileSync(join(root, 'home', '.kurmis'), 'a file where the data folder should be')
-    await expect(prepareCodexHome('codex:work', { env: {} })).rejects.toThrow(/Could not create the Codex home of codex:work/)
+    await expect(prepareCodexHome({ ...WORK, alias: 'work-example' }, { env: {} })).rejects.toThrow(/Could not create the Codex home of work-example/)
   })
 
   test('prepares a login home from ~/.codex: links, AGENTS.md and config.toml, and nothing private', async () => {
     const source = join(root, 'home', '.codex')
     makeSourceHome(source)
 
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
-    const home = loginFolder('codex:work')
+    const prepared = await prepareCodexHome(WORK, { env: {} })
+    const home = loginFolder(WORK)
 
     expect(prepared.codexHome).toBe(home)
     if (!windows) expect(statSync(home).mode & 0o777).toBe(0o700)
@@ -142,8 +145,8 @@ describe('prepareCodexHome', () => {
   test('refreshes the login home after the default home changes, keeping the login\'s own secret and comment', async () => {
     const source = join(root, 'home', '.codex')
     makeSourceHome(source)
-    await prepareCodexHome('codex:work', { env: {} })
-    const home = loginFolder('codex:work')
+    await prepareCodexHome(WORK, { env: {} })
+    const home = loginFolder(WORK)
 
     // The login gets its own secret and a comment, and the default home changes.
     const own = read(join(home, 'config.toml'))
@@ -154,7 +157,7 @@ describe('prepareCodexHome', () => {
     writeFileSync(join(source, 'AGENTS.md'), '# new house rules\n')
     mkdirSync(join(source, 'memories'))
 
-    const second = await prepareCodexHome('codex:work', { env: {} })
+    const second = await prepareCodexHome(WORK, { env: {} })
 
     const config = read(join(home, 'config.toml'))
     expect(tomlValue(config)).toMatchObject({ model: 'gpt-b', mcp_servers: { demo: { env: { API_KEY: 'LOGIN_SECRET_CANARY' } } } })
@@ -167,7 +170,7 @@ describe('prepareCodexHome', () => {
 
     // Nothing changed: neither file is written again.
     const before = { config: statSync(join(home, 'config.toml')).ino, agents: statSync(join(home, 'AGENTS.md')).ino }
-    const third = await prepareCodexHome('codex:work', { env: {} })
+    const third = await prepareCodexHome(WORK, { env: {} })
     expect(third.warnings).toEqual([])
     expect({ config: statSync(join(home, 'config.toml')).ino, agents: statSync(join(home, 'AGENTS.md')).ino }).toEqual(before)
     expect(readdirSync(home).filter((name) => name.endsWith('.tmp'))).toEqual([])
@@ -176,12 +179,12 @@ describe('prepareCodexHome', () => {
   test('leaves a real folder where a link should go alone, with a warning', async () => {
     const source = join(root, 'home', '.codex')
     makeSourceHome(source)
-    const home = loginFolder('codex:work')
+    const home = loginFolder(WORK)
     mkdirSync(join(home, 'skills'), { recursive: true })
     writeFileSync(join(home, 'skills', 'mine.md'), 'the login\'s own\n')
     linkFolder(join(root, 'elsewhere'), join(home, 'log'))
 
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
+    const prepared = await prepareCodexHome(WORK, { env: {} })
 
     expect(read(join(home, 'skills', 'mine.md'))).toBe('the login\'s own\n')
     expect(lstatSync(join(home, 'skills')).isSymbolicLink()).toBe(false)
@@ -199,8 +202,8 @@ describe('prepareCodexHome', () => {
     writeFileSync(join(custom, 'AGENTS.md'), '# custom rules\n')
     mkdirSync(join(root, 'home', '.codex', 'skills'), { recursive: true })
 
-    const prepared = await prepareCodexHome('codex:work', { env: { CODEX_HOME: custom } })
-    const home = loginFolder('codex:work')
+    const prepared = await prepareCodexHome(WORK, { env: { CODEX_HOME: custom } })
+    const home = loginFolder(WORK)
 
     expect(prepared.warnings).toEqual([])
     expect(linkTarget(join(home, 'sessions'))).toBe(join(custom, 'sessions'))
@@ -211,18 +214,18 @@ describe('prepareCodexHome', () => {
   })
 
   test('prepares an empty home when there is no default home at all', async () => {
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
-    expect(prepared).toEqual({ codexHome: loginFolder('codex:work'), warnings: [] })
-    expect(readdirSync(loginFolder('codex:work'))).toEqual([])
+    const prepared = await prepareCodexHome(WORK, { env: {} })
+    expect(prepared).toEqual({ codexHome: loginFolder(WORK), warnings: [] })
+    expect(readdirSync(loginFolder(WORK))).toEqual([])
   })
 
   test('leaves a login config.toml that is not valid TOML as it is, with a warning that repeats nothing of it', async () => {
     makeSourceHome(join(root, 'home', '.codex'))
-    const home = loginFolder('codex:work')
+    const home = loginFolder(WORK)
     mkdirSync(home, { recursive: true })
     writeFileSync(join(home, 'config.toml'), 'model = [\nLOGIN_BROKEN_CANARY')
 
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
+    const prepared = await prepareCodexHome(WORK, { env: {} })
 
     expect(read(join(home, 'config.toml'))).toBe('model = [\nLOGIN_BROKEN_CANARY')
     expect(prepared.warnings.some((line) => line.startsWith(`Could not refresh ${join(home, 'config.toml')}`))).toBe(true)
@@ -232,11 +235,11 @@ describe('prepareCodexHome', () => {
   posixOnly('turns every failing step into a warning when the home cannot be written', async () => {
     if (process.getuid?.() === 0) return
     makeSourceHome(join(root, 'home', '.codex'))
-    const home = loginFolder('codex:work')
+    const home = loginFolder(WORK)
     mkdirSync(home, { recursive: true })
     chmodSync(home, 0o500)
     try {
-      const prepared = await prepareCodexHome('codex:work', { env: {} })
+      const prepared = await prepareCodexHome(WORK, { env: {} })
       expect(prepared.codexHome).toBe(home)
       expect(prepared.warnings.filter((line) => line.startsWith('Could not link'))).toHaveLength(4)
       expect(prepared.warnings.some((line) => line.startsWith('Could not copy'))).toBe(true)
@@ -249,12 +252,12 @@ describe('prepareCodexHome', () => {
 
 describe('prepareCodexHome over several starts', () => {
   const source = (): string => join(root, 'home', '.codex')
-  const home = (): string => loginFolder('codex:work')
+  const home = (): string => loginFolder(WORK)
 
   test('keeps what Codex wrote into the login\'s config.toml, and keeps the merged copy outside the home', async () => {
     makeSourceHome(source())
-    await prepareCodexHome('codex:work', { env: {} })
-    const record = codexMergedRecordPath('codex:work')
+    await prepareCodexHome(WORK, { env: {} })
+    const record = codexMergedRecordPath(WORK)
     if (!windows) expect(statSync(record).mode & 0o777).toBe(0o600)
     expect(read(record)).not.toMatch(/CANARY/)
     expect(record.startsWith(home())).toBe(false)
@@ -263,7 +266,7 @@ describe('prepareCodexHome over several starts', () => {
     const own = read(join(home(), 'config.toml')).replace('model = "gpt-a"', 'model = "gpt-mini"').concat('\n[notice]\nhide_full_access_warning = true\n')
     writeFileSync(join(home(), 'config.toml'), own)
     writeFileSync(join(source(), 'config.toml'), SOURCE_CONFIG.replace('approval_policy = "on-request"\n', ''))
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
 
     const config = tomlValue(read(join(home(), 'config.toml')))
     expect(config).toMatchObject({ model: 'gpt-mini', notice: { hide_full_access_warning: true } })
@@ -273,17 +276,17 @@ describe('prepareCodexHome over several starts', () => {
   test('copies AGENTS.override.md, and removes the copy once the default home has none', async () => {
     makeSourceHome(source())
     writeFileSync(join(source(), 'AGENTS.override.md'), '# override\n')
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
     expect(read(join(home(), 'AGENTS.override.md'))).toBe('# override\n')
 
     rmSync(join(source(), 'AGENTS.override.md'))
-    const second = await prepareCodexHome('codex:work', { env: {} })
+    const second = await prepareCodexHome(WORK, { env: {} })
     expect(existsSync(join(home(), 'AGENTS.override.md'))).toBe(false)
     expect(second.warnings).toEqual([expect.stringMatching(/has a secret/)])
 
     // A file kurmis did not put there stays.
     writeFileSync(join(home(), 'AGENTS.override.md'), '# the login\'s own\n')
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
     expect(read(join(home(), 'AGENTS.override.md'))).toBe('# the login\'s own\n')
   })
 
@@ -291,7 +294,7 @@ describe('prepareCodexHome over several starts', () => {
     makeSourceHome(source())
     mkdirSync(join(source(), 'memories'))
     mkdirSync(join(source(), '.sandbox'))
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
     expect(lstatSync(join(home(), 'memories')).isSymbolicLink()).toBe(true)
     // A link an earlier kurmis made to the sandbox folder, which is private now.
     linkFolder(join(source(), '.sandbox'), join(home(), '.sandbox'))
@@ -301,7 +304,7 @@ describe('prepareCodexHome over several starts', () => {
     if (dangling) symlinkSync(join(root, 'nowhere', 'my-notes'), join(home(), 'notes'), 'dir')
 
     rmSync(join(source(), 'memories'), { recursive: true })
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
+    const prepared = await prepareCodexHome(WORK, { env: {} })
 
     expect(existsSync(join(home(), 'memories'))).toBe(false)
     expect(existsSync(join(home(), '.sandbox'))).toBe(false)
@@ -318,29 +321,29 @@ describe('prepareCodexHome over several starts', () => {
     mkdirSync(join(source(), 'memories'))
     mkdirSync(join(source(), 'shell_snapshots'))
 
-    const first = await prepareCodexHome('codex:work', { env: {} })
+    const first = await prepareCodexHome(WORK, { env: {} })
     expect(linkTarget(join(home(), 'memories'))).toBe(join(source(), 'memories'))
     expect(first.warnings.filter((line) => line.includes('not linked'))).toEqual([expect.stringContaining(join(home(), 'shell_snapshots'))])
 
-    const second = await prepareCodexHome('codex:work', { env: {} })
+    const second = await prepareCodexHome(WORK, { env: {} })
     expect(second.warnings.filter((line) => line.includes('not linked'))).toEqual([])
     expect(read(join(home(), 'shell_snapshots', 'one.sh'))).toBe('echo\n')
   })
 
   test('gives no warning when two starts link the same folders at once', async () => {
     makeSourceHome(source())
-    const both = await Promise.all([prepareCodexHome('codex:work', { env: {} }), prepareCodexHome('codex:work', { env: {} })])
+    const both = await Promise.all([prepareCodexHome(WORK, { env: {} }), prepareCodexHome(WORK, { env: {} })])
     for (const prepared of both) expect(prepared.warnings.filter((line) => /link/i.test(line))).toEqual([])
     expect(linkTarget(join(home(), 'sessions'))).toBe(join(source(), 'sessions'))
   })
 
   test('does not use a record left by an earlier login of the same name', async () => {
     mkdirSync(join(root, 'home', '.kurmis', 'codex-merged'), { recursive: true })
-    writeFileSync(codexMergedRecordPath('codex:work'), JSON.stringify({ config: 'model = "stale"\n', copied: {}, conflicts: ['sessions'] }))
+    writeFileSync(codexMergedRecordPath(WORK), JSON.stringify({ config: 'model = "stale"\n', copied: {}, conflicts: ['sessions'] }))
     mkdirSync(source(), { recursive: true })
     writeFileSync(join(source(), 'config.toml'), 'model = "gpt-a"\n')
-    await prepareCodexHome('codex:work', { env: {} })
-    expect(JSON.parse(read(codexMergedRecordPath('codex:work')))).toEqual({ config: 'model = "gpt-a"\n', copied: {}, links: {}, conflicts: [] })
+    await prepareCodexHome(WORK, { env: {} })
+    expect(JSON.parse(read(codexMergedRecordPath(WORK)))).toEqual({ config: 'model = "gpt-a"\n', copied: {}, links: {}, conflicts: [] })
   })
 })
 
@@ -352,7 +355,7 @@ describe('codexSourceHome', () => {
   })
 
   test("is ~/.codex when CODEX_HOME is an extra login's home, inherited from a session on it", () => {
-    expect(codexSourceHome({ CODEX_HOME: loginFolder('codex:work') })).toBe(join(root, 'home', '.codex'))
+    expect(codexSourceHome({ CODEX_HOME: loginFolder(WORK) })).toBe(join(root, 'home', '.codex'))
     expect(codexSourceHome({ CODEX_HOME: join(root, 'home', '.kurmis', 'codex') })).toBe(join(root, 'home', '.codex'))
     expect(codexSourceHome({ CODEX_HOME: join(root, 'home', '.kurmis', 'codex-other') })).toBe(join(root, 'home', '.kurmis', 'codex-other'))
   })
@@ -403,18 +406,18 @@ describe('writeIfUnchanged', () => {
 
 describe('prepareCodexHome: what a later start keeps', () => {
   const source = (): string => join(root, 'home', '.codex')
-  const home = (): string => loginFolder('codex:work')
+  const home = (): string => loginFolder(WORK)
 
   test("keeps the login's own settings when the default home's config.toml appears after the login was made", async () => {
     mkdirSync(join(source(), 'sessions'), { recursive: true })
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
     // Sessions on the login write its own settings, an MCP server with a secret among them.
     const own = 'model = "own"\n[mcp_servers.mine]\ncommand = "mine"\n[mcp_servers.mine.env]\nK = "LOGIN_CANARY"\n'
     writeFileSync(join(home(), 'config.toml'), own)
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
     writeFileSync(join(source(), 'config.toml'), 'approval_policy = "never"\n')
 
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
+    const prepared = await prepareCodexHome(WORK, { env: {} })
 
     expect(tomlValue(read(join(home(), 'config.toml')))).toEqual({
       model: 'own',
@@ -431,12 +434,12 @@ describe('prepareCodexHome: what a later start keeps', () => {
   test("keeps the login's own settings when the first start could not merge the default home's config.toml", async () => {
     mkdirSync(source(), { recursive: true })
     writeFileSync(join(source(), 'config.toml'), 'model = \n')
-    const first = await prepareCodexHome('codex:work', { env: {} })
+    const first = await prepareCodexHome(WORK, { env: {} })
     expect(first.warnings).toEqual([expect.stringMatching(/could not be merged/)])
     writeFileSync(join(home(), 'config.toml'), LOGIN_OWN)
     writeFileSync(join(source(), 'config.toml'), 'model = "gpt-a"\n')
 
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
 
     expect(tomlValue(read(join(home(), 'config.toml')))).toEqual({ model: 'gpt-a', ...LOGIN_OWN_VALUE })
   })
@@ -444,11 +447,11 @@ describe('prepareCodexHome: what a later start keeps', () => {
   test("keeps the login's own settings when the record is damaged", async () => {
     mkdirSync(source(), { recursive: true })
     writeFileSync(join(source(), 'config.toml'), 'model = "gpt-a"\n')
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
     writeFileSync(join(home(), 'config.toml'), `model = "gpt-a"\n${LOGIN_OWN}`)
-    writeFileSync(codexMergedRecordPath('codex:work'), '{"config": "model = ')
+    writeFileSync(codexMergedRecordPath(WORK), '{"config": "model = ')
 
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
 
     expect(tomlValue(read(join(home(), 'config.toml')))).toEqual({ model: 'gpt-a', ...LOGIN_OWN_VALUE })
   })
@@ -456,20 +459,20 @@ describe('prepareCodexHome: what a later start keeps', () => {
   test('records an empty merged copy for a new home even when nothing else changes', async () => {
     mkdirSync(source(), { recursive: true })
     writeFileSync(join(source(), 'config.toml'), 'model = \n')
-    await prepareCodexHome('codex:work', { env: {} })
-    expect(JSON.parse(read(codexMergedRecordPath('codex:work')))).toEqual({ config: '', copied: {}, links: {}, conflicts: [] })
+    await prepareCodexHome(WORK, { env: {} })
+    expect(JSON.parse(read(codexMergedRecordPath(WORK)))).toEqual({ config: '', copied: {}, links: {}, conflicts: [] })
   })
 
   // A symlink to a file and a dangling symlink need Developer Mode or an administrator on Windows.
   test.runIf(canCreateSymlinks())("leaves the user's own links alone: one to a file in the default home, and one that leads nowhere", async () => {
     makeSourceHome(source())
     writeFileSync(join(source(), 'hooks.json'), '{}\n')
-    await prepareCodexHome('codex:work', { env: {} })
+    await prepareCodexHome(WORK, { env: {} })
     symlinkSync(join(source(), 'hooks.json'), join(home(), 'hooks.json'), 'file')
     // A link into a volume that is not mounted now; its target has the link's own name.
     symlinkSync(join(root, 'unmounted', 'prompts'), join(home(), 'prompts'), 'dir')
 
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
+    const prepared = await prepareCodexHome(WORK, { env: {} })
 
     expect(linkTarget(join(home(), 'hooks.json'))).toBe(join(source(), 'hooks.json'))
     expect(linkTarget(join(home(), 'prompts'))).toBe(join(root, 'unmounted', 'prompts'))
@@ -479,12 +482,12 @@ describe('prepareCodexHome: what a later start keeps', () => {
   test('removes a link it made into a default home used before, once that home is gone', async () => {
     const old = join(root, 'old-codex')
     mkdirSync(join(old, 'memories'), { recursive: true })
-    await prepareCodexHome('codex:work', { env: { CODEX_HOME: old } })
+    await prepareCodexHome(WORK, { env: { CODEX_HOME: old } })
     expect(linkTarget(join(home(), 'memories'))).toBe(join(old, 'memories'))
     rmSync(old, { recursive: true, maxRetries: 10 })
     mkdirSync(join(source(), 'memories'), { recursive: true })
 
-    const prepared = await prepareCodexHome('codex:work', { env: {} })
+    const prepared = await prepareCodexHome(WORK, { env: {} })
 
     expect(linkTarget(join(home(), 'memories'))).toBe(join(source(), 'memories'))
     expect(prepared.warnings).toEqual([])
@@ -495,7 +498,7 @@ describe('prepareCodexHome: what a later start keeps', () => {
     for (let round = 0; round < 5; round++) {
       rmSync(home(), { recursive: true, force: true, maxRetries: 10 })
       for (const name of ['sessions', 'skills', 'log']) mkdirSync(join(home(), name), { recursive: true })
-      const both = await Promise.all([prepareCodexHome('codex:work', { env: {} }), prepareCodexHome('codex:work', { env: {} })])
+      const both = await Promise.all([prepareCodexHome(WORK, { env: {} }), prepareCodexHome(WORK, { env: {} })])
       for (const prepared of both) expect(prepared.warnings.filter((line) => /link/i.test(line))).toEqual([])
       expect(linkTarget(join(home(), 'sessions'))).toBe(join(source(), 'sessions'))
     }

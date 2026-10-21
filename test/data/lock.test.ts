@@ -159,7 +159,7 @@ describe('changeConfig from several processes at once', () => {
     const ids = loadConfig(join(home, 'config.json')).logins.map((login) => login.id)
     expect(ids).toHaveLength(2 + children * each)
     for (let index = 0; index < children; index++) {
-      for (let i = 0; i < each; i++) expect(ids).toContain(`claude:w${String(index)}-${String(i)}`)
+      for (let i = 0; i < each; i++) expect(ids).toContain(`w${String(index)}n${String(i)}`)
     }
     expect(existsSync(join(home, 'config.json.lock'))).toBe(false)
   })

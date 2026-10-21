@@ -12,7 +12,7 @@ import type { AccountUsage } from './claude-usage.ts'
 import { CONTROL_PREFIX } from './proxy-rules.ts'
 
 /** Raised when an answer changes in a way an older CLI would misread. */
-export const CONTROL_API_VERSION = 1
+export const CONTROL_API_VERSION = 2
 
 export const CONTROL_PATHS = {
   /** `GET`: `StatusAnswer`. */
@@ -67,7 +67,10 @@ export interface ProbeRequest {
 export interface LoginStatus {
   id: string
   provider: AccountProvider
-  label: string
+  /** The name the person sees and types for the login (`alias` in `config.json`). */
+  alias: string
+  /** The machine's own sign-in of the provider, which follows what a plain `claude` or `codex` is signed in to. */
+  machineOwn: boolean
   /** Opted in to routing. */
   routing: boolean
   fiveHourLimit: number
@@ -87,8 +90,9 @@ export interface LoginStatus {
   /** Sessions whose last request this login served. Claude only. */
   sessions: number
   /**
-   * The login's email from the profile its own CLI runs cached (`ClaudeIdentityReader`), or
-   * null when none is known. Claude only. For the person's own terminal; never logged.
+   * The login's email, or null when none is known: for Claude from the profile its own CLI runs
+   * cached (`ClaudeIdentityReader`), for Codex from the last usage probe's `account/read`, kept in
+   * the daemon's memory only. For the person's own terminal; never logged or stored.
    */
   email: string | null
   /** A usage probe of this login is running now. */
@@ -104,6 +108,6 @@ export interface StatusAnswer {
   port: number
   /** Milliseconds since epoch. */
   startedAt: number
-  /** Every login in `config.json`, the two default logins first. */
+  /** Every login in `config.json`, the machine's own logins first. */
   logins: LoginStatus[]
 }

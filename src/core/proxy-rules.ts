@@ -315,15 +315,15 @@ export function refusalAnswer(session: RouteSession, rows: readonly RouteAccount
  * The proxy's own 599 for a request no login here can sign. Not a usage limit, and never a 401,
  * which would send the CLI off to renew a token that is not the problem. The CLI retries a 5xx
  * and honours `retry-after`. `cliOnOwnCredentials` is a request whose CLI said its credentials
- * are no kurmis login's (`STARTED_ON_NONE`), and the message then says why `claude:default` was
- * not used.
+ * are no kurmis login's (`STARTED_ON_NONE`), and the message then says why the machine's own
+ * Claude login was not used.
  */
 export function noSignerAnswer(cliOnOwnCredentials = false): ProxyAnswer {
   const message = cliOnOwnCredentials
     ? 'No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with ' +
-      'CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not kurmis\' claude:default, ' +
-      'and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude ' +
-      'with `kurmis claude`, or run `kurmis setup --undo` with that CLAUDE_CONFIG_DIR.'
+      'CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not this machine\'s own ' +
+      'Claude sign-in, and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, ' +
+      'start Claude with `kurmis claude`, or run `kurmis setup --undo` with that CLAUDE_CONFIG_DIR.'
     : 'No Claude login kurmis may use for this session could sign the request. ' +
       'Run `kurmis status` to see which logins are signed in.'
   return {

@@ -2,8 +2,9 @@
 // touching the disk. The code that lists `~/.codex`, links folders and writes files calls
 // these.
 //
-// An extra login's `CODEX_HOME` is `codex/<name>/` in the data folder. `codex:default` has
-// none of its own and is never prepared. Before every start of `codex` on an extra login:
+// An extra login's `CODEX_HOME` is `codex/<id>/` in the data folder. The machine's own Codex
+// login has none of its own and is never prepared. Before every start of `codex` on an extra
+// login:
 //
 // - every folder of `~/.codex` is linked into the login's home (a symlink on macOS, a
 //   directory junction on Windows), so rollouts, skills and the like are shared, except
@@ -20,7 +21,7 @@
 //   sign-in stays in its own home.
 //
 // What kurmis last merged and copied into a login's home is kept outside it, in
-// `codex-merged/<name>.json` in the data folder (`src/cli/codex-home-files.ts`).
+// `codex-merged/<id>.json` in the data folder (`src/cli/codex-home-files.ts`).
 //
 // A link, copy or merge that fails is reported and the start goes on. Kurmis keeps the login's
 // own trust, so it does not check the login's own `config.toml` for trust and never refuses a

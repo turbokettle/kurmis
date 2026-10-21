@@ -71,12 +71,12 @@ describe('window keys', () => {
 describe('a rate-limits read', () => {
   test('names every window by the limit it belongs to and how long it is', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       { rateLimits: snapshot(), rateLimitsByLimitId: { codex: snapshot(), codex_bengalfox: SPARK } },
       NOW
     )
 
-    expect(usage.accountId).toBe('codex:work')
+    expect(usage.accountId).toBe('workcodex')
     expect(usage.provider).toBe('codex')
     expect(usage.source).toBe('probe')
     expect(usage.subscriptionType).toBe('prolite')
@@ -95,14 +95,14 @@ describe('a rate-limits read', () => {
   })
 
   test('falls back to the single bucket when there is no multi-limit map', () => {
-    const usage = usageFromCodexRateLimits('codex:work', { rateLimits: snapshot() }, NOW)
+    const usage = usageFromCodexRateLimits('workcodex', { rateLimits: snapshot() }, NOW)
 
     expect(usage.windows?.map((window) => window.key)).toEqual(['codex:primary'])
   })
 
   test('names a limit without a name or a known id by its id', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       { rateLimits: snapshot({ limitId: 'codex_other', limitName: '' }) },
       NOW
     )
@@ -111,9 +111,9 @@ describe('a rate-limits read', () => {
   })
 
   test('a read that answered nothing leaves the snapshot empty rather than wrong', () => {
-    const usage = usageFromCodexRateLimits('codex:work', null, NOW)
+    const usage = usageFromCodexRateLimits('workcodex', null, NOW)
 
-    expect(usage).toEqual(emptyCodexUsage('codex:work', NOW))
+    expect(usage).toEqual(emptyCodexUsage('workcodex', NOW))
     expect(usage.windows).toEqual([])
     expect(usage.rateLimitsAvailable).toBe(false)
     expect(usage.status).toBeNull()
@@ -121,7 +121,7 @@ describe('a rate-limits read', () => {
 
   test('a reached limit reads as rejected', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       { rateLimits: snapshot({ rateLimitReachedType: 'rate_limit_reached' }) },
       NOW
     )
@@ -132,7 +132,7 @@ describe('a rate-limits read', () => {
   // A limit on one model stops that model only, so the login can still be used.
   test('a reached limit on one model alone does not read as rejected', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       { rateLimits: snapshot(), rateLimitsByLimitId: { codex: snapshot(), codex_bengalfox: { ...SPARK, rateLimitReachedType: 'rate_limit_reached' } } },
       NOW
     )
@@ -142,7 +142,7 @@ describe('a rate-limits read', () => {
 
   test('a reached general limit reads as rejected beside a model limit with room', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       { rateLimitsByLimitId: { codex: snapshot({ rateLimitReachedType: 'rate_limit_reached' }), codex_bengalfox: SPARK } },
       NOW
     )
@@ -152,7 +152,7 @@ describe('a rate-limits read', () => {
 
   test('a reached limit counts from any bucket when none is the general limit', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       { rateLimitsByLimitId: { codex_other: snapshot({ limitId: 'codex_other', rateLimitReachedType: 'rate_limit_reached' }) } },
       NOW
     )
@@ -162,7 +162,7 @@ describe('a rate-limits read', () => {
 
   test('a spending control reached on a model bucket reads as rejected', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       { rateLimitsByLimitId: { codex: snapshot(), codex_bengalfox: { ...SPARK, spendControlReached: true } } },
       NOW
     )
@@ -171,7 +171,7 @@ describe('a rate-limits read', () => {
   })
 
   test('a reached spending control reads as rejected', () => {
-    const usage = usageFromCodexRateLimits('codex:work', { rateLimits: snapshot({ spendControlReached: true }) }, NOW)
+    const usage = usageFromCodexRateLimits('workcodex', { rateLimits: snapshot({ spendControlReached: true }) }, NOW)
 
     expect(usage.status).toBe('rejected')
   })
@@ -180,7 +180,7 @@ describe('a rate-limits read', () => {
 describe('the reset time a waiting session uses', () => {
   test('reads the Codex windows that are at or over their limit', () => {
     const usage = usageFromCodexRateLimits(
-      'codex:work',
+      'workcodex',
       {
         rateLimits: snapshot({
           primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: RESET_SECONDS }
@@ -193,7 +193,7 @@ describe('the reset time a waiting session uses', () => {
   })
 
   test('says nothing while every window still has room', () => {
-    const usage = usageFromCodexRateLimits('codex:work', { rateLimits: snapshot() }, NOW)
+    const usage = usageFromCodexRateLimits('workcodex', { rateLimits: snapshot() }, NOW)
 
     expect(resetsAtFromUsage(usage)).toBeNull()
   })
@@ -201,7 +201,7 @@ describe('the reset time a waiting session uses', () => {
 
 describe('banked resets', () => {
   test('counts the available ones and lists when each runs out, soonest first', () => {
-    const usage = usageFromCodexRateLimits('codex:work', {
+    const usage = usageFromCodexRateLimits('workcodex', {
       rateLimits: snapshot(),
       rateLimitResetCredits: {
         availableCount: 3,
@@ -229,7 +229,7 @@ describe('banked resets', () => {
   })
 
   test('is null when the read did not mention them, and zero when it has none', () => {
-    expect(usageFromCodexRateLimits('codex:work', { rateLimits: snapshot() }, NOW).bankedResets).toBeNull()
+    expect(usageFromCodexRateLimits('workcodex', { rateLimits: snapshot() }, NOW).bankedResets).toBeNull()
     expect(bankedResetsOf({ availableCount: 0, credits: [] })).toEqual({ count: 0, expiresAt: [] })
   })
 })
@@ -258,9 +258,9 @@ describe('the raw JSON-RPC result', () => {
   }
 
   test('reads a whole answer into the same usage as the checked one', () => {
-    const usage = codexUsageFromResult('codex:work', wire, NOW)
+    const usage = codexUsageFromResult('workcodex', wire, NOW)
 
-    expect(usage).toEqual(usageFromCodexRateLimits('codex:work', {
+    expect(usage).toEqual(usageFromCodexRateLimits('workcodex', {
       rateLimits: snapshot(),
       rateLimitsByLimitId: null,
       rateLimitResetCredits: { availableCount: 1, credits: [credit('available', null)] }
@@ -270,17 +270,17 @@ describe('the raw JSON-RPC result', () => {
 
   test('answers null for a result that is not an object, and never throws', () => {
     for (const result of [null, undefined, 'ok', 42, true, []]) {
-      expect(codexUsageFromResult('codex:work', result, NOW)).toBeNull()
+      expect(codexUsageFromResult('workcodex', result, NOW)).toBeNull()
       expect(parseCodexRateLimitsRead(result)).toBeNull()
     }
   })
 
   test('reads an empty object as a read with nothing in it', () => {
-    expect(codexUsageFromResult('codex:work', {}, NOW)).toEqual(emptyCodexUsage('codex:work', NOW))
+    expect(codexUsageFromResult('workcodex', {}, NOW)).toEqual(emptyCodexUsage('workcodex', NOW))
   })
 
   test('leaves out the parts that have the wrong shape and keeps the rest', () => {
-    const usage = codexUsageFromResult('codex:work', {
+    const usage = codexUsageFromResult('workcodex', {
       rateLimits: 'broken',
       rateLimitsByLimitId: {
         codex: { ...wire.rateLimits, primary: { usedPercent: '24' }, secondary: { usedPercent: 50, windowDurationMins: 'week', resetsAt: 'soon' } },
@@ -304,6 +304,6 @@ describe('the raw JSON-RPC result', () => {
     const read = parseCodexRateLimitsRead(JSON.parse('{"rateLimitsByLimitId":{"__proto__":{"limitId":"codex","primary":{"usedPercent":5,"windowDurationMins":300,"resetsAt":null}}}}'))
 
     expect(Object.keys(read?.rateLimitsByLimitId ?? {})).toEqual(['__proto__'])
-    expect(usageFromCodexRateLimits('codex:work', read, NOW).windows?.map((window) => window.utilization)).toEqual([5])
+    expect(usageFromCodexRateLimits('workcodex', read, NOW).windows?.map((window) => window.utilization)).toEqual([5])
   })
 })

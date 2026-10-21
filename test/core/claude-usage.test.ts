@@ -46,12 +46,12 @@ describe('folding a fresh snapshot into the map', () => {
 
   test('a map merge applies that rule per row and leaves the rest alone', () => {
     const merged = mergeUsageMaps(
-      { 'claude:default': usage({ fetchedAt: 200 }), 'claude:old': usage({ accountId: 'claude:old', fetchedAt: 5 }) },
-      { 'claude:default': usage({ fetchedAt: 100 }), 'claude:work': usage({ accountId: 'claude:work', fetchedAt: 7 }) }
+      { 'ownclaude1': usage({ fetchedAt: 200 }), 'oldclaude': usage({ accountId: 'oldclaude', fetchedAt: 5 }) },
+      { 'ownclaude1': usage({ fetchedAt: 100 }), 'workclaude': usage({ accountId: 'workclaude', fetchedAt: 7 }) }
     )
 
-    expect(merged['claude:default']?.fetchedAt).toBe(200)
-    expect(merged['claude:old']?.fetchedAt).toBe(5)
-    expect(merged['claude:work']?.fetchedAt).toBe(7)
+    expect(merged['ownclaude1']?.fetchedAt).toBe(200)
+    expect(merged['oldclaude']?.fetchedAt).toBe(5)
+    expect(merged['workclaude']?.fetchedAt).toBe(7)
   })
 })

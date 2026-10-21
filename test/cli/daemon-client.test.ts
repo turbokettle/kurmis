@@ -270,7 +270,7 @@ describe('startDaemon', () => {
   })
 
   it('reports a config.json it cannot read as a DaemonError', async () => {
-    writeFileSync(`${kurmisHome()}/config.json`, '{ "version": 1, "port": 80 }')
+    writeFileSync(`${kurmisHome()}/config.json`, '{ "version": 2, "port": 80 }')
     await expect(startDaemon({ env: {} })).rejects.toThrow(DaemonError)
   })
 })

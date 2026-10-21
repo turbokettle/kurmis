@@ -70,9 +70,9 @@ describe('the cooling of one session', () => {
 
   test('each answer in a row backs the login off longer, and another session is not affected', () => {
     const cooling = new CapacityCooling()
-    expect(cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW))
+    expect(cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW))
       .toEqual({ attempt: 1, delayMs: CAPACITY_HOLD_BASE_MS, until: NOW + CAPACITY_HOLD_BASE_MS })
-    expect(cooling.noteNoCapacity('s1', 'claude:b', '529 Overloaded', null, 0, NOW + 1000).attempt).toBe(2)
+    expect(cooling.noteNoCapacity('s1', 'bclaude', '529 Overloaded', null, 0, NOW + 1000).attempt).toBe(2)
     expect(cooling.attempt('s1', NOW + 1000)).toBe(2)
     expect(cooling.coolingOf('s2', NOW)).toBeNull()
     expect(cooling.attempt('s2', NOW)).toBe(1)
@@ -80,43 +80,43 @@ describe('the cooling of one session', () => {
 
   test('a retry-after longer than the backoff is waited, and a shorter later backoff does not cut it short', () => {
     const cooling = new CapacityCooling()
-    cooling.noteNoCapacity('s1', 'claude:a', '429 Too Many Requests', '600', 0, NOW)
-    const later = cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW + 1000)
+    cooling.noteNoCapacity('s1', 'aclaude', '429 Too Many Requests', '600', 0, NOW)
+    const later = cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW + 1000)
     expect(later.until).toBe(NOW + 600_000)
     expect(cooling.coolingOf('s1', NOW + 1000)?.reason).toBe('529 Overloaded')
   })
 
   test('a login stops cooling once its backoff is over, and the session with it', () => {
     const cooling = new CapacityCooling()
-    cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW)
-    expect(cooling.isCooling('s1', 'claude:a', NOW + CAPACITY_HOLD_BASE_MS - 1)).toBe(true)
-    expect(cooling.isCooling('s1', 'claude:a', NOW + CAPACITY_HOLD_BASE_MS)).toBe(false)
+    cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW)
+    expect(cooling.isCooling('s1', 'aclaude', NOW + CAPACITY_HOLD_BASE_MS - 1)).toBe(true)
+    expect(cooling.isCooling('s1', 'aclaude', NOW + CAPACITY_HOLD_BASE_MS)).toBe(false)
     expect(cooling.coolingOf('s1', NOW + CAPACITY_HOLD_BASE_MS)).toBeNull()
   })
 
   test('the count in a row starts over after an answer with room, or after ten quiet minutes', () => {
     const cooling = new CapacityCooling()
-    cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW)
+    cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW)
     cooling.noteAnswered('s1')
-    expect(cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW + 1).attempt).toBe(1)
-    expect(cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW + 2).attempt).toBe(2)
-    expect(cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW + 3 + CAPACITY_STREAK_MS).attempt).toBe(1)
+    expect(cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW + 1).attempt).toBe(1)
+    expect(cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW + 2).attempt).toBe(2)
+    expect(cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW + 3 + CAPACITY_STREAK_MS).attempt).toBe(1)
   })
 
   test('a held request waits only for logins the session may still use, until the first of them is free', () => {
     const cooling = new CapacityCooling({ baseMs: 1000, maxMs: 1000 })
-    cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', '20', 0, NOW)
-    cooling.noteNoCapacity('s1', 'claude:b', '529 Overloaded', null, 0, NOW)
-    expect(cooling.waitFor('s1', new Set(['claude:a', 'claude:b']), NOW))
-      .toEqual({ cooling: new Set(['claude:a', 'claude:b']), wakeAt: NOW + 1000 })
-    expect(cooling.waitFor('s1', new Set(['claude:a']), NOW))
-      .toEqual({ cooling: new Set(['claude:a']), wakeAt: NOW + 20_000 })
+    cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', '20', 0, NOW)
+    cooling.noteNoCapacity('s1', 'bclaude', '529 Overloaded', null, 0, NOW)
+    expect(cooling.waitFor('s1', new Set(['aclaude', 'bclaude']), NOW))
+      .toEqual({ cooling: new Set(['aclaude', 'bclaude']), wakeAt: NOW + 1000 })
+    expect(cooling.waitFor('s1', new Set(['aclaude']), NOW))
+      .toEqual({ cooling: new Set(['aclaude']), wakeAt: NOW + 20_000 })
     expect(cooling.waitFor('s1', new Set(), NOW)).toEqual({ cooling: new Set(), wakeAt: null })
   })
 
   test('forgetting a session drops its cooling and its count', () => {
     const cooling = new CapacityCooling()
-    cooling.noteNoCapacity('s1', 'claude:a', '529 Overloaded', null, 0, NOW)
+    cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW)
     cooling.forget('s1')
     expect(cooling.coolingOf('s1', NOW)).toBeNull()
     expect(cooling.attempt('s1', NOW)).toBe(1)

@@ -1,8 +1,9 @@
 // The environment a routed Claude CLI is started with.
 import { describe, expect, test } from 'vitest'
 import { applyRoutedEnv, inheritedOAuthTokenVariables, ROUTED_CLI_MAX_RETRIES, routedClaudeEnv } from '../../src/core/routed-env.ts'
+import { OWN_CLAUDE } from '../logins.ts'
 
-const FOLDER = '/Users/example/.kurmis/claude/work'
+const FOLDER = '/Users/example/.kurmis/claude/workclaude'
 
 describe('the routed environment', () => {
   test('on Auto: the loopback URL, the key, the tool-search opt-in and the retry budget', () => {
@@ -23,15 +24,15 @@ describe('the routed environment', () => {
   })
 
   test('on a named login: the login header and its folder, passed as given', () => {
-    const env = routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', secureStorageDir: `${FOLDER}/` })
-    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: claude:work')
+    const env = routedClaudeEnv({ port: 1, key: 'k', login: 'workclaude', secureStorageDir: `${FOLDER}/` })
+    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: workclaude')
     expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe(`${FOLDER}/`)
     expect(env.unset).toEqual(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
   })
 
   test('on the machine\'s own login: pinned, with the folder variable empty, which means the default credentials', () => {
-    const env = routedClaudeEnv({ port: 1, key: 'k', login: 'claude:default', secureStorageDir: FOLDER })
-    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: claude:default')
+    const env = routedClaudeEnv({ port: 1, key: 'k', login: OWN_CLAUDE, secureStorageDir: null })
+    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe(`x-kurmis-key: k\nx-kurmis-login: ${OWN_CLAUDE}`)
     expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('')
     expect(env.unset).not.toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
     // An inherited folder, from a session on another login, is replaced.
@@ -47,20 +48,20 @@ describe('the routed environment', () => {
   })
 
   test('on Auto, started on another login: its folder and the started-on header, no pin', () => {
-    const env = routedClaudeEnv({ port: 1, key: 'k', login: null, startedOn: 'claude:work', secureStorageDir: FOLDER })
-    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-started-on: claude:work')
+    const env = routedClaudeEnv({ port: 1, key: 'k', login: null, startedOn: 'workclaude', secureStorageDir: FOLDER })
+    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-started-on: workclaude')
     expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe(FOLDER)
   })
 
   test('pinned: the started-on login is the pinned one', () => {
-    const env = routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', startedOn: 'claude:work', secureStorageDir: FOLDER })
-    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: claude:work\nx-kurmis-started-on: claude:work')
-    expect(() => routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', startedOn: 'claude:other', secureStorageDir: FOLDER }))
+    const env = routedClaudeEnv({ port: 1, key: 'k', login: 'workclaude', startedOn: 'workclaude', secureStorageDir: FOLDER })
+    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: workclaude\nx-kurmis-started-on: workclaude')
+    expect(() => routedClaudeEnv({ port: 1, key: 'k', login: 'workclaude', startedOn: 'otherclaude', secureStorageDir: FOLDER }))
       .toThrow()
   })
 
-  test('a named login with no folder is a mistake of the caller', () => {
-    expect(() => routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', secureStorageDir: null })).toThrow()
+  test('an extra login\'s folder cannot be the empty string, which would mean the default credentials', () => {
+    expect(() => routedClaudeEnv({ port: 1, key: 'k', login: 'workclaude', secureStorageDir: '' })).toThrow(/cannot be the empty string/)
   })
 })
 

@@ -5,11 +5,15 @@ import { settleWithin } from '../../../src/cli/command-deps.ts'
 import type { ChildRunner } from '../../../src/cli/command-deps.ts'
 import type { PrepareCodexHomeOptions, PreparedCodexHome } from '../../../src/cli/codex-home-files.ts'
 import type { ChildEnd, ChildSpec, FinishOptions } from '../../../src/cli/wrapper.ts'
-import { addLogin, ConfigError, defaultConfig } from '../../../src/data/config.ts'
+import { ConfigError } from '../../../src/data/config.ts'
+import type { LoginRef } from '../../../src/data/login-id.ts'
 import { providerFolder } from '../../../src/data/paths.ts'
 import { ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { codexUsage } from '../../core/codex-usage-fixture.ts'
+import { claudeRef, codexRef, OWN_CLAUDE_REF, OWN_CODEX, OWN_CODEX_REF, testConfig } from '../../logins.ts'
 import { collect, fakeDaemonClient, loginStatus, statusAnswer, type FakeDaemonOptions } from '../helpers.ts'
+
+const WORK = { ...codexRef('workcodex1'), alias: 'work-example' }
 
 const NOW = Date.parse('2026-09-13T01:10:00.000Z')
 const HOUR = 3_600_000
@@ -48,14 +52,15 @@ function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<Codex
       daemon,
       child,
       findProgram: () => ({ command: '/fake/node', args: ['/fake/codex.js'], source: 'env' }),
-      async prepareCodexHome(id: string, options: PrepareCodexHomeOptions): Promise<PreparedCodexHome> {
+      async prepareCodexHome(login: LoginRef, options: PrepareCodexHomeOptions): Promise<PreparedCodexHome> {
         void options
-        prepared.push(id)
-        return id === 'codex:default'
+        prepared.push(login.id)
+        return login.machineOwn
           ? { codexHome: null, warnings: [] }
-          : { codexHome: `${FAKE_HOMES}/${id.slice('codex:'.length)}`, warnings: ['the hooks file could not be linked'] }
+          : { codexHome: `${FAKE_HOMES}/${login.id}`, warnings: ['the hooks file could not be linked'] }
       },
-      loadConfig: () => addLogin(defaultConfig(), 'codex:work'),
+      // A Claude login with the same alias as the Codex one, which kurmis codex never looks at.
+      loadConfig: () => testConfig({ extras: [{ ...WORK }, { id: 'workclaude', provider: 'claude', alias: 'work-example' }] }),
       now: () => NOW,
       platform: 'darwin',
       probeWaitMs: 50,
@@ -65,54 +70,72 @@ function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<Codex
 }
 
 const TWO_LOGINS = statusAnswer([
-  loginStatus('claude:default'),
-  loginStatus('codex:default', { usage: codexUsage('codex:default', { weeklyResetsAt: at(90 * HOUR), fetchedAt: NOW }) }),
-  loginStatus('codex:work', { usage: codexUsage('codex:work', { weeklyResetsAt: at(10 * HOUR), fetchedAt: NOW }) })
+  loginStatus(OWN_CLAUDE_REF),
+  loginStatus({ ...claudeRef('workclaude'), alias: 'work-example' }),
+  loginStatus(OWN_CODEX_REF, { usage: codexUsage(OWN_CODEX, { weeklyResetsAt: at(90 * HOUR), fetchedAt: NOW }) }),
+  loginStatus(WORK, { usage: codexUsage(WORK.id, { weeklyResetsAt: at(10 * HOUR), fetchedAt: NOW }) })
 ])
 
 describe('kurmis codex with --login', () => {
   test('starts codex on the named login with its prepared CODEX_HOME and the arguments passed on', async () => {
     const h = harness()
     const out = collect({ PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'http://127.0.0.1:40123' })
-    const code = await createCodexCommand(h.deps).run(['--login', 'work', 'exec', '--login', 'x'], out.context)
+    const code = await createCodexCommand(h.deps).run(['--login', 'work-example', 'exec', '--login', 'x'], out.context)
     expect(code).toBe(3)
     expect(h.daemon.calls).toEqual([])
-    expect(h.prepared).toEqual(['codex:work'])
+    expect(h.prepared).toEqual([WORK.id])
     expect(h.specs).toEqual([{
       command: '/fake/node',
       args: ['/fake/codex.js', 'exec', '--login', 'x'],
-      env: { PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'http://127.0.0.1:40123', CODEX_HOME: `${FAKE_HOMES}/work` }
+      env: { PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'http://127.0.0.1:40123', CODEX_HOME: `${FAKE_HOMES}/${WORK.id}` }
     }])
     expect(h.finished[0]?.options.name).toBe('codex')
     expect(out.stderr()).toBe('kurmis codex: the hooks file could not be linked\n')
   })
 
+  test('finds the login by id, by alias and with codex: in front, among the Codex logins only', async () => {
+    for (const text of [WORK.id, 'codex:work-example', 'work-example', `codex:${WORK.id}`]) {
+      const h = harness()
+      expect(await createCodexCommand(h.deps).run(['--login', text], collect().context)).toBe(3)
+      expect(h.prepared).toEqual([WORK.id])
+    }
+    const h = harness()
+    expect(await createCodexCommand(h.deps).run(['--login', OWN_CODEX], collect().context)).toBe(3)
+    expect(h.prepared).toEqual([OWN_CODEX])
+  })
+
   test('refuses a login that is not in config.json', async () => {
     const h = harness()
     const out = collect()
-    expect(await createCodexCommand(h.deps).run(['--login', 'codex:other'], out.context)).toBe(1)
-    expect(out.stderr()).toContain('there is no login codex:other')
+    expect(await createCodexCommand(h.deps).run(['--login', 'other-example'], out.context)).toBe(1)
+    expect(out.stderr()).toContain('there is no Codex login called "other-example"')
     expect(h.specs).toEqual([])
   })
 
-  test('a config.json that does not read stops a named extra login but not codex:default', async () => {
-    const h = harness({}, {
+  test('a config.json that does not read stops a named login, and Auto starts on the machine\'s own login', async () => {
+    const h = harness({ status: TWO_LOGINS }, {
       loadConfig: () => {
-        throw new ConfigError('config.json is not valid JSON')
+        throw new ConfigError('config.json is not valid JSON.')
       }
     })
-    const out = collect()
-    expect(await createCodexCommand(h.deps).run(['--login', 'work'], out.context)).toBe(1)
-    expect(out.stderr()).toBe('kurmis codex: config.json is not valid JSON\n')
-    expect(await createCodexCommand(h.deps).run(['--login', 'default'], out.context)).toBe(3)
-    expect(h.prepared).toEqual(['codex:default'])
+    const named = collect()
+    expect(await createCodexCommand(h.deps).run(['--login', 'work-example'], named.context)).toBe(1)
+    expect(named.stderr()).toBe('kurmis codex: config.json is not valid JSON.\n')
+    const auto = collect({ CODEX_HOME: '/srv/my-codex' })
+    expect(await createCodexCommand(h.deps).run([], auto.context)).toBe(3)
+    expect(auto.stderr()).toBe('kurmis codex: config.json is not valid JSON. Starting on this machine\'s own Codex sign-in.\n')
+    expect(h.specs[0]?.env).toEqual({ CODEX_HOME: '/srv/my-codex' })
+    expect(h.daemon.calls).toEqual([])
   })
 
   test('refuses a Claude login', async () => {
     const h = harness()
-    const out = collect()
-    expect(await createCodexCommand(h.deps).run(['--login', 'claude:work'], out.context)).toBe(2)
-    expect(out.stderr()).toContain('is a claude login, not a codex one')
+    for (const text of ['claude:work-example', 'workclaude']) {
+      const out = collect()
+      expect(await createCodexCommand(h.deps).run(['--login', text], out.context)).toBe(1)
+      expect(out.stderr()).toContain('is a Claude login; this takes a Codex login')
+    }
+    expect(h.specs).toEqual([])
   })
 })
 
@@ -122,91 +145,91 @@ describe('kurmis codex without --login', () => {
     const out = collect({ PATH: '/usr/bin' })
     expect(await createCodexCommand(h.deps).run([], out.context)).toBe(3)
     expect(h.daemon.calls).toEqual(['ensureDaemon', 'readStatus'])
-    expect(h.prepared).toEqual(['codex:work'])
-    expect(h.specs[0]?.env.CODEX_HOME).toBe(`${FAKE_HOMES}/work`)
-    expect(out.stderr()).toContain('kurmis codex: starting on codex:work.')
+    expect(h.prepared).toEqual([WORK.id])
+    expect(h.specs[0]?.env.CODEX_HOME).toBe(`${FAKE_HOMES}/${WORK.id}`)
+    expect(out.stderr()).toContain('kurmis codex: starting on work-example.')
   })
 
-  test('says nothing about the choice when codex:default is the only Codex login', async () => {
-    const h = harness({ status: statusAnswer([loginStatus('claude:default'), loginStatus('codex:default')]) })
+  test('says nothing about the choice when the machine\'s own login is the only Codex login', async () => {
+    const h = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(OWN_CODEX_REF)]) })
     const out = collect()
     await createCodexCommand(h.deps).run([], out.context)
-    expect(h.prepared).toEqual(['codex:default'])
+    expect(h.prepared).toEqual([OWN_CODEX])
     expect(out.stderr()).toBe('')
   })
 
   test('probes logins with old usage first and chooses with the answer', async () => {
     const stale = statusAnswer([
-      loginStatus('codex:default', { usage: codexUsage('codex:default', { fetchedAt: NOW - 2 * HOUR }) }),
-      loginStatus('codex:work')
+      loginStatus(OWN_CODEX_REF, { usage: codexUsage(OWN_CODEX, { fetchedAt: NOW - 2 * HOUR }) }),
+      loginStatus(WORK)
     ])
     const h = harness({ status: stale, probed: TWO_LOGINS })
     const out = collect()
     await createCodexCommand(h.deps).run([], out.context)
-    expect(h.daemon.calls).toEqual(['ensureDaemon', 'readStatus', 'requestProbe:codex:default,codex:work'])
-    expect(h.prepared).toEqual(['codex:work'])
+    expect(h.daemon.calls).toEqual(['ensureDaemon', 'readStatus', `requestProbe:${OWN_CODEX},${WORK.id}`])
+    expect(h.prepared).toEqual([WORK.id])
   })
 
   test('chooses with the usage it had when the probe does not answer in time', async () => {
     const stale = statusAnswer([
-      loginStatus('codex:default', { usage: codexUsage('codex:default', { weeklyResetsAt: at(HOUR), fetchedAt: NOW - 2 * HOUR }) }),
-      loginStatus('codex:work')
+      loginStatus(OWN_CODEX_REF, { usage: codexUsage(OWN_CODEX, { weeklyResetsAt: at(HOUR), fetchedAt: NOW - 2 * HOUR }) }),
+      loginStatus(WORK)
     ])
     const h = harness({ status: stale })
     h.daemon.requestProbe = () => new Promise(() => undefined)
     const out = collect()
     await createCodexCommand(h.deps).run([], out.context)
-    expect(h.prepared).toEqual(['codex:default'])
+    expect(h.prepared).toEqual([OWN_CODEX])
     expect(out.stderr()).toContain('the usage probe did not finish within 0.05 s; choosing with the usage read before.')
   })
 
   test('chooses with the usage it had when the probe fails', async () => {
-    const stale = statusAnswer([loginStatus('codex:default'), loginStatus('codex:work')])
+    const stale = statusAnswer([loginStatus(OWN_CODEX_REF), loginStatus(WORK)])
     const h = harness({ status: stale })
     h.daemon.requestProbe = () => Promise.reject(new Error('probe broke'))
     const out = collect()
     await createCodexCommand(h.deps).run([], out.context)
-    expect(h.prepared).toEqual(['codex:default'])
+    expect(h.prepared).toEqual([OWN_CODEX])
     expect(out.stderr()).toContain('the usage probe failed (probe broke)')
   })
 
   test('prints the note when every login is out', async () => {
     const out = statusAnswer([
-      loginStatus('codex:default', { usage: codexUsage('codex:default', { weekly: 100, weeklyResetsAt: at(5 * HOUR), fetchedAt: NOW }) }),
-      loginStatus('codex:work', { usage: codexUsage('codex:work', { weekly: 100, weeklyResetsAt: at(2 * HOUR), fetchedAt: NOW }) })
+      loginStatus(OWN_CODEX_REF, { usage: codexUsage(OWN_CODEX, { weekly: 100, weeklyResetsAt: at(5 * HOUR), fetchedAt: NOW }) }),
+      loginStatus(WORK, { usage: codexUsage(WORK.id, { weekly: 100, weeklyResetsAt: at(2 * HOUR), fetchedAt: NOW }) })
     ])
     const h = harness({ status: out })
     const collected = collect()
     await createCodexCommand(h.deps).run([], collected.context)
-    expect(h.prepared).toEqual(['codex:work'])
+    expect(h.prepared).toEqual([WORK.id])
     expect(collected.stderr()).toBe(
-      'kurmis codex: Every Codex login is at its limit; starting on codex:work, whose usage comes back first (in 2h).\n' +
+      'kurmis codex: Every Codex login is at its limit; starting on work-example, whose usage comes back first (in 2h).\n' +
       'kurmis codex: the hooks file could not be linked\n')
   })
 
-  test('starts on codex:default with a note when the daemon cannot be reached', async () => {
+  test('starts on the machine\'s own login with a note when the daemon cannot be reached', async () => {
     const h = harness({ ensureFails: 'port 40123 is taken by another program' })
     const out = collect()
     expect(await createCodexCommand(h.deps).run(['resume'], out.context)).toBe(3)
-    expect(h.prepared).toEqual(['codex:default'])
+    expect(h.prepared).toEqual([OWN_CODEX])
     expect(h.specs[0]?.args).toEqual(['/fake/codex.js', 'resume'])
-    expect(out.stderr()).toBe('kurmis codex: the kurmis daemon could not be reached (port 40123 is taken by another program); starting on codex:default.\n')
+    expect(out.stderr()).toBe(`kurmis codex: the kurmis daemon could not be reached (port 40123 is taken by another program); starting on ${OWN_CODEX}, this machine's own Codex sign-in.\n`)
   })
 })
 
 describe('kurmis codex and CODEX_HOME', () => {
-  test('codex:default keeps the user\'s own CODEX_HOME', async () => {
+  test('the machine\'s own login keeps the user\'s own CODEX_HOME', async () => {
     const h = harness()
     const out = collect({ CODEX_HOME: '/srv/my-codex' })
-    await createCodexCommand(h.deps).run(['--login', 'default'], out.context)
+    await createCodexCommand(h.deps).run(['--login', OWN_CODEX], out.context)
     expect(h.specs[0]?.env).toEqual({ CODEX_HOME: '/srv/my-codex' })
   })
 
-  test('codex:default drops a CODEX_HOME an outer kurmis codex session set for an extra login', async () => {
+  test('the machine\'s own login drops a CODEX_HOME an outer kurmis codex session set for an extra login', async () => {
     // The home is a path of this machine, so the command has to compare it by this OS's rules.
     const h = harness({}, { platform: process.platform })
     const out = collect({ CODEX_HOME: join(providerFolder('codex'), 'work'), PATH: '/usr/bin' })
-    await createCodexCommand(h.deps).run(['--login', 'default'], out.context)
+    await createCodexCommand(h.deps).run(['--login', OWN_CODEX], out.context)
     expect(h.specs[0]?.env).toEqual({ PATH: '/usr/bin' })
   })
 
@@ -238,8 +261,8 @@ describe('kurmis codex failures', () => {
       prepareCodexHome: () => Promise.reject(new Error('the folder is not writable'))
     })
     const out = collect()
-    expect(await createCodexCommand(h.deps).run(['--login', 'work'], out.context)).toBe(1)
-    expect(out.stderr()).toContain('could not prepare the Codex home of codex:work: the folder is not writable')
+    expect(await createCodexCommand(h.deps).run(['--login', 'work-example'], out.context)).toBe(1)
+    expect(out.stderr()).toContain('could not prepare the Codex home of work-example: the folder is not writable')
     expect(h.specs).toEqual([])
   })
 

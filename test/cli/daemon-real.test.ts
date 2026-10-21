@@ -106,7 +106,7 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     const oldPid = read.status === 'ok' ? read.info.pid : 0
     const key = readOrCreateKey(join(home, 'key'))
 
-    // No token can be read for claude:default here, so the proxy forwards the CLI's own header.
+    // No token can be read for the machine's own Claude login here, so the proxy forwards the CLI's own header.
     api.script(reply.ok({ text: 'Hello from the older daemon', delayMs: 2_500 }))
     const open = call({ port }, '/v1/messages', {
       headers: { 'x-kurmis-key': key, authorization: 'Bearer example-token', 'x-claude-code-session-id': 'session-1' },

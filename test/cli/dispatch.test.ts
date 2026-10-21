@@ -2,8 +2,8 @@ import { rmSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { COMMANDS } from '../../src/cli/commands/index.ts'
 import { runCli } from '../../src/cli/dispatch.ts'
-import { addLogin, defaultConfig, saveConfig, updateLogin } from '../../src/data/config.ts'
 import { configPath } from '../../src/data/paths.ts'
+import { OWN_CLAUDE, OWN_CODEX, writeTestConfig } from '../logins.ts'
 
 async function run(...argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   let stdout = ''
@@ -73,7 +73,7 @@ describe('dispatch', () => {
     const status = await run('status', '--nope')
     expect(status.code).toBe(2)
     expect(status.stderr).toContain('kurmis status:')
-    expect((await run('claude', '--login', '../x')).code).toBe(2)
+    expect((await run('claude', '--login=')).code).toBe(2)
     expect((await run('daemon')).code).toBe(2)
     expect((await run('daemon', 'nope')).code).toBe(2)
     expect((await run('daemon', 'stop', '--nope')).code).toBe(2)
@@ -86,26 +86,32 @@ describe('kurmis list', () => {
     rmSync(configPath(), { force: true })
   })
 
-  it('lists the default logins when there is no config', async () => {
+  it('lists the machine\'s own logins, with new ids, when there is no config', async () => {
     const result = await run('list')
     expect(result.code).toBe(0)
-    expect(result.stdout).toBe(
-      [
-        'ID              LABEL    AUTO  FIVE-HOUR  WEEKLY  USE-FIRST  CREDENTIALS',
-        'claude:default  default  on    100%       100%    off        no',
-        'codex:default   default  on    100%       100%    off        no',
-        ''
-      ].join('\n')
-    )
+    // Each of the machine's own logins has a new id of 10 letters and digits, which is also its alias.
+    const [ownClaude, ownCodex] = [...new Set(result.stdout.match(/\b[a-z0-9]{10}\b/g))]
+    expect(ownClaude).toBeDefined()
+    expect(result.stdout.replaceAll(ownClaude!, 'OWN-CLAUDE').replaceAll(ownCodex!, 'OWN-CODEX0')).toBe([
+      'PROVIDER  ALIAS       ID          AUTO  FIVE-HOUR  WEEKLY  USE-FIRST  CREDENTIALS',
+      'claude    OWN-CLAUDE  OWN-CLAUDE  on    100%       100%    off        no',
+      'codex     OWN-CODEX0  OWN-CODEX0  on    100%       100%    off        no',
+      '',
+      'OWN-CLAUDE is this machine\'s own Claude sign-in: the account a plain "claude" is signed in to.',
+      'OWN-CODEX0 is this machine\'s own Codex sign-in: the account a plain "codex" is signed in to.',
+      ''
+    ].join('\n'))
   })
 
   it('lists stored logins and settings, also as JSON', async () => {
-    let config = addLogin(defaultConfig(), 'claude:work', { label: 'Work account', useFirst: true })
-    config = updateLogin(config, 'codex:default', { routing: false, weeklyLimit: 75 })
-    saveConfig(config)
+    const config = writeTestConfig({
+      extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example', useFirst: true }],
+      ownCodex: { routing: false, weeklyLimit: 75 }
+    })
     const table = await run('list')
-    expect(table.stdout).toContain('claude:work     Work account  on    100%       100%    on         no')
-    expect(table.stdout).toContain('codex:default   default       off   100%       75%     off        no')
+    expect(table.stdout).toContain('claude    work-example  workclaude  on    100%       100%    on         no')
+    expect(table.stdout).toContain(`codex     ${OWN_CODEX}    ${OWN_CODEX}  off   100%       75%     off        no`)
+    expect(table.stdout).toContain(`${OWN_CLAUDE} is this machine's own Claude sign-in`)
     const json = await run('list', '--json')
     expect(JSON.parse(json.stdout)).toEqual(config.logins.map((login) => ({ ...login, credentials: false })))
   })

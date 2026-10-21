@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import { CREDENTIALS_FILE_NAME, CredentialsFileReader } from '../../src/daemon/credentials.ts'
 
+const WORK = 'workclaude'
+
 let dir: string
 let path: string
 beforeEach(() => {
@@ -22,60 +24,60 @@ test('the file is .credentials.json in the login folder', () => {
   const folders: string[] = []
   const tracking = new CredentialsFileReader({ credentialsDir: (id) => { folders.push(id); return dir } })
   write('one')
-  expect(tracking.read('claude:work')).toEqual({ accessToken: 'one', expiresAt: 123, hasRefreshToken: false })
-  expect(folders).toEqual(['claude:work'])
+  expect(tracking.read(WORK)).toEqual({ accessToken: 'one', expiresAt: 123, hasRefreshToken: false })
+  expect(folders).toEqual([WORK])
 })
 
 test('caches by mtime and size and reloads a changed file', () => {
   const credentials = reader()
   write('one')
   utimesSync(path, 1000, 1000)
-  const first = credentials.read('claude:work')
+  const first = credentials.read(WORK)
   expect(first).toEqual({ accessToken: 'one', expiresAt: 123, hasRefreshToken: false })
   write('two')
   utimesSync(path, 1000, 1000)
-  expect(credentials.read('claude:work')).toBe(first)
+  expect(credentials.read(WORK)).toBe(first)
   utimesSync(path, 2000, 2000)
-  expect(credentials.read('claude:work')?.accessToken).toBe('two')
+  expect(credentials.read(WORK)?.accessToken).toBe('two')
 })
 
 test('a file of another size is read again even with the same mtime', () => {
   const credentials = reader()
   write('one')
   utimesSync(path, 1000, 1000)
-  expect(credentials.read('claude:work')?.accessToken).toBe('one')
+  expect(credentials.read(WORK)?.accessToken).toBe('one')
   write('a-longer-token')
   utimesSync(path, 1000, 1000)
-  expect(credentials.read('claude:work')?.accessToken).toBe('a-longer-token')
+  expect(credentials.read(WORK)?.accessToken).toBe('a-longer-token')
 })
 
 test('invalidate and clear make the next read go to the file', () => {
   const credentials = reader()
   write('one')
   utimesSync(path, 1000, 1000)
-  const first = credentials.read('claude:work')
-  credentials.invalidate('claude:work')
-  const second = credentials.read('claude:work')
+  const first = credentials.read(WORK)
+  credentials.invalidate(WORK)
+  const second = credentials.read(WORK)
   expect(second).toEqual(first)
   expect(second).not.toBe(first)
   credentials.clear()
-  expect(credentials.read('claude:work')).not.toBe(second)
+  expect(credentials.read(WORK)).not.toBe(second)
 })
 
 test('a file that goes away reads as no token', () => {
   const credentials = reader()
   write('one')
-  expect(credentials.read('claude:work')).not.toBeNull()
+  expect(credentials.read(WORK)).not.toBeNull()
   unlinkSync(path)
-  expect(credentials.read('claude:work')).toBeNull()
+  expect(credentials.read(WORK)).toBeNull()
 })
 
 test('prime has nothing to do and resolves', async () => {
-  await expect(reader().prime(['claude:work'])).resolves.toBeUndefined()
+  await expect(reader().prime([WORK])).resolves.toBeUndefined()
 })
 
 test.each([undefined, '{', 'null', '{}', '{"claudeAiOauth":{"accessToken":""}}',
   '{"claudeAiOauth":{"accessToken":12}}'])('unreadable credentials: %s', (body) => {
   if (body !== undefined) writeFileSync(path, body)
-  expect(reader().read('claude:work')).toBeNull()
+  expect(reader().read(WORK)).toBeNull()
 })

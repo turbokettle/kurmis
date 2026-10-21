@@ -10,7 +10,7 @@ const RESET = '2026-09-06T12:00:00.000Z'
 const EXTRA_KEY = 'seven_day_overage_included'
 
 function probe(enabled = false): AccountUsage {
-  return usageFromGetUsage('claude:example', {
+  return usageFromGetUsage('exampleclaude', {
     subscription_type: 'max',
     rate_limits_available: true,
     rate_limits: {
@@ -25,7 +25,7 @@ function probe(enabled = false): AccountUsage {
 }
 
 function event(previous: AccountUsage | null, percent: number): AccountUsage {
-  return usageFromRateLimitEvent('claude:example', previous, {
+  return usageFromRateLimitEvent('exampleclaude', previous, {
     status: 'allowed_warning',
     rateLimitType: EXTRA_KEY,
     utilization: percent / 100,
@@ -94,10 +94,10 @@ describe('the extra-usage window', () => {
         extra_usage: { is_enabled: true }
       }
     }
-    const enabled = usageFromGetUsage('claude:example', raw, NOW)
+    const enabled = usageFromGetUsage('exampleclaude', raw, NOW)
     expect(allUsageWindows(enabled).map((window) => window.key)).toContain(EXTRA_KEY)
     raw.rate_limits.extra_usage.is_enabled = false
-    const disabled = usageFromGetUsage('claude:example', raw, NOW + 1000, enabled)
+    const disabled = usageFromGetUsage('exampleclaude', raw, NOW + 1000, enabled)
     expect(disabled.sevenDayOverage?.utilization).toBe(100)
     expectHidden(disabled)
   })

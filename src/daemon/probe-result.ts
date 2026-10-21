@@ -21,7 +21,17 @@ export interface ProbeOptions {
 }
 
 export type ProbeResult =
-  | { ok: true; signedIn: boolean; usage: AccountUsage }
+  | {
+      ok: true
+      signedIn: boolean
+      usage: AccountUsage
+      /**
+       * The email the login is signed in with, when the probe learned it: a Codex probe from
+       * `account/read`. The daemon keeps it in memory only, for the status answer and the
+       * login's automatic alias; it is never logged or stored.
+       */
+      email?: string | null
+    }
   | { ok: false; signedIn: boolean | null; reason: LogReason; error: string }
 
 export type ProbeFailure = Extract<ProbeResult, { ok: false }>

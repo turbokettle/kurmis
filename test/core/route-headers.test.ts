@@ -4,6 +4,7 @@ import {
   formatCustomHeaders, KEY_HEADER, LOGIN_HEADER, parseCustomHeaders, readRouteRequest, routeKeyMatches,
   SESSION_HEADER, STARTED_ON_HEADER, STARTED_ON_NONE, withRouteHeaders
 } from '../../src/core/route-headers.ts'
+import { OWN_CLAUDE } from '../logins.ts'
 
 describe('ANTHROPIC_CUSTOM_HEADERS', () => {
   test('is read as one Name: value per line, split at the first colon and trimmed', () => {
@@ -16,17 +17,17 @@ describe('ANTHROPIC_CUSTOM_HEADERS', () => {
   })
 
   test('is written back as the same lines', () => {
-    const headers = [{ name: 'x-kurmis-key', value: 'abc' }, { name: 'x-kurmis-login', value: 'claude:work' }]
-    expect(formatCustomHeaders(headers)).toBe('x-kurmis-key: abc\nx-kurmis-login: claude:work')
+    const headers = [{ name: 'x-kurmis-key', value: 'abc' }, { name: 'x-kurmis-login', value: 'workclaude' }]
+    expect(formatCustomHeaders(headers)).toBe('x-kurmis-key: abc\nx-kurmis-login: workclaude')
     expect(parseCustomHeaders(formatCustomHeaders(headers))).toEqual(headers)
   })
 
   test('keeps the person\'s own headers and replaces kurmis\' headers already there', () => {
-    const inherited = 'X-Team: blue\nX-Kurmis-Key: old\nx-kurmis-login: claude:old'
+    const inherited = 'X-Team: blue\nX-Kurmis-Key: old\nx-kurmis-login: oldclaude'
     expect(withRouteHeaders(inherited, 'new', null)).toBe('X-Team: blue\nx-kurmis-key: new')
-    expect(withRouteHeaders(null, 'new', 'claude:work')).toBe('x-kurmis-key: new\nx-kurmis-login: claude:work')
-    expect(withRouteHeaders('x-kurmis-started-on: claude:old', 'new', null, 'claude:work'))
-      .toBe('x-kurmis-key: new\nx-kurmis-started-on: claude:work')
+    expect(withRouteHeaders(null, 'new', 'workclaude')).toBe('x-kurmis-key: new\nx-kurmis-login: workclaude')
+    expect(withRouteHeaders('x-kurmis-started-on: oldclaude', 'new', null, 'workclaude'))
+      .toBe('x-kurmis-key: new\nx-kurmis-started-on: workclaude')
   })
 })
 
@@ -34,26 +35,33 @@ describe('a request to the proxy', () => {
   const getter = (values: Record<string, string>) => (name: string): string | undefined => values[name]
 
   test('carries the key, the session and, when pinned, a Claude login', () => {
-    expect(readRouteRequest(getter({ [KEY_HEADER]: 'secret', [LOGIN_HEADER]: 'claude:work', [SESSION_HEADER]: 'abc-123' })))
-      .toEqual({ key: 'secret', login: 'claude:work', startedOn: 'claude:default', sessionId: 'abc-123' })
-    expect(readRouteRequest(getter({}))).toEqual({ key: null, login: null, startedOn: 'claude:default', sessionId: null })
-    expect(readRouteRequest(getter({ [KEY_HEADER]: '  ', [LOGIN_HEADER]: '' })))
-      .toEqual({ key: null, login: null, startedOn: 'claude:default', sessionId: null })
+    expect(readRouteRequest(getter({ [KEY_HEADER]: 'secret', [LOGIN_HEADER]: 'workclaude', [SESSION_HEADER]: 'abc-123' }), OWN_CLAUDE))
+      .toEqual({ key: 'secret', login: 'workclaude', startedOn: OWN_CLAUDE, sessionId: 'abc-123' })
+    expect(readRouteRequest(getter({}), OWN_CLAUDE)).toEqual({ key: null, login: null, startedOn: OWN_CLAUDE, sessionId: null })
+    expect(readRouteRequest(getter({ [KEY_HEADER]: '  ', [LOGIN_HEADER]: '' }), OWN_CLAUDE))
+      .toEqual({ key: null, login: null, startedOn: OWN_CLAUDE, sessionId: null })
   })
 
-  test('names the login the CLI was started on, claude:default without the header', () => {
-    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'claude:work' })).startedOn).toBe('claude:work')
-    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'codex:work' })).startedOn).toBe('invalid')
+  test('names the login the CLI was started on, the machine\'s own login without the header', () => {
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'workclaude' }), OWN_CLAUDE).startedOn).toBe('workclaude')
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: ' workclaude ' }), OWN_CLAUDE).startedOn).toBe('workclaude')
+    expect(readRouteRequest(getter({}), 'otherown01').startedOn).toBe('otherown01')
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'claude:workclaude' }), OWN_CLAUDE).startedOn).toBe('invalid')
+  })
+
+  test('passes any login id on, since only the proxy knows which logins are Claude logins', () => {
+    expect(readRouteRequest(getter({ [LOGIN_HEADER]: 'workcodex1' }), OWN_CLAUDE).login).toBe('workcodex1')
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'workcodex1' }), OWN_CLAUDE).startedOn).toBe('workcodex1')
   })
 
   test('reads started-on none as no kurmis login', () => {
-    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: STARTED_ON_NONE })).startedOn).toBeNull()
-    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: ' None ' })).startedOn).toBeNull()
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: STARTED_ON_NONE }), OWN_CLAUDE).startedOn).toBeNull()
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: ' None ' }), OWN_CLAUDE).startedOn).toBeNull()
     expect(withRouteHeaders('X-Team: blue', 'k', null, STARTED_ON_NONE)).toBe('X-Team: blue\nx-kurmis-key: k\nx-kurmis-started-on: none')
   })
 
-  test.each(['codex:work', 'work', 'claude:', 'claude:Work', 'claude:con'])('a login header of %j is invalid', (value) => {
-    expect(readRouteRequest(getter({ [LOGIN_HEADER]: value })).login).toBe('invalid')
+  test.each(['claude:workclaude', 'work-claude', 'Workclaude', 'con', 'invalid', 'claude', 'a'.repeat(33), 'a b'])('a login header of %j is invalid', (value) => {
+    expect(readRouteRequest(getter({ [LOGIN_HEADER]: value }), OWN_CLAUDE).login).toBe('invalid')
   })
 
   test('the key matches the secret exactly', () => {

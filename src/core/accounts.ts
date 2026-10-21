@@ -1,22 +1,12 @@
-// Login ids and the per-login routing settings.
+// The providers, the rules for login ids, and the per-login routing settings.
 //
-// A login id carries its provider: `claude:<name>` or `codex:<name>`. Only `<name>` names the
-// login's folder on disk (`claude/<name>/`, `codex/<name>/` under the data folder), because a
-// colon is not allowed in a Windows path. The machine's own logins are `claude:default` and
-// `codex:default`.
+// A login id is 1 to 32 lowercase letters and digits. Kurmis makes them random
+// (`newLoginId` in `src/data/login-id.ts`); the rule here is what a stored id is checked
+// against, so that it is always a safe folder name and a safe value for the log.
 
 export type AccountProvider = 'claude' | 'codex'
 
 export const ACCOUNT_PROVIDERS: readonly AccountProvider[] = ['claude', 'codex']
-
-/** The name part of the machine's own login, for either provider. */
-export const DEFAULT_LOGIN_NAME = 'default'
-
-/** The machine's own `~/.claude` login. Always listed and never removable. */
-export const CLAUDE_DEFAULT_ACCOUNT_ID = 'claude:default'
-
-/** The machine's own `~/.codex` login. Always listed and never removable. */
-export const CODEX_DEFAULT_ACCOUNT_ID = 'codex:default'
 
 /** The five-hour routing limit a login has until one is set, in percent. */
 export const DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100
@@ -28,55 +18,22 @@ export const DEFAULT_WEEKLY_LIMIT_PERCENT = 100
 export const DEFAULT_AUTO_ROUTE = true
 
 /**
- * A login name: lower-case letters, digits, `-` and `_`, starting with a letter or digit, at
- * most 32 characters. Lower case only, because the folder it names must not collide with
- * another on a case-insensitive file system.
+ * Lowercase only, because the folder the id names must not collide with another on a
+ * case-insensitive file system.
  */
-const LOGIN_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
-
-/** Names Windows reserves for devices, which cannot be folder names there. */
-const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/
-
-/** Whether `name` can be the name part of a login id, and so a folder name on every platform. */
-export function isLoginName(name: string): boolean {
-  return LOGIN_NAME.test(name) && !WINDOWS_RESERVED.test(name)
-}
-
-/** `('codex', 'work')` -> `codex:work`. */
-export function accountId(provider: AccountProvider, name: string): string {
-  return `${provider}:${name}`
-}
+const LOGIN_ID = /^[a-z0-9]{1,32}$/
 
 /**
- * The provider and name of a login id, or null when it is not one: no known provider prefix, or
- * a name `isLoginName` refuses.
+ * Names Windows reserves for devices, which cannot be folder names there; `none`, which the
+ * `x-kurmis-started-on` header uses for "no kurmis login"; `invalid`, which `readRouteRequest`
+ * answers for a header that names no login; and the provider names, which `kurmis login` takes
+ * in place of a login.
  */
-export function parseAccountId(id: string): { provider: AccountProvider; name: string } | null {
-  const colon = id.indexOf(':')
-  if (colon < 0) return null
-  const provider = id.slice(0, colon)
-  const name = id.slice(colon + 1)
-  if (provider !== 'claude' && provider !== 'codex') return null
-  return isLoginName(name) ? { provider, name } : null
-}
+const RESERVED_IDS = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|none|invalid|claude|codex)$/
 
-/** The provider of a login id, or null when it is not a login id. */
-export function accountProviderOf(id: string | null | undefined): AccountProvider | null {
-  return typeof id === 'string' ? parseAccountId(id)?.provider ?? null : null
-}
-
-/** `codex:work` -> `work`, the name of the login's folder. Null when it is not a login id. */
-export function loginNameOf(id: string): string | null {
-  return parseAccountId(id)?.name ?? null
-}
-
-export function defaultAccountIdFor(provider: AccountProvider): string {
-  return provider === 'codex' ? CODEX_DEFAULT_ACCOUNT_ID : CLAUDE_DEFAULT_ACCOUNT_ID
-}
-
-/** True for either provider's machine-wide login, which cannot be removed. */
-export function isDefaultAccountId(id: string | null | undefined): boolean {
-  return id === CLAUDE_DEFAULT_ACCOUNT_ID || id === CODEX_DEFAULT_ACCOUNT_ID
+/** Whether `text` can be a login id, and so a folder name on every platform. */
+export function isLoginIdText(text: string): boolean {
+  return LOGIN_ID.test(text) && !RESERVED_IDS.test(text)
 }
 
 /** A stored routing limit held to the whole 1..100 it may be, or null when it is not a number. */

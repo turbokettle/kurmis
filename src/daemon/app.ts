@@ -87,13 +87,16 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
   const now = options.now ?? Date.now
   const tuning = options.tuning ?? {}
   const { env, log, key } = options
-  const tokens = createTokenSource({ env, log, now, ...(tuning.platform === undefined ? {} : { platform: tuning.platform }) })
+  // The token source looks logins up in the table, which is made next and needs the source.
+  const tokens = createTokenSource({ login: (id) => table.find(id), env, log, now,
+    ...(tuning.platform === undefined ? {} : { platform: tuning.platform }) })
   const identity = new ClaudeIdentityReader()
   const table = new LoginTable({ tokens, log, now,
     ...(tuning.configCheckMs === undefined ? {} : { configCheckMs: tuning.configCheckMs }),
     ...(tuning.stateWriteMs === undefined ? {} : { stateWriteMs: tuning.stateWriteMs }) })
-  const poller = new UsagePoller({ table, tokens, env, log, now,
-    probeClaude: tuning.probeClaude ?? ((id, probe) => probeClaudeUsage(id, { ...probe, env: probeEnvironment(tokens, id, probe.env) })),
+  const poller = new UsagePoller({ table, tokens, identity, env, log, now,
+    probeClaude: tuning.probeClaude ??
+      ((login, probe) => probeClaudeUsage(login, { ...probe, env: probeEnvironment(tokens, login.id, probe.env) })),
     probeCodex: tuning.probeCodex ?? probeCodexUsage,
     ...(tuning.pollIntervalMs === undefined ? {} : { intervalMs: tuning.pollIntervalMs }) })
   const upstream = createUpstream({ origin: upstreamOrigin(env),

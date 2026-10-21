@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { CONFIG_VERSION } from '../../src/data/config.ts'
 
 /** A port nothing listens on now: one the OS hands out for port 0, closed again. */
 export function freePort(): Promise<number> {
@@ -24,7 +25,7 @@ export function freePort(): Promise<number> {
  */
 export function dataFolderWithPort(port: number): string {
   const home = mkdtempSync(join(process.env.HOME ?? tmpdir(), 'kurmis-home-'))
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1, port }))
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ version: CONFIG_VERSION, port }))
   return home
 }
 

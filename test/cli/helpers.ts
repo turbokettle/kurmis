@@ -1,10 +1,12 @@
 // Shared helpers for the command tests: an output collector, a fake daemon client and a status
-// answer builder. Every id, label and email here is made up.
+// answer builder. Every id, alias and email here is made up.
 import type { LoginStatus, StatusAnswer } from '../../src/core/control-api.ts'
 import type { CliContext } from '../../src/cli/command.ts'
 import type { DaemonClient } from '../../src/cli/command-deps.ts'
 import type { DaemonConnection } from '../../src/cli/daemon-client.ts'
 import { DaemonError } from '../../src/cli/daemon-client.ts'
+import type { LoginRef } from '../../src/data/login-id.ts'
+import { OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
 
 export interface Collected {
   context: CliContext
@@ -29,13 +31,16 @@ export function collect(env: NodeJS.ProcessEnv = {}): Collected {
 
 export const FAKE_CONNECTION: DaemonConnection = { port: 40123, key: 'a'.repeat(64), pid: 4242, version: '0.1.0' }
 
-/** One login as the daemon would report it, with every setting at its default. */
-export function loginStatus(id: string, patch: Partial<LoginStatus> = {}): LoginStatus {
-  const provider = id.startsWith('codex:') ? 'codex' : 'claude'
+/**
+ * One login as the daemon would report it, with every setting at its default and, unless
+ * `login` has an alias (a `LoginSettings`), its id as its alias.
+ */
+export function loginStatus(login: LoginRef & { alias?: string }, patch: Partial<LoginStatus> = {}): LoginStatus {
   return {
-    id,
-    provider,
-    label: id.slice(id.indexOf(':') + 1),
+    id: login.id,
+    provider: login.provider,
+    alias: login.alias ?? login.id,
+    machineOwn: login.machineOwn,
     routing: true,
     fiveHourLimit: 100,
     weeklyLimit: 100,
@@ -85,7 +90,7 @@ export interface FakeDaemonOptions {
 /** A daemon client that answers from memory and records what it was asked. */
 export function fakeDaemonClient(options: FakeDaemonOptions = {}): FakeDaemonClient {
   const calls: string[] = []
-  const status = options.status ?? statusAnswer([loginStatus('claude:default'), loginStatus('codex:default')])
+  const status = options.status ?? statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(OWN_CODEX_REF)])
   return {
     calls,
     async findDaemon() {

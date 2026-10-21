@@ -2,7 +2,7 @@
  * The `config.toml` an extra Codex login's home gets: the default home's settings without
  * its secrets, merged into the login's own file.
  *
- * An extra Codex login runs with its own `CODEX_HOME` (`codex/<name>/` in the data folder).
+ * An extra Codex login runs with its own `CODEX_HOME` (`codex/<id>/` in the data folder).
  * Before every start its `config.toml` is merged again from `~/.codex/config.toml` with
  * `mergeAccountConfig` (`codex-home.ts` says when). Layout, comments and TOML types (integer
  * or float, the kind of date) of the login's file are kept. A value copied from the default

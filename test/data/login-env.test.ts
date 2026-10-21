@@ -5,48 +5,50 @@ import { join, sep } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, codexLoginEnv, namesDefaultClaudeFolder,
   sharesDefaultSettingsFile } from '../../src/data/login-env.ts'
-import { claudeDefaultProbeFolder, kurmisHome } from '../../src/data/paths.ts'
+import { kurmisHome, ownClaudeProbeFolder } from '../../src/data/paths.ts'
 import { canCreateSymlinks, linkFolder } from '../host.ts'
+import { claudeRef, codexRef, OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
 
 const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
 
 describe('claude', () => {
   test('an extra login runs with its folder as the config folder', () => {
-    const env = claudeLoginEnv('claude:work')
-    expect(env['CLAUDE_CONFIG_DIR']).toBe(join(kurmisHome(), 'claude', 'work'))
+    const env = claudeLoginEnv(claudeRef('workclaude'))
+    expect(env['CLAUDE_CONFIG_DIR']).toBe(join(kurmisHome(), 'claude', 'workclaude'))
     expect('CLAUDE_SECURESTORAGE_CONFIG_DIR' in env && env['CLAUDE_SECURESTORAGE_CONFIG_DIR'] === undefined).toBe(true)
     for (const name of ROUTED) expect(name in env && env[name] === undefined).toBe(true)
-    expect(claudeProbeEnv('claude:work')).toEqual(env)
+    expect(claudeProbeEnv(claudeRef('workclaude'))).toEqual(env)
   })
 
-  test('the default login signs in on ~/.claude, with both folder variables removed', () => {
-    const env = claudeLoginEnv('claude:default')
+  test("the machine's own login signs in on ~/.claude, with both folder variables removed", () => {
+    const env = claudeLoginEnv(OWN_CLAUDE_REF)
     expect(Object.entries(env).filter(([, value]) => value !== undefined)).toEqual([])
     expect(Object.keys(env)).toEqual(expect.arrayContaining(['CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']))
   })
 
   test('forceCredentialManager adds CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1', () => {
-    expect(claudeLoginEnv('claude:work', true)).toEqual({ ...claudeLoginEnv('claude:work'), CLAUDE_CODE_FORCE_WINDOWS_CREDMAN: '1' })
-    expect(claudeLoginEnv('claude:default', true)['CLAUDE_CODE_FORCE_WINDOWS_CREDMAN']).toBe('1')
-    expect('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN' in claudeLoginEnv('claude:work')).toBe(false)
+    const work = claudeRef('workclaude')
+    expect(claudeLoginEnv(work, true)).toEqual({ ...claudeLoginEnv(work), CLAUDE_CODE_FORCE_WINDOWS_CREDMAN: '1' })
+    expect(claudeLoginEnv(OWN_CLAUDE_REF, true)['CLAUDE_CODE_FORCE_WINDOWS_CREDMAN']).toBe('1')
+    expect('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN' in claudeLoginEnv(claudeRef('workclaude'))).toBe(false)
   })
 
-  test('the default login is probed in the probe folder with the default credentials', () => {
-    const env = claudeProbeEnv('claude:default')
-    expect(env['CLAUDE_CONFIG_DIR']).toBe(claudeDefaultProbeFolder())
+  test("the machine's own login is probed in the probe folder with the default credentials", () => {
+    const env = claudeProbeEnv(OWN_CLAUDE_REF)
+    expect(env['CLAUDE_CONFIG_DIR']).toBe(ownClaudeProbeFolder())
     expect(env['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('')
   })
 })
 
 describe('codex', () => {
-  test('an extra login gets its CODEX_HOME, the default keeps the inherited one', () => {
-    expect(codexLoginEnv('codex:work')['CODEX_HOME']).toBe(join(kurmisHome(), 'codex', 'work'))
-    expect('CODEX_HOME' in codexLoginEnv('codex:default')).toBe(false)
-    expect('CODEX_HOME' in codexLoginEnv('codex:default', { CODEX_HOME: '/somewhere/else' })).toBe(false)
+  test("an extra login gets its CODEX_HOME, the machine's own login keeps the inherited one", () => {
+    expect(codexLoginEnv(codexRef('workcodex1'))['CODEX_HOME']).toBe(join(kurmisHome(), 'codex', 'workcodex1'))
+    expect('CODEX_HOME' in codexLoginEnv(OWN_CODEX_REF)).toBe(false)
+    expect('CODEX_HOME' in codexLoginEnv(OWN_CODEX_REF, { CODEX_HOME: '/somewhere/else' })).toBe(false)
   })
 
-  test('the default drops an inherited CODEX_HOME that is an extra login\'s home', () => {
-    const env = codexLoginEnv('codex:default', { CODEX_HOME: join(kurmisHome(), 'codex', 'work') })
+  test("the machine's own login drops an inherited CODEX_HOME that is an extra login's home", () => {
+    const env = codexLoginEnv(OWN_CODEX_REF, { CODEX_HOME: join(kurmisHome(), 'codex', 'workcodex1') })
     expect('CODEX_HOME' in env && env['CODEX_HOME'] === undefined).toBe(true)
   })
 })

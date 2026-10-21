@@ -15,9 +15,10 @@ import {
   type KeychainReadFailure
 } from '../../src/daemon/keychain.ts'
 import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
+import { OWN_CLAUDE } from '../logins.ts'
 
-const DEFAULT = 'claude:default'
-const WORK = 'claude:work'
+const DEFAULT = OWN_CLAUDE
+const WORK = 'workclaude'
 const PLAIN = 'Claude Code-credentials'
 const SECRET = JSON.stringify({ claudeAiOauth: { accessToken: 'fake-token', expiresAt: 4_100_000_000_000 } })
 // A read that should answer gets a deadline that a loaded machine still meets: the stand-in is a
@@ -43,7 +44,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'kurmis-keychain-'))
   keychain = new FakeKeychain(join(dir, 'keychain'))
   vi.stubEnv('FAKE_SECURITY_DIR', keychain.dir)
-  directories = { [DEFAULT]: null, [WORK]: join(dir, 'kurmis', 'claude', 'work') }
+  directories = { [DEFAULT]: null, [WORK]: join(dir, 'kurmis', 'claude', WORK) }
   workService = keychainService(directories[WORK] ?? null)
 })
 

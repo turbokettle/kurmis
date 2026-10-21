@@ -11,7 +11,7 @@ import { portAcceptsConnections, processExists } from '../../src/daemon/lifecycl
 import { buildTestBundle } from '../daemon/bundle.ts'
 import { freePort } from '../daemon/helpers.ts'
 import { fakeToken, reply, writeClaudeScenario, type RecordedRequest } from '../fakes/index.ts'
-import { createWorld, PACKAGE_VERSION, waitUntil, type KurmisResult, type World } from './harness.ts'
+import { createWorld, OWN_CLAUDE, PACKAGE_VERSION, waitUntil, type KurmisResult, type World } from './harness.ts'
 
 /** A version older than every real one, for a daemon the current kurmis replaces. */
 const OLDER_VERSION = '0.0.9'
@@ -183,7 +183,7 @@ describe('the kurmis daemon, end to end', () => {
       // newer one's own sessions must still be there once it stops.
       expect((await world.kurmis(['daemon', 'stop'])).code).toBe(0)
       const state = JSON.parse(readFileSync(join(world.data, 'state.json'), 'utf8')) as { sessions: Record<string, { login: string }> }
-      expect(state.sessions[SESSION_B]).toMatchObject({ login: 'claude:default' })
+      expect(state.sessions[SESSION_B]).toMatchObject({ login: OWN_CLAUDE })
     } finally {
       answer.release()
     }
@@ -228,23 +228,23 @@ describe('the kurmis daemon, end to end', () => {
   it('keeps session placements and cooldowns in state.json across a restart', async () => {
     const world = await createWorld()
     world.signInDefaultClaude()
-    const work = await world.addClaudeLogin('work')
-    // A new session goes to the login whose week resets first: the default login.
+    const work = await world.addClaudeLogin('work@example.com')
+    // A new session goes to the login whose week resets first: the machine's own login.
     const soon = new Date(Date.now() + DAY_MS).toISOString()
     const late = new Date(Date.now() + 5 * DAY_MS).toISOString()
     writeClaudeScenario(join(world.home, '.claude'), { sevenDay: { utilization: 10, resetsAt: soon } })
-    writeClaudeScenario(world.loginFolder('claude:work'), { sevenDay: { utilization: 10, resetsAt: late } })
+    writeClaudeScenario(work.folder, { sevenDay: { utilization: 10, resetsAt: late } })
     // No rate-limit headers, so the answers do not change the usage the probes read.
-    world.api.setDefault((request) => reply.ok({ text: `served by ${request.bearer === work ? 'work' : 'default'}`, unified: null }))
+    world.api.setDefault((request) => reply.ok({ text: `served by ${request.bearer === work.token ? 'work' : 'default'}`, unified: null }))
     const ask = async (session: string): Promise<string> => {
       const result = await world.kurmis(['claude', '-p', 'hi', '--session-id', session])
       expect(result.code, JSON.stringify(result)).toBe(0)
       return result.stdout.trim()
     }
 
-    expect((await world.kurmis(['set', 'claude:work', '--use-first', 'on'])).code).toBe(0)
+    expect((await world.kurmis(['set', 'work-example', '--use-first', 'on'])).code).toBe(0)
     expect(await ask(SESSION_A)).toBe('served by work')
-    expect((await world.kurmis(['set', 'claude:work', '--use-first', 'off'])).code).toBe(0)
+    expect((await world.kurmis(['set', 'work-example', '--use-first', 'off'])).code).toBe(0)
     await waitUntil(async () => (await world.status()).logins.every((login) => login.provider !== 'claude' || login.usage !== null),
       GENEROUS_MS, 'both Claude logins to be probed')
     expect((await world.kurmis(['daemon', 'restart'])).code).toBe(0)
@@ -256,7 +256,7 @@ describe('the kurmis daemon, end to end', () => {
 
     const resetsAt = Date.now() + 2 * HOUR_MS
     world.api.scriptFor(fakeToken('default'), reply.quota({ claim: 'five_hour', resetsAt }))
-    // From now on the default login's probes agree with the 429.
+    // From now on the machine's own login's probes agree with the 429.
     writeClaudeScenario(join(world.home, '.claude'), { fiveHour: { utilization: 100, resetsAt: new Date(resetsAt).toISOString() }, sevenDay: { utilization: 10, resetsAt: soon } })
     expect(await ask(SESSION_C)).toBe('served by work')
 
@@ -264,10 +264,10 @@ describe('the kurmis daemon, end to end', () => {
     const status = await world.status()
     const byId = new Map(status.logins.map((login) => [login.id, login]))
     const cooldownEnd = new Date(Math.floor(resetsAt / 1000) * 1000).toISOString()
-    expect(byId.get('claude:default')?.blocked).toMatchObject({ kind: 'cooldown', until: cooldownEnd })
-    expect(byId.get('claude:default')?.sessions).toBe(0)
-    expect(byId.get('claude:work')?.sessions).toBe(2)
-    expect(byId.get('claude:work')?.blocked).toBeNull()
+    expect(byId.get(OWN_CLAUDE)?.blocked).toMatchObject({ kind: 'cooldown', until: cooldownEnd })
+    expect(byId.get(OWN_CLAUDE)?.sessions).toBe(0)
+    expect(byId.get(work.id)?.sessions).toBe(2)
+    expect(byId.get(work.id)?.blocked).toBeNull()
     expect(await ask(SESSION_C)).toBe('served by work')
   }, 120_000)
 

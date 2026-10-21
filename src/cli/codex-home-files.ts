@@ -1,7 +1,7 @@
 // Preparing an extra Codex login's `CODEX_HOME` before a Codex CLI starts on it, following the
 // decisions in `src/core/codex-home.ts` and `src/core/codex-account-config.ts`.
 //
-// The login's home is `loginFolder(id)`. The default home it is prepared from is `CODEX_HOME`
+// The login's home is `loginFolder(login)`. The default home it is prepared from is `CODEX_HOME`
 // of the environment the CLI was started with, or `~/.codex`. Each start:
 //
 // 1. creates the login's home, private to the user, when it is missing;
@@ -13,12 +13,12 @@
 // 3. copies `AGENTS.md` and `AGENTS.override.md` (`codexAgentsCopy`);
 // 4. merges `config.toml` (`codexConfigRefresh`).
 //
-// What was last merged and copied is kept in `codexMergedRecordPath(id)`, outside the login's
+// What was last merged and copied is kept in `codexMergedRecordPath(login)`, outside the login's
 // home: the default home's `config.toml` without secrets as last merged in (the three-way
 // merge needs it), a hash of each file copied, the target of each link kurmis made or found
 // in place, and the folders already warned about. A home that is empty when the start begins
-// (a new login) starts from an empty record, so a record left by an earlier login of the same
-// name is not used, and that record is written even when the first merge does not land.
+// (a new login) starts from an empty record, so a record left by an earlier login with the same
+// id is not used, and that record is written even when the first merge does not land.
 //
 // `config.toml` and the copied files of the default home are read through a link, so a file
 // that is a symlink into a dotfiles folder is still used.
@@ -46,13 +46,13 @@ import {
   type CodexLinkEnd
 } from '../core/codex-home.ts'
 import { formatJson, readJsonFile, writeJsonFile } from '../data/json-file.ts'
-import { isDefaultLoginId, providerOfLoginId, toLoginId } from '../data/login-id.ts'
+import type { LoginRef } from '../data/login-id.ts'
 import { codexMergedRecordPath, loginFolder, providerFolder } from '../data/paths.ts'
 import { makePrivateDirSync, PRIVATE_FILE_MODE, replaceFile, syncDirectory } from '../platform/files.ts'
 import { linkFolder, pathsOf, readFolderLink, removeFolderLink } from '../platform/links.ts'
 
 export interface PreparedCodexHome {
-  /** The `CODEX_HOME` to start codex with, or null for `codex:default`, which keeps the inherited one. */
+  /** The `CODEX_HOME` to start codex with, or null for the machine's own Codex login, which keeps the inherited one. */
   codexHome: string | null
   /** Sentences about what could not be prepared, for stderr. Never a secret. */
   warnings: string[]
@@ -89,21 +89,22 @@ function emptyRecord(config: string | null): CodexMergedRecord {
 }
 
 /**
- * Prepares the home of the extra Codex login `id` and answers it as the `CODEX_HOME` to start
- * codex with. `codex:default` answers null and nothing is touched. Throws only when `id` is
- * not a Codex login id or the login's home cannot be created.
+ * Prepares the home of the extra Codex login `login` and answers it as the `CODEX_HOME` to start
+ * codex with. The machine's own Codex login answers null and nothing is touched. Throws only when
+ * `login` is not a Codex login or its home cannot be created. Messages name the login by `alias`
+ * when it is given, otherwise by its id.
  */
-export async function prepareCodexHome(id: string, options: PrepareCodexHomeOptions): Promise<PreparedCodexHome> {
-  const login = toLoginId(id)
-  if (providerOfLoginId(login) !== 'codex') throw new Error(`${login} is not a Codex login.`)
-  if (isDefaultLoginId(login)) return { codexHome: null, warnings: [] }
+export async function prepareCodexHome(login: LoginRef & { alias?: string }, options: PrepareCodexHomeOptions): Promise<PreparedCodexHome> {
+  const name = login.alias ?? login.id
+  if (login.provider !== 'codex') throw new Error(`${name} is not a Codex login.`)
+  if (login.machineOwn) return { codexHome: null, warnings: [] }
 
   const platform = options.platform ?? process.platform
   const home = loginFolder(login)
   try {
     makePrivateDirSync(home)
   } catch (error) {
-    throw new Error(`Could not create the Codex home of ${login} at ${home}: ${errorText(error)}`, { cause: error })
+    throw new Error(`Could not create the Codex home of ${name} at ${home}: ${errorText(error)}`, { cause: error })
   }
 
   const source = codexSourceHome(options.env, platform)

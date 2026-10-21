@@ -2,10 +2,9 @@
 // when Codex starts: the one named with `--login`, or the one the daemon's usage ranks first
 // (`chooseCodexLogin` in `src/core/codex-choice.ts`). The login's `CODEX_HOME` is prepared and
 // Codex runs with the terminal attached.
-import { CODEX_DEFAULT_ACCOUNT_ID } from '../../core/accounts.ts'
 import { chooseCodexLogin, codexLoginsToProbe, isKurmisCodexHome } from '../../core/codex-choice.ts'
 import type { StatusAnswer } from '../../core/control-api.ts'
-import { ConfigError, findLogin, loadConfig, type KurmisConfig } from '../../data/config.ts'
+import { ConfigError, findLogin, loadConfig, machineOwnLogin, resolveLogin, type KurmisConfig, type LoginSettings } from '../../data/config.ts'
 import { applyEnvPatch, type EnvPatch } from '../../data/login-env.ts'
 import { providerFolder } from '../../data/paths.ts'
 import { EXIT_FAILURE, EXIT_OK, usageError, writeLine, type CliContext, type Command } from '../command.ts'
@@ -20,6 +19,7 @@ import {
 } from '../command-deps.ts'
 import type { PreparedCodexHome } from '../codex-home-files.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
+import { machineOwnText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
 import { parseWrapperArgs } from '../wrapper-args.ts'
 
@@ -41,16 +41,18 @@ export interface CodexDeps {
   probeWaitMs: number
 }
 
-const USAGE = `Usage: kurmis codex [--login <id>] [--] [codex arguments...]
+const USAGE = `Usage: kurmis codex [--login <login>] [--] [codex arguments...]
 
 Starts Codex with the terminal attached, on the login that ranks first (the same order Claude's
 Auto uses) or on the one named, and exits with codex's exit code. Without --login the daemon is
 asked for each login's usage, and started first when it is not running.
 
 Options (only before the first argument kurmis does not know):
-  --login <id>   Start on this login. <id> is codex:<name> or just <name>.
-  -h, --help     Show this help.
-  --             Pass everything after it to codex, even arguments kurmis knows.
+  --login <login>   Start on this Codex login. <login> is the login's alias or its id, as
+                    "kurmis list" shows them, for example --login work-example. Only Codex
+                    logins are looked at, so a Claude login with the same alias does not count.
+  -h, --help        Show this help.
+  --                Pass everything after it to codex, even arguments kurmis knows.
 
 Everything from the first argument kurmis does not know is passed to codex unchanged.
 "kurmis codex -- --help" shows codex's own help.`
@@ -79,7 +81,7 @@ export function createCodexCommand(overrides: Partial<CodexDeps> = {}): Command 
 export const codexCommand: Command = createCodexCommand()
 
 async function runCodex(args: string[], context: CliContext, deps: CodexDeps): Promise<number> {
-  const parsed = parseWrapperArgs('codex', args)
+  const parsed = parseWrapperArgs(args)
   if ('error' in parsed) return usageError('codex', parsed.error, context)
   if (parsed.help) {
     writeLine(context.stdout, USAGE)
@@ -95,35 +97,8 @@ async function runCodex(args: string[], context: CliContext, deps: CodexDeps): P
     return error instanceof ProgramNotFoundError ? notStartedExitCode('ENOENT') : EXIT_FAILURE
   }
 
-  let login: string
-  if (parsed.login === CODEX_DEFAULT_ACCOUNT_ID) {
-    // Always there, so it needs no config.json, even a damaged one.
-    login = parsed.login
-  } else if (parsed.login !== null) {
-    let config: KurmisConfig
-    try {
-      config = deps.loadConfig()
-    } catch (error) {
-      if (!(error instanceof ConfigError)) throw error
-      writeLine(context.stderr, `kurmis codex: ${error.message}`)
-      return EXIT_FAILURE
-    }
-    if (findLogin(config, parsed.login) === undefined) {
-      writeLine(context.stderr, `kurmis codex: there is no login ${parsed.login}. "kurmis list" shows the logins.`)
-      return EXIT_FAILURE
-    }
-    login = parsed.login
-  } else {
-    login = await chooseLogin(context, deps)
-  }
-
-  let prepared: PreparedCodexHome
-  try {
-    prepared = await deps.prepareCodexHome(login, { env: context.env, platform: deps.platform })
-  } catch (error) {
-    writeLine(context.stderr, `kurmis codex: could not prepare the Codex home of ${login}: ${messageOf(error)}`)
-    return EXIT_FAILURE
-  }
+  const prepared = await preparedHome(parsed.login, context, deps)
+  if (prepared === null) return EXIT_FAILURE
   for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis codex: ${warning}`)
 
   const env = applyEnvPatch(context.env, codexHomePatch(prepared, context.env, deps.platform), deps.platform === 'win32')
@@ -135,8 +110,46 @@ async function runCodex(args: string[], context: CliContext, deps: CodexDeps): P
 }
 
 /**
- * The `CODEX_HOME` change for the child. An extra login gets its prepared home. `codex:default`
- * keeps the inherited `CODEX_HOME`, unless that is an extra login's home kurmis set for an
+ * The login to start on, by `--login` (`named`) or by the daemon's ranking, with its Codex home
+ * prepared. A config.json that cannot be read stops a named login, which cannot be looked up then;
+ * without a name Codex starts on the machine's own login, which needs nothing from the config.
+ * Null after a message on stderr when Codex is not to start.
+ */
+async function preparedHome(named: string | null, context: CliContext, deps: CodexDeps): Promise<PreparedCodexHome | null> {
+  let config: KurmisConfig
+  try {
+    config = deps.loadConfig()
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error
+    if (named !== null) {
+      writeLine(context.stderr, `kurmis codex: ${error.message}`)
+      return null
+    }
+    writeLine(context.stderr, `kurmis codex: ${error.message} Starting on ${machineOwnText('codex')}.`)
+    return { codexHome: null, warnings: [] }
+  }
+  let login: LoginSettings
+  if (named !== null) {
+    const resolved = resolveLogin(config, named, 'codex')
+    if ('error' in resolved) {
+      writeLine(context.stderr, `kurmis codex: ${resolved.error}. "kurmis list" shows the logins, and "kurmis login codex" adds one.`)
+      return null
+    }
+    login = resolved.login
+  } else {
+    login = await chooseLogin(context, config, deps)
+  }
+  try {
+    return await deps.prepareCodexHome(login, { env: context.env, platform: deps.platform })
+  } catch (error) {
+    writeLine(context.stderr, `kurmis codex: could not prepare the Codex home of ${login.alias}: ${messageOf(error)}`)
+    return null
+  }
+}
+
+/**
+ * The `CODEX_HOME` change for the child. An extra login gets its prepared home. The machine's own
+ * Codex login keeps the inherited `CODEX_HOME`, unless that is an extra login's home kurmis set for an
  * outer `kurmis codex` session (this one was started from a shell inside it), which would put
  * this session on the outer one's login.
  */
@@ -154,7 +167,8 @@ export function codexHomePatch(prepared: PreparedCodexHome, env: NodeJS.ProcessE
  * or old and waits for it at most `probeWaitMs`. When the daemon cannot be reached, the
  * machine's own login. Prints a note on stderr when the choice is not the plain ranked one.
  */
-async function chooseLogin(context: CliContext, deps: CodexDeps): Promise<string> {
+async function chooseLogin(context: CliContext, config: KurmisConfig, deps: CodexDeps): Promise<LoginSettings> {
+  const own = machineOwnLogin(config, 'codex')
   let status: StatusAnswer
   try {
     const connection = await deps.daemon.ensureDaemon({ env: context.env })
@@ -173,16 +187,19 @@ async function chooseLogin(context: CliContext, deps: CodexDeps): Promise<string
     }
   } catch (error) {
     writeLine(context.stderr,
-      `kurmis codex: the kurmis daemon could not be reached (${messageOf(error)}); starting on ${CODEX_DEFAULT_ACCOUNT_ID}.`)
-    return CODEX_DEFAULT_ACCOUNT_ID
+      `kurmis codex: the kurmis daemon could not be reached (${messageOf(error)}); starting on ${own.alias}, ${machineOwnText('codex')}.`)
+    return own
   }
   const choice = chooseCodexLogin(status, deps.now())
+  // The daemon names the logins of the config it last read; one it has and this config lacks is
+  // gone, so the machine's own login is used.
+  const chosen = findLogin(config, choice.login) ?? own
   if (choice.note !== null) {
     writeLine(context.stderr, `kurmis codex: ${choice.note}`)
   } else if (status.logins.filter((row) => row.provider === 'codex').length > 1) {
-    writeLine(context.stderr, `kurmis codex: starting on ${choice.login}.`)
+    writeLine(context.stderr, `kurmis codex: starting on ${chosen.alias}.`)
   }
-  return choice.login
+  return chosen
 }
 
 function messageOf(error: unknown): string {

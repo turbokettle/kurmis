@@ -5,7 +5,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { expect, test } from 'vitest'
 import { LOG_REASONS } from '../../src/data/log.ts'
 import { loginFolder } from '../../src/data/paths.ts'
-import { CODEX_PROBE_ARGS, probeCodexUsage } from '../../src/daemon/codex-probe.ts'
+import { CODEX_PROBE_ARGS, probeCodexUsage, readCodexEmail } from '../../src/daemon/codex-probe.ts'
 import type { ProbeResult } from '../../src/daemon/probe-result.ts'
 import {
   FAKE_CODEX_SCRIPT,
@@ -16,14 +16,15 @@ import {
   type FakeCodexRecord,
   type FakeCodexScenario
 } from '../fakes/index.ts'
+import { codexRef, OWN_CODEX, OWN_CODEX_REF } from '../logins.ts'
 
 let counter = 0
 
 /** A fresh extra login with a record file of its own, so tests do not see each other's runs. */
 function login(scenario?: FakeCodexScenario): { id: string; home: string; record: string; env: NodeJS.ProcessEnv } {
   counter += 1
-  const id = `codex:probe${String(counter)}`
-  const home = loginFolder(id)
+  const id = `probe${String(counter)}`
+  const home = loginFolder(codexRef(id))
   const record = join(mkdtempSync(join(homedir(), 'codex-probe-')), 'record.jsonl')
   if (scenario !== undefined) writeCodexScenario(home, scenario)
   return { id, home, record, env: { ...process.env, KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT, FAKE_CODEX_RECORD: record } }
@@ -55,13 +56,14 @@ function expectFixedError(result: ProbeResult): void {
 test('a ChatGPT login answers its windows after the handshake, account/read and the rate-limit read', async () => {
   const { id, home, record, env } = login({ primary: { usedPercent: 30 }, secondary: { usedPercent: 12 } })
   writeCodexAuth(home, { planType: 'pro' })
-  const result = await probeCodexUsage(id, { env, now: () => 5_000 })
+  const result = await probeCodexUsage(codexRef(id), { env, now: () => 5_000 })
   expect(result.ok).toBe(true)
   if (!result.ok) return
   expect(result.signedIn).toBe(true)
   expect(result.usage).toMatchObject({ accountId: id, provider: 'codex', fetchedAt: 5_000, subscriptionType: 'pro', rateLimitsAvailable: true, error: null })
   expect(result.usage.windows?.map((window) => [window.key, window.utilization])).toEqual([['codex:primary', 30], ['codex:secondary', 12]])
-  // Nothing personal ends up in the snapshot.
+  // The email comes beside the snapshot, for the daemon's memory, and nothing personal is in it.
+  expect(result.email).toBe('codex-user@example.com')
   expect(JSON.stringify(result.usage)).not.toContain('@example.com')
   expect(requests(record)).toEqual(['initialize', 'account/read', 'account/rateLimits/read'])
   const lines = readCodexRecord(record)
@@ -74,22 +76,31 @@ test('a ChatGPT login answers its windows after the handshake, account/read and 
 test('an API-key login counts as signed out and is not asked for rate limits', async () => {
   const { id, home, record, env } = login()
   writeCodexApiKeyAuth(home)
-  const result = await probeCodexUsage(id, { env })
+  const result = await probeCodexUsage(codexRef(id), { env })
   expect(result).toMatchObject({ ok: true, signedIn: false, usage: { subscriptionType: 'api key', rateLimitsAvailable: false, windows: [] } })
   expect(requests(record)).toEqual(['initialize', 'account/read'])
 })
 
 test('a home with no sign-in is signed out, which is an answer and not an error', async () => {
   const { id, record, env } = login()
-  const result = await probeCodexUsage(id, { env })
-  expect(result).toMatchObject({ ok: true, signedIn: false, usage: { subscriptionType: null, windows: [] } })
+  const result = await probeCodexUsage(codexRef(id), { env })
+  expect(result).toMatchObject({ ok: true, signedIn: false, usage: { subscriptionType: null, windows: [] }, email: null })
   expect(requests(record)).toEqual(['initialize', 'account/read'])
+})
+
+test('the email alone is read with account/read, without the rate-limit read', async () => {
+  const { id, home, record, env } = login()
+  writeCodexAuth(home, { email: 'someone.else@example.org' })
+  expect(await readCodexEmail(codexRef(id), { env })).toBe('someone.else@example.org')
+  expect(requests(record)).toEqual(['initialize', 'account/read'])
+  const signedOut = login()
+  expect(await readCodexEmail(codexRef(signedOut.id), { env: signedOut.env })).toBeNull()
 })
 
 test('a refused rate-limit read is an error with a fixed sentence, on a signed-in login', async () => {
   const { id, home, env } = login({ rateLimitsError: true })
   writeCodexAuth(home)
-  const result = await probeCodexUsage(id, { env })
+  const result = await probeCodexUsage(codexRef(id), { env })
   expect(result).toEqual({ ok: false, signedIn: true, reason: 'upstream_error', error: 'Codex could not read the plan usage from OpenAI.' })
   expectFixedError(result)
 })
@@ -105,7 +116,7 @@ test('a rate-limit read that never answers is killed at the deadline', async () 
   const { id, home, record, env } = login({ rateLimitsHang: true })
   writeCodexAuth(home)
   const started = Date.now()
-  const result = await probeCodexUsage(id, { env, timeoutMs: HANG_DEADLINE_MS })
+  const result = await probeCodexUsage(codexRef(id), { env, timeoutMs: HANG_DEADLINE_MS })
   expect(Date.now() - started).toBeLessThan(HANG_DEADLINE_MS + 6_500)
   expect(result).toEqual({ ok: false, signedIn: true, reason: 'timeout', error: `The usage probe timed out after ${String(HANG_DEADLINE_MS / 1000)} s.` })
   expect(isRunning(start(record)?.pid ?? 0)).toBe(false)
@@ -113,7 +124,7 @@ test('a rate-limit read that never answers is killed at the deadline', async () 
 
 test('an app-server that fails at start is an error naming its exit code and nothing it printed', async () => {
   const { id, env } = login({ startupFailure: { exitCode: 3, stderr: 'fake-codex: cannot start' } })
-  const result = await probeCodexUsage(id, { env })
+  const result = await probeCodexUsage(codexRef(id), { env })
   expect(result).toEqual({ ok: false, signedIn: null, reason: 'exited', error: 'codex exited with code 3 before it answered.' })
 })
 
@@ -121,7 +132,7 @@ test('aborting the signal kills the app-server', async () => {
   const { id, home, record, env } = login({ rateLimitsHang: true })
   writeCodexAuth(home)
   const controller = new AbortController()
-  const probe = probeCodexUsage(id, { env, signal: controller.signal })
+  const probe = probeCodexUsage(codexRef(id), { env, signal: controller.signal })
   const until = Date.now() + 5_000
   while (!requests(record).includes('account/rateLimits/read')) {
     if (Date.now() > until) throw new Error('the probe never asked for rate limits')
@@ -132,11 +143,11 @@ test('aborting the signal kills the app-server', async () => {
   expect(isRunning(start(record)?.pid ?? 0)).toBe(false)
 })
 
-test('the default login runs with CODEX_HOME as inherited', async () => {
+test("the machine's own login runs with CODEX_HOME as inherited", async () => {
   const { record, env } = login()
   writeCodexAuth(join(homedir(), '.codex'))
-  const result = await probeCodexUsage('codex:default', { env: { ...env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' } })
-  expect(result).toMatchObject({ ok: true, signedIn: true, usage: { accountId: 'codex:default' } })
+  const result = await probeCodexUsage(OWN_CODEX_REF, { env: { ...env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' } })
+  expect(result).toMatchObject({ ok: true, signedIn: true, usage: { accountId: OWN_CODEX } })
   expect(start(record)).toMatchObject({ codexHome: null, authFile: true })
   expect(start(record)?.envNames).not.toContain('ANTHROPIC_BASE_URL')
 })
@@ -144,7 +155,7 @@ test('the default login runs with CODEX_HOME as inherited', async () => {
 test('an extra login runs in the probe folder with its own CODEX_HOME even when one is inherited', async () => {
   const { id, home, record, env } = login()
   writeCodexAuth(home)
-  const result = await probeCodexUsage(id, { env: { ...env, CODEX_HOME: join(homedir(), 'other-home') } })
+  const result = await probeCodexUsage(codexRef(id), { env: { ...env, CODEX_HOME: join(homedir(), 'other-home') } })
   expect(result).toMatchObject({ ok: true, signedIn: true })
   expect(start(record)?.codexHome).toBe(home)
 })
@@ -154,7 +165,7 @@ test('a codex that cannot be found is an error with a fixed sentence', async () 
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: empty, Path: empty }
   // Empty rather than removed: in the tests a missing variable is taken from test/setup.ts.
   env.KURMIS_CODEX_BIN = ''
-  const result = await probeCodexUsage('codex:missing', { env })
+  const result = await probeCodexUsage(codexRef('missing'), { env })
   expect(result).toMatchObject({ ok: false, signedIn: null, reason: 'missing' })
   expectFixedError(result)
   // The daemon looks it up on the PATH it was started with, and the sentence says so.

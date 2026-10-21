@@ -12,7 +12,6 @@ import {
   type RouteBlock,
   type RouteSession
 } from './account-router.ts'
-import { CODEX_DEFAULT_ACCOUNT_ID } from './accounts.ts'
 import type { AccountUsage } from './claude-usage.ts'
 import type { LoginStatus, StatusAnswer } from './control-api.ts'
 import { countdownIn } from './countdown.ts'
@@ -70,18 +69,30 @@ function refusedUntil(usage: AccountUsage | null): number | null {
   return Number.isFinite(at) ? at : Infinity
 }
 
-/** The session the choice is made for: a new one, at home on `codex:default`, on Auto. */
-const CODEX_SESSION: RouteSession = { homeAccountId: CODEX_DEFAULT_ACCOUNT_ID, currentAccountId: null, pinnedAccountId: null }
+/** The machine's own Codex login of a status answer. Every answer has one. */
+export function ownCodexLogin(status: Pick<StatusAnswer, 'logins'>): LoginStatus {
+  const own = status.logins.find((login) => login.provider === 'codex' && login.machineOwn)
+  if (own === undefined) throw new Error("The daemon's status has no login for the machine's own Codex sign-in.")
+  return own
+}
+
+/** The name a person knows a login of the status by: its alias, or the id when it is not there. */
+function aliasIn(status: Pick<StatusAnswer, 'logins'>, id: string): string {
+  return status.logins.find((login) => login.id === id)?.alias ?? id
+}
 
 /** Why `chooseCodexLogin` answered the login it did. */
 export type CodexChoiceKind =
   /** The login that ranks first. */
   | 'ranked'
   /** No Codex login is opted in to routing, so the machine's own login is used. */
-  | 'default'
+  | 'machine-own'
   /** Every login routing may use is at a limit; this one gets its usage back first. */
   | 'all-out'
-  /** No login routing may use is signed in, or `codex:default` is not when it is the only choice. */
+  /**
+   * No login routing may use is signed in, or the machine's own login is not when it is the
+   * only choice.
+   */
   | 'none-signed-in'
 
 export interface CodexChoice {
@@ -94,32 +105,34 @@ export interface CodexChoice {
 /**
  * The Codex login to start on. Normally the one `chooseAccount` ranks first. When every login
  * routing may use is at one of its limits, the one whose usage comes back first, with a note
- * that says when. When none of them is signed in, `codex:default`, with a note.
+ * that says when. When none of them is signed in, the machine's own login, with a note.
  */
 export function chooseCodexLogin(status: Pick<StatusAnswer, 'logins'>, now: number): CodexChoice {
+  const ownId = ownCodexLogin(status).id
+  const session: RouteSession = { homeAccountId: ownId, currentAccountId: null, pinnedAccountId: null }
   const rows = codexRouteAccounts(status)
-  const chosen = chooseAccount(CODEX_SESSION, rows, now, new Set())
-  const pinned = effectivePin(CODEX_SESSION, rows)
-  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? 'ranked' : 'default', note: null }
+  const chosen = chooseAccount(session, rows, now, new Set())
+  const pinned = effectivePin(session, rows)
+  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? 'ranked' : 'machine-own', note: null }
   if (pinned !== null) {
     return {
       login: pinned,
       kind: 'none-signed-in',
-      note: `${pinned} does not look signed in; starting Codex on it anyway.`
+      note: `${aliasIn(status, pinned)} does not look signed in; starting Codex on it anyway.`
     }
   }
-  const inScope = accountsInScope(CODEX_SESSION, rows)
+  const inScope = accountsInScope(session, rows)
   if (inScope.length === 0) {
     return {
-      login: CODEX_DEFAULT_ACCOUNT_ID,
+      login: ownId,
       kind: 'none-signed-in',
-      note: `No Codex login that routing may use is signed in; starting on ${CODEX_DEFAULT_ACCOUNT_ID}.`
+      note: `No Codex login that routing may use is signed in; starting on ${aliasIn(status, ownId)}, this machine's own Codex sign-in.`
     }
   }
   let best: { id: string; readyAt: number } | null = null
   for (const row of inScope) {
     // One login on its own: when it can serve again, measured against its own limits.
-    const readyAt = poolReadyAt([row], now, null, CODEX_DEFAULT_ACCOUNT_ID)
+    const readyAt = poolReadyAt([row], now, null, ownId)
     if (readyAt !== null && (best === null || readyAt < best.readyAt)) best = { id: row.id, readyAt }
   }
   if (best === null) {
@@ -127,14 +140,14 @@ export function chooseCodexLogin(status: Pick<StatusAnswer, 'logins'>, now: numb
     return {
       login: first.id,
       kind: 'all-out',
-      note: `Every Codex login is at its limit and none says when it resets; starting on ${first.id}.`
+      note: `Every Codex login is at its limit and none says when it resets; starting on ${aliasIn(status, first.id)}.`
     }
   }
   const when = countdownIn(best.readyAt, now) ?? 'now'
   return {
     login: best.id,
     kind: 'all-out',
-    note: `Every Codex login is at its limit; starting on ${best.id}, whose usage comes back first (${when}).`
+    note: `Every Codex login is at its limit; starting on ${aliasIn(status, best.id)}, whose usage comes back first (${when}).`
   }
 }
 
@@ -172,7 +185,7 @@ export function codexLoginsToProbe(status: Pick<StatusAnswer, 'logins'>, now: nu
  * Whether an inherited `CODEX_HOME` is one kurmis set for an extra login: a folder inside the
  * data folder's `codex/` folder (`codexLoginsFolder`). A `kurmis codex` started from a shell
  * inside another `kurmis codex` session on an extra login inherits that session's
- * `CODEX_HOME`, and a start on `codex:default` must not run on it. A `CODEX_HOME` anywhere
+ * `CODEX_HOME`, and a start on the machine's own login must not run on it. A `CODEX_HOME` anywhere
  * else is the user's own and is the machine's own login. Paths are compared as given, after
  * removing trailing separators; on Windows (`windows`) without regard to case and with either
  * slash.

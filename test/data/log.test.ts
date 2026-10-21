@@ -19,12 +19,12 @@ function freshLogPath(): string {
 describe('formatLogLine', () => {
   it('writes the time, the event and the fields', () => {
     expect(
-      formatLogLine('request_forwarded', { login: toLoginId('claude:work'), status: 200, ms: 812, method: 'POST', ok: true }, TIME)
-    ).toBe('2026-01-15T12:00:00.000Z request_forwarded login=claude:work status=200 ms=812 method=POST ok=true\n')
+      formatLogLine('request_forwarded', { login: toLoginId('workclaude'), status: 200, ms: 812, method: 'POST', ok: true }, TIME)
+    ).toBe('2026-01-15T12:00:00.000Z request_forwarded login=workclaude status=200 ms=812 method=POST ok=true\n')
   })
 
   it('writes Infinity for a cooldown with no known end', () => {
-    expect(formatLogLine('cooldown_started', { login: toLoginId('claude:work'), until: Infinity }, TIME)).toContain('until=Infinity')
+    expect(formatLogLine('cooldown_started', { login: toLoginId('workclaude'), until: Infinity }, TIME)).toContain('until=Infinity')
   })
 
   it('does not let a token in through any field or the event', () => {
@@ -56,7 +56,7 @@ describe('formatLogLine', () => {
   it('rejects free text at compile time', () => {
     // These lines only have to fail the type check (`pnpm check`); at run time they are redacted.
     // @ts-expect-error an arbitrary string is not a LoginId
-    formatLogLine('request_failed', { login: 'claude:work' })
+    formatLogLine('request_failed', { login: 'workclaude' })
     // @ts-expect-error an unknown event name
     formatLogLine('token was sk-ant-x')
     // @ts-expect-error an unknown field

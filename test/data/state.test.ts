@@ -15,7 +15,7 @@ import {
 } from '../../src/data/state.ts'
 
 const NOW = Date.UTC(2026, 0, 15, 12)
-const WORK = toLoginId('claude:work')
+const WORK = toLoginId('workclaude')
 
 function usage(accountId: string, patch: Partial<AccountUsage> = {}): AccountUsage {
   return {
@@ -46,21 +46,21 @@ beforeEach(() => {
 describe('saving and loading', () => {
   it('round-trips usage, cooldowns (Infinity too) and sessions', async () => {
     const state = emptyState()
-    state.usage.set(WORK, usage('claude:work'))
+    state.usage.set(WORK, usage('workclaude'))
     state.cooldowns.set(WORK, NOW + 60_000)
-    state.cooldowns.set(toLoginId('claude:default'), Infinity)
+    state.cooldowns.set(toLoginId('ownclaude1'), Infinity)
     state.sessions.set('0b7c0a52-1111-4222-8333-944445555666', { login: WORK, lastUsed: NOW - 5000 })
     await saveState(state)
 
     const file = JSON.parse(readFileSync(statePath(), 'utf8')) as Record<string, Record<string, unknown>>
-    expect(file.cooldowns).toEqual({ 'claude:work': NOW + 60_000, 'claude:default': null })
+    expect(file.cooldowns).toEqual({ 'workclaude': NOW + 60_000, 'ownclaude1': null })
 
     const read = loadState(NOW)
     expect(read.problem).toBeNull()
     expect(read.dropped).toBe(0)
-    expect(read.state.cooldowns.get(toLoginId('claude:default'))).toBe(Infinity)
+    expect(read.state.cooldowns.get(toLoginId('ownclaude1'))).toBe(Infinity)
     expect(read.state.cooldowns.get(WORK)).toBe(NOW + 60_000)
-    expect(read.state.usage.get(WORK)).toEqual(usage('claude:work'))
+    expect(read.state.usage.get(WORK)).toEqual(usage('workclaude'))
     expect(read.state.sessions.get('0b7c0a52-1111-4222-8333-944445555666')).toEqual({ login: WORK, lastUsed: NOW - 5000 })
   })
 
@@ -88,33 +88,33 @@ describe('parseState', () => {
       {
         version: 1,
         usage: {
-          'claude:work': usage('claude:work'),
-          'claude:other': usage('claude:work'),
-          'claude:../x': usage('claude:../x'),
-          'codex:side': { ...usage('codex:side'), fiveHour: { utilization: 'high' } },
-          'claude:late': { ...usage('claude:late'), fetchedAt: 'yesterday' }
+          'workclaude': usage('workclaude'),
+          'otherlogin': usage('workclaude'),
+          '../x': usage('../x'),
+          'sidecodex1': { ...usage('sidecodex1'), fiveHour: { utilization: 'high' } },
+          'latelogin': { ...usage('latelogin'), fetchedAt: 'yesterday' }
         },
-        cooldowns: { 'claude:work': NOW + 5, 'claude:bad': 'soon', 'not-an-id': NOW + 5 },
+        cooldowns: { 'workclaude': NOW + 5, 'badlogin': 'soon', 'not-an-id': NOW + 5, 'claude:old': NOW + 5 },
         sessions: {
-          good: { login: 'claude:work', lastUsed: NOW },
-          'bad id with spaces': { login: 'claude:work', lastUsed: NOW },
+          good: { login: 'workclaude', lastUsed: NOW },
+          'bad id with spaces': { login: 'workclaude', lastUsed: NOW },
           noLogin: { lastUsed: NOW },
-          badLogin: { login: 'claude:../x', lastUsed: NOW }
+          badLogin: { login: '../x', lastUsed: NOW }
         }
       },
       NOW
     )
-    expect([...read.state.usage.keys()]).toEqual(['claude:work'])
-    expect([...read.state.cooldowns.keys()]).toEqual(['claude:work'])
+    expect([...read.state.usage.keys()]).toEqual(['workclaude'])
+    expect([...read.state.cooldowns.keys()]).toEqual(['workclaude'])
     expect([...read.state.sessions.keys()]).toEqual(['good'])
-    expect(read.dropped).toBe(4 + 2 + 3)
+    expect(read.dropped).toBe(4 + 3 + 3)
   })
 
   it('keeps a session id that is also an Object property name as an ordinary key', async () => {
-    const read = parseState(JSON.parse('{"version":1,"sessions":{"__proto__":{"login":"claude:work","lastUsed":1}}}'), 2)
-    expect(read.state.sessions.get('__proto__')).toEqual({ login: 'claude:work', lastUsed: 1 })
+    const read = parseState(JSON.parse('{"version":1,"sessions":{"__proto__":{"login":"workclaude","lastUsed":1}}}'), 2)
+    expect(read.state.sessions.get('__proto__')).toEqual({ login: 'workclaude', lastUsed: 1 })
     await saveState(read.state)
-    expect(loadState(2).state.sessions.get('__proto__')).toEqual({ login: 'claude:work', lastUsed: 1 })
+    expect(loadState(2).state.sessions.get('__proto__')).toEqual({ login: 'workclaude', lastUsed: 1 })
   })
 
   it('counts a section that is not an object as one dropped entry', () => {
@@ -127,8 +127,8 @@ describe('parseState', () => {
     const read = parseState(
       {
         version: 1,
-        cooldowns: { 'claude:work': NOW - 1 },
-        sessions: { old: { login: 'claude:work', lastUsed: NOW - 8 * 24 * 3600 * 1000 } }
+        cooldowns: { 'workclaude': NOW - 1 },
+        sessions: { old: { login: 'workclaude', lastUsed: NOW - 8 * 24 * 3600 * 1000 } }
       },
       NOW
     )

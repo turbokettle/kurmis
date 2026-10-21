@@ -6,11 +6,20 @@
 // table, so a change one of them makes (a cooldown, a probe's answer, a reloaded config) is seen
 // by the others at once. `onChange` tells listeners, which is how a request held for capacity
 // learns that the pool has changed.
+//
+// Which provider a login belongs to, and whether it is the machine's own sign-in, is read from
+// its settings in the config (`find`, `ownLogin`), never from its id.
+//
+// The table also writes one thing into `config.json`: a login's automatic alias, when a usage
+// probe has told the daemon the login's email (`noteEmail`). The email itself is kept only in
+// memory, and only for Codex (`codexEmail`); Claude's is read from its profile file when needed.
 import { usageFromUnifiedHeaders, type RouteAccount, type UnifiedObservation } from '../core/account-router.ts'
-import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import type { AccountUsage } from '../core/claude-usage.ts'
-import { configStamp, defaultConfig, loadConfig, type KurmisConfig, type LoginSettings } from '../data/config.ts'
-import { isLoginId, type LoginId } from '../data/login-id.ts'
+import {
+  changeConfig, configStamp, defaultConfig, findLogin, followEmail, loadConfig, machineOwnLogin, type KurmisConfig, type LoginSettings
+} from '../data/config.ts'
+import { isLoginId, type LoginId, type LoginProvider } from '../data/login-id.ts'
+import { LockTimeoutError } from '../data/lock.ts'
 import { errorCodeOf, type DaemonLog } from '../data/log.ts'
 import { configPath, statePath } from '../data/paths.ts'
 import {
@@ -31,6 +40,13 @@ export const CONFIG_CHECK_MS = 2_000
 
 /** The shortest time between two writes of `state.json`. */
 export const STATE_WRITE_MS = 2_000
+
+/**
+ * How long the daemon waits for `config.json`'s lock when it writes the file (an automatic
+ * alias, or the machine's own logins added to a file that has none). The wait blocks the event
+ * loop, so it is short; a write that does not get the lock in time is tried again later.
+ */
+export const CONFIG_LOCK_TIMEOUT_MS = 500
 
 export interface LoginTableOptions {
   tokens: TokenSource
@@ -56,6 +72,11 @@ export class LoginTable {
   private state: DaemonState = emptyState()
   /** What the last probe of each login said about its sign-in. Absent: not probed yet. */
   private readonly signedIn = new Map<string, boolean>()
+  /**
+   * The email the last successful probe of each Codex login named, null when it named none.
+   * In memory only, for the status answer: it is never logged or written to a file.
+   */
+  private readonly codexEmails = new Map<string, string | null>()
   /**
    * Sessions held to one login after a 400 on the login they had just moved to
    * (`replayDecision`'s `pin-back`). The proxy lets go of a hold when the held login cannot
@@ -122,7 +143,7 @@ export class LoginTable {
     }
     if (stamp === this.stamp) return { ok: true, changed: false }
     try {
-      this.config = loadConfig(this.configFile)
+      this.config = loadConfig(this.configFile, { timeoutMs: CONFIG_LOCK_TIMEOUT_MS })
     } catch (error) {
       this.stamp = stamp
       this.options.log.write('config_invalid', { reason: 'invalid' })
@@ -133,6 +154,7 @@ export class LoginTable {
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id)
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id)
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id)
+    for (const id of [...this.codexEmails.keys()]) if (!ids.has(id)) this.codexEmails.delete(id)
     for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id)
     for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id)
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id)
@@ -147,7 +169,7 @@ export class LoginTable {
     this.reloadConfig()
   }
 
-  /** Every login in `config.json`, the two default logins first. */
+  /** Every login in `config.json`, the machine's own logins first. */
   logins(): readonly LoginSettings[] {
     return this.config.logins
   }
@@ -157,7 +179,15 @@ export class LoginTable {
   }
 
   find(id: string): LoginSettings | undefined {
-    return this.config.logins.find((login) => login.id === id)
+    return findLogin(this.config, id)
+  }
+
+  /**
+   * The machine's own login of a provider: the one a plain `claude` or `codex` is signed in
+   * to. The config always has one for each provider.
+   */
+  ownLogin(provider: LoginProvider): LoginSettings {
+    return machineOwnLogin(this.config, provider)
   }
 
   port(): number {
@@ -170,8 +200,8 @@ export class LoginTable {
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
    * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
    * credentials are no kurmis login's (`STARTED_ON_NONE`): no login is signed with its header,
-   * and `claude:default`, whose token belongs to another account than the CLI's, is left out of
-   * the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
+   * and the machine's own Claude login, whose token belongs to another account than the CLI's,
+   * is left out of the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
    * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
    *
@@ -182,7 +212,7 @@ export class LoginTable {
   routeRows(startedOn: string | null, callerSigns: boolean, pinned: string | null = null): RouteAccount[] {
     const now = this.options.now()
     return this.claudeLogins().map((login) => {
-      const notTheCli = startedOn === null && login.id === CLAUDE_DEFAULT_ACCOUNT_ID
+      const notTheCli = startedOn === null && login.machineOwn
       const token = notTheCli ? null : this.options.tokens.read(login.id)
       const passThrough = token === null && callerSigns && login.id === startedOn
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned
@@ -270,6 +300,38 @@ export class LoginTable {
     if (this.signedIn.get(id) === value) return
     this.signedIn.set(id, value)
     this.changed()
+  }
+
+  /** The email the last successful probe of a Codex login named, or null. In memory only. */
+  codexEmail(id: string): string | null {
+    return this.codexEmails.get(id) ?? null
+  }
+
+  /** Keeps what a successful probe of a Codex login said its email is (null: none). */
+  setCodexEmail(id: string, email: string | null): void {
+    if (this.find(id)?.provider !== 'codex') return
+    this.codexEmails.set(id, email)
+  }
+
+  /**
+   * Gives the login the automatic alias its email makes (`followEmail` in `config.ts`) when its
+   * alias is automatic and does not fit the email yet, by writing `config.json` and reading it
+   * again. The change is worked out again inside the lock, from the file as it is then. When the
+   * lock is not free within `CONFIG_LOCK_TIMEOUT_MS`, or the write fails, the failure is logged
+   * with the login's id only and the config stays as it is; the next probe tries again. The log
+   * line never names the alias or the email.
+   */
+  noteEmail(id: string, email: string): void {
+    this.checkConfig()
+    const login = this.find(id)
+    if (login === undefined || followEmail(this.config, id, email) === this.config) return
+    try {
+      changeConfig((current) => followEmail(current, id, email), this.configFile, { timeoutMs: CONFIG_LOCK_TIMEOUT_MS })
+    } catch (error) {
+      this.options.log.write('alias_write_failed', { login: login.id, reason: isLockTimeout(error) ? 'timeout' : 'error', code: errorCodeOf(error) })
+      return
+    }
+    this.reloadConfig()
   }
 
   /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
@@ -392,8 +454,10 @@ export class LoginTable {
   }
 }
 
-/** The default login's id, for code that needs it as a `LoginId`. */
-export const CLAUDE_DEFAULT_LOGIN = CLAUDE_DEFAULT_ACCOUNT_ID as LoginId
+/** Whether `changeConfig` failed because another process held the config lock for too long. */
+function isLockTimeout(error: unknown): boolean {
+  return error instanceof Error && error.cause instanceof LockTimeoutError
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)

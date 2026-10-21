@@ -102,11 +102,11 @@ describe('controlRequest', () => {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ ok: true }))
     })
-    const result = await controlRequest({ port, key: KEY, method: 'POST', path: CONTROL_PATHS.probe, body: { logins: ['claude:work'] } })
+    const result = await controlRequest({ port, key: KEY, method: 'POST', path: CONTROL_PATHS.probe, body: { logins: ['workclaude'] } })
     expect(result).toEqual({ kind: 'answered', status: 200, body: { ok: true } })
     expect(seen).toEqual({
       method: 'POST', url: CONTROL_PATHS.probe, key: KEY, type: 'application/json',
-      body: JSON.stringify({ logins: ['claude:work'] }), connection: 'close'
+      body: JSON.stringify({ logins: ['workclaude'] }), connection: 'close'
     })
   })
 

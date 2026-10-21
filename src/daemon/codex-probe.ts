@@ -23,6 +23,7 @@
 import type { AccountUsage } from '../core/claude-usage.ts'
 import { codexLoginStatus, parseCodexAccountRead } from '../core/codex-account.ts'
 import { codexUsageFromResult, emptyCodexUsage } from '../core/codex-usage.ts'
+import type { LoginRef } from '../data/login-id.ts'
 import { applyEnvPatch, codexLoginEnv } from '../data/login-env.ts'
 import { probeWorkFolder } from '../data/paths.ts'
 import { makePrivateDirSync } from '../platform/files.ts'
@@ -58,7 +59,22 @@ export const CODEX_PROBE_ARGS: readonly string[] = ['app-server']
 type RpcReply = { ok: true; result: unknown } | { ok: false }
 
 /** Asks one Codex login who it is signed in as and for its plan usage. Never rejects. */
-export async function probeCodexUsage(id: string, options: ProbeOptions): Promise<ProbeResult> {
+export async function probeCodexUsage(login: LoginRef, options: ProbeOptions): Promise<ProbeResult> {
+  return await runProbe(login, options, false)
+}
+
+/**
+ * The email a Codex login is signed in with, from `account/read` alone, without asking for the
+ * usage: for `kurmis login`, which compares a new sign-in with the logins there are. Null when
+ * the login is not signed in to a ChatGPT account, the answer names no email, or the probe fails.
+ * Never rejects.
+ */
+export async function readCodexEmail(login: LoginRef, options: ProbeOptions): Promise<string | null> {
+  const result = await runProbe(login, options, true)
+  return result.ok ? result.email ?? null : null
+}
+
+async function runProbe(login: LoginRef, options: ProbeOptions, accountOnly: boolean): Promise<ProbeResult> {
   const now = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? CODEX_PROBE_TIMEOUT_MS
   if (options.signal?.aborted === true) return abortedProbe(null)
@@ -73,7 +89,7 @@ export async function probeCodexUsage(id: string, options: ProbeOptions): Promis
     return probeFailure(null, 'other', 'The codex program could not be looked up.')
   }
 
-  const env = applyEnvPatch(options.env, codexLoginEnv(id, options.env))
+  const env = applyEnvPatch(options.env, codexLoginEnv(login, options.env))
   const cwd = probeWorkFolder()
   try {
     makePrivateDirSync(cwd)
@@ -93,7 +109,7 @@ export async function probeCodexUsage(id: string, options: ProbeOptions): Promis
     }
   })
 
-  const result = await converse(codex, replies, id, timeoutMs, now)
+  const result = await converse(codex, replies, login.id, timeoutMs, now, accountOnly)
   const exit = await codex.close(PROBE_CLOSE_GRACE_MS)
   // The signal fired after the answers: they still stand.
   if (!result.ok && exit.end === 'aborted') return abortedProbe(result.signedIn)
@@ -105,7 +121,8 @@ async function converse(
   replies: PendingReplies<RpcReply>,
   id: string,
   timeoutMs: number,
-  now: () => number
+  now: () => number,
+  accountOnly: boolean
 ): Promise<ProbeResult> {
   let nextId = 1
   const ask = (method: string, params?: unknown): Promise<ReplyOrExit<RpcReply>> => {
@@ -131,7 +148,10 @@ async function converse(
   if (read === null) return probeFailure(null, 'invalid', "codex app-server's answer about the sign-in could not be read.")
   const status = codexLoginStatus(read)
   if (!status.loggedIn) {
-    return { ok: true, signedIn: false, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status.subscriptionType } }
+    return { ok: true, signedIn: false, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status.subscriptionType }, email: null }
+  }
+  if (accountOnly) {
+    return { ok: true, signedIn: true, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status.subscriptionType }, email: status.email }
   }
 
   const limits = await ask('account/rateLimits/read')
@@ -139,7 +159,7 @@ async function converse(
   if (!limits.value.ok) return probeFailure(true, 'upstream_error', 'Codex could not read the plan usage from OpenAI.')
   const usage = codexUsageFromResult(id, limits.value.result, now())
   if (usage === null) return probeFailure(true, 'invalid', "codex app-server's answer about the plan usage could not be read.")
-  return { ok: true, signedIn: true, usage: withPlan(usage, status.subscriptionType) }
+  return { ok: true, signedIn: true, usage: withPlan(usage, status.subscriptionType), email: status.email }
 }
 
 /** The plan from `account/read` when the rate-limit answer named none. */

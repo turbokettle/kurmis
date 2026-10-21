@@ -129,12 +129,12 @@ describe('usageAsOf', () => {
 describe('usageMapAsOf', () => {
   it('reads every login at the moment given', () => {
     const map = {
-      'claude:a': accountUsage({ accountId: 'claude:a', fiveHour: usageWindow(94, PAST) }),
-      'claude:b': accountUsage({ accountId: 'claude:b', fiveHour: usageWindow(20, LATER) })
+      'aclaude': accountUsage({ accountId: 'aclaude', fiveHour: usageWindow(94, PAST) }),
+      'bclaude': accountUsage({ accountId: 'bclaude', fiveHour: usageWindow(20, LATER) })
     }
     const after = usageMapAsOf(map, NOW)
-    expect(after['claude:a']?.fiveHour?.utilization).toBe(0)
-    expect(after['claude:b']).toBe(map['claude:b'])
+    expect(after['aclaude']?.fiveHour?.utilization).toBe(0)
+    expect(after['bclaude']).toBe(map['bclaude'])
   })
 
   it('returns the same map when no login has a window that turned over', () => {

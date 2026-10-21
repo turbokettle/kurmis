@@ -5,16 +5,20 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'vitest'
-import { CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
+import { CONTROL_API_VERSION, CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
 import { addLogin, loadConfig, saveConfig } from '../../src/data/config.ts'
+import { toLoginId } from '../../src/data/login-id.ts'
 import { loginFolder, statePath } from '../../src/data/paths.ts'
 import { fakeToken, readFakeClaudeRecord, reply, writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth } from '../fakes/index.ts'
+import { claudeRef, codexRef, OWN_CLAUDE, OWN_CODEX } from '../logins.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
 const S2 = '22222222-2222-4222-8222-222222222222'
 const DEFAULT = fakeToken('default')
 const WORK = fakeToken('work')
+const WORK_ID = 'workclaude'
+const WORK_CODEX = 'workcodex1'
 
 let harness: Harness | null = null
 
@@ -23,11 +27,11 @@ afterEach(async () => {
   harness = null
 })
 
-/** A harness with `claude:default` and `claude:work`, both signed in with a file. */
+/** A harness with the machine's own Claude login and `WORK_ID`, both signed in with a file. */
 async function twoLogins(options: Parameters<typeof startHarness>[0] = {}): Promise<Harness> {
-  harness = await startHarness({ logins: { 'claude:work': {} }, ...options })
+  harness = await startHarness({ claude: { [WORK_ID]: {} }, ...options })
   writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
-  writeClaudeCredentials(loginFolder('claude:work'), { accessToken: WORK })
+  writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
   return harness
 }
 
@@ -59,13 +63,25 @@ describe('what the daemon answers itself', () => {
     expect(harness.api.apiRequests()).toHaveLength(0)
   })
 
-  test('a login header that names no Claude login is refused with a 400', async () => {
-    harness = await startHarness()
-    const pinned = await messages(harness, S1, { 'x-kurmis-login': 'codex:default' })
-    expect(pinned.status).toBe(400)
-    expect(JSON.parse(pinned.text)).toMatchObject({ type: 'error', error: { type: 'invalid_request_error' } })
-    expect((await messages(harness, S1, { 'x-kurmis-started-on': 'nobody' })).status).toBe(400)
+  test('a login header that names a Codex login or no login at all is refused with a 400', async () => {
+    harness = await startHarness({ codex: { [WORK_CODEX]: {} } })
+    writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
+    for (const id of [OWN_CODEX, WORK_CODEX, 'nobody']) {
+      const pinned = await messages(harness, S1, { 'x-kurmis-login': id })
+      expect(pinned.status).toBe(400)
+      expect(JSON.parse(pinned.text)).toEqual({ type: 'error',
+        error: { type: 'invalid_request_error', message: 'The x-kurmis-login header does not name a Claude login.' } })
+    }
+    const notAnId = await messages(harness, S1, { 'x-kurmis-login': 'claude:work' })
+    expect(notAnId.status).toBe(400)
+    expect(JSON.parse(notAnId.text)).toMatchObject({ error: { message: 'The x-kurmis-login header is not a login id.' } })
+    expect((await messages(harness, S1, { 'x-kurmis-started-on': 'Not An Id' })).status).toBe(400)
     expect(harness.api.apiRequests()).toHaveLength(0)
+    expect(harness.log.filter((line) => line.event === 'proxy_rejected').map((line) => line.fields.reason))
+      .toEqual(['invalid', 'invalid', 'invalid', 'invalid', 'invalid'])
+    // The machine's own Claude login, named by its id, is a Claude login like any other.
+    expect((await messages(harness, S1, { 'x-kurmis-login': OWN_CLAUDE })).status).toBe(200)
+    expect(bearers(harness)).toEqual([DEFAULT])
   })
 
   test('a body that is not JSON is refused with a 400', async () => {
@@ -103,9 +119,9 @@ describe('choosing and signing', () => {
     expect(answer.text).toContain('message_stop')
     expect(bearers(h)).toEqual([DEFAULT, WORK])
     const logins = (await status(h)).logins
-    expect(logins.find((login) => login.id === 'claude:default')?.cooldownUntil).toBeGreaterThan(Date.now())
-    expect(logins.find((login) => login.id === 'claude:default')?.block?.kind).toBe('cooldown')
-    expect(logins.find((login) => login.id === 'claude:work')?.sessions).toBe(1)
+    expect(logins.find((login) => login.id === OWN_CLAUDE)?.cooldownUntil).toBeGreaterThan(Date.now())
+    expect(logins.find((login) => login.id === OWN_CLAUDE)?.block?.kind).toBe('cooldown')
+    expect(logins.find((login) => login.id === WORK_ID)?.sessions).toBe(1)
     // The next request of the session stays on the login that served it.
     expect((await messages(h, S1)).status).toBe(200)
     expect(bearers(h)).toEqual([DEFAULT, WORK, WORK])
@@ -115,30 +131,30 @@ describe('choosing and signing', () => {
     const h = await twoLogins()
     // No rate-limit headers, so neither login has a weekly reset and the ranking falls to the home login.
     h.api.setDefault(reply.ok({ unified: null }))
-    expect((await messages(h, S1, { 'x-kurmis-login': 'claude:work' })).status).toBe(200)
+    expect((await messages(h, S1, { 'x-kurmis-login': WORK_ID })).status).toBe(200)
     expect((await messages(h, S1)).status).toBe(200)
     expect((await messages(h, S2)).status).toBe(200)
     expect(bearers(h)).toEqual([WORK, WORK, DEFAULT])
     await h.app.close()
     const saved = JSON.parse(readFileSync(statePath(), 'utf8')) as { sessions: Record<string, { login: string }> }
-    expect(saved.sessions[S1]?.login).toBe('claude:work')
-    expect(saved.sessions[S2]?.login).toBe('claude:default')
+    expect(saved.sessions[S1]?.login).toBe(WORK_ID)
+    expect(saved.sessions[S2]?.login).toBe(OWN_CLAUDE)
   })
 
   test('requests without a session id share one placement', async () => {
     const h = await twoLogins()
-    expect((await messages(h, null, { 'x-kurmis-login': 'claude:work' })).status).toBe(200)
+    expect((await messages(h, null, { 'x-kurmis-login': WORK_ID })).status).toBe(200)
     expect((await messages(h, null)).status).toBe(200)
     expect(bearers(h)).toEqual([WORK, WORK])
     await h.app.close()
     const saved = JSON.parse(readFileSync(statePath(), 'utf8')) as { sessions: Record<string, { login: string }> }
-    expect(Object.values(saved.sessions).map((placement) => placement.login)).toEqual(['claude:work'])
+    expect(Object.values(saved.sessions).map((placement) => placement.login)).toEqual([WORK_ID])
   })
 
   test('a pinned session goes to its login whatever the ranking, and gets that login\'s 429 as it stands', async () => {
     const h = await twoLogins()
     h.api.scriptFor(WORK, reply.quota({ claim: 'seven_day', resetsAt: Date.now() + 3_600_000 }))
-    const answer = await messages(h, S1, { 'x-kurmis-login': 'claude:work' })
+    const answer = await messages(h, S1, { 'x-kurmis-login': WORK_ID })
     expect(answer.status).toBe(429)
     expect(answer.headers['anthropic-ratelimit-unified-representative-claim']).toBe('seven_day')
     expect(bearers(h)).toEqual([WORK])
@@ -146,9 +162,9 @@ describe('choosing and signing', () => {
 
   test('the account uuid in metadata.user_id is the chosen login\'s', async () => {
     const h = await twoLogins()
-    writeClaudeIdentity(join(loginFolder('claude:work'), '.claude.json'),
+    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'),
       { email: 'work@example.com', accountUuid: '00000000-0000-4000-8000-00000000a0a0' })
-    await messages(h, S1, { 'x-kurmis-login': 'claude:work' })
+    await messages(h, S1, { 'x-kurmis-login': WORK_ID })
     const sent = h.api.apiRequests()[0]!.json as { metadata: { user_id: string } }
     expect(JSON.parse(sent.metadata.user_id)).toEqual({
       device_id: 'device-1', account_uuid: '00000000-0000-4000-8000-00000000a0a0', session_id: 'session-1'
@@ -157,20 +173,20 @@ describe('choosing and signing', () => {
 
   test('the body goes upstream byte for byte, and only the account uuid changes when it must', async () => {
     const h = await twoLogins()
-    writeClaudeIdentity(join(loginFolder('claude:work'), '.claude.json'),
+    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'),
       { email: 'work@example.com', accountUuid: '00000000-0000-4000-8000-00000000a0a0' })
     const userId = JSON.stringify(JSON.stringify({ device_id: 'device-1', account_uuid: '00000000-0000-4000-8000-00000000c11e' }))
     const text = `{ "model" : "claude-sonnet-5",\n "max_tokens": 100, "seed": 18446744073709551615, "stream": true,\n` +
       ` "messages": [{"role":"user","content":"caf\u00e9"}], "metadata": {"user_id": ${userId}} }`
-    // claude:default has no identity here, so its request is not rewritten at all.
+    // The machine's own login has no identity here, so its request is not rewritten at all.
     await call(h, '/v1/messages?beta=true', { headers: { ...routed(S1), 'content-type': 'application/json' }, text })
     expect(h.api.apiRequests()[0]!.body).toBe(text)
-    await call(h, '/v1/messages?beta=true', { headers: { ...routed(S2, { 'x-kurmis-login': 'claude:work' }), 'content-type': 'application/json' }, text })
+    await call(h, '/v1/messages?beta=true', { headers: { ...routed(S2, { 'x-kurmis-login': WORK_ID }), 'content-type': 'application/json' }, text })
     expect(h.api.apiRequests()[1]!.body).toBe(text.replace('00000000c11e', '00000000a0a0'))
   })
 
   test('with no token anywhere and no header of its own, the CLI gets the proxy\'s 599', async () => {
-    harness = await startHarness({ logins: { 'claude:work': {} } })
+    harness = await startHarness({ claude: { [WORK_ID]: {} } })
     const answer = await messages(harness, S1)
     expect(answer.status).toBe(599)
     expect(answer.headers['retry-after']).toBe('5')
@@ -179,26 +195,26 @@ describe('choosing and signing', () => {
   })
 
   test('the CLI\'s own authorization header signs for the login it was started on when no token was read for it', async () => {
-    harness = await startHarness({ logins: { 'claude:work': {} } })
+    harness = await startHarness({ claude: { [WORK_ID]: {} } })
     const own = await messages(harness, S1, { authorization: 'Bearer cli-own-default' })
     expect(own.status).toBe(200)
-    // Started on claude:work, whose token kurmis cannot read either: still the CLI's own header.
-    const onWork = await messages(harness, S2, { authorization: 'Bearer cli-own-work', 'x-kurmis-started-on': 'claude:work' })
+    // Started on WORK_ID, whose token kurmis cannot read either: still the CLI's own header.
+    const onWork = await messages(harness, S2, { authorization: 'Bearer cli-own-work', 'x-kurmis-started-on': WORK_ID })
     expect(onWork.status).toBe(200)
     expect(bearers(harness)).toEqual(['cli-own-default', 'cli-own-work'])
   })
 
   test('a token the daemon read signs instead of the CLI\'s own header', async () => {
     const h = await twoLogins()
-    await messages(h, S1, { authorization: 'Bearer cli-own', 'x-kurmis-login': 'claude:work' })
+    await messages(h, S1, { authorization: 'Bearer cli-own', 'x-kurmis-login': WORK_ID })
     expect(bearers(h)).toEqual([WORK])
   })
 
   test('a 400 on the login a session has just moved to sends it back to its previous login', async () => {
     const h = await twoLogins()
-    expect((await messages(h, S1)).status).toBe(200) // S1 is placed on claude:default
+    expect((await messages(h, S1)).status).toBe(200) // S1 is placed on the machine's own login
     h.api.scriptFor(DEFAULT, reply.quota({ resetsAt: Date.now() + 3_600_000 }))
-    expect((await messages(h, S2)).status).toBe(200) // claude:default is now cooling, S2 is on claude:work
+    expect((await messages(h, S2)).status).toBe(200) // the machine's own login is now cooling, S2 is on WORK_ID
     h.api.scriptFor(WORK, reply.raw(400, '{"type":"error","error":{"type":"invalid_request_error","message":"no"}}'))
     const answer = await messages(h, S1)
     expect(answer.status).toBe(200)
@@ -308,7 +324,7 @@ describe('streaming', () => {
     const h = await twoLogins()
     h.api.scriptFor(DEFAULT, reply.ok({ unified: { fiveHour: { utilization: 0.37, resetsAt: Date.now() + 3_600_000 } } }))
     await messages(h, S1)
-    const usage = (await status(h)).logins.find((login) => login.id === 'claude:default')?.usage
+    const usage = (await status(h)).logins.find((login) => login.id === OWN_CLAUDE)?.usage
     expect(usage?.source).toBe('session')
     expect(usage?.fiveHour?.utilization).toBeCloseTo(37)
   })
@@ -333,26 +349,26 @@ describe('tokens and probes', () => {
     expect(harness.api.apiRequests()).toHaveLength(0)
     expect(() => readFakeClaudeRecord(record)).not.toThrow()
     expect(readFakeClaudeRecordSafe(record)).toHaveLength(0)
-    const block = (await status(harness)).logins.find((login) => login.id === 'claude:default')?.block
+    const block = (await status(harness)).logins.find((login) => login.id === OWN_CLAUDE)?.block
     expect(block?.kind).toBe('token-expiring')
   })
 
   test('a probe request probes the Claude logins and answers the status with their usage', async () => {
     const h = await twoLogins()
-    const answer = await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: ['claude:work'] } })
+    const answer = await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: [WORK_ID] } })
     expect(answer.status).toBe(200)
-    const work = (JSON.parse(answer.text) as StatusAnswer).logins.find((login) => login.id === 'claude:work')
+    const work = (JSON.parse(answer.text) as StatusAnswer).logins.find((login) => login.id === WORK_ID)
     expect(work?.signedIn).toBe(true)
     expect(work?.usage?.source).toBe('probe')
     expect(work?.usage?.fiveHour?.utilization).toBe(42)
   })
 
   test('a probe request reaches Codex logins through the app-server', async () => {
-    harness = await startHarness({ logins: { 'codex:work': {} } })
-    writeCodexAuth(loginFolder('codex:work'))
-    const answer = await call(harness, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: ['codex:work'] } })
+    harness = await startHarness({ codex: { [WORK_CODEX]: {} } })
+    writeCodexAuth(loginFolder(codexRef(WORK_CODEX)))
+    const answer = await call(harness, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: [WORK_CODEX] } })
     expect(answer.status).toBe(200)
-    const work = (JSON.parse(answer.text) as StatusAnswer).logins.find((login) => login.id === 'codex:work')
+    const work = (JSON.parse(answer.text) as StatusAnswer).logins.find((login) => login.id === WORK_CODEX)
     expect(work?.signedIn).toBe(true)
     expect(work?.usage?.provider).toBe('codex')
     expect(work?.usage?.windows?.length).toBeGreaterThan(0)
@@ -370,30 +386,63 @@ describe('the control API', () => {
     expect(harness.stopRequested()).toBe(0)
   })
 
-  test('status lists every login with its settings, the default ones first', async () => {
+  test("status lists every login with its settings, the machine's own ones first", async () => {
     const h = await twoLogins()
-    writeClaudeIdentity(join(loginFolder('claude:work'), '.claude.json'), { email: 'work@example.com' })
+    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'), { email: 'work@example.com' })
     const answer = await status(h)
-    expect(answer).toMatchObject({ ok: true, apiVersion: 1, pid: process.pid })
-    expect(answer.logins.map((login) => login.id)).toEqual(['claude:default', 'codex:default', 'claude:work'])
-    const work = answer.logins.find((login) => login.id === 'claude:work')!
-    expect(work).toMatchObject({ provider: 'claude', routing: true, fiveHourLimit: 100, weeklyLimit: 100, useFirst: false,
-      signedIn: true, usage: null, cooldownUntil: null, block: null, sessions: 0, email: 'work@example.com' })
-    expect(answer.logins.find((login) => login.id === 'codex:default')?.block).toBeNull()
+    expect(answer).toMatchObject({ ok: true, apiVersion: CONTROL_API_VERSION, pid: process.pid })
+    expect(answer.logins.map((login) => login.id)).toEqual([OWN_CLAUDE, OWN_CODEX, WORK_ID])
+    const work = answer.logins.find((login) => login.id === WORK_ID)!
+    expect(work).toEqual({ id: WORK_ID, provider: 'claude', alias: WORK_ID, machineOwn: false, routing: true, fiveHourLimit: 100,
+      weeklyLimit: 100, useFirst: false, signedIn: true, usage: null, cooldownUntil: null, block: null, sessions: 0,
+      email: 'work@example.com', probing: false })
+    expect(answer.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ provider: 'claude', machineOwn: true, email: null })
+    expect(answer.logins.find((login) => login.id === OWN_CODEX)).toMatchObject({ provider: 'codex', machineOwn: true, email: null,
+      block: null })
     expect(h.log.every((line) => !JSON.stringify(line).includes('example.com'))).toBe(true)
+  })
+
+  test('a probe gives each login the automatic alias of its email, and status shows the email of both providers', async () => {
+    harness = await startHarness({ claude: { [WORK_ID]: {}, picked: { alias: 'picked' } }, codex: { [WORK_CODEX]: {} } })
+    const h = harness
+    writeClaudeCredentials(join(h.home, '.claude'), { accessToken: DEFAULT })
+    writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
+    writeClaudeCredentials(loginFolder(claudeRef('picked')), { accessToken: fakeToken('picked') })
+    // Before its first probe, the machine's own Claude login's profile is read from ~/.claude.json.
+    writeClaudeIdentity(join(h.home, '.claude.json'), { email: 'own.person@example.com' })
+    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'), { email: 'work.person@example.com' })
+    writeClaudeIdentity(join(loginFolder(claudeRef('picked')), '.claude.json'), { email: 'picked.person@example.com' })
+    writeCodexAuth(loginFolder(codexRef(WORK_CODEX)), { email: 'codex.person@example.org' })
+    const probed = await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY },
+      body: { logins: [OWN_CLAUDE, WORK_ID, 'picked', WORK_CODEX] } })
+    expect(probed.status).toBe(200)
+    const logins = (JSON.parse(probed.text) as StatusAnswer).logins
+    const of = (id: string): StatusAnswer['logins'][number] | undefined => logins.find((login) => login.id === id)
+    expect(of(OWN_CLAUDE)).toMatchObject({ alias: 'own-person-example', email: 'own.person@example.com' })
+    expect(of(WORK_ID)).toMatchObject({ alias: 'work-person-example', email: 'work.person@example.com' })
+    expect(of('picked')).toMatchObject({ alias: 'picked', email: 'picked.person@example.com' })
+    expect(of(WORK_CODEX)).toMatchObject({ alias: 'codex-person-example', email: 'codex.person@example.org' })
+    expect(loadConfig().logins.find((login) => login.id === WORK_CODEX)).toMatchObject({ alias: 'codex-person-example', aliasSetByUser: false })
+
+    await h.app.close()
+    // The Codex email is in the daemon's memory only, and no alias or email reaches the log.
+    expect(readFileSync(statePath(), 'utf8')).not.toContain('@')
+    const log = JSON.stringify(h.log)
+    expect(log).not.toMatch(/example|person|@/)
+    expect(log).toContain(WORK_CODEX)
   })
 
   test('reload reads config.json again, and a request notices a change by itself', async () => {
     const h = await twoLogins()
-    saveConfig(addLogin(loadConfig(), 'claude:extra', { label: 'Extra' }))
+    saveConfig(addLogin(loadConfig(), { id: toLoginId('extraclaude'), provider: 'claude' }, { alias: 'extra' }))
     expect((await call(h, CONTROL_PATHS.reload, { method: 'POST', headers: { 'x-kurmis-key': KEY } })).status).toBe(200)
-    expect((await status(h)).logins.map((login) => login.id)).toContain('claude:extra')
+    expect((await status(h)).logins.map((login) => login.id)).toContain('extraclaude')
     writeFileSync(join(process.env.KURMIS_HOME ?? '', 'config.json'), '{ not json')
     const broken = await call(h, CONTROL_PATHS.reload, { method: 'POST', headers: { 'x-kurmis-key': KEY } })
     expect(broken.status).toBe(500)
     expect(JSON.parse(broken.text)).toMatchObject({ ok: false })
     // The config the daemon had is kept.
-    expect((await status(h)).logins.map((login) => login.id)).toContain('claude:extra')
+    expect((await status(h)).logins.map((login) => login.id)).toContain('extraclaude')
   })
 
   test('stop answers ok and then asks the daemon to stop', async () => {
@@ -466,7 +515,7 @@ describe('the control API', () => {
     harness = await startHarness()
     expect((await call(harness, CONTROL_PATHS.stop, { headers: { 'x-kurmis-key': KEY } })).status).toBe(405)
     expect((await call(harness, '/_kurmis/nothing', { headers: { 'x-kurmis-key': KEY } })).status).toBe(404)
-    const probe = await call(harness, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: ['claude:nobody'] } })
+    const probe = await call(harness, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: ['nobody'] } })
     expect(probe.status).toBe(400)
   })
 })

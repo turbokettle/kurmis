@@ -2,7 +2,7 @@
 // (docs/architecture.md, "How a Claude CLI reaches the daemon").
 //
 // The CLI is started on one login's credentials: the pinned one with `--login`, otherwise the
-// one `autoStartLogin` picks from the daemon's status (normally `claude:default`). The proxy
+// one `autoStartLogin` picks from the daemon's status (normally the machine's own Claude login). The proxy
 // signs each request with the login it picks, so on Auto this only has to be a login the CLI
 // can send with at all. The routing variables go into the process environment and, because a
 // `settings.json` in global mode would beat that, into a `--settings` argument too
@@ -12,7 +12,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { autoStartLogin, type StartableLogin } from '../../core/account-router.ts'
-import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../../core/accounts.ts'
 import type { StatusAnswer } from '../../core/control-api.ts'
 import {
   applyRoutedEnv,
@@ -21,8 +20,9 @@ import {
   routedClaudeEnv,
   withoutRoutedVariables
 } from '../../core/routed-env.ts'
-import { ConfigError, findLogin, loadConfig, type KurmisConfig } from '../../data/config.ts'
+import { ConfigError, loadConfig, machineOwnLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
 import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data/login-env.ts'
+import type { LoginId } from '../../data/login-id.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
 import { EXIT_FAILURE, EXIT_OK, usageError, writeLine, type CliContext, type Command } from '../command.ts'
@@ -41,6 +41,7 @@ import {
   type SettingsStore,
   type UserSettingsArg
 } from '../settings-arg.ts'
+import { loginArgument, machineOwnText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
 import { parseWrapperArgs } from '../wrapper-args.ts'
 
@@ -62,17 +63,19 @@ export interface ClaudeDeps {
   storeSettings: SettingsStore
 }
 
-const USAGE = `Usage: kurmis claude [--login <id>] [--] [claude arguments...]
+const USAGE = `Usage: kurmis claude [--login <login>] [--] [claude arguments...]
 
 Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
 which signs each one with a login that has room, and the command exits with claude's exit code.
 The daemon is started first when it is not running.
 
 Options (only before the first argument kurmis does not know):
-  --login <id>   Keep the session on one login, whatever its limits say. <id> is claude:<name>
-                 or just <name>. Without it the session is on Auto.
-  -h, --help     Show this help.
-  --             Pass everything after it to claude, even arguments kurmis knows.
+  --login <login>   Keep the session on one Claude login, whatever its limits say. <login> is
+                    the login's alias or its id, as "kurmis list" shows them, for example
+                    --login work-example. Only Claude logins are looked at, so a Codex login
+                    with the same alias does not count. Without --login the session is on Auto.
+  -h, --help        Show this help.
+  --                Pass everything after it to claude, even arguments kurmis knows.
 
 Everything from the first argument kurmis does not know is passed to claude unchanged, except
 claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
@@ -103,8 +106,15 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
 
 export const claudeCommand: Command = createClaudeCommand()
 
+/** The login a CLI is started on, as the config or the daemon's status has it. */
+interface StartedOn {
+  id: string
+  alias: string
+  machineOwn: boolean
+}
+
 async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps): Promise<number> {
-  const parsed = parseWrapperArgs('claude', args)
+  const parsed = parseWrapperArgs(args)
   if ('error' in parsed) return usageError('claude', parsed.error, context)
   if (parsed.help) {
     writeLine(context.stdout, USAGE)
@@ -127,17 +137,20 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     return fail(messageOf(error))
   }
 
-  if (parsed.login !== null && parsed.login !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-    let config: KurmisConfig
-    try {
-      config = deps.loadConfig()
-    } catch (error) {
-      if (!(error instanceof ConfigError)) throw error
-      return fail(error.message)
+  let config: KurmisConfig
+  try {
+    config = deps.loadConfig()
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error
+    return fail(error.message)
+  }
+  let pinned: StartedOn | null = null
+  if (parsed.login !== null) {
+    const resolved = resolveLogin(config, parsed.login, 'claude')
+    if ('error' in resolved) {
+      return fail(`${resolved.error}. "kurmis list" shows the logins, and "kurmis login claude" adds one.`)
     }
-    if (findLogin(config, parsed.login) === undefined) {
-      return fail(`there is no login ${parsed.login}. "kurmis list" shows the logins, and "kurmis login claude" adds one.`)
-    }
+    pinned = resolved.login
   }
 
   let connection: DaemonConnection
@@ -147,9 +160,9 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     return fail(daemonUnreachable(error))
   }
 
-  let startedOn: string
-  if (parsed.login !== null) {
-    startedOn = parsed.login
+  let startedOn: StartedOn
+  if (pinned !== null) {
+    startedOn = pinned
   } else {
     let status: StatusAnswer
     try {
@@ -157,22 +170,25 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     } catch (error) {
       return fail(daemonUnreachable(error))
     }
-    startedOn = autoStartLogin(startableLogins(status))
-    if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-      writeLine(context.stderr,
-        `kurmis claude: ${CLAUDE_DEFAULT_ACCOUNT_ID} is not signed in, so claude starts on ${startedOn}'s credentials; requests are still routed on Auto.`)
+    const startId = autoStartLogin(startableLogins(status))
+    startedOn = status.logins.find((login) => login.id === startId) ?? machineOwnLogin(config, 'claude')
+    if (!startedOn.machineOwn) {
+      const own = status.logins.find((login) => login.provider === 'claude' && login.machineOwn) ?? machineOwnLogin(config, 'claude')
+      writeLine(context.stderr, `kurmis claude: ${own.alias}, ${machineOwnText('claude')}, is not signed in, so claude starts on ` +
+        `${startedOn.alias}'s credentials; requests are still routed on Auto.`)
     }
   }
 
   let secureStorageDir: string | null = null
-  if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-    secureStorageDir = loginFolder(startedOn)
+  if (!startedOn.machineOwn) {
+    secureStorageDir = loginFolder({ id: startedOn.id as LoginId, provider: 'claude', machineOwn: false })
     if (!deps.folderExists(secureStorageDir)) {
-      return fail(`the folder of ${startedOn} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${startedOn}".`)
+      return fail(`the folder of ${startedOn.alias} is missing (${secureStorageDir}). Sign it in again with ` +
+        `"kurmis login ${loginArgument(config, { id: startedOn.id, provider: 'claude', alias: startedOn.alias })}".`)
     }
   }
 
-  if (startedOn === CLAUDE_DEFAULT_ACCOUNT_ID && configDirHasOwnCredentials(context.env, deps.platform)) {
+  if (startedOn.machineOwn && configDirHasOwnCredentials(context.env, deps.platform)) {
     writeLine(context.stderr, `kurmis claude: ${configDirNote(context.env['CLAUDE_CONFIG_DIR'] ?? '', deps)}`)
   }
 
@@ -182,8 +198,8 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
   const routed = withoutRoutedVariables(routedClaudeEnv({
     port: connection.port,
     key: connection.key,
-    login: parsed.login,
-    startedOn,
+    login: pinned?.id ?? null,
+    startedOn: startedOn.id,
     secureStorageDir,
     inheritedCustomHeaders: inheritedCustomHeaders(layers.layers)
   }), userOwnedRoutingVariables(layers.layers))
@@ -222,7 +238,8 @@ export function startableLogins(status: StatusAnswer): StartableLogin[] {
     .filter((login) => login.provider === 'claude')
     .map((login) => ({
       id: login.id,
-      loggedIn: login.signedIn ?? login.id === CLAUDE_DEFAULT_ACCOUNT_ID,
+      machineOwn: login.machineOwn,
+      loggedIn: login.signedIn ?? login.machineOwn,
       autoRoute: login.routing
     }))
 }
@@ -249,18 +266,18 @@ function settingsLayers(userSettings: UserSettingsArg, env: NodeJS.ProcessEnv,
 }
 
 /**
- * The note for a CLI started on `claude:default` while `CLAUDE_CONFIG_DIR` is set, on a platform
+ * The note for a CLI started on the machine's own Claude login while `CLAUDE_CONFIG_DIR` is set, on a platform
  * where that gives the CLI credentials of its own (`configDirHasOwnCredentials`).
  */
 function configDirNote(value: string, deps: ClaudeDeps): string {
   if (namesDefaultClaudeFolder(value, deps.platform, deps.homeDir())) {
     const keeps = deps.platform === 'win32' ? 'may keep its credentials in a Credential Manager entry'
       : 'keeps its credentials in a Keychain item'
-    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of ${CLAUDE_DEFAULT_ACCOUNT_ID}, but a claude started with it set ` +
-      `${keeps} of its own, which may hold another account. Kurmis starts claude with ${CLAUDE_DEFAULT_ACCOUNT_ID}'s ` +
+    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of the machine's own Claude login, but a claude started with it set ` +
+      `${keeps} of its own, which may hold another account. Kurmis starts claude with the machine's own login's ` +
       'credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.'
   }
-  return `CLAUDE_CONFIG_DIR is set, but ${CLAUDE_DEFAULT_ACCOUNT_ID} is the login in ~/.claude, so claude signs in with ` +
+  return 'CLAUDE_CONFIG_DIR is set, but the machine\'s own Claude login is the one in ~/.claude, so claude signs in with ' +
     'that login\'s credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from CLAUDE_CONFIG_DIR.'
 }
 

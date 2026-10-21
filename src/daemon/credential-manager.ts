@@ -52,7 +52,7 @@ export function retryDelayMs(failures: number): number {
 }
 
 export interface CredentialManagerReaderOptions {
-  /** The `CLAUDE_SECURESTORAGE_CONFIG_DIR` the login's CLI is started with, or null for `claude:default`. */
+  /** The `CLAUDE_SECURESTORAGE_CONFIG_DIR` the login's CLI is started with, or null for the machine's own login. */
   secureStorageDir(id: string): string | null
   /** Whether the login's `.credentials.json` exists. */
   fileExists(id: string): boolean

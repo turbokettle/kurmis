@@ -2,9 +2,10 @@
 // `/_kurmis/` of the daemon's port. Every request needs the key; one without it gets 403 and
 // no body, the same as a proxied request.
 //
-// `status` shows each Claude login's email from its identity file, for `kurmis status` and
-// `kurmis list` on the person's own terminal. The control API answers only on 127.0.0.1 and only
-// with the key, which only the user can read. The email is never logged.
+// `status` shows each login's email, for `kurmis status` and `kurmis list` on the person's own
+// terminal: a Claude login's from its identity file, a Codex login's from its last usage probe,
+// which the daemon keeps in memory only. The control API answers only on 127.0.0.1 and only with
+// the key, which only the user can read. The email is never logged.
 //
 // A request body larger than `MAX_CONTROL_BODY_BYTES` is answered 413 with an `ErrorAnswer`.
 // The answer is sent at once, and the rest of the body is still read and thrown away (for at
@@ -12,7 +13,6 @@
 // reset can lose the answer before the client has read it.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { routeBlock } from '../core/account-router.ts'
-import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import {
   CONTROL_API_VERSION, CONTROL_PATHS, MAX_CONTROL_BODY_BYTES, type ErrorAnswer, type LoginStatus, type OkAnswer, type ProbeRequest,
   type StatusAnswer, type StopRequest
@@ -58,7 +58,7 @@ export function createControl(options: ControlOptions): Control {
     await tokens.prime(table.claudeLogins().map((login) => login.id))
     // As the proxy sees a request with no authorization header of its own: a login counts as
     // signable only with a token the daemon read.
-    const rows = table.routeRows(CLAUDE_DEFAULT_ACCOUNT_ID, false)
+    const rows = table.routeRows(table.ownLogin('claude').id, false)
     const at = now()
     const logins: LoginStatus[] = table.logins().map((login) => {
       const row = rows.find((each) => each.id === login.id)
@@ -66,7 +66,8 @@ export function createControl(options: ControlOptions): Control {
       return {
         id: login.id,
         provider: login.provider,
-        label: login.label,
+        alias: login.alias,
+        machineOwn: login.machineOwn,
         routing: login.routing,
         fiveHourLimit: login.fiveHourLimit,
         weeklyLimit: login.weeklyLimit,
@@ -76,7 +77,7 @@ export function createControl(options: ControlOptions): Control {
         cooldownUntil: cooldown === null ? null : Number.isFinite(cooldown) ? cooldown : 'unknown',
         block: row === undefined ? null : routeBlock(row, at),
         sessions: login.provider === 'claude' ? table.sessionCount(login.id) : 0,
-        email: login.provider === 'claude' ? identity.read(login.id)?.email ?? null : null,
+        email: login.provider === 'claude' ? identity.read(login)?.email ?? null : table.codexEmail(login.id),
         probing: poller.isRunning(login.id)
       }
     })

@@ -2,8 +2,9 @@
 // answer. It applies the decisions of `src/core/proxy-rules.ts` in the order that file's header
 // lists, and keeps the per-request bookkeeping:
 //
-// 1. The key (`routeKeyMatches`), then the `x-kurmis-login` / `x-kurmis-started-on` headers. The
-//    body is read whole, because a request may be sent more than once (a replay); a body over
+// 1. The key (`routeKeyMatches`), then the `x-kurmis-login` / `x-kurmis-started-on` headers,
+//    which carry login ids; `x-kurmis-login` must name a Claude login in the config. The body is
+//    read whole, because a request may be sent more than once (a replay); a body over
 //    `MAX_REQUEST_BODY_BYTES` is answered 413 (`refuseTooLarge`).
 // 2. A login is chosen (`pick`): stale usage readings are probed first (`staleUsageLogins`, at
 //    most once a minute per login), a login whose token is about to expire is renewed by a probe
@@ -30,14 +31,13 @@ import {
   accountsInScope, chooseAccount, effectivePin, isDefinitiveQuotaRejection, parseUnifiedHeaders, quotaCooldownUntil,
   replayDecision, routeBlock, tokenIsFresh, type RouteAccount, type RouteSession
 } from '../core/account-router.ts'
-import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import {
   CAPACITY_HOLD_BASE_MS, CAPACITY_HOLD_MAX_MS, CAPACITY_HOLD_MS, CapacityCooling, capacityHoldAnswer, capacityRefusal
 } from '../core/capacity-hold.ts'
 import {
   downstreamResponseHeaders, poolLimitAnswer, refusalAnswer, staleUsageLogins, upstreamRequest, type ProxyAnswer
 } from '../core/proxy-rules.ts'
-import { readRouteRequest, routeKeyMatches } from '../core/route-headers.ts'
+import { readRouteRequest, routeKeyMatches, type RouteRequest } from '../core/route-headers.ts'
 import type { ClaudeIdentityReader } from '../data/identity.ts'
 import { isLoginId, type LoginId } from '../data/login-id.ts'
 import { errorCodeOf, methodOf, type DaemonLog, type LogFields } from '../data/log.ts'
@@ -142,19 +142,18 @@ export function createProxy(options: ProxyOptions): Proxy {
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const info = readRouteRequest((name) => headerValue(req, name))
+    const info = readRouteRequest((name) => headerValue(req, name), table.ownLogin('claude').id)
     if (!routeKeyMatches(info.key, options.key)) {
       log.write('proxy_rejected', { reason: 'bad_secret', method: methodOf(req.method) })
       req.resume()
       res.writeHead(403).end()
       return
     }
-    if (info.login === 'invalid' || info.startedOn === 'invalid') {
+    const problem = headerProblem(info)
+    if (problem !== null) {
       log.write('proxy_rejected', { reason: 'invalid', method: methodOf(req.method) })
       req.resume()
-      send(res, invalidRequest(info.login === 'invalid'
-        ? 'The x-kurmis-login header does not name a Claude login (claude:<name>).'
-        : 'The x-kurmis-started-on header does not name a Claude login (claude:<name>).'))
+      send(res, invalidRequest(problem))
       return
     }
     open++
@@ -178,8 +177,27 @@ export function createProxy(options: ProxyOptions): Proxy {
     }
   }
 
-  async function route(req: IncomingMessage, res: ServerResponse, info: ReturnType<typeof readRouteRequest>,
-    signal: AbortSignal): Promise<void> {
+  /**
+   * Why the request's kurmis headers are refused, or null. A header that is not a login id is
+   * refused, and so is an `x-kurmis-login` that names no Claude login in the config (a Codex
+   * login, or an id the config does not have). `x-kurmis-started-on` is only checked to be an id:
+   * a login it names that is not a Claude login here never matches a login the proxy signs for.
+   */
+  function headerProblem(info: RouteRequest): string | null {
+    if (info.login === 'invalid') return 'The x-kurmis-login header is not a login id.'
+    if (info.startedOn === 'invalid') return 'The x-kurmis-started-on header is neither a login id nor "none".'
+    if (info.login === null) return null
+    table.checkConfig()
+    return table.find(info.login)?.provider === 'claude' ? null : 'The x-kurmis-login header does not name a Claude login.'
+  }
+
+  /** The account uuid of a Claude login's profile, for `metadata.user_id`, or null when none is known. */
+  function accountUuidOf(id: string): string | null {
+    const login = table.find(id)
+    return login === undefined ? null : identity.read(login)?.accountUuid ?? null
+  }
+
+  async function route(req: IncomingMessage, res: ServerResponse, info: RouteRequest, signal: AbortSignal): Promise<void> {
     const arrived = now()
     const read = await readBody(req, maxBodyBytes, signal)
     if (read === 'too-large') {
@@ -195,6 +213,8 @@ export function createProxy(options: ProxyOptions): Proxy {
       return
     }
     table.checkConfig()
+    /** The machine's own Claude login, which an Auto session starts from (`effectivePin`). */
+    const ownClaude = table.ownLogin('claude').id
     const sessionKey = info.sessionId !== null && isSessionId(info.sessionId) ? info.sessionId : NO_SESSION_KEY
     /**
      * The login the session was sent back to after a 400 (`replayDecision`'s `pin-back`) and is
@@ -207,7 +227,7 @@ export function createProxy(options: ProxyOptions): Proxy {
     let leftAnswer: KeptRefusal | null = null
     const pinned = info.login ?? sentBack
     const session: RouteSession = {
-      homeAccountId: pinned ?? CLAUDE_DEFAULT_ACCOUNT_ID,
+      homeAccountId: pinned ?? ownClaude,
       currentAccountId: table.sessionLogin(sessionKey),
       pinnedAccountId: pinned
     }
@@ -244,7 +264,7 @@ export function createProxy(options: ProxyOptions): Proxy {
       sentBack = null
       sentBackHere = false
       session.pinnedAccountId = null
-      session.homeAccountId = CLAUDE_DEFAULT_ACCOUNT_ID
+      session.homeAccountId = ownClaude
     }
 
     /**
@@ -362,7 +382,7 @@ export function createProxy(options: ProxyOptions): Proxy {
         excluded.add(row.id)
         continue
       }
-      const outgoing = upstreamRequest(req.headers, body, authorization, identity.read(row.id)?.accountUuid ?? null)
+      const outgoing = upstreamRequest(req.headers, body, authorization, accountUuidOf(row.id))
       attempted.add(row.id)
       // A held request's wait for the answer's headers ends where the hold does, and the
       // request is given back then. The timer stops once the headers are in: the body of an

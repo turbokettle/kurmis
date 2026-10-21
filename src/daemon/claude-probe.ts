@@ -37,11 +37,11 @@
 // empty `--mcp-config` starts no MCP server. `--no-session-persistence` writes no transcript.
 // `skip_behaviors` leaves out the walk over the last week's transcripts that fills the answer's
 // `behaviors` block, which kurmis does not read; a CLI older than 2.1.272 ignores it.
-import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import type { AccountUsage } from '../core/claude-usage.ts'
 import { usageFromGetUsage } from '../core/usage.ts'
 import { applyEnvPatch, claudeProbeEnv } from '../data/login-env.ts'
-import { claudeDefaultProbeFolder, probeWorkFolder } from '../data/paths.ts'
+import type { LoginRef } from '../data/login-id.ts'
+import { ownClaudeProbeFolder, probeWorkFolder } from '../data/paths.ts'
 import { makePrivateDirSync } from '../platform/files.ts'
 import { startFrameProcess, type FrameProcess } from '../platform/frame-process.ts'
 import { findProgram, ProgramNotFoundError, type ResolvedProgram } from '../platform/programs.ts'
@@ -98,7 +98,7 @@ const PROBE_SETTINGS = { DISABLE_AUTOUPDATER: '1' }
 type ControlReply = { ok: true; response: unknown } | { ok: false }
 
 /** Asks one Claude login for its plan usage. Never rejects. */
-export async function probeClaudeUsage(id: string, options: ProbeOptions): Promise<ProbeResult> {
+export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): Promise<ProbeResult> {
   const now = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? CLAUDE_PROBE_TIMEOUT_MS
   if (options.signal?.aborted === true) return abortedProbe(null)
@@ -113,11 +113,11 @@ export async function probeClaudeUsage(id: string, options: ProbeOptions): Promi
     return probeFailure(null, 'other', 'The claude program could not be looked up.')
   }
 
-  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(id), ...TOKEN_VARIABLES, ...PROBE_SETTINGS })
+  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(login), ...TOKEN_VARIABLES, ...PROBE_SETTINGS })
   const cwd = probeWorkFolder()
   try {
     makePrivateDirSync(cwd)
-    if (id === CLAUDE_DEFAULT_ACCOUNT_ID) makePrivateDirSync(claudeDefaultProbeFolder())
+    if (login.machineOwn) makePrivateDirSync(ownClaudeProbeFolder())
   } catch {
     return probeFailure(null, 'other', 'The usage probe could not create its folder in the kurmis data folder.')
   }
@@ -134,7 +134,7 @@ export async function probeClaudeUsage(id: string, options: ProbeOptions): Promi
     }
   })
 
-  const result = await converse(claude, replies, id, timeoutMs, now, options.previous ?? null)
+  const result = await converse(claude, replies, login.id, timeoutMs, now, options.previous ?? null)
   // Wait for the exit in every case, so a renewed token is on disk and no CLI outlives the probe.
   const exit = await claude.close(PROBE_CLOSE_GRACE_MS)
   // The signal fired after the answer: the answer still stands.

@@ -46,14 +46,14 @@ const SPARK = bucket({
 /** The whole prolite answer, general bucket and Spark together. */
 function codexUsage(general: v2.RateLimitSnapshot = bucket()): AccountUsage {
   return usageFromCodexRateLimits(
-    'codex:abc',
+    'abccodex',
     { rateLimits: general, rateLimitsByLimitId: { codex: general, codex_bengalfox: SPARK } },
     NOW
   )
 }
 
 function claudeUsage(overrides: Partial<AccountUsage> = {}): AccountUsage {
-  return { ...emptyAccountUsage('claude:default', NOW), rateLimitsAvailable: true, ...overrides }
+  return { ...emptyAccountUsage('ownclaude1', NOW), rateLimitsAvailable: true, ...overrides }
 }
 
 describe('the windows worth showing', () => {
@@ -113,7 +113,7 @@ describe('whether the plan is used up', () => {
     const full = { ...SPARK, primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: RESET_SECONDS } }
     const general = bucket({ credits: withCredits })
     const usage = usageFromCodexRateLimits(
-      'codex:abc',
+      'abccodex',
       { rateLimits: general, rateLimitsByLimitId: { codex: general, codex_bengalfox: full } },
       NOW
     )
@@ -130,7 +130,7 @@ describe('whether the plan is used up', () => {
     }
     const general = bucket({ credits: withCredits })
     const usage = usageFromCodexRateLimits(
-      'codex:abc',
+      'abccodex',
       { rateLimits: general, rateLimitsByLimitId: { codex: general, codex_something_new: model } },
       NOW
     )
@@ -147,7 +147,7 @@ describe('whether the plan is used up', () => {
       primary: spent.primary
     })
     const usage = usageFromCodexRateLimits(
-      'codex:abc',
+      'abccodex',
       { rateLimits: model, rateLimitsByLimitId: { codex_other: model } },
       NOW
     )

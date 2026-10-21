@@ -9,18 +9,18 @@
 // them is forwarded upstream. The CLI also sends
 // `X-Claude-Code-Session-Id` by itself, which is what the proxy tells sessions apart by.
 import { timingSafeEqual } from 'node:crypto'
-import { CLAUDE_DEFAULT_ACCOUNT_ID, parseAccountId } from './accounts.ts'
+import { isLoginIdText } from './accounts.ts'
 
 /** The header that carries the daemon's secret. A proxy request without the right one is refused. */
 export const KEY_HEADER = 'x-kurmis-key'
 
-/** The header that pins a request to one Claude login, by id (`claude:<name>`). */
+/** The header that pins a request to one Claude login, by its id. */
 export const LOGIN_HEADER = 'x-kurmis-login'
 
 /**
- * The header naming the login whose credentials the CLI was started on (`claude:<name>`). The
+ * The header naming the login whose credentials the CLI was started on, by its id. The
  * proxy may forward the CLI's own `authorization` header only for that login. A request without
- * it was sent by a CLI started on `claude:default`, such as a plain `claude` in global mode.
+ * it was sent by a CLI started on the machine's own login, such as a plain `claude` in global mode.
  */
 export const STARTED_ON_HEADER = 'x-kurmis-started-on'
 
@@ -29,7 +29,7 @@ export const STARTED_ON_HEADER = 'x-kurmis-started-on'
  * mode writes it into `$CLAUDE_CONFIG_DIR/settings.json`, which only a CLI that reads the
  * credentials in that folder uses (`configDirHasOwnCredentials` in `src/data/login-env.ts`). The
  * proxy then never forwards the CLI's own `authorization` header and never signs the request as
- * `claude:default`.
+ * the machine's own login.
  */
 export const STARTED_ON_NONE = 'none'
 
@@ -90,36 +90,38 @@ export interface RouteRequest {
   /** The secret the request carries, or null without one. */
   key: string | null
   /**
-   * The Claude login the request is pinned to, or null on Auto. A header that does not name a
-   * Claude login reads as `invalid`, which the proxy should refuse rather than route on Auto.
+   * The id of the login the request is pinned to, or null on Auto. A header that is not a login
+   * id reads as `invalid`, which the proxy should refuse rather than route on Auto. Whether the id
+   * names a Claude login is for the proxy to check.
    */
   login: string | null | 'invalid'
   /**
-   * The Claude login the CLI was started on: the `x-kurmis-started-on` header, or
-   * `claude:default` without one. Null for `none` (`STARTED_ON_NONE`): no kurmis login. Any other
-   * header that does not name a Claude login reads as `invalid`.
+   * The id of the login the CLI was started on: the `x-kurmis-started-on` header, or `ownClaude`
+   * without one. Null for `none` (`STARTED_ON_NONE`): no kurmis login. Any other value that is
+   * not a login id reads as `invalid`.
    */
   startedOn: string | null | 'invalid'
   /** The CLI's session id, or null when the request has none. */
   sessionId: string | null
 }
 
-export function readRouteRequest(get: RequestHeaderGetter): RouteRequest {
+/** Reads a request's headers. `ownClaude` is the id of the machine's own Claude login. */
+export function readRouteRequest(get: RequestHeaderGetter, ownClaude: string): RouteRequest {
   const key = nonEmpty(get(KEY_HEADER))
   const named = nonEmpty(get(LOGIN_HEADER))
   const startedOn = nonEmpty(get(STARTED_ON_HEADER))
   return {
     key,
-    login: named === null ? null : claudeLoginOrInvalid(named),
-    startedOn: startedOn === null ? CLAUDE_DEFAULT_ACCOUNT_ID
+    login: named === null ? null : loginIdOrInvalid(named),
+    startedOn: startedOn === null ? ownClaude
       : startedOn.toLowerCase() === STARTED_ON_NONE ? null
-        : claudeLoginOrInvalid(startedOn),
+        : loginIdOrInvalid(startedOn),
     sessionId: nonEmpty(get(SESSION_HEADER))
   }
 }
 
-function claudeLoginOrInvalid(value: string): string | 'invalid' {
-  return parseAccountId(value)?.provider === 'claude' ? value : 'invalid'
+function loginIdOrInvalid(value: string): string | 'invalid' {
+  return isLoginIdText(value) ? value : 'invalid'
 }
 
 /** Whether a request's key is the daemon's secret, compared in constant time. */

@@ -66,7 +66,7 @@ export function emptyCodexUsage(accountId: string, now: number): AccountUsage {
 /**
  * The JSON-RPC `result` of `account/rateLimits/read` as a login's usage, or null when it is
  * not an object at all. Never throws: a part of the answer that has the wrong shape is left
- * out (`parseCodexRateLimitsRead`). `accountId` is the kurmis login id, such as `codex:work`.
+ * out (`parseCodexRateLimitsRead`). `accountId` is the kurmis login id, such as `k3v9q2m7xa`.
  */
 export function codexUsageFromResult(accountId: string, result: unknown, now: number): AccountUsage | null {
   const read = parseCodexRateLimitsRead(result)

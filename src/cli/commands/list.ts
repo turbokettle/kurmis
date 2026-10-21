@@ -5,16 +5,17 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../../core/accounts.ts'
 import { tomlValue } from '../../core/codex-account-config.ts'
 import { ConfigError, loadConfig, type LoginSettings } from '../../data/config.ts'
 import { CLAUDE_PROFILE_FILE, parseClaudeIdentity } from '../../data/identity.ts'
 import { applyEnvPatch, codexLoginEnv } from '../../data/login-env.ts'
+import type { LoginRef } from '../../data/login-id.ts'
 import { loginFolder } from '../../data/paths.ts'
 import { ProgramNotFoundError, windowsEnv, type findProgram } from '../../platform/programs.ts'
 import { runProgram } from '../../platform/run.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, writeLine, type Command } from '../command.ts'
 import { realFindProgram } from '../command-deps.ts'
+import { machineOwnText } from '../login-names.ts'
 
 /** How `codex login status` is found and run (`codexSignedIn`); the fakes in tests. */
 export interface CodexStatusDeps {
@@ -45,27 +46,28 @@ function namesAccount(file: string): boolean {
  * - an extra Claude login: its folder holds `.credentials.json`, or a `.claude.json` that names
  *   an account. On macOS the secret is in the Keychain, which is not read here, so the account
  *   in `.claude.json` (written by `claude auth login`) is the sign there.
- * - `claude:default`: `~/.claude/.credentials.json`, or an account in `~/.claude.json`.
+ * - the machine's own Claude login: `~/.claude/.credentials.json`, or an account in
+ *   `~/.claude.json`.
  * - Codex: `auth.json` exists in the login's Codex home (`codexHomeOf`). Only its existence is
  *   checked. A login that keeps its sign-in in the system's keyring has none; `hasCredentials`
  *   asks Codex about that one.
  */
-export function hasLocalCredentials(id: string, env: NodeJS.ProcessEnv, home: string): boolean {
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
+export function hasLocalCredentials(login: LoginRef, env: NodeJS.ProcessEnv, home: string): boolean {
+  if (login.provider === 'codex') return existsSync(join(codexHomeOf(login, env, home), 'auth.json'))
+  if (login.machineOwn) {
     return existsSync(join(home, '.claude', '.credentials.json')) || namesAccount(join(home, CLAUDE_PROFILE_FILE))
   }
-  if (id.startsWith('codex:')) return existsSync(join(codexHomeOf(id, env, home), 'auth.json'))
-  const folder = loginFolder(id)
+  const folder = loginFolder(login)
   return existsSync(join(folder, '.credentials.json')) || namesAccount(join(folder, CLAUDE_PROFILE_FILE))
 }
 
 /**
  * The Codex home of a Codex login, the one `codex login` and `codex logout` run in
- * (`codexLoginEnv`): the login's folder, or for `codex:default` the inherited `CODEX_HOME`
- * (unless it is an extra login's home), else `~/.codex`.
+ * (`codexLoginEnv`): the login's folder, or for the machine's own Codex login the inherited
+ * `CODEX_HOME` (unless it is an extra login's home), else `~/.codex`.
  */
-export function codexHomeOf(id: string, env: NodeJS.ProcessEnv, home: string, platform: NodeJS.Platform = process.platform): string {
-  const patched = applyEnvPatch(env, codexLoginEnv(id, env, platform), platform === 'win32')
+export function codexHomeOf(login: LoginRef, env: NodeJS.ProcessEnv, home: string, platform: NodeJS.Platform = process.platform): string {
+  const patched = applyEnvPatch(env, codexLoginEnv(login, env, platform), platform === 'win32')
   const named = platform === 'win32' ? windowsEnv(patched, 'CODEX_HOME') : patched['CODEX_HOME']
   return named !== undefined && named !== '' ? named : join(home, '.codex')
 }
@@ -92,11 +94,11 @@ export function codexKeepsSignInElsewhere(codexHome: string): boolean {
 }
 
 /**
- * Whether `codex login status`, run on the Codex login `id` the way `codex login` is, says it
+ * Whether `codex login status`, run on the Codex login `login` the way `codex login` is, says it
  * is signed in (exit code 0). What it prints is not read. False when Codex is not found, fails
  * or takes longer than `CODEX_LOGIN_STATUS_TIMEOUT_MS`.
  */
-export async function codexSignedIn(id: string, env: NodeJS.ProcessEnv, deps: CodexStatusDeps): Promise<boolean> {
+export async function codexSignedIn(login: LoginRef, env: NodeJS.ProcessEnv, deps: CodexStatusDeps): Promise<boolean> {
   let program
   try {
     program = deps.findProgram('codex', { env })
@@ -105,7 +107,7 @@ export async function codexSignedIn(id: string, env: NodeJS.ProcessEnv, deps: Co
     throw error
   }
   const result = await deps.runProgram(program.command, [...program.args, 'login', 'status'],
-    { timeoutMs: CODEX_LOGIN_STATUS_TIMEOUT_MS, env: applyEnvPatch(env, codexLoginEnv(id, env)), maxOutputBytes: 64 * 1024 })
+    { timeoutMs: CODEX_LOGIN_STATUS_TIMEOUT_MS, env: applyEnvPatch(env, codexLoginEnv(login, env)), maxOutputBytes: 64 * 1024 })
   return result.code === 0
 }
 
@@ -115,25 +117,29 @@ export async function codexSignedIn(id: string, env: NodeJS.ProcessEnv, deps: Co
  * (`codexKeepsSignInElsewhere`), what `codex login status` says. So Codex is started only for
  * such a login, which `codex login` gave no `auth.json`.
  */
-export async function hasCredentials(id: string, env: NodeJS.ProcessEnv, home: string, deps: CodexStatusDeps): Promise<boolean> {
-  if (hasLocalCredentials(id, env, home)) return true
-  if (!id.startsWith('codex:') || !codexKeepsSignInElsewhere(codexHomeOf(id, env, home))) return false
-  return await codexSignedIn(id, env, deps)
+export async function hasCredentials(login: LoginRef, env: NodeJS.ProcessEnv, home: string, deps: CodexStatusDeps): Promise<boolean> {
+  if (hasLocalCredentials(login, env, home)) return true
+  if (login.provider !== 'codex' || !codexKeepsSignInElsewhere(codexHomeOf(login, env, home))) return false
+  return await codexSignedIn(login, env, deps)
 }
 
 /** A login as `kurmis list --json` prints it: its settings and `credentials`. */
 export type ListedLogin = LoginSettings & { credentials: boolean }
 
 /** The headers of the setting columns are the names of `kurmis set`'s options. */
-const HEADER = ['ID', 'LABEL', 'AUTO', 'FIVE-HOUR', 'WEEKLY', 'USE-FIRST', 'CREDENTIALS']
+const HEADER = ['PROVIDER', 'ALIAS', 'ID', 'AUTO', 'FIVE-HOUR', 'WEEKLY', 'USE-FIRST', 'CREDENTIALS']
 
-/** The logins as a table with a header row, columns padded to their widest cell. */
+/**
+ * The logins as a table with a header row, columns padded to their widest cell, followed by a
+ * line for each of the machine's own logins that says which one it is.
+ */
 export function formatLoginTable(logins: readonly ListedLogin[]): string {
   const rows = [
     HEADER,
     ...logins.map((login) => [
+      login.provider,
+      login.alias,
       login.id,
-      login.label,
       login.routing ? 'on' : 'off',
       `${String(login.fiveHourLimit)}%`,
       `${String(login.weeklyLimit)}%`,
@@ -142,7 +148,10 @@ export function formatLoginTable(logins: readonly ListedLogin[]): string {
     ])
   ]
   const widths = HEADER.map((_, column) => Math.max(...rows.map((row) => row[column]!.length)))
-  return rows.map((row) => row.map((cell, column) => cell.padEnd(widths[column]!)).join('  ').trimEnd()).join('\n')
+  const table = rows.map((row) => row.map((cell, column) => cell.padEnd(widths[column]!)).join('  ').trimEnd())
+  const own = logins.filter((login) => login.machineOwn).map((login) =>
+    `${login.alias} is ${machineOwnText(login.provider)}: the account a plain "${login.provider}" is signed in to.`)
+  return [...table, ...(own.length > 0 ? ['', ...own] : [])].join('\n')
 }
 
 export function createListCommand(deps: Partial<ListDeps> = {}): Command {
@@ -153,10 +162,17 @@ export function createListCommand(deps: Partial<ListDeps> = {}): Command {
     summary: 'List the logins and their routing settings',
     usage: `Usage: kurmis list [--json]
 
-Lists every login kurmis knows, the machine's own claude:default and codex:default first, with
-its settings and whether it has credentials on this machine. Change the settings with
-"kurmis set". The columns:
+Lists every login kurmis knows, with its settings and whether it has credentials on this
+machine. The machine's own Claude and Codex logins come first. They are the accounts a plain
+"claude" and a plain "codex" are signed in to, and the lines under the table name them.
+Change the settings with "kurmis set". The columns:
 
+  PROVIDER      claude or codex.
+  ALIAS         The name you type for the login, for example in "kurmis claude --login".
+                Kurmis makes it from the account's email until you set one with
+                "kurmis set <alias> --alias <new alias>". While kurmis knows no email for
+                the login, the alias is its id.
+  ID            The login's id, which never changes. Commands take it in place of the alias.
   AUTO          Whether Auto routing may use the login (set --auto).
   FIVE-HOUR     Auto routing stops using the login once its five-hour window reaches this
                 (set --five-hour).
@@ -169,7 +185,8 @@ its settings and whether it has credentials on this machine. Change the settings
                 whether they still work.
 
 Options:
-  --json       Print the logins as JSON, with a "credentials" field for the last column.
+  --json       Print the logins as JSON. Each has "alias", "id", "provider", "machineOwn"
+               (true for the machine's own logins) and "credentials" for the last column.
   -h, --help   Show this help.`,
     async run(args, context) {
       const parsed = parseCommandArgs('list', args, { json: { type: 'boolean' } }, context)
@@ -184,7 +201,7 @@ Options:
       }
       // The `codex login status` runs, if any, run at the same time.
       const listed = await Promise.all(logins.map(async (login) =>
-        ({ ...login, credentials: await hasCredentials(login.id, context.env, home(), codex) })))
+        ({ ...login, credentials: await hasCredentials(login, context.env, home(), codex) })))
       writeLine(context.stdout, parsed.values.json === true ? JSON.stringify(listed, null, 2) : formatLoginTable(listed))
       return EXIT_OK
     }

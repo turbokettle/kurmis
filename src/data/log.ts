@@ -26,6 +26,7 @@ export const LOG_EVENTS = [
   'port_in_use',
   'config_loaded',
   'config_invalid',
+  'alias_write_failed',
   'state_loaded',
   'state_write_failed',
   'control_request',

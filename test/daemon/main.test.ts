@@ -435,7 +435,7 @@ describe('runDaemon', () => {
   })
 
   it('exits 1 with the message when config.json is wrong', async () => {
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 1, port: 80 }))
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 2, port: 80 }))
     const daemon = start()
     expect(await daemon.exit).toBe(1)
     expect(daemon.stderr.text()).toMatch(/port/)

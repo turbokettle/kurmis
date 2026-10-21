@@ -1,23 +1,20 @@
 import { rmSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
-import {
-  createSetCommand,
-  formatLoginSettings,
-  parseOnOff,
-  parsePercent,
-  patchFromOptions,
-  resolveLoginArgument
-} from '../../../src/cli/commands/set.ts'
-import { addLogin, defaultConfig, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
+import { createSetCommand, formatLoginSettings, parseOnOff, parsePercent, patchFromOptions } from '../../../src/cli/commands/set.ts'
+import { changeConfig, findLogin, followEmail, loadConfig } from '../../../src/data/config.ts'
 import { configPath, kurmisHome } from '../../../src/data/paths.ts'
+import { OWN_CLAUDE, OWN_CODEX, writeTestConfig } from '../../logins.ts'
 import { collect, fakeDaemonClient } from '../helpers.ts'
 
 beforeEach(() => {
   rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
-  let config = addLogin(defaultConfig(), 'claude:work', { label: 'Work' })
-  config = addLogin(config, 'codex:work')
-  config = addLogin(config, 'codex:side')
-  saveConfig(config)
+  writeTestConfig({
+    extras: [
+      { id: 'workclaude', provider: 'claude', alias: 'work-example' },
+      { id: 'workcodex1', provider: 'codex', alias: 'work-example' },
+      { id: 'sidecodex1', provider: 'codex', alias: 'side-example' }
+    ]
+  })
 })
 
 describe('reading the options', () => {
@@ -35,27 +32,14 @@ describe('reading the options', () => {
   })
 
   it('builds the patch, or names the wrong option', () => {
-    expect(patchFromOptions({ auto: 'off', 'five-hour': '90', weekly: '80', 'use-first': 'on', label: '  Mine  ' })).toEqual({
-      routing: false, fiveHourLimit: 90, weeklyLimit: 80, useFirst: true, label: 'Mine'
+    expect(patchFromOptions({ auto: 'off', 'five-hour': '90', weekly: '80', 'use-first': 'on', alias: 'mine' })).toEqual({
+      routing: false, fiveHourLimit: 90, weeklyLimit: 80, useFirst: true, alias: 'mine'
     })
     expect(patchFromOptions({})).toEqual({ error: expect.stringContaining('give at least one of') as unknown })
     expect(patchFromOptions({ auto: 'yes' })).toEqual({ error: '--auto takes on or off, not "yes"' })
     expect(patchFromOptions({ 'use-first': 'true' })).toEqual({ error: '--use-first takes on or off, not "true"' })
     expect(patchFromOptions({ weekly: '0' })).toEqual({ error: '--weekly takes a whole number from 1 to 100, not "0"' })
     expect(patchFromOptions({ 'five-hour': '150' })).toEqual({ error: '--five-hour takes a whole number from 1 to 100, not "150"' })
-    expect(patchFromOptions({ label: '   ' })).toEqual({ error: '--label takes 1 to 64 characters' })
-    expect(patchFromOptions({ label: 'x'.repeat(65) })).toEqual({ error: '--label takes 1 to 64 characters' })
-  })
-
-  it('finds a login by id or by a name only one login has', () => {
-    const config = loadConfig()
-    expect(resolveLoginArgument('claude:work', config)).toMatchObject({ id: 'claude:work' })
-    expect(resolveLoginArgument('side', config)).toMatchObject({ id: 'codex:side' })
-    expect(resolveLoginArgument('work', config)).toEqual({ error: '"work" could be claude:work or codex:work; give the full id' })
-    expect(resolveLoginArgument('default', config)).toMatchObject({ error: expect.stringContaining('could be claude:default or codex:default') as unknown })
-    expect(resolveLoginArgument('claude:none', config)).toMatchObject({ error: expect.stringContaining('there is no login claude:none') as unknown })
-    expect(resolveLoginArgument('none', config)).toMatchObject({ error: expect.stringContaining('there is no login named "none"') as unknown })
-    expect(resolveLoginArgument('claude:../x', config)).toMatchObject({ error: expect.stringContaining('is not a login id') as unknown })
   })
 })
 
@@ -64,14 +48,12 @@ describe('kurmis set', () => {
     const daemon = fakeDaemonClient()
     const set = createSetCommand({ daemon })
     const out = collect()
-    const code = await set.run(['claude:work', '--auto', 'off', '--five-hour', '90', '--weekly', '80', '--use-first', 'on', '--label', 'Work account'], out.context)
+    const code = await set.run(['claude:work-example', '--auto', 'off', '--five-hour', '90', '--weekly', '80', '--use-first', 'on'], out.context)
     expect(code).toBe(0)
-    expect(findLogin(loadConfig(), 'claude:work')).toMatchObject({
-      label: 'Work account', routing: false, fiveHourLimit: 90, weeklyLimit: 80, useFirst: true
-    })
+    expect(findLogin(loadConfig(), 'workclaude')).toMatchObject({ routing: false, fiveHourLimit: 90, weeklyLimit: 80, useFirst: true })
     expect(out.stdout()).toBe([
-      'claude:work',
-      '  label       Work account',
+      'work-example (Claude, id workclaude)',
+      '  alias       work-example (set by you)',
       '  auto        off',
       '  five-hour   90%',
       '  weekly      80%',
@@ -82,39 +64,97 @@ describe('kurmis set', () => {
     expect(daemon.calls).toEqual(['findDaemon', 'requestReload'])
   })
 
+  it('finds a login by its alias, its id, or either after claude: or codex:', async () => {
+    const set = createSetCommand({ daemon: fakeDaemonClient({ running: false }) })
+    for (const [text, id] of [['side-example', 'sidecodex1'], ['sidecodex1', 'sidecodex1'], ['codex:side-example', 'sidecodex1'],
+      ['workclaude', 'workclaude'], ['codex:work-example', 'workcodex1'], ['claude:workclaude', 'workclaude']] as const) {
+      const weekly = String(10 + text.length)
+      expect(await set.run([text, '--weekly', weekly], collect().context)).toBe(0)
+      expect(findLogin(loadConfig(), id)?.weeklyLimit).toBe(Number(weekly))
+    }
+  })
+
+  it('needs claude: or codex: in front of an alias a Claude and a Codex login share', async () => {
+    const before = readConfigText()
+    const out = collect()
+    expect(await createSetCommand({ daemon: fakeDaemonClient() }).run(['work-example', '--weekly', '5'], out.context)).toBe(2)
+    expect(out.stderr()).toContain('a Claude login and a Codex login are both called "work-example"; give claude:work-example or codex:work-example')
+    expect(readConfigText()).toBe(before)
+  })
+
   it('leaves the other settings and logins as they were', async () => {
     const before = loadConfig()
     const set = createSetCommand({ daemon: fakeDaemonClient({ running: false }) })
     const out = collect()
-    expect(await set.run(['side', '--weekly', '50'], out.context)).toBe(0)
+    expect(await set.run(['side-example', '--weekly', '50'], out.context)).toBe(0)
     const after = loadConfig()
-    expect(findLogin(after, 'codex:side')).toEqual({ ...findLogin(before, 'codex:side'), weeklyLimit: 50 })
-    expect(after.logins.filter((login) => login.id !== 'codex:side')).toEqual(before.logins.filter((login) => login.id !== 'codex:side'))
+    expect(findLogin(after, 'sidecodex1')).toEqual({ ...findLogin(before, 'sidecodex1'), weeklyLimit: 50 })
+    expect(after.logins.filter((login) => login.id !== 'sidecodex1')).toEqual(before.logins.filter((login) => login.id !== 'sidecodex1'))
     expect(out.stdout()).not.toContain('daemon')
   })
 
-  it('sets the machine\'s own logins too', async () => {
+  it('sets the machine\'s own logins too, and marks them', async () => {
     const set = createSetCommand({ daemon: fakeDaemonClient({ running: false }) })
-    expect(await set.run(['codex:default', '--auto', 'off'], collect().context)).toBe(0)
-    expect(findLogin(loadConfig(), 'codex:default')?.routing).toBe(false)
+    const out = collect()
+    expect(await set.run([OWN_CODEX, '--auto', 'off'], out.context)).toBe(0)
+    expect(findLogin(loadConfig(), OWN_CODEX)?.routing).toBe(false)
+    expect(out.stdout()).toContain(`${OWN_CODEX} (Codex, id ${OWN_CODEX})\n  this machine's own Codex sign-in\n`)
+    expect(out.stdout()).toContain(`  alias       ${OWN_CODEX} (the id, while kurmis knows no email for the login)`)
+  })
+
+  it('sets an alias the person chose, which an email no longer replaces', async () => {
+    changeConfig((config) => followEmail(config, OWN_CLAUDE, 'own@example.com'))
+    expect(findLogin(loadConfig(), OWN_CLAUDE)?.alias).toBe('own-example')
+    const set = createSetCommand({ daemon: fakeDaemonClient({ running: false }) })
+    const out = collect()
+    expect(await set.run(['own-example', '--alias', 'home'], out.context)).toBe(0)
+    expect(out.stdout()).toContain('  alias       home (set by you)')
+    expect(findLogin(loadConfig(), OWN_CLAUDE)).toMatchObject({ alias: 'home', aliasSetByUser: true })
+    changeConfig((config) => followEmail(config, OWN_CLAUDE, 'other@example.com'))
+    expect(findLogin(loadConfig(), OWN_CLAUDE)?.alias).toBe('home')
+  })
+
+  it('takes an alias another provider\'s login has', async () => {
+    const set = createSetCommand({ daemon: fakeDaemonClient({ running: false }) })
+    expect(await set.run(['side-example', '--alias', 'workclaude-x'], collect().context)).toBe(0)
+    expect(await set.run(['codex:workclaude-x', '--alias', 'side_2'], collect().context)).toBe(0)
+    expect(findLogin(loadConfig(), 'sidecodex1')?.alias).toBe('side_2')
+  })
+
+  it.each([
+    [['side-example', '--alias', 'work-example'], 'another Codex login is already called "work-example"'],
+    [['side-example', '--alias', 'workclaude'], '"workclaude" is the id of another login'],
+    [['side-example', '--alias', 'Work'], '"Work" is not an alias'],
+    [['side-example', '--alias', 'codex'], '"codex" is not an alias'],
+    [['side-example', '--alias', 'a'.repeat(33)], 'is not an alias'],
+    [['side-example', '--alias', ''], '"" is not an alias'],
+    [['side-example', '--alias=_side'], '"_side" is not an alias']
+  ])('refuses the alias in %j', async (args, message) => {
+    const before = readConfigText()
+    const out = collect()
+    expect(await createSetCommand({ daemon: fakeDaemonClient() }).run(args, out.context)).toBe(2)
+    expect(out.stderr()).toContain(message)
+    expect(readConfigText()).toBe(before)
   })
 
   it('says when the daemon could not be told', async () => {
     const set = createSetCommand({ daemon: fakeDaemonClient({ reloadFails: 'connection refused' }) })
     const out = collect()
-    expect(await set.run(['claude:work', '--weekly', '70'], out.context)).toBe(0)
+    expect(await set.run(['workclaude', '--weekly', '70'], out.context)).toBe(0)
     expect(out.stdout()).toContain('The daemon could not be told about the change (connection refused)')
   })
 
   it.each([
     [[]],
-    [['claude:work']],
-    [['claude:work', 'codex:side', '--weekly', '5']],
-    [['claude:work', '--auto', 'maybe']],
-    [['claude:work', '--weekly', '101']],
-    [['claude:work', '--nope', '1']],
-    [['claude:none', '--weekly', '5']],
-    [['work', '--weekly', '5']]
+    [['workclaude']],
+    [['workclaude', 'sidecodex1', '--weekly', '5']],
+    [['workclaude', '--auto', 'maybe']],
+    [['workclaude', '--weekly', '101']],
+    [['workclaude', '--nope', '1']],
+    [['workclaude', '--label', 'Work']],
+    [['none-example', '--weekly', '5']],
+    [['claude:side-example', '--weekly', '5']],
+    [['work-example', '--weekly', '5']]
   ])('gives a usage error for %j and changes nothing', async (args) => {
     const before = readConfigText()
     const daemon = fakeDaemonClient()
@@ -128,12 +168,12 @@ describe('kurmis set', () => {
   it('reports a broken config.json', async () => {
     writeFileSync(configPath(), '{"version": 7}')
     const out = collect()
-    expect(await createSetCommand({ daemon: fakeDaemonClient() }).run(['claude:work', '--weekly', '5'], out.context)).toBe(1)
+    expect(await createSetCommand({ daemon: fakeDaemonClient() }).run(['workclaude', '--weekly', '5'], out.context)).toBe(1)
     expect(out.stderr()).toContain('newer kurmis')
   })
 
   it('formats the settings under the option names', () => {
-    expect(formatLoginSettings(findLogin(loadConfig(), 'claude:work')!)).toContain('  five-hour   100%')
+    expect(formatLoginSettings(findLogin(loadConfig(), 'workclaude')!)).toContain('  five-hour   100%')
   })
 })
 

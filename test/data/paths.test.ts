@@ -1,22 +1,19 @@
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { LoginId } from '../../src/data/login-id.ts'
 import {
-  isDefaultLoginId,
-  isLoginId,
-  isValidLoginName,
-  loginId,
-  parseLoginId,
-  toLoginId
-} from '../../src/data/login-id.ts'
-import {
+  codexMergedRecordPath,
   configPath,
   daemonFilePath,
   kurmisHome,
-  logPath,
   loginFolder,
+  loginLockPath,
+  logPath,
+  ownClaudeProbeFolder,
   previousLogPath,
   statePath
 } from '../../src/data/paths.ts'
+import { claudeRef, codexRef, OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
 
 const testHome = process.env.KURMIS_HOME as string
 
@@ -49,50 +46,37 @@ describe('file paths', () => {
     expect(daemonFilePath()).toBe(join(kurmisHome(), 'daemon.json'))
     expect(logPath()).toBe(join(kurmisHome(), 'daemon.log'))
     expect(previousLogPath()).toBe(join(kurmisHome(), 'daemon.log.1'))
+    expect(ownClaudeProbeFolder()).toBe(join(kurmisHome(), 'probe', 'claude-own'))
   })
 
-  it('names a login folder after the name half of the id', () => {
-    expect(loginFolder('claude:work')).toBe(join(kurmisHome(), 'claude', 'work'))
-    expect(loginFolder('codex:side-2')).toBe(join(kurmisHome(), 'codex', 'side-2'))
+  it("names an extra login's folder after its id, in its provider's folder", () => {
+    expect(loginFolder(claudeRef('workclaude'))).toBe(join(kurmisHome(), 'claude', 'workclaude'))
+    expect(loginFolder(codexRef('sidecodex1'))).toBe(join(kurmisHome(), 'codex', 'sidecodex1'))
   })
 
-  it('refuses the default logins, which have no folder here', () => {
-    expect(() => loginFolder('claude:default')).toThrow(/machine's own login/)
-    expect(() => loginFolder('codex:default')).toThrow(/machine's own login/)
+  it("refuses the machine's own logins, which have no folder here", () => {
+    expect(() => loginFolder(OWN_CLAUDE_REF)).toThrow(/machine's own claude sign-in/)
+    expect(() => loginFolder(OWN_CODEX_REF)).toThrow(/machine's own codex sign-in/)
   })
 
-  it.each(['claude:../x', 'claude:a/b', 'claude:a\\b', 'claude:..', 'claude:', 'work', 'other:work', 'claude:Work', 'codex:con', 'codex:.hidden'])(
-    'refuses %s',
+  it.each(['../x', 'a/b', 'a\\b', '..', '', 'claude:work', 'Work', 'con', '.hidden', 'side-2', 'a_b', 'a'.repeat(33)])(
+    'refuses the id %j',
     (id) => {
-      expect(() => loginFolder(id)).toThrow(/not a login id/)
+      expect(() => loginFolder(claudeRef(id))).toThrow(/not a login id/)
     }
   )
-})
 
-describe('login ids', () => {
-  it('parses provider and name', () => {
-    expect(parseLoginId('claude:work')).toEqual({ id: 'claude:work', provider: 'claude', name: 'work' })
-    expect(parseLoginId('codex:a_b-1')).toMatchObject({ provider: 'codex', name: 'a_b-1' })
-    expect(parseLoginId('claude:work:x')).toBeNull()
-    expect(parseLoginId(42)).toBeNull()
+  it('puts the lock of one login in locks/, named after its id', () => {
+    expect(loginLockPath('workclaude')).toBe(join(kurmisHome(), 'locks', 'workclaude.lock'))
+    expect(loginLockPath(OWN_CLAUDE_REF.id)).toBe(join(kurmisHome(), 'locks', `${OWN_CLAUDE_REF.id}.lock`))
+    expect(() => loginLockPath('../x')).toThrow(/not a login id/)
+    expect(() => loginLockPath('claude:work')).toThrow(/not a login id/)
   })
 
-  it('limits names to 32 safe characters and no Windows device names', () => {
-    expect(isValidLoginName('a'.repeat(32))).toBe(true)
-    expect(isValidLoginName('a'.repeat(33))).toBe(false)
-    expect(isValidLoginName('-a')).toBe(false)
-    expect(isValidLoginName('nul')).toBe(false)
-    expect(isValidLoginName('com1')).toBe(false)
-    expect(isValidLoginName('console')).toBe(true)
-  })
-
-  it('builds and checks ids', () => {
-    expect(loginId('codex', 'work')).toBe('codex:work')
-    expect(() => toLoginId('claude:A')).toThrow(/not a login id/)
-    expect(isLoginId('claude:default')).toBe(true)
-    expect(isDefaultLoginId('claude:default')).toBe(true)
-    expect(isDefaultLoginId('codex:default')).toBe(true)
-    expect(isDefaultLoginId('default')).toBe(false)
-    expect(isDefaultLoginId('claude:work')).toBe(false)
+  it('keeps the merge record of an extra Codex login only', () => {
+    expect(codexMergedRecordPath(codexRef('sidecodex1'))).toBe(join(kurmisHome(), 'codex-merged', 'sidecodex1.json'))
+    expect(() => codexMergedRecordPath(OWN_CODEX_REF)).toThrow(/not an extra Codex login/)
+    expect(() => codexMergedRecordPath(claudeRef('workclaude'))).toThrow(/not an extra Codex login/)
+    expect(() => codexMergedRecordPath({ id: '../x' as LoginId, provider: 'codex', machineOwn: false })).toThrow(/not a login id/)
   })
 })
