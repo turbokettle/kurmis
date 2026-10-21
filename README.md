@@ -217,10 +217,11 @@ nothing.
 it writes `$CLAUDE_CONFIG_DIR/settings.json`, which only a `claude` with that variable reads.
 Such a `claude` signs in with the login in that folder, which kurmis does not know, so kurmis
 never signs its requests as `claude:default`: they go to your extra logins only. A `claude` with
-`CLAUDE_CONFIG_DIR` set that reads `~/.claude/settings.json` from a setup run without the
-variable is not told apart from a plain one (see "Known limits" in
-[docs/architecture.md](docs/architecture.md)). `kurmis claude` is not affected; it always starts
-claude on the login it names, `claude:default` included.
+`CLAUDE_CONFIG_DIR` naming `~/.claude` itself, after a setup run without the variable, reads
+`~/.claude/settings.json` and counts as a plain `claude` on `claude:default` (see "Known
+limits" in [docs/architecture.md](docs/architecture.md)); unset the variable for it.
+`kurmis claude` is not affected; it always starts claude on the login it names,
+`claude:default` included.
 
 On macOS and Windows, setup stops when `CLAUDE_CONFIG_DIR` names `~/.claude` itself: Claude
 Code keeps separate credentials for a `claude` started with the variable set, even to that
