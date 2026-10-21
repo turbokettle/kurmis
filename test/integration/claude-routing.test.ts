@@ -169,19 +169,25 @@ describe.skipIf(process.platform === 'win32')('routing kurmis claude -p', () => 
     expect(bearers(world).at(-1)).toBe(fakeToken('default'))
   }, 120_000)
 
-  it('signs with the CLI\'s own Authorization header when the daemon cannot read the started-on login\'s token', async () => {
+  it('with CLAUDE_CONFIG_DIR set, starts claude on claude:default\'s own credentials, never on those in that folder', async () => {
     const world = await createWorld()
-    // The daemon was started from a shell without CLAUDE_CONFIG_DIR, so it looks for the default
-    // login's credentials in ~/.claude (and the empty fake Keychain) and finds none. The person's
-    // claude runs with CLAUDE_CONFIG_DIR, where its credentials are.
     expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
+    // The person's shell sets CLAUDE_CONFIG_DIR to a folder signed in to another account.
     const ownConfig = join(world.root, 'own-claude-config')
     writeClaudeCredentials(ownConfig, { accessToken: fakeToken('own') })
-    world.api.setDefault(reply.ok({ text: 'signed by the CLI' }))
+    world.api.setDefault(reply.ok({ text: 'signed as claude:default' }))
 
+    // claude:default, the login in ~/.claude, is not signed in: the CLI says so and sends nothing.
+    const signedOut = await world.kurmis(['claude', '-p', 'hi'], { env: { CLAUDE_CONFIG_DIR: ownConfig } })
+    expect(signedOut.code).not.toBe(0)
+    expect(signedOut.stdout).toContain('Not logged in')
+    expect(signedOut.stderr).toContain('CLAUDE_CONFIG_DIR is set, but claude:default is the login in ~/.claude')
+    expect(bearers(world)).toEqual([])
+
+    world.signInDefaultClaude()
     const result = await world.kurmis(['claude', '-p', 'hi'], { env: { CLAUDE_CONFIG_DIR: ownConfig } })
-    expect(result).toMatchObject({ code: 0, stdout: expect.stringContaining('signed by the CLI') as string })
-    expect(bearers(world)).toEqual([fakeToken('own')])
+    expect(result).toMatchObject({ code: 0, stdout: expect.stringContaining('signed as claude:default') as string })
+    expect(bearers(world)).toEqual([fakeToken('default')])
     expectNoKurmisHeaders(world)
   }, 90_000)
 })
