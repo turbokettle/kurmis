@@ -331,7 +331,7 @@ describe('kurmis claude with the person\'s own settings', () => {
     const h = harness()
     const out = collect()
     expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(3)
-    expect(out.stderr()).toContain('is not valid JSON, so custom headers set there are not kept')
+    expect(out.stderr()).toContain('is not valid JSON (line 1, column 8), so custom headers set there are not kept')
   })
 })
 

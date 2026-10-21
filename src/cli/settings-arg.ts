@@ -38,6 +38,7 @@ import { ROUTING_VARIABLES, type RoutedEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { wrapperSettingsFolder } from '../data/paths.ts'
 import { PRIVATE_FILE_MODE } from '../platform/files.ts'
+import { notJsonText } from './json-error.ts'
 
 const FLAG = '--settings'
 
@@ -110,8 +111,9 @@ function parseSettings(text: string, what: string): { value: Record<string, unkn
   let value: unknown
   try {
     value = JSON.parse(withoutBom(text))
-  } catch (error) {
-    return { error: `${FLAG}: ${what} is not valid JSON (${error instanceof Error ? error.message : String(error)})` }
+  } catch {
+    // Never `JSON.parse`'s message: it quotes the text, which may hold a secret.
+    return { error: `${FLAG}: ${what} is ${notJsonText(withoutBom(text))}` }
   }
   if (!isPlainObject(value)) return { error: `${FLAG}: ${what} is not a JSON object` }
   if (value.env !== undefined && !isPlainObject(value.env)) {
@@ -242,7 +244,7 @@ export function readUserSettingsEnv(path: string, readFile: (path: string) => st
   try {
     value = JSON.parse(withoutBom(text))
   } catch {
-    return { env: null, warning: `${path} is not valid JSON, so custom headers set there are not kept` }
+    return { env: null, warning: `${path} is ${notJsonText(withoutBom(text))}, so custom headers set there are not kept` }
   }
   if (!isPlainObject(value) || !isPlainObject(value.env)) return { env: null, warning: null }
   return { env: value.env, warning: null }

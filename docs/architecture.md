@@ -491,10 +491,20 @@ login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon
 - The file is edited as text: only the members of `env` change, and key order, indent, line
   endings and a byte order mark stay as they were. A file that is not plain JSON (comments,
   trailing commas), or whose top level or `env` is not an object, is refused and not written.
+  The message names the line and column where it stops being JSON and never quotes the file,
+  since it may hold a secret (`src/cli/json-error.ts`); the same goes for a `--settings` file of
+  the wrapper's and the user settings file it reads for custom headers.
   A symlinked file is written through the link: the link stays, its target gets the change, and
-  setup warns that the key is written to that target and names it.
-- Before the first change to an existing file, it is copied to `settings.json.kurmis-backup`
-  (mode 0600), which is never overwritten.
+  setup warns that the key is written to that target and names it. A link whose target does
+  not exist yet gets that target created, so the link is not replaced by a plain file.
+- On Windows a read-only file (its read-only attribute set) is refused with the `attrib -R`
+  command that clears it, because a rename over a read-only file fails there. A write that
+  fails because another program holds the file open is reported as a sentence, not a stack.
+- When setup changes an existing file that holds none of kurmis' settings, it first copies it
+  to `settings.json.kurmis-backup` (mode 0600), replacing an older backup: after a setup, an
+  undo and months of edits, the file as it is now is what "before kurmis" means. When the file
+  already holds kurmis' settings (setup run again after the port or the key changed), the
+  backup is left as it is.
 - The file holds the key after setup, so setup makes it readable by the user only: a new file
   gets mode 0600, and an existing one has its group and other bits cleared (0644 becomes 0600),
   also when setup finds kurmis' settings already there and writes nothing. An existing backup
@@ -505,13 +515,17 @@ login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon
 - An `ANTHROPIC_BASE_URL` that is not kurmis' (`http://127.0.0.1:<port>` with the port of
   `config.json`, or with an `x-kurmis-key` in the same `env`'s headers) is refused, so another
   proxy is not cut off silently. A value of the person's own for `ENABLE_TOOL_SEARCH` or
-  `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept.
+  `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept exactly
+  as written, ahead of kurmis' lines.
 - When autostart or the daemon fails, the settings change stands and setup exits 1; running it
   again is safe.
 
 `kurmis setup --undo` removes only the values that are still kurmis': a key the person changed is
-left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. An `env`
-that undo empties is removed. It unregisters autostart and leaves the daemon running, because
+left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the
+lines left are the ones the backup has, the backup's value comes back as it was (with its line
+endings and blank lines); otherwise the lines left are joined by newlines. A value the backup
+already had (read with or without a byte order mark) is left. An `env` that undo empties is
+removed, unless the backup shows the file had an `env` before kurmis. It unregisters autostart and leaves the daemon running, because
 `kurmis claude` still uses it. Both directions can be run again without changing anything more.
 Claude Code sessions that are already open keep the settings they started with.
 

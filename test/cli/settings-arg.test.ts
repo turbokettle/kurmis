@@ -162,6 +162,18 @@ describe('the user settings file and custom headers', () => {
     expect(claudeUserSettingsPath({ CLAUDE_CONFIG_DIR: '/conf' }, '/home/someone')).toBe(join('/conf', 'settings.json'))
   })
 
+  test('a broken settings file or --settings value is reported by line and column, never quoting its text', () => {
+    const secret = 'sk-ant-oat01-fake-secret-value'
+    const file = join(dir, 'secret.json')
+    writeFileSync(file, `{\n  "env": {\n    "TOKEN": ${secret}\n  }\n}`)
+    expect(readUserSettingsEnv(file).warning).toBe(`${file} is not valid JSON (line 3, column 14), so custom headers set there are not kept`)
+    const read = readUserSettingsArg(['--settings', file], { cwd: dir })
+    expect(read).toEqual({ error: `--settings: the settings file ${file} is not valid JSON (line 3, column 14)` })
+    const inline = readUserSettingsArg(['--settings', `{"env": {"TOKEN": ${secret}}}`], { cwd: dir })
+    expect('error' in inline && inline.error).toBe('--settings: the JSON given to --settings is not valid JSON (line 1, column 19)')
+    expect(JSON.stringify([read, inline])).not.toContain('sk-ant')
+  })
+
   test('reads the env block; a missing file or one without env is no env; a broken file is a warning', () => {
     const file = join(dir, 'settings.json')
     expect(readUserSettingsEnv(file)).toEqual({ env: null, warning: null })
@@ -170,7 +182,7 @@ describe('the user settings file and custom headers', () => {
     writeFileSync(file, '{"env":{"ANTHROPIC_CUSTOM_HEADERS":"x-team: a"}}')
     expect(readUserSettingsEnv(file)).toEqual({ env: { ANTHROPIC_CUSTOM_HEADERS: 'x-team: a' }, warning: null })
     writeFileSync(file, '{"env":')
-    expect(readUserSettingsEnv(file)).toEqual({ env: null, warning: `${file} is not valid JSON, so custom headers set there are not kept` })
+    expect(readUserSettingsEnv(file)).toEqual({ env: null, warning: `${file} is not valid JSON (line 1, column 8), so custom headers set there are not kept` })
     expect(readUserSettingsEnv(dir).warning).toContain(`could not read ${dir}`)
   })
 

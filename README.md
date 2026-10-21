@@ -188,7 +188,8 @@ a plain `claude`, and the Claude Code extensions in your editor, use kurmis too:
   `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` when you set that variable),
   leaving everything else in the file as it was. Because the file then holds kurmis' key, setup
   makes it readable only by you (on macOS and Linux);
-- it saves a copy of the file as `settings.json.kurmis-backup` before its first change;
+- it saves a copy of the file as `settings.json.kurmis-backup` before it adds kurmis' settings
+  (a later setup that only updates them keeps that copy);
 - it makes the daemon start when you log in (a launch agent on macOS, a logon entry on Windows)
   and starts it now.
 
