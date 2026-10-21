@@ -1,16 +1,22 @@
-// `daemon.json`: how the CLI finds the running daemon and proves it is the same user. The
-// daemon writes it when it has its port and removes it when it stops; the CLI reads it.
+// Two files tell the CLI how to reach the daemon:
 //
-// It holds the secret every control request and every proxied request must carry, so only
-// the user may read it. On macOS and Linux the file is created with mode 0600 inside a 0700
-// folder. On Windows the mode does nothing; the file is protected by the access list it
-// inherits from `%USERPROFILE%`, which grants the user, SYSTEM and Administrators only. A
+// - `daemon.json` says which daemon is running: its pid, port and version. The daemon writes
+//   it when it has its port and removes it when it stops.
+// - `key` holds the secret every control request and every proxied request must carry. It is
+//   created once and kept, because a running Claude CLI and, in global mode,
+//   `~/.claude/settings.json` hold a copy of it, and both must keep working after the daemon
+//   restarts.
+//
+// Only the user may read them. On macOS and Linux the files are created with mode 0600 inside
+// a 0700 folder. On Windows the mode does nothing; the files are protected by the access list
+// they inherit from `%USERPROFILE%`, which grants the user, SYSTEM and Administrators only. A
 // `KURMIS_HOME` outside the profile gets that folder's access list instead.
-import { randomBytes, timingSafeEqual } from 'node:crypto'
-import { rmSync } from 'node:fs'
-import { PRIVATE_FILE_MODE } from '../platform/files.ts'
-import { readJsonFileSync, writeJsonFileSync } from './json-file.ts'
-import { daemonFilePath } from './paths.ts'
+import { randomBytes } from 'node:crypto'
+import { linkSync, readFileSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { makePrivateDirSync, PRIVATE_FILE_MODE } from '../platform/files.ts'
+import { readJsonFileSync, writeFileAtomicSync, writeJsonFileSync } from './json-file.ts'
+import { daemonFilePath, keyPath } from './paths.ts'
 import { isPlainObject } from './validate.ts'
 
 export interface DaemonInfo {
@@ -18,8 +24,6 @@ export interface DaemonInfo {
   port: number
   /** The kurmis version the daemon runs, so a newer CLI can replace an older daemon. */
   version: string
-  /** Sent by clients in `x-kurmis-key`. 64 hex characters. */
-  secret: string
   /** Milliseconds since epoch. */
   startedAt: number
 }
@@ -31,18 +35,50 @@ export function generateDaemonSecret(): string {
 
 const SECRET_PATTERN = /^[0-9a-f]{64}$/
 
-/** Compares a secret a client sent with the daemon's in constant time. */
-export function secretMatches(expected: string, given: string | undefined | null): boolean {
-  if (typeof given !== 'string') return false
-  const a = Buffer.from(expected, 'utf8')
-  const b = Buffer.from(given, 'utf8')
-  return a.length === b.length && timingSafeEqual(a, b)
+/** The key in the `key` file, or null when there is none or it is not 64 hex characters. */
+export function readKey(path = keyPath()): string | null {
+  let text
+  try {
+    text = readFileSync(path, 'utf8').trim()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  return SECRET_PATTERN.test(text) ? text : null
+}
+
+/**
+ * The key, created first when there is none. Two processes that start at the same moment get
+ * the same key: the new key is written to a temporary file and hard-linked to `key`, which
+ * fails when another process got there first, and that process's key is read instead. A
+ * damaged file is replaced.
+ */
+export function readOrCreateKey(path = keyPath()): string {
+  const existing = readKey(path)
+  if (existing !== null) return existing
+  makePrivateDirSync(dirname(path))
+  const key = generateDaemonSecret()
+  const temporary = join(dirname(path), `.key-${process.pid}-${randomBytes(4).toString('hex')}`)
+  writeFileAtomicSync(temporary, `${key}\n`, { mode: PRIVATE_FILE_MODE })
+  try {
+    linkSync(temporary, path)
+    return key
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    const theirs = readKey(path)
+    if (theirs !== null) return theirs
+    // The file there is damaged, so it is replaced with this process's key.
+    writeFileAtomicSync(path, `${key}\n`, { mode: PRIVATE_FILE_MODE })
+    return key
+  } finally {
+    rmSync(temporary, { force: true })
+  }
 }
 
 export type DaemonFileRead =
   | { status: 'missing' }
   | { status: 'ok'; info: DaemonInfo }
-  /** The file exists but does not hold a usable record. `reason` never contains the secret. */
+  /** The file exists but does not hold a usable record. */
   | { status: 'invalid'; reason: string }
 
 function isPositiveInteger(value: unknown): value is number {
@@ -55,9 +91,8 @@ export function parseDaemonInfo(value: unknown): DaemonInfo | string {
   if (!isPositiveInteger(value.pid)) return 'pid must be a positive whole number'
   if (!isPositiveInteger(value.port) || value.port > 65535) return 'port must be a whole number from 1 to 65535'
   if (typeof value.version !== 'string' || value.version === '') return 'version must be a string'
-  if (typeof value.secret !== 'string' || !SECRET_PATTERN.test(value.secret)) return 'secret must be 64 hex characters'
   if (typeof value.startedAt !== 'number' || !Number.isFinite(value.startedAt)) return 'startedAt must be a number'
-  return { pid: value.pid, port: value.port, version: value.version, secret: value.secret, startedAt: value.startedAt }
+  return { pid: value.pid, port: value.port, version: value.version, startedAt: value.startedAt }
 }
 
 export function readDaemonFile(path = daemonFilePath()): DaemonFileRead {

@@ -26,9 +26,14 @@ export function configPath(): string {
   return join(kurmisHome(), 'config.json')
 }
 
-/** The running daemon's pid, port, version and secret. */
+/** The running daemon's pid, port and version. */
 export function daemonFilePath(): string {
   return join(kurmisHome(), 'daemon.json')
+}
+
+/** The key every proxied and control request carries. Kept across daemon restarts. */
+export function keyPath(): string {
+  return join(kurmisHome(), 'key')
 }
 
 /** The daemon's usage snapshots, cooldowns and session placements. */

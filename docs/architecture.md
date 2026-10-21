@@ -30,8 +30,11 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   under a name derived from this folder's path (`keychainService` in
   `src/core/keychain-service.ts`).
 - `codex/<name>/` is the `CODEX_HOME` of the extra Codex login `codex:<name>`.
-- `daemon.json` holds the running daemon's pid, port, version and the secret clients send.
-  Only the user can read it.
+- `daemon.json` holds the running daemon's pid, port and version. The daemon writes it when it
+  has its port and removes it when it stops.
+- `key` holds the secret every proxied and control request carries. It is created once and
+  kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
+  of it and must keep working after the daemon restarts. Only the user can read it.
 - `state.json` holds the daemon's usage snapshots, cooldowns and which login each session is on,
   so a daemon restart keeps them.
 - `daemon.log` is the daemon's log. It never holds a token, a request body or an email. At 5 MB
@@ -48,10 +51,10 @@ digits, `-` and `_`, starting with a letter or digit, and not a Windows device n
 **Writing files.** Every JSON file is written to a temp file in the same folder, flushed to the
 disk and renamed over the old one, so a reader sees the old file or the new one, never half of
 each. On Windows a rename fails while another program has the file open, so it is retried for
-about a second. On macOS and Linux the data folder is created with mode 0700 and `daemon.json`
-and `daemon.log` with 0600. Windows ignores those modes; there the files are protected by the
-access list they inherit from `%USERPROFILE%`, which only lets in the user, SYSTEM and
-Administrators.
+about a second. On macOS and Linux the data folder is created with mode 0700, and `key`,
+`daemon.json` and `daemon.log` with 0600. Windows ignores those modes; there the files are
+protected by the access list they inherit from `%USERPROFILE%`, which only lets in the user,
+SYSTEM and Administrators.
 
 **Reading files.** A missing `config.json` means the defaults. A `config.json` that is not JSON,
 has a wrong field or has a `version` newer than this kurmis is an error that names the file and
@@ -80,7 +83,9 @@ dropped and the rest is kept, and a file that is not JSON reads as empty.
 }
 
 // daemon.json
-{ "pid": 4242, "port": 28411, "version": "0.1.0", "secret": "<64 hex characters>", "startedAt": 1768478400000 }
+{ "pid": 4242, "port": 28411, "version": "0.1.0", "startedAt": 1768478400000 }
+
+// key: 64 hex characters on one line
 ```
 
 Session placements are dropped after 7 days without a request, and beyond the newest 2000. The
@@ -97,8 +102,9 @@ and no common tool uses it. Starting it again replaces a daemon of an
 older version, after that daemon finishes the requests it has open.
 
 - **The control API** is on paths under `/_kurmis/`. It lets the CLI read status, ask for a
-  usage probe, reload config and stop the daemon. Every request needs the secret from
-  `daemon.json`.
+  usage probe, reload config and stop the daemon. The paths and their answers are in
+  `src/core/control-api.ts`. Every request needs the secret from
+  `key`, in the header `x-kurmis-key`.
 - **The proxy** is every other path. A request needs the header `x-kurmis-key: <secret>`, which
   reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`. A request may also carry
   `x-kurmis-login: claude:<name>`, which pins it to that login. Neither header is forwarded
@@ -189,6 +195,7 @@ the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it 
     and drops, the account uuid in the body, and the answers it gives when no login can serve.
   - `capacity-hold.ts`: how long a request waits when Anthropic has no capacity (529).
   - `route-headers.ts`: the `x-kurmis-*` headers and `ANTHROPIC_CUSTOM_HEADERS`.
+  - `control-api.ts`: the control API's paths and answers, shared by the CLI and the daemon.
   - `routed-env.ts`: the environment a routed Claude CLI is started with.
   - `claude-usage.ts`, `usage.ts`, `usage-rules.ts`, `countdown.ts`: the usage snapshot, the
     `get_usage` parser and the rules over the windows.
