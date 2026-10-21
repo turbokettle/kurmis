@@ -22,8 +22,8 @@ type Handler = (args: string[], context: CliContext) => Promise<number> | number
 /** After `daemon run` has finished, the process exits within this even if something still holds it open. */
 const RUN_EXIT_FALLBACK_MS = 2_000
 
-function clientOptions(context: CliContext, noLaunchd = false): DaemonClientOptions {
-  return { env: context.env, noLaunchd, onWarning: (text) => writeLine(context.stderr, `kurmis daemon: ${text}`) }
+function clientOptions(context: CliContext): DaemonClientOptions {
+  return { env: context.env }
 }
 
 /** Prints a `DaemonError` as a sentence; anything else is rethrown. */
@@ -47,24 +47,21 @@ function describeStart(result: StartResult): string {
       : `The kurmis daemon ${connection.version} already runs ${where}.`
   }
   const replaced = result.replaced === null ? '' : `, replacing version ${result.replaced}, which stops once its open requests finish`
-  const through = result.method === 'launchd' ? ' through launchd' : result.method === 'wmi' ? ' through WMI' : ''
-  return `Started the kurmis daemon ${connection.version}${through} ${where}${replaced}.`
+  return `Started the kurmis daemon ${connection.version} ${where}${replaced}.`
 }
 
 const start: Handler = async (args, context) => {
-  const parsed = parseCommandArgs('daemon start', args, {
-    'no-launchd': { type: 'boolean' },
-    env: { type: 'string', multiple: true }
-  }, context)
+  const parsed = parseCommandArgs('daemon start', args, { env: { type: 'string', multiple: true } }, context)
   if (typeof parsed === 'number') return parsed
-  const assignments = daemonRunAssignments(parsed.values.env ?? [])
+  const assignments = daemonStartAssignments(parsed.values.env ?? [])
   if (typeof assignments === 'string') return usageError('daemon start', assignments, context)
-  // As for `daemon run`: the data folder's paths come from `process.env`, and the daemon this
-  // starts gets the variables through `context.env`. The Windows logon script passes them so.
+  // The Windows logon script passes the variables this way, since a program started at logon
+  // gets only the user's environment. The data folder's paths are read from `process.env`
+  // (`src/data/paths.ts`), and the daemon this starts gets the variables through `context.env`.
   for (const [name, value] of Object.entries(assignments)) process.env[name] = value
   const startContext = { ...context, env: { ...context.env, ...assignments } }
   try {
-    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(startContext, parsed.values['no-launchd'] === true))))
+    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(startContext))))
     return EXIT_OK
   } catch (error) {
     return failed(error, context)
@@ -72,10 +69,10 @@ const start: Handler = async (args, context) => {
 }
 
 const restart: Handler = async (args, context) => {
-  const parsed = parseCommandArgs('daemon restart', args, { 'no-launchd': { type: 'boolean' } }, context)
+  const parsed = parseCommandArgs('daemon restart', args, {}, context)
   if (typeof parsed === 'number') return parsed
   try {
-    writeLine(context.stdout, describeStart(await restartDaemon(clientOptions(context, parsed.values['no-launchd'] === true))))
+    writeLine(context.stdout, describeStart(await restartDaemon(clientOptions(context))))
     return EXIT_OK
   } catch (error) {
     return failed(error, context)
@@ -160,10 +157,10 @@ const status: Handler = async (args, context) => {
 }
 
 /**
- * The `--env NAME=VALUE` assignments of `daemon run`, as variables, or a sentence saying what is
- * wrong. Only the kurmis variables a daemon job carries (`DAEMON_JOB_VARIABLES`) may be set.
+ * The `--env NAME=VALUE` assignments of `daemon start`, as variables, or a sentence saying what
+ * is wrong. Only the kurmis variables a login item carries (`DAEMON_JOB_VARIABLES`) may be set.
  */
-export function daemonRunAssignments(values: readonly string[]): Record<string, string> | string {
+export function daemonStartAssignments(values: readonly string[]): Record<string, string> | string {
   const out: Record<string, string> = {}
   for (const value of values) {
     const at = value.indexOf('=')
@@ -177,15 +174,9 @@ export function daemonRunAssignments(values: readonly string[]): Record<string, 
 }
 
 const run: Handler = async (args, context) => {
-  const parsed = parseCommandArgs('daemon run', args, { env: { type: 'string', multiple: true } }, context)
+  const parsed = parseCommandArgs('daemon run', args, {}, context)
   if (typeof parsed === 'number') return parsed
-  const assignments = daemonRunAssignments(parsed.values.env ?? [])
-  if (typeof assignments === 'string') return usageError('daemon run', assignments, context)
-  // The data folder's paths are read from `process.env` (`src/data/paths.ts`), so the variables
-  // go there as well as into the environment the daemon hands to the programs it starts.
-  for (const [name, value] of Object.entries(assignments)) process.env[name] = value
-  const env = { ...context.env, ...assignments }
-  const code = await runDaemon({ env, stdout: context.stdout, stderr: context.stderr })
+  const code = await runDaemon({ env: context.env, stdout: context.stdout, stderr: context.stderr })
   // A timer or socket left open by mistake must not keep a stopped daemon around.
   setTimeout(() => process.exit(code), RUN_EXIT_FALLBACK_MS).unref()
   return code
@@ -201,20 +192,20 @@ export const daemonCommand: Command = {
 The daemon is the background process that routes Claude requests. "kurmis claude" starts it
 when it is not running, so it seldom needs starting by hand.
 
-  start [--no-launchd]    Start it in the background, replacing one of an older version.
-                          --env NAME=VALUE sets a kurmis variable, as for "run"; the
-                          Windows logon entry uses it.
+  start                   Start it in the background, replacing one of an older version.
+                          --env NAME=VALUE sets a kurmis variable in the daemon's
+                          environment; the Windows logon entry uses it.
   stop                    Stop it after it finishes the requests it has open, waiting at most
                           30 seconds for them.
-  restart [--no-launchd]  Start a new one now; the old one finishes its open requests first.
+  restart                 Start a new one now; the old one finishes its open requests first.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
   run                     Run it in this terminal instead of the background (what "start"
-                          launches). --env NAME=VALUE sets a kurmis variable in its
-                          environment; kurmis uses it when it starts the daemon through WMI.
+                          launches).
 
-On macOS, a daemon started from an ssh login could not read the login Keychain, so "start"
-asks launchd to start it in your desktop session; --no-launchd starts it directly instead.
+On macOS, a daemon started from an ssh login cannot read the login Keychain. Run "kurmis
+setup" in a terminal at the screen: the daemon then runs in your desktop session, starts
+again at each login, and ssh sessions use it.
 
 Options:
   -h, --help              Show this help.`,

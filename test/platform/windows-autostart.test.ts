@@ -94,7 +94,7 @@ function expandEnvironmentStrings(text: string, variables: Record<string, string
 const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 const ENTRY = 'C:\\Users\\Example User\\AppData\\Roaming\\npm\\node_modules\\kurmis\\dist\\kurmis.cjs'
 const SCRIPT = 'C:\\Users\\Example User\\.kurmis\\autostart.js'
-const PROGRAM = [NODE, ENTRY, 'daemon', 'start', '--no-launchd']
+const PROGRAM = [NODE, ENTRY, 'daemon', 'start']
 
 describe('programs', () => {
   it('finds the Windows folder from the environment', () => {

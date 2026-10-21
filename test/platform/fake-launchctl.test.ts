@@ -34,7 +34,6 @@ describe('fake launchctl', () => {
     const missing = await launchctl(['bootout', 'gui/501/example.one'])
     expect(missing.code).toBe(3)
     expect(missing.stderr).toContain('Boot-out failed: 3: No such process')
-    expect((await launchctl(['kickstart', 'gui/501/example.one'])).code).toBe(113)
   })
 
   it('refuses a domain that is not gui/<uid>, a missing plist, and on request every bootstrap', async () => {

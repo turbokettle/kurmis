@@ -114,12 +114,11 @@ because a renewal replaces the refresh token.
   - To change only `expiresAt` for the renewal test, read the item with `-w` into a variable,
     edit the JSON with a script, and write it back with
     `security add-generic-password -U -a <same account> -s <name> -w <json>`. Never print it.
-- **Over ssh.** ssh in and run `kurmis daemon stop`, then `kurmis daemon start`. It should
-  start through launchd within a few seconds, so it can read the Keychain. A daemon started
-  directly from ssh cannot read the login Keychain, and kurmis says so when it has to do that.
-- **launchd fallback.** With the bundle or `KURMIS_HOME` on an external volume, launchd jobs may
-  fail. `kurmis daemon start` should give up on launchd after about 5 seconds, start the
-  daemon directly, and leave no `kurmis.*` job behind (`launchctl print gui/$(id -u) | grep kurmis`).
+- **Over ssh.** Without setup: ssh in and run `kurmis daemon stop`, then `kurmis daemon start`.
+  The daemon starts, and `kurmis status` shows the logins whose token is in the Keychain
+  without a token. Then run `kurmis setup` at the screen and log out and in again. Over ssh,
+  `kurmis daemon status` should show the daemon started at that login, and `kurmis claude -p
+  --model haiku "Reply ok"` should be routed on a Keychain login.
 - **Signed-out default login.** When `claude` itself is signed out, `kurmis claude` says it
   starts on another login's credentials and still routes.
 
@@ -143,8 +142,8 @@ because a renewal replaces the refresh token.
   which is how every npm command behaves there. In PowerShell there is no such question.
 - **Daemon survives.** Start the daemon from a terminal, close the terminal window, and check
   `kurmis daemon status` in a new one. No console window should stay open for the daemon.
-- **Started from ssh.** Over OpenSSH, `kurmis daemon start` starts the daemon through WMI so it
-  outlives the ssh session. Disconnect, reconnect, and check it still runs.
+- **Started from ssh.** Without setup, over OpenSSH, `kurmis daemon start`, then disconnect and
+  reconnect. The daemon should be gone, and the next kurmis command starts it again.
 - **Autostart.** After `kurmis setup`, sign out and in. The daemon starts with no window
   showing. Also check: a user folder with non-ASCII letters or a `%` in its path, and Windows
   Script Host turned off (`HKCU\Software\Microsoft\Windows Script Host\Settings`, value

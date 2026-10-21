@@ -53,20 +53,18 @@ process.env.FAKE_LAUNCHCTL_DIR = join(home, 'fake-launchctl')
 mkdirSync(process.env.FAKE_LAUNCHCTL_DIR, { recursive: true })
 delete process.env.FAKE_LAUNCHCTL_RUN
 delete process.env.FAKE_LAUNCHCTL_FAIL_BOOTSTRAP
-delete process.env.FAKE_LAUNCHCTL_JOB_EXIT
 process.env.KURMIS_REG_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), 'platform', 'fake-reg', 'reg.mjs')
 process.env.FAKE_REG_DIR = join(home, 'fake-reg')
 mkdirSync(process.env.FAKE_REG_DIR, { recursive: true })
 delete process.env.FAKE_REG_FAIL
 
-// The Windows programs: PowerShell (the WMI start) fails and records its calls, taskkill
+// The Windows programs: PowerShell (the Credential Manager read) fails and records its calls, taskkill
 // records its calls and ends only the one pid it is given, and wscript, which kurmis only names
 // in the logon entry, fails when run. src/platform/system-programs.ts falls back to these
 // variables of this process even when a test hands kurmis an environment without them.
 const fakeWindows = join(dirname(fileURLToPath(import.meta.url)), 'platform', 'fake-windows')
 process.env.KURMIS_POWERSHELL_PROGRAM = join(fakeWindows, 'powershell.mjs')
 process.env.FAKE_POWERSHELL_DIR = join(home, 'fake-powershell')
-delete process.env.FAKE_POWERSHELL_PID
 process.env.KURMIS_TASKKILL_PROGRAM = join(fakeWindows, 'taskkill.mjs')
 process.env.FAKE_TASKKILL_DIR = join(home, 'fake-taskkill')
 process.env.KURMIS_WSCRIPT_PROGRAM = join(fakeWindows, 'wscript.mjs')

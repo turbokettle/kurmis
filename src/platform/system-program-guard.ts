@@ -15,7 +15,7 @@
 // The guard is read from this process's environment and from the environment a program is
 // given, and while it is on it is added to the environment of every program kurmis starts,
 // together with `TEST_HOME_VARIABLES` when that environment lacks them. So a kurmis process that
-// a test starts with an environment of its own (a daemon, a launchd job's command) keeps the
+// a test starts with an environment of its own (a daemon, a login item's command) keeps the
 // guard, uses the test's temporary home rather than the real one, and finds the fake or failing
 // `claude` and `codex` that `test/setup.ts` names. A person never sets it.
 //

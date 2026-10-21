@@ -77,7 +77,7 @@ export function systemProgram(
  * The stand-in variables, the guard and its refusal log (`system-program-guard.ts`) that are set
  * in `processEnv` but missing from `env`, and while the guard is on also the test's home and
  * the `claude` and `codex` it names (`TEST_HOME_VARIABLES`). Kurmis adds these to the environment
- * of a daemon it starts (directly, through launchd or through WMI), so a daemon a test starts
+ * of a daemon it starts, and to the login items setup writes, so a daemon a test starts
  * with an environment of its own still uses the stand-ins and the temporary home. Empty outside
  * the tests.
  */

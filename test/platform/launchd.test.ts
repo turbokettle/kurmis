@@ -1,28 +1,25 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { launchdJobFolder } from '../../src/data/paths.ts'
 import {
   AUTOSTART_LABEL,
   LAUNCHCTL_PROGRAM,
-  ONE_SHOT_LABEL_PREFIX,
-  STALE_ONE_SHOT_MS,
   bootoutJob,
   bootstrapFailure,
+  bootstrapJob,
   daemonJobEnvironment,
   daemonJobPlist,
   guiDomain,
   isMissingGuiDomain,
   isNotLoaded,
-  jobLoaded,
+  jobState,
   launchAgentsDir,
   launchctlFor,
   launchctlProgram,
   parseLaunchctlPrint,
-  plistXml,
-  startThroughLaunchd
+  plistXml
 } from '../../src/platform/launchd.ts'
 import type { RunResult } from '../../src/platform/run.ts'
 import { withoutAddedVariables } from '../host.ts'
@@ -42,7 +39,6 @@ function result(code: number, stdout = '', stderr = ''): RunResult {
 beforeEach(() => {
   rmSync(fakeDir(), { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(fakeDir(), { recursive: true })
-  rmSync(launchdJobFolder(), { recursive: true, force: true, maxRetries: 10 })
 })
 
 describe('launchctl program', () => {
@@ -158,8 +154,8 @@ describe('daemonJobEnvironment', () => {
 
 describe('daemonJobPlist', () => {
   it('runs once at load, abandons its process group, keeps nothing alive and throws output away', () => {
-    const text = daemonJobPlist({ label: 'kurmis.start.0000', programArguments: ['/usr/bin/node', '/tmp/k.cjs'], environment: { HOME: '/Users/example', PATH: '/usr/bin' } })
-    expect(text).toContain('<key>Label</key>\n  <string>kurmis.start.0000</string>')
+    const text = daemonJobPlist({ label: AUTOSTART_LABEL, programArguments: ['/usr/bin/node', '/tmp/k.cjs'], environment: { HOME: '/Users/example', PATH: '/usr/bin' } })
+    expect(text).toContain('<key>Label</key>\n  <string>kurmis.daemon</string>')
     expect(text).toContain('<key>WorkingDirectory</key>\n  <string>/Users/example</string>')
     expect(text).toContain('<key>RunAtLoad</key>\n  <true/>')
     expect(text).toContain('<key>AbandonProcessGroup</key>\n  <true/>')
@@ -173,18 +169,9 @@ describe('launchctl answers', () => {
   it('reads a loaded job from print, ignoring nested lines', () => {
     const out = 'gui/501/kurmis.daemon = {\n\tactive count = 1\n\tpath = /Users/example/Library/LaunchAgents/kurmis.daemon.plist\n' +
       '\tstate = running\n\tpid = 4242\n\tendpoints = {\n\t\tpid = 7\n\t}\n}\n'
-    expect(parseLaunchctlPrint(result(0, out))).toEqual({
-      loaded: true, path: '/Users/example/Library/LaunchAgents/kurmis.daemon.plist', pid: 4242, lastExitCode: null
-    })
-    expect(parseLaunchctlPrint(result(0, 'x = {\n\tstate = not running\n\tpid = 5\n}\n'))).toEqual({ loaded: true, path: null, pid: null, lastExitCode: null })
-    expect(parseLaunchctlPrint(result(113, '', 'Could not find service "x" in domain for port'))).toEqual({ loaded: false, path: null, pid: null, lastExitCode: null })
-  })
-
-  it("reads a job's last exit code, which launchd gives as 78 when it could not start the program", () => {
-    const exited = parseLaunchctlPrint(result(0, 'x = {\n\tstate = not running\n\tlast exit code = 78: EX_CONFIG\n\tsub = {\n\t\tlast exit code = 1\n\t}\n}\n'))
-    expect(exited.lastExitCode).toBe(78)
-    expect(parseLaunchctlPrint(result(0, 'x = {\n\tlast exit code = 0\n}\n')).lastExitCode).toBe(0)
-    expect(parseLaunchctlPrint(result(0, 'x = {\n\tlast exit code = (never exited)\n}\n')).lastExitCode).toBeNull()
+    expect(parseLaunchctlPrint(result(0, out))).toEqual({ loaded: true, path: '/Users/example/Library/LaunchAgents/kurmis.daemon.plist' })
+    expect(parseLaunchctlPrint(result(0, 'x = {\n\tstate = not running\n\tsub = {\n\t\tpath = /tmp/nested\n\t}\n}\n'))).toEqual({ loaded: true, path: null })
+    expect(parseLaunchctlPrint(result(113, '', 'Could not find service "x" in domain for port'))).toEqual({ loaded: false, path: null })
   })
 
   it('tells "not loaded" and "no GUI domain" apart from other failures', () => {
@@ -213,57 +200,22 @@ describe('launchctl answers', () => {
   })
 })
 
-describe('startThroughLaunchd', () => {
-  const program = ['/usr/local/bin/node', '/tmp/kurmis.cjs', 'daemon', 'start', '--no-launchd']
-
-  it('writes a private one-shot plist, loads it into the GUI domain, and removes it again', async () => {
-    const job = await startThroughLaunchd({ programArguments: program, env: process.env })
-    expect(job.label).toMatch(new RegExp(`^${ONE_SHOT_LABEL_PREFIX.replace('.', '\\.')}\\.[0-9a-f]{8}$`))
-    expect(job.plistPath).toBe(join(launchdJobFolder(), `${job.label}.plist`))
-    if (process.platform !== 'win32') expect(statSync(job.plistPath).mode & 0o777).toBe(0o600)
-    const text = readFileSync(job.plistPath, 'utf8')
-    for (const arg of program) expect(text).toContain(`<string>${arg}</string>`)
-    expect(text).toContain(`<key>KURMIS_HOME</key>\n    <string>${resolve(process.env.KURMIS_HOME ?? '')}</string>`)
-    expect(calls()).toEqual([['bootstrap', guiDomain(), job.plistPath]])
-    expect(await jobLoaded(job.label, launchctlFor())).toBe(true)
-
-    await job.remove()
-    await job.remove()
-    expect(existsSync(job.plistPath)).toBe(false)
-    expect(calls().filter((call) => call[0] === 'bootout')).toEqual([['bootout', `${guiDomain()}/${job.label}`]])
-    expect(await jobLoaded(job.label, launchctlFor())).toBe(false)
+describe('the login item in the fake launchctl', () => {
+  it('loads and unloads it in the GUI domain', async () => {
+    const plist = join(process.env.HOME ?? '', 'example-job.plist')
+    writeFileSync(plist, daemonJobPlist({ label: 'example.job', programArguments: ['/usr/bin/true'], environment: daemonJobEnvironment() }))
+    await bootstrapJob(plist, launchctlFor())
+    expect(calls()).toEqual([['bootstrap', guiDomain(), plist]])
+    expect(await jobState('example.job', launchctlFor())).toEqual({ loaded: true, path: plist })
+    expect(await bootoutJob('example.job', launchctlFor())).toBe(true)
+    expect((await jobState('example.job', launchctlFor())).loaded).toBe(false)
   })
 
-  it('gives every start a label of its own', async () => {
-    const [one, two] = await Promise.all([
-      startThroughLaunchd({ programArguments: program, env: process.env }),
-      startThroughLaunchd({ programArguments: program, env: process.env })
-    ])
-    expect(one?.label).not.toBe(two?.label)
-    await Promise.all([one?.remove(), two?.remove()])
-  })
-
-  it('removes the plist and says why when launchd refuses the job', async () => {
-    const env = { ...process.env, FAKE_LAUNCHCTL_FAIL_BOOTSTRAP: '125' }
-    await expect(startThroughLaunchd({ programArguments: program, env })).rejects.toThrow(/nobody is logged in at this Mac's screen/)
-    expect(readdirSync(launchdJobFolder())).toEqual([])
-  })
-
-  it('unloads and deletes old one-shot jobs a killed CLI left behind, and leaves recent ones', async () => {
-    mkdirSync(launchdJobFolder(), { recursive: true })
-    const old = join(launchdJobFolder(), `${ONE_SHOT_LABEL_PREFIX}.0badc0de.plist`)
-    const recent = join(launchdJobFolder(), `${ONE_SHOT_LABEL_PREFIX}.12345678.plist`)
-    const other = join(launchdJobFolder(), 'notes.txt')
-    for (const file of [old, recent, other]) writeFileSync(file, 'x')
-    const past = (Date.now() - STALE_ONE_SHOT_MS - 60_000) / 1000
-    utimesSync(old, past, past)
-    utimesSync(other, past, past)
-    const job = await startThroughLaunchd({ programArguments: program, env: process.env })
-    expect(existsSync(old)).toBe(false)
-    expect(existsSync(recent)).toBe(true)
-    expect(existsSync(other)).toBe(true)
-    expect(calls()[0]).toEqual(['bootout', `${guiDomain()}/${ONE_SHOT_LABEL_PREFIX}.0badc0de`])
-    await job.remove()
+  it('says why when launchd refuses it', async () => {
+    const plist = join(process.env.HOME ?? '', 'example-refused.plist')
+    writeFileSync(plist, daemonJobPlist({ label: 'example.refused', programArguments: ['/usr/bin/true'], environment: daemonJobEnvironment() }))
+    await expect(bootstrapJob(plist, launchctlFor({ ...process.env, FAKE_LAUNCHCTL_FAIL_BOOTSTRAP: '125' })))
+      .rejects.toThrow(/nobody is logged in at this Mac's screen/)
   })
 
   it('runs the program with only the plist environment and HOME as its folder, when the fake runs jobs', async () => {
@@ -277,7 +229,9 @@ describe('startThroughLaunchd', () => {
       SSH_TTY: '/dev/ttys001',
       KURMIS_CLAUDE_BIN: '/tmp/fake-claude.js'
     }
-    const job = await startThroughLaunchd({ programArguments: [process.execPath, '-e', script, out], env })
+    const plist = join(process.env.HOME ?? '', 'example-run.plist')
+    writeFileSync(plist, daemonJobPlist({ label: 'example.run', programArguments: [process.execPath, '-e', script, out], environment: daemonJobEnvironment(env) }))
+    await bootstrapJob(plist, launchctlFor(env))
     for (let i = 0; i < 200 && !existsSync(out); i++) await sleep(25)
     const seen = JSON.parse(readFileSync(out, 'utf8')) as { env: Record<string, string>; cwd: string }
     const expected = { ...daemonJobEnvironment(env) }
@@ -291,8 +245,8 @@ describe('startThroughLaunchd', () => {
     expect(seenEnv.KURMIS_CLAUDE_BIN).toBe('/tmp/fake-claude.js')
     expect(realpathSync(seen.cwd)).toBe(realpathSync(process.env.HOME ?? '.'))
     const runs = readFileSync(join(fakeDir(), 'runs.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { label: string })
-    expect(runs.map((run) => run.label)).toEqual([job.label])
-    await job.remove()
+    expect(runs.map((run) => run.label)).toEqual(['example.run'])
+    await bootoutJob('example.run', launchctlFor(env))
   })
 })
 

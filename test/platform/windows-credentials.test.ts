@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { keychainService } from '../../src/core/keychain-service.ts'
 import type { RunResult } from '../../src/platform/run.ts'
+import { realSystemProgram } from '../../src/platform/system-programs.ts'
 import {
   CHUNK_CHARS,
   chooseAccount,
@@ -11,6 +12,8 @@ import {
   MAX_ENCODED_COMMAND_CHARS,
   parseCredEnumOutput,
   powerShellCredentialRead,
+  powerShellInvocation,
+  powerShellQuote,
   preferredAccounts,
   readStoredRecords,
   type CredentialRead,
@@ -201,5 +204,22 @@ describe('holdsStoredRecord', () => {
     expect(await holdsStoredRecord(null, {}, 'darwin', held.read)).toBe(false)
     expect(held.calls).toHaveLength(2)
     expect(await holdsStoredRecord(null, {}, 'win32', () => Promise.reject(new Error('PowerShell exited with code 1')))).toBe(false)
+  })
+})
+
+describe('PowerShell', () => {
+  it('doubles every quote character PowerShell ends a single-quoted string at', () => {
+    expect(powerShellQuote("it's")).toBe("'it''s'")
+    expect(powerShellQuote('a\u2018b\u2019c\u201ad\u201be')).toBe("'a\u2018\u2018b\u2019\u2019c\u201a\u201ad\u201b\u201be'")
+    expect(powerShellQuote("O\u2019Brien's")).toBe("'O\u2019\u2019Brien''s'")
+  })
+
+  it('runs powershell from the Windows folder with the script encoded', () => {
+    const { program, args } = powerShellInvocation('Write-Output 1', { SystemRoot: 'D:\\Windows' })
+    // Every test has the stand-in; the real program is in the Windows folder.
+    expect(program).toBe(process.env.KURMIS_POWERSHELL_PROGRAM)
+    expect(realSystemProgram('powershell', { SystemRoot: 'D:\\Windows' })).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    expect(args.slice(0, 5)).toEqual(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'])
+    expect(Buffer.from(args[5] ?? '', 'base64').toString('utf16le')).toBe('Write-Output 1')
   })
 })

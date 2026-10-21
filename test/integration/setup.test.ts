@@ -153,10 +153,10 @@ describe.skipIf(process.platform !== 'darwin')('kurmis setup on macOS', () => {
     expect(readFileSync(backup, 'utf8')).toBe(ORIGINAL)
     expect(fileMode(backup)).toBe(0o600)
 
-    // The login item: a plist that starts `daemon start --no-launchd` with this world's data
-    // folder, loaded into the user's GUI domain.
+    // The login item: a plist that starts `daemon start` with this world's data folder, loaded
+    // into the user's GUI domain.
     const plist = readFileSync(plistPath(world), 'utf8')
-    expect(plist).toContain(`<string>${bundlePath(world)}</string>\n    <string>daemon</string>\n    <string>start</string>\n    <string>--no-launchd</string>`)
+    expect(plist).toContain(`<string>${bundlePath(world)}</string>\n    <string>daemon</string>\n    <string>start</string>\n  </array>`)
     expect(plist).toContain(`<key>KURMIS_HOME</key>\n    <string>${world.data}</string>`)
     expect(plist).toContain(`<key>HOME</key>\n    <string>${world.home}</string>`)
     expect(plist).not.toMatch(/ANTHROPIC_|SSH_|CLAUDE_CONFIG_DIR/)
@@ -299,7 +299,7 @@ describe.runIf(process.platform === 'win32')('kurmis setup on Windows', () => {
     const text = readFileSync(script).subarray(2).toString('utf16le')
     // A folder with a space in it is quoted on the command line, and the quote is escaped in
     // the script's string.
-    expect(text).toMatch(/daemon start --no-launchd --env (\\")?KURMIS_HOME=/)
+    expect(text).toMatch(/daemon start --env (\\")?KURMIS_HOME=/)
     expect(text).not.toContain(key)
 
     const routed = await plainClaude(world, ['-p', 'hi'])

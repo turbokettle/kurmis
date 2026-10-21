@@ -8,12 +8,9 @@
 //   group of its own, so closing the terminal window does not end it, and `windowsHide` keeps
 //   any window it opens hidden. Node cannot ask for `CREATE_BREAKAWAY_FROM_JOB`, so a child
 //   stays in a job object its parent is in. Windows' OpenSSH server puts each session in such a
-//   job and ends every process in it when the session closes, detached ones included. So from
-//   an ssh session the daemon is created through WMI instead (`Win32_Process.Create`, run by
-//   PowerShell): WMI's own host process is its parent and it is in no job of the session.
-//   Measured on Windows 10: such a process outlives the ssh session. Terminals
-//   that put their children in a kill-on-close job (some IDE terminals) are not detected; a
-//   daemon started from one ends with it, and the next kurmis command starts it again.
+//   job and ends every process in it when the session closes, and some IDE terminals do the
+//   same when they close. A daemon started there ends with them, and the next kurmis command
+//   starts it again.
 //
 // Which bundle runs the daemon: the one that is running now, or `KURMIS_ENTRY` (a test hook,
 // for tests that run kurmis from the source tree, where there is no bundle to start).
@@ -22,9 +19,7 @@ import { realpathSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { posix, win32 } from 'node:path'
 import { posixPathFolders, windowsEnv, windowsPathFolders } from './programs.ts'
-import { runProgram, type RunResult } from './run.ts'
 import { refusedByGuard, withGuard } from './system-program-guard.ts'
-import { systemProgram } from './system-programs.ts'
 
 /** The test hook naming the bundle a daemon is started from. */
 export const ENTRY_VARIABLE = 'KURMIS_ENTRY'
@@ -141,11 +136,6 @@ export function nodeForJobs(options: NodeForJobsOptions = {}): string {
   return running
 }
 
-/** Whether this process runs in an ssh session: the ssh server sets these, and children inherit them. */
-export function inSshSession(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY)
-}
-
 export interface DetachedStart {
   command: string
   args: readonly string[]
@@ -216,66 +206,4 @@ function quoteWindowsArgument(arg: string): string {
     backslashes = 0
   }
   return `${out}${'\\'.repeat(backslashes * 2)}"`
-}
-
-/**
- * A PowerShell single-quoted string. PowerShell ends such a string at any of the single quote
- * characters `'`, `‘`, `’`, `‚` and `‛`, so each of them inside is doubled.
- */
-export function powerShellQuote(text: string): string {
-  return `'${text.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`
-}
-
-/**
- * The PowerShell script that creates `argv` in `cwd` through WMI and prints `pid <n>`. WMI's
- * `ReturnValue` is not 0 when it refused: 2 access denied, 9 path not found, and so on. Every
- * value is in a single-quoted PowerShell string, so nothing in a path is run.
- *
- * `Win32_ProcessStartup` with `ShowWindow` 0 (SW_HIDE) keeps a console window from showing for
- * the new process. The script uses only cmdlets, hashtables and a cast to `[uint16]`, which
- * PowerShell's Constrained Language Mode allows, and no .NET calls such as `[Console]::`, which
- * it blocks; output goes through `Write-Output`.
- */
-export function wmiCreateScript(argv: readonly string[], cwd: string): string {
-  return [
-    "$ProgressPreference='SilentlyContinue'",
-    "$ErrorActionPreference='Stop'",
-    "$s=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}",
-    `$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${powerShellQuote(windowsCommandLine(argv))};` +
-      `CurrentDirectory=${powerShellQuote(cwd)};ProcessStartupInformation=$s}`,
-    'if($r.ReturnValue -ne 0){Write-Output "Win32_Process.Create answered $($r.ReturnValue)";exit 1}',
-    "Write-Output ('pid '+$r.ProcessId)"
-  ].join('\n')
-}
-
-/**
- * `powershell.exe` in the Windows folder (or the stand-in `KURMIS_POWERSHELL_PROGRAM` names), and
- * the arguments that run `script` without a profile.
- */
-export function powerShellInvocation(script: string, env: NodeJS.ProcessEnv): { program: string; args: string[] } {
-  return {
-    program: systemProgram('powershell', env),
-    args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
-  }
-}
-
-/** Reads what `wmiCreateScript` printed: the new process's pid. Throws for anything else. */
-export function parseWmiCreateAnswer(result: RunResult): number {
-  const match = /^pid ([1-9]\d*)$/m.exec(result.stdout.trim())
-  if (result.code === 0 && match !== null) return Number(match[1])
-  const said = (result.error ?? result.stderr.trim()) || result.stdout.trim() || `exit ${String(result.code)}`
-  throw new Error(`WMI did not create the process: ${said}`)
-}
-
-export type ProgramRunner = typeof runProgram
-
-/**
- * Creates `argv` through WMI (Windows only), outside the job object of an ssh session, and
- * answers its pid. The process gets the user's own environment from Windows, not this one's,
- * so whatever it needs from here has to be in `argv`.
- */
-export async function createThroughWmi(argv: readonly string[], cwd: string, env: NodeJS.ProcessEnv,
-  run: ProgramRunner = runProgram): Promise<number> {
-  const { program, args } = powerShellInvocation(wmiCreateScript(argv, cwd), env)
-  return parseWmiCreateAnswer(await run(program, args, { timeoutMs: 60_000, env }))
 }

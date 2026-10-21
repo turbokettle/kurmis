@@ -1,13 +1,13 @@
 // Starting the daemon when the user logs in, for `kurmis setup`: a launchd agent on macOS and a
 // per-user logon entry on Windows (`windows-autostart.ts`). Other platforms answer a warning.
 //
-// Both run `<node> <kurmis bundle> daemon start --no-launchd`, which starts the daemon detached
-// and exits, the same way every other start does. So `setup --undo`, which unloads the launchd
-// job, does not end a daemon that is running.
+// Both run `<node> <kurmis bundle> daemon start`, which starts the daemon detached and exits,
+// the same way every other start does. So `setup --undo`, which unloads the launchd job, does
+// not end a daemon that is running.
 //
-// - **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist`, with the shape of the one-shot
-//   jobs in `launchd.ts` (RunAtLoad, AbandonProcessGroup, no KeepAlive, output thrown away, the
-//   environment from `daemonJobEnvironment`). launchd loads it at every login. Registering also
+// - **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist` (`daemonJobPlist` in `launchd.ts`:
+//   RunAtLoad, AbandonProcessGroup, no KeepAlive, output thrown away, the environment from
+//   `daemonJobEnvironment`). launchd loads it at every login. Registering also
 //   loads it now (`launchctl bootstrap`), which runs it once: a daemon that already runs makes
 //   that start a no-op. A plist whose content changed is unloaded and loaded again, since launchd
 //   keeps what it read at load time. Unregistering unloads it (`bootout`) and deletes it.
@@ -77,7 +77,7 @@ const UNSUPPORTED = 'Starting the daemon at login is not supported on this platf
 const NO_ENTRY = 'kurmis is not running from its bundle, so there is no program to start at login; ' +
   'run kurmis setup from the installed kurmis.'
 
-/** The program a login item runs: `<node> <entry> daemon start --no-launchd`, or null without a bundle. */
+/** The program a login item runs: `<node> <entry> daemon start`, or null without a bundle. */
 function loginProgram(options: AutostartOptions, platform: NodeJS.Platform): string[] | null {
   const entry = options.entry === undefined ? kurmisEntry({ env: options.env }) : options.entry
   if (entry === null) return null

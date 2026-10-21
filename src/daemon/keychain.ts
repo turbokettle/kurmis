@@ -288,23 +288,3 @@ function failureKindOf(error: KeychainReadError): KeychainFailureKind {
   if (error.code === null) return 'not_run'
   return 'failed'
 }
-
-/**
- * Whether this process can read the login Keychain at all, or why not.
- *
- * A process started from an ssh login runs in the ssh session, where the login Keychain cannot
- * be read, and so does everything it starts: a Claude CLI started there finds no token and says
- * "Not logged in". `security show-keychain-info login.keychain` shows no dialog either way: it
- * prints the Keychain's settings when it can read it, and fails with "User interaction is not
- * allowed" when it cannot. The daemon calls this at start to tell whether it has to be started
- * through launchd instead.
- */
-export async function probeLoginKeychain(
-  securityProgram: string,
-  timeoutMs: number = KEYCHAIN_READ_TIMEOUT_MS
-): Promise<{ readable: true } | { readable: false; reason: string }> {
-  const result = await runProgram(securityProgram, ['show-keychain-info', 'login.keychain'],
-    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES })
-  const failure = failureOf(result, timeoutMs)
-  return failure === null ? { readable: true } : { readable: false, reason: failure }
-}

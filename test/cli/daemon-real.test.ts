@@ -1,7 +1,7 @@
 // The real bundle, request handling included: `kurmis daemon start`, `status`, `stop` and the
 // version handover against a daemon that runs `createDaemonApp`, with the fake claude, codex and
 // Anthropic API. Skipped while `createDaemonApp` is not implemented.
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -73,25 +73,24 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     expect(existsSync(join(home, 'daemon.json'))).toBe(false)
   }, 60_000)
 
-  it('daemon run --env KURMIS_HOME=<folder> uses that data folder, as a start through WMI on Windows needs', async () => {
+  it('daemon start --env KURMIS_HOME=<folder> starts a daemon on that data folder, as the Windows logon entry needs', async () => {
     const bundle = await buildTestBundle({ version: '0.5.0', entry: 'real' })
     const port = await freePort()
     const home = dataFolderWithPort(port)
     daemons.push(new OwnDaemons(home, [bundle]))
     const other = dataFolderWithPort(await freePort())
-    const env: NodeJS.ProcessEnv = { ...process.env, KURMIS_HOME: other, KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT, KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT, KURMIS_UPSTREAM_URL: api.url }
-    delete env.NODE_OPTIONS
-    const child = spawn(process.execPath, [bundle, 'daemon', 'run', '--env', `KURMIS_HOME=${home}`], { env, stdio: 'ignore' })
-    const exited = new Promise<number | null>((resolve) => child.once('exit', resolve))
-    try {
-      await waitUntil(() => readDaemonFile(join(home, 'daemon.json')).status === 'ok', 30_000, 'daemon.json in the folder --env named')
-      expect(existsSync(join(other, 'daemon.json'))).toBe(false)
-      const stop = await controlRequest({ port, key: readOrCreateKey(join(home, 'key')), method: 'POST', path: CONTROL_PATHS.stop })
-      expect(stop).toMatchObject({ kind: 'answered', status: 200 })
-      expect(await exited).toBe(0)
-    } finally {
-      child.kill('SIGKILL')
-    }
+    daemons.push(new OwnDaemons(other, [bundle]))
+    const started = await kurmis(bundle, other, ['daemon', 'start', '--env', `KURMIS_HOME=${home}`])
+    expect(started).toMatchObject({ code: 0, stderr: '' })
+    // The daemon may answer before it has written daemon.json.
+    await waitUntil(() => readDaemonFile(join(home, 'daemon.json')).status === 'ok', 10_000, 'daemon.json in the folder --env named')
+    const read = readDaemonFile(join(home, 'daemon.json'))
+    expect(read.status === 'ok' && read.info).toMatchObject({ port })
+    expect(existsSync(join(other, 'daemon.json'))).toBe(false)
+    const pid = read.status === 'ok' ? read.info.pid : 0
+    const stop = await controlRequest({ port, key: readOrCreateKey(join(home, 'key')), method: 'POST', path: CONTROL_PATHS.stop })
+    expect(stop).toMatchObject({ kind: 'answered', status: 200 })
+    await waitUntil(() => !processExists(pid), 10_000, 'the daemon to exit')
   }, 60_000)
 
   it('hands over to a newer version while a proxied request finishes on the older one', async () => {

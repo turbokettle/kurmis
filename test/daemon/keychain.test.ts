@@ -10,7 +10,6 @@ import {
   KeychainReadError,
   SECURITY_PROGRAM,
   keychainHoldsSecret,
-  probeLoginKeychain,
   readKeychainItem,
   type KeychainReaderOptions,
   type KeychainReadFailure
@@ -395,23 +394,6 @@ test('readKeychainItem answers the item, null for an empty one, and throws with 
   const error = await readKeychainItem(FAKE_SECURITY, 'Claude Code-credentials-00000000').catch((thrown: unknown) => thrown)
   expect(error).toBeInstanceOf(KeychainReadError)
   expect(error).toMatchObject({ code: 44, timedOut: false })
-})
-
-// A daemon started from an ssh session cannot read the login Keychain. `show-keychain-info` is
-// the question, because it shows no dialog whichever way it answers.
-test('the probe finds a readable login Keychain readable', async () => {
-  expect(await probeLoginKeychain(FAKE_SECURITY)).toEqual({ readable: true })
-  expect(keychain.calls()).toEqual([['show-keychain-info', 'login.keychain']])
-})
-
-test('the probe says why a login Keychain cannot be read', async () => {
-  keychain.setMode('locked')
-  expect(await probeLoginKeychain(FAKE_SECURITY)).toEqual({ readable: false, reason: expect.stringContaining('User interaction is not allowed') })
-})
-
-test('a probe that never answers counts as unreadable', async () => {
-  keychain.setMode('prompt')
-  expect(await probeLoginKeychain(FAKE_SECURITY, HANG_TIMEOUT_MS)).toEqual({ readable: false, reason: expect.stringContaining('did not answer') })
 })
 
 test('the Keychain holds the secret on macOS only', () => {

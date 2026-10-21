@@ -10,9 +10,8 @@
 //                                           oversize  prints half a megabyte and exits 0
 //   calls.jsonl                           every call's arguments are appended here
 //
-// Only `find-generic-password -w -s <service>` and `show-keychain-info <keychain>` are
-// understood. An item it does not hold exits 44, as `security` does. `show-keychain-info`
-// answers that the Keychain is readable unless the mode says otherwise.
+// Only `find-generic-password -w -s <service>` is understood. An item it does not hold exits 44,
+// as `security` does.
 // `fake-keychain.ts` beside this file writes the folder.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -38,8 +37,6 @@ if (mode === 'prompt') {
 } else if (mode === 'locked') {
   process.stderr.write('security: SecKeychainSearchCopyNext: User interaction is not allowed.\n')
   process.exit(36)
-} else if (argv[0] === 'show-keychain-info') {
-  process.stdout.write(`Keychain "${argv[1] ?? 'login.keychain'}" lock-on-sleep timeout=21600s\n`)
 } else if (argv[0] !== 'find-generic-password' || !argv.includes('-w') || argv.indexOf('-s') < 0) {
   process.stderr.write(`security: unknown command "${argv.join(' ')}"\n`)
   process.exit(2)

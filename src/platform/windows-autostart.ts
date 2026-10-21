@@ -39,8 +39,8 @@
 //   ANSI code page is, so a user folder with letters outside it still works. A program started
 //   at logon gets only the user's environment from Windows, so the kurmis variables the daemon
 //   needs (`KURMIS_HOME` as an absolute path, and the test hooks, when set at setup) go on its
-//   command line as `--env NAME=VALUE`, which `daemon start` and `daemon run` put into their
-//   environment. PATH is that environment's, which is the user's normal one.
+//   command line as `--env NAME=VALUE`, which `daemon start` puts into its own environment and
+//   the daemon's. PATH is that environment's, which is the user's normal one.
 // - **A `%` in the command line:** `WshShell.Run` replaces `%NAME%` in its command line with the
 //   variable NAME (ExpandEnvironmentStrings, which has no escape), so a path or value with `%`
 //   in it could turn into something else at logon. When the command line has a `%`, the script
@@ -170,10 +170,9 @@ export function jscriptString(text: string): string {
 }
 
 /**
- * The kurmis variables a daemon started on Windows outside this process's environment needs:
- * the ones the logon script sets before it starts the daemon, and the ones a start through WMI
- * passes on the command line. `KURMIS_HOME` is made absolute (Windows path rules, from the
- * current folder), since the daemon starts in another folder.
+ * The kurmis variables the logon script passes to `daemon start` as `--env NAME=VALUE`.
+ * `KURMIS_HOME` is made absolute (Windows path rules, from the current folder), since the daemon
+ * starts in another folder.
  */
 export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}
@@ -186,7 +185,7 @@ export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env
 }
 
 export interface AutostartScript {
-  /** `[node, bundle, 'daemon', 'start', '--no-launchd']`. */
+  /** `[node, bundle, 'daemon', 'start']`. */
   programArguments: readonly string[]
   /** Variables the daemon needs, passed on its command line as `--env NAME=VALUE`. */
   environment: Readonly<Record<string, string>>
@@ -257,7 +256,7 @@ const ok = (result: RunResult): boolean => result.code === 0 && result.error ===
 
 export interface WindowsAutostartOptions {
   env: NodeJS.ProcessEnv
-  /** `[node, bundle, 'daemon', 'start', '--no-launchd']`. Needed to register. */
+  /** `[node, bundle, 'daemon', 'start']`. Needed to register. */
   programArguments?: readonly string[]
   /** Where the logon script is. `windowsAutostartScriptPath()` by default. */
   scriptPath?: string

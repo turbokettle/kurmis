@@ -42,8 +42,27 @@
 // the only source.
 import { userInfo } from 'node:os'
 import { keychainService } from '../core/keychain-service.ts'
-import { powerShellInvocation, powerShellQuote } from './detach.ts'
 import { runProgram, type RunResult } from './run.ts'
+import { systemProgram } from './system-programs.ts'
+
+/**
+ * A PowerShell single-quoted string. PowerShell ends such a string at any of the single quote
+ * characters `'`, `‘`, `’`, `‚` and `‛`, so each of them inside is doubled.
+ */
+export function powerShellQuote(text: string): string {
+  return `'${text.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`
+}
+
+/**
+ * `powershell.exe` in the Windows folder (or the stand-in `KURMIS_POWERSHELL_PROGRAM` names), and
+ * the arguments that run `script` without a profile.
+ */
+export function powerShellInvocation(script: string, env: NodeJS.ProcessEnv): { program: string; args: string[] } {
+  return {
+    program: systemProgram('powershell', env),
+    args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
+  }
+}
 
 /** The account name Claude Code falls back to when the user's name cannot be used. */
 export const CREDENTIAL_USER_NAME = 'claude-code-user'

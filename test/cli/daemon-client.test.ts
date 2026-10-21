@@ -1,8 +1,8 @@
 // The daemon client against an in-process HTTP server standing in for the daemon. Starting real
 // daemon processes is tested in `daemon-lifecycle.test.ts`.
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { isAbsolute, join, resolve, win32 } from 'node:path'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, resolve } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -11,9 +11,7 @@ import { saveConfig, defaultConfig } from '../../src/data/config.ts'
 import { readOrCreateKey, writeDaemonFile } from '../../src/data/daemon-file.ts'
 import { daemonFilePath, keyPath, kurmisHome } from '../../src/data/paths.ts'
 import { processExists } from '../../src/daemon/lifecycle.ts'
-import type { JobState } from '../../src/platform/launchd.ts'
 import {
-  chooseStartMethod,
   daemonEnvironment,
   DaemonError,
   findDaemon,
@@ -23,9 +21,7 @@ import {
   requestReload,
   restartDaemon,
   startDaemon,
-  stopDaemon,
-  waitForLaunchdJob,
-  wmiDaemonArguments
+  stopDaemon
 } from '../../src/cli/daemon-client.ts'
 
 interface FakeDaemon {
@@ -279,113 +275,24 @@ describe('startDaemon', () => {
   })
 })
 
-describe('starting through launchd', () => {
-  const securityDir = process.env.FAKE_SECURITY_DIR ?? ''
-  const launchctlDir = process.env.FAKE_LAUNCHCTL_DIR ?? ''
+describe('starting from an ssh session', () => {
   const ssh = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22' }
-  const launchctlCalls = (): string[] => {
-    const file = join(launchctlDir, 'calls.jsonl')
-    return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map((line) => (JSON.parse(line) as string[])[0] ?? '') : []
-  }
-  const noBundle = (): string => join(kurmisHome(), 'no-such-bundle.cjs')
+  const stateDirs = [process.env.FAKE_LAUNCHCTL_DIR ?? '', process.env.FAKE_SECURITY_DIR ?? '', process.env.FAKE_POWERSHELL_DIR ?? '']
 
   beforeEach(() => {
-    rmSync(launchctlDir, { recursive: true, force: true, maxRetries: 10 })
-    mkdirSync(launchctlDir, { recursive: true })
-    rmSync(join(securityDir, 'calls.jsonl'), { force: true })
+    for (const dir of stateDirs) rmSync(join(dir, 'calls.jsonl'), { force: true })
   })
 
-  afterEach(() => {
-    rmSync(join(securityDir, 'mode'), { force: true })
-  })
-
-  it('reaches only the stand-ins when it is given an empty environment', async () => {
-    // A test once called startDaemon({ env: {} }) this way, on a machine whose login Keychain
-    // could not be read: the Keychain check ran the real security, and the start loaded a real
-    // launchd job. test/setup.ts fails this test if the guard has to refuse a real program.
-    usePort(await freePort())
-    readOrCreateKey()
-    writeFileSync(join(securityDir, 'mode'), 'locked')
-    const warnings: string[] = []
-    const failure = startDaemon({ env: {}, platform: 'darwin', entry: noBundle(), onWarning: (text) => warnings.push(text) })
-    await expect(failure).rejects.toThrow(/exited at start/)
-    expect(readFileSync(join(securityDir, 'calls.jsonl'), 'utf8')).toContain('show-keychain-info')
-    // The launchctl stand-in ran; it fails here, since the empty environment names no folder for it.
-    expect(warnings.join('\n')).toMatch(/could not be started through launchd .*fake launchctl: FAKE_LAUNCHCTL_DIR is not set/)
-  }, 30_000)
-
-  it('starts the daemon directly, and removes the job, when the job exits with an error', async () => {
-    usePort(await freePort())
-    readOrCreateKey()
-    const warnings: string[] = []
-    const failure = startDaemon({
-      env: { ...process.env, ...ssh, FAKE_LAUNCHCTL_JOB_EXIT: '78' },
-      platform: 'darwin',
-      entry: noBundle(),
-      // Only the exit code can end the wait early here.
-      launchdAnswerTimeoutMs: 60_000,
-      onWarning: (text) => warnings.push(text)
-    })
-    // The direct start runs node on a bundle that does not exist, which exits at once.
-    await expect(failure).rejects.toThrow(/exited at start/)
-    expect(warnings).toHaveLength(1)
-    expect(warnings[0]).toContain('could not be started through launchd (its job exited with code 78, which launchd answers when it ' +
-      'cannot start the program, for example one on an external volume)')
-    expect(launchctlCalls()[0]).toBe('bootstrap')
-    expect(launchctlCalls()).toContain('print')
-    expect(launchctlCalls().at(-1)).toBe('bootout')
-    expect(readdirSync(join(kurmisHome(), 'launchd')).filter((name) => name.endsWith('.plist'))).toEqual([])
-  }, 30_000)
-
-  it('starts the daemon directly when no daemon answers soon after the job is loaded', async () => {
-    usePort(await freePort())
-    readOrCreateKey()
-    const warnings: string[] = []
-    // The launchctl stand-in loads the job and runs nothing, like a job that hangs.
-    const failure = startDaemon({ env: { ...process.env, ...ssh }, platform: 'darwin', entry: noBundle(), launchdAnswerTimeoutMs: 1_000,
-      onWarning: (text) => warnings.push(text) })
-    await expect(failure).rejects.toThrow(/exited at start/)
-    expect(warnings[0]).toContain('could not be started through launchd (no daemon answered within 1 second of loading its job)')
-    expect(launchctlCalls().at(-1)).toBe('bootout')
-  }, 30_000)
-})
-
-describe('waitForLaunchdJob', () => {
-  const running: JobState = { loaded: true, path: null, pid: null, lastExitCode: null }
-
-  it('ends near its deadline when the status requests hang', async () => {
-    readOrCreateKey()
-    // Two servers that take every request and never answer: the one daemon.json names, and the configured one.
-    const silent = [await listen(() => undefined), await listen(() => undefined)]
-    servers.push(...silent.map((entry) => entry.server))
-    writeDaemonFile({ pid: process.pid, port: silent[0]?.port ?? 0, version: '1.2.3', startedAt: 1 })
-    usePort(silent[1]?.port ?? 0)
-    const startedAt = Date.now()
-    const outcome = await waitForLaunchdJob({ port: silent[1]?.port ?? 0, version: '1.2.3', job: { state: () => Promise.resolve(running) },
-      answerTimeoutMs: 1_000, timeoutMs: 30_000 })
-    const took = Date.now() - startedAt
-    for (const { server } of silent) server.closeAllConnections()
-    expect(outcome).toEqual({ failure: 'no daemon answered within 1 second of loading its job' })
-    // Each status request used to get 10 seconds of its own.
-    expect(took).toBeLessThan(5_000)
-  }, 30_000)
-
-  it('ends near its deadline when launchctl does not answer, and does not ask it again meanwhile', async () => {
-    let asked = 0
-    const startedAt = Date.now()
-    const outcome = await waitForLaunchdJob({ port: 1, version: '1.2.3',
-      job: { state: () => { asked++; return new Promise<JobState>(() => undefined) } }, answerTimeoutMs: 1_000, timeoutMs: 30_000 })
-    expect(outcome).toEqual({ failure: 'no daemon answered within 1 second of loading its job' })
-    expect(Date.now() - startedAt).toBeLessThan(5_000)
-    expect(asked).toBe(1)
-  }, 30_000)
-
-  it('names the longer wait when the job exited 0 and still no daemon answered', async () => {
-    const exited: JobState = { loaded: true, path: null, pid: null, lastExitCode: 0 }
-    const outcome = await waitForLaunchdJob({ port: 1, version: '1.2.3', job: { state: () => Promise.resolve(exited) },
-      answerTimeoutMs: 500, timeoutMs: 1_500 })
-    expect(outcome).toEqual({ failure: 'no daemon answered within 1.5 seconds of loading its job, although the job exited with code 0' })
-  }, 30_000)
+  for (const platform of ['darwin', 'win32'] as const) {
+    it(`starts the daemon directly on ${platform}, and runs no launchctl, security or PowerShell`, async () => {
+      usePort(await freePort())
+      readOrCreateKey()
+      // The bundle does not exist, so the daemon node starts exits at once.
+      const failure = startDaemon({ env: { ...process.env, ...ssh }, platform, entry: join(kurmisHome(), 'no-such-bundle.cjs') })
+      await expect(failure).rejects.toThrow(/exited at start/)
+      for (const dir of stateDirs) expect(existsSync(join(dir, 'calls.jsonl'))).toBe(false)
+    }, 30_000)
+  }
 })
 
 describe('restartDaemon', () => {
@@ -484,23 +391,6 @@ describe('control requests', () => {
   })
 })
 
-describe('chooseStartMethod', () => {
-  const readable = (value: boolean) => () => Promise.resolve(value)
-
-  it('goes through launchd on macOS from ssh or where the Keychain cannot be read', async () => {
-    expect(await chooseStartMethod({ platform: 'darwin', env: { SSH_CONNECTION: 'x' }, noLaunchd: false, keychainReadable: readable(true) })).toBe('launchd')
-    expect(await chooseStartMethod({ platform: 'darwin', env: {}, noLaunchd: false, keychainReadable: readable(false) })).toBe('launchd')
-    expect(await chooseStartMethod({ platform: 'darwin', env: {}, noLaunchd: false, keychainReadable: readable(true) })).toBe('direct')
-    expect(await chooseStartMethod({ platform: 'darwin', env: { SSH_TTY: 'x' }, noLaunchd: true, keychainReadable: readable(false) })).toBe('direct')
-  })
-
-  it('goes through WMI on Windows from ssh only', async () => {
-    expect(await chooseStartMethod({ platform: 'win32', env: { SSH_CLIENT: 'x' }, noLaunchd: false, keychainReadable: readable(false) })).toBe('wmi')
-    expect(await chooseStartMethod({ platform: 'win32', env: {}, noLaunchd: false, keychainReadable: readable(false) })).toBe('direct')
-    expect(await chooseStartMethod({ platform: 'linux', env: { SSH_CLIENT: 'x' }, noLaunchd: false, keychainReadable: readable(false) })).toBe('direct')
-  })
-})
-
 describe('daemonEnvironment', () => {
   it('drops what a routed session put in the environment', () => {
     // An absolute path of this OS, which `resolve` leaves as it is (on Windows it adds a drive).
@@ -528,18 +418,5 @@ describe('daemonEnvironment', () => {
     const env = daemonEnvironment({ KURMIS_HOME: join('relative', 'data') })
     expect(isAbsolute(env.KURMIS_HOME ?? '')).toBe(true)
     expect(env.KURMIS_HOME).toBe(resolve('relative', 'data'))
-  })
-})
-
-describe('wmiDaemonArguments', () => {
-  it('puts the kurmis variables on the command line, KURMIS_HOME as an absolute Windows path', () => {
-    expect(wmiDaemonArguments('C:\\Program Files\\nodejs\\node.exe', 'C:\\kurmis\\kurmis.cjs', {
-      KURMIS_HOME: 'D:\\kurmis data', KURMIS_CLAUDE_BIN: 'C:\\c.exe', ANTHROPIC_API_KEY: 'sk-ant-api03-fake', Path: 'C:\\Windows'
-    }, {})).toEqual(['C:\\Program Files\\nodejs\\node.exe', 'C:\\kurmis\\kurmis.cjs', 'daemon', 'run',
-      '--env', 'KURMIS_HOME=D:\\kurmis data', '--env', 'KURMIS_CLAUDE_BIN=C:\\c.exe'])
-    const relative = wmiDaemonArguments('node.exe', 'kurmis.cjs', { KURMIS_HOME: 'data' }, {})
-    const home = relative[5]?.slice('KURMIS_HOME='.length) ?? ''
-    expect(win32.isAbsolute(home)).toBe(true)
-    expect(home.endsWith('\\data')).toBe(true)
   })
 })

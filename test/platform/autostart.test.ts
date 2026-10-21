@@ -32,7 +32,7 @@ describe('macOS login item', () => {
     const text = readFileSync(autostartPlistPath(), 'utf8')
     expect(text).toContain('<key>ProgramArguments</key>\n  <array>\n' +
       `    <string>${NODE}</string>\n    <string>${ENTRY}</string>\n` +
-      '    <string>daemon</string>\n    <string>start</string>\n    <string>--no-launchd</string>\n  </array>')
+      '    <string>daemon</string>\n    <string>start</string>\n  </array>')
     expect(text).toContain(`<key>KURMIS_HOME</key>\n    <string>${process.env.KURMIS_HOME ?? ''}</string>`)
     expect(text).toContain('<key>RunAtLoad</key>\n  <true/>')
     expect(text).toContain('<key>AbandonProcessGroup</key>\n  <true/>')
@@ -145,7 +145,7 @@ describe('Windows logon entry', () => {
     expect(await registerAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     const script = readFileSync(scriptPath()).subarray(2).toString('utf16le')
     expect(script).toContain('shell.Run("\\"C:\\\\Program Files\\\\nodejs\\\\node.exe\\" \\"C:\\\\Users\\\\Example User\\\\AppData\\\\Roaming' +
-      '\\\\npm\\\\node_modules\\\\kurmis\\\\dist\\\\kurmis.cjs\\" daemon start --no-launchd --env KURMIS_HOME=')
+      '\\\\npm\\\\node_modules\\\\kurmis\\\\dist\\\\kurmis.cjs\\" daemon start --env KURMIS_HOME=')
     expect(script).toContain(', 0, false);')
     const value = parseRegQuery((await regFor()(regQueryArgs())).stdout, 'kurmis')
     expect(value?.data).toBe(`${wscriptPath()} //B //Nologo //E:JScript ${scriptPath().includes(' ') ? `"${scriptPath()}"` : scriptPath()}`)

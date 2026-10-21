@@ -2976,8 +2976,8 @@ function parseCommandArgs(command, args, options, context, allowPositionals = fa
 }
 
 // src/cli/commands/claude.ts
-var import_node_fs14 = require("node:fs");
-var import_node_os9 = require("node:os");
+var import_node_fs12 = require("node:fs");
+var import_node_os8 = require("node:os");
 
 // src/core/accounts.ts
 var ACCOUNT_PROVIDERS = ["claude", "codex"];
@@ -4308,9 +4308,6 @@ function wrapperSettingsFolder() {
 function probeWorkFolder() {
   return (0, import_node_path3.join)(kurmisHome(), "probe", "cwd");
 }
-function launchdJobFolder() {
-  return (0, import_node_path3.join)(kurmisHome(), "launchd");
-}
 function windowsAutostartScriptPath() {
   return (0, import_node_path3.join)(kurmisHome(), "autostart.js");
 }
@@ -4735,14 +4732,10 @@ var import_node_fs8 = require("node:fs");
 var import_node_path8 = require("node:path");
 
 // src/platform/detach.ts
-var import_node_child_process2 = require("node:child_process");
+var import_node_child_process = require("node:child_process");
 var import_node_fs7 = require("node:fs");
 var import_node_os3 = require("node:os");
 var import_node_path6 = require("node:path");
-
-// src/platform/run.ts
-var import_node_child_process = require("node:child_process");
-var import_node_timers = require("node:timers");
 
 // src/platform/system-program-guard.ts
 var import_node_fs6 = require("node:fs");
@@ -4840,160 +4833,6 @@ function hasVariable(env, name) {
   return Object.keys(env).some((key) => key.toUpperCase() === upper && env[key] !== void 0);
 }
 
-// src/platform/run.ts
-var DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
-function invocationFor(program, args, nodePath = process.execPath) {
-  if (/\.(cmd|bat)$/i.test(program)) {
-    return { refused: `${program} is a batch file, which only cmd.exe can start; kurmis never starts a program through a shell` };
-  }
-  if (/\.(js|cjs|mjs)$/i.test(program)) return { command: nodePath, args: [program, ...args] };
-  return { command: program, args: [...args] };
-}
-function runProgram(program, args, options) {
-  const invocation = invocationFor(program, args);
-  if ("refused" in invocation) {
-    return Promise.resolve({ stdout: "", stderr: "", code: null, timedOut: false, outputTooLarge: false, error: invocation.refused });
-  }
-  const guarded = refusedByGuard(invocation.command, options.env, invocation.args);
-  if (guarded !== null) {
-    return Promise.resolve({ stdout: "", stderr: "", code: null, timedOut: false, outputTooLarge: false, error: guarded });
-  }
-  const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-  let child2;
-  try {
-    child2 = (0, import_node_child_process.spawn)(invocation.command, invocation.args, {
-      // Standard input is closed, so a program that reads it gets end-of-file at once rather
-      // than waiting on a terminal until the deadline.
-      stdio: ["ignore", "pipe", "pipe"],
-      env: withGuard(options.env ?? process.env),
-      cwd: options.cwd,
-      shell: false,
-      windowsHide: true
-    });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    return Promise.resolve({
-      stdout: "",
-      stderr: "",
-      code: null,
-      timedOut: false,
-      outputTooLarge: false,
-      error: `${program} could not be started: ${reason}`
-    });
-  }
-  return new Promise((resolve8) => {
-    const stdout = [];
-    const stderr = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let timedOut = false;
-    let outputTooLarge = false;
-    let settled = false;
-    const finish = (code, error) => {
-      if (settled) return;
-      settled = true;
-      (0, import_node_timers.clearTimeout)(timer);
-      resolve8({
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        code,
-        timedOut,
-        outputTooLarge,
-        error
-      });
-    };
-    const kill = () => {
-      child2.kill("SIGKILL");
-      child2.stdout.destroy();
-      child2.stderr.destroy();
-    };
-    const timer = (0, import_node_timers.setTimeout)(() => {
-      timedOut = true;
-      kill();
-    }, options.timeoutMs);
-    const keep = (chunks, chunk, kept) => {
-      if (outputTooLarge || timedOut) return kept;
-      if (kept + chunk.length > cap) {
-        chunks.push(chunk.subarray(0, cap - kept));
-        outputTooLarge = true;
-        kill();
-        return cap;
-      }
-      chunks.push(chunk);
-      return kept + chunk.length;
-    };
-    child2.stdout.on("data", (chunk) => {
-      stdoutBytes = keep(stdout, chunk, stdoutBytes);
-    });
-    child2.stderr.on("data", (chunk) => {
-      stderrBytes = keep(stderr, chunk, stderrBytes);
-    });
-    child2.on("error", (error) => {
-      if (child2.pid === void 0) finish(null, `${program} could not be started: ${error.message}`);
-    });
-    child2.on("close", (code, signal) => {
-      if (timedOut) finish(null, `${program} did not finish within ${String(options.timeoutMs)} ms and was killed`);
-      else if (outputTooLarge) finish(null, `${program} printed more than ${String(cap)} bytes and was killed`);
-      else if (code === null) finish(null, `${program} was ended by ${signal ?? "a signal"}`);
-      else finish(code, null);
-    });
-  });
-}
-
-// src/platform/system-programs.ts
-var SYSTEM_PROGRAM_VARIABLES = {
-  launchctl: "KURMIS_LAUNCHCTL_PROGRAM",
-  security: "KURMIS_SECURITY_PROGRAM",
-  powershell: "KURMIS_POWERSHELL_PROGRAM",
-  reg: "KURMIS_REG_PROGRAM",
-  taskkill: "KURMIS_TASKKILL_PROGRAM",
-  wscript: "KURMIS_WSCRIPT_PROGRAM"
-};
-function lookup(env, name) {
-  const exact = env[name];
-  if (exact !== void 0 && exact !== "") return exact;
-  const upper = name.toUpperCase();
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
-  }
-  return void 0;
-}
-function systemRoot(env = process.env) {
-  const value = lookup(env, "SystemRoot") ?? lookup(env, "windir");
-  return value === void 0 ? "C:\\Windows" : value.replace(/[\\/]+$/, "");
-}
-function realSystemProgram(program, env = process.env) {
-  switch (program) {
-    case "launchctl":
-      return "/bin/launchctl";
-    case "security":
-      return "/usr/bin/security";
-    case "powershell":
-      return `${systemRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-    case "reg":
-      return `${systemRoot(env)}\\System32\\reg.exe`;
-    case "taskkill":
-      return `${systemRoot(env)}\\System32\\taskkill.exe`;
-    case "wscript":
-      return `${systemRoot(env)}\\System32\\wscript.exe`;
-  }
-}
-function systemProgram(program, env = process.env, processEnv = process.env) {
-  const variable = SYSTEM_PROGRAM_VARIABLES[program];
-  return lookup(env, variable) ?? lookup(processEnv, variable) ?? realSystemProgram(program, env);
-}
-function inheritedTestHooks(env, processEnv = process.env) {
-  const out = {};
-  const guarded = lookup(env, GUARD_VARIABLE) === "1" || lookup(processEnv, GUARD_VARIABLE) === "1";
-  const names = [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, ...guarded ? TEST_HOME_VARIABLES : []];
-  for (const name of names) {
-    if (lookup(env, name) !== void 0) continue;
-    const value = lookup(processEnv, name);
-    if (value !== void 0) out[name] = value;
-  }
-  return out;
-}
-
 // src/platform/detach.ts
 var ENTRY_VARIABLE = "KURMIS_ENTRY";
 function bundleFile() {
@@ -5059,9 +4898,6 @@ function nodeForJobs(options = {}) {
   }
   return running;
 }
-function inSshSession(env = process.env) {
-  return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY);
-}
 function spawnDetached(start2) {
   return new Promise((resolve8, reject) => {
     const guarded = refusedByGuard(start2.command, start2.env, start2.args);
@@ -5069,7 +4905,7 @@ function spawnDetached(start2) {
       reject(new Error(guarded));
       return;
     }
-    const child2 = (0, import_node_child_process2.spawn)(start2.command, [...start2.args], {
+    const child2 = (0, import_node_child_process.spawn)(start2.command, [...start2.args], {
       detached: true,
       stdio: "ignore",
       env: withGuard(start2.env),
@@ -5107,35 +4943,6 @@ function quoteWindowsArgument(arg) {
     backslashes = 0;
   }
   return `${out}${"\\".repeat(backslashes * 2)}"`;
-}
-function powerShellQuote(text2) {
-  return `'${text2.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`;
-}
-function wmiCreateScript(argv, cwd) {
-  return [
-    "$ProgressPreference='SilentlyContinue'",
-    "$ErrorActionPreference='Stop'",
-    "$s=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}",
-    `$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${powerShellQuote(windowsCommandLine(argv))};CurrentDirectory=${powerShellQuote(cwd)};ProcessStartupInformation=$s}`,
-    'if($r.ReturnValue -ne 0){Write-Output "Win32_Process.Create answered $($r.ReturnValue)";exit 1}',
-    "Write-Output ('pid '+$r.ProcessId)"
-  ].join("\n");
-}
-function powerShellInvocation(script, env) {
-  return {
-    program: systemProgram("powershell", env),
-    args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]
-  };
-}
-function parseWmiCreateAnswer(result) {
-  const match = /^pid ([1-9]\d*)$/m.exec(result.stdout.trim());
-  if (result.code === 0 && match !== null) return Number(match[1]);
-  const said = (result.error ?? result.stderr.trim()) || result.stdout.trim() || `exit ${String(result.code)}`;
-  throw new Error(`WMI did not create the process: ${said}`);
-}
-async function createThroughWmi(argv, cwd, env, run2 = runProgram) {
-  const { program, args } = powerShellInvocation(wmiCreateScript(argv, cwd), env);
-  return parseWmiCreateAnswer(await run2(program, args, { timeoutMs: 6e4, env }));
 }
 
 // src/platform/npm-shim.ts
@@ -5269,6 +5076,108 @@ function tokenize(command) {
 }
 function sameCall(a, b) {
   return a.target === b.target && a.interpreters.length === 0 === (b.interpreters.length === 0) && a.interpreterArgs.join("\0") === b.interpreterArgs.join("\0") && a.targetArgs.join("\0") === b.targetArgs.join("\0");
+}
+
+// src/platform/run.ts
+var import_node_child_process2 = require("node:child_process");
+var import_node_timers = require("node:timers");
+var DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
+function invocationFor(program, args, nodePath = process.execPath) {
+  if (/\.(cmd|bat)$/i.test(program)) {
+    return { refused: `${program} is a batch file, which only cmd.exe can start; kurmis never starts a program through a shell` };
+  }
+  if (/\.(js|cjs|mjs)$/i.test(program)) return { command: nodePath, args: [program, ...args] };
+  return { command: program, args: [...args] };
+}
+function runProgram(program, args, options) {
+  const invocation = invocationFor(program, args);
+  if ("refused" in invocation) {
+    return Promise.resolve({ stdout: "", stderr: "", code: null, timedOut: false, outputTooLarge: false, error: invocation.refused });
+  }
+  const guarded = refusedByGuard(invocation.command, options.env, invocation.args);
+  if (guarded !== null) {
+    return Promise.resolve({ stdout: "", stderr: "", code: null, timedOut: false, outputTooLarge: false, error: guarded });
+  }
+  const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  let child2;
+  try {
+    child2 = (0, import_node_child_process2.spawn)(invocation.command, invocation.args, {
+      // Standard input is closed, so a program that reads it gets end-of-file at once rather
+      // than waiting on a terminal until the deadline.
+      stdio: ["ignore", "pipe", "pipe"],
+      env: withGuard(options.env ?? process.env),
+      cwd: options.cwd,
+      shell: false,
+      windowsHide: true
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return Promise.resolve({
+      stdout: "",
+      stderr: "",
+      code: null,
+      timedOut: false,
+      outputTooLarge: false,
+      error: `${program} could not be started: ${reason}`
+    });
+  }
+  return new Promise((resolve8) => {
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let outputTooLarge = false;
+    let settled = false;
+    const finish = (code, error) => {
+      if (settled) return;
+      settled = true;
+      (0, import_node_timers.clearTimeout)(timer);
+      resolve8({
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        code,
+        timedOut,
+        outputTooLarge,
+        error
+      });
+    };
+    const kill = () => {
+      child2.kill("SIGKILL");
+      child2.stdout.destroy();
+      child2.stderr.destroy();
+    };
+    const timer = (0, import_node_timers.setTimeout)(() => {
+      timedOut = true;
+      kill();
+    }, options.timeoutMs);
+    const keep = (chunks, chunk, kept) => {
+      if (outputTooLarge || timedOut) return kept;
+      if (kept + chunk.length > cap) {
+        chunks.push(chunk.subarray(0, cap - kept));
+        outputTooLarge = true;
+        kill();
+        return cap;
+      }
+      chunks.push(chunk);
+      return kept + chunk.length;
+    };
+    child2.stdout.on("data", (chunk) => {
+      stdoutBytes = keep(stdout, chunk, stdoutBytes);
+    });
+    child2.stderr.on("data", (chunk) => {
+      stderrBytes = keep(stderr, chunk, stderrBytes);
+    });
+    child2.on("error", (error) => {
+      if (child2.pid === void 0) finish(null, `${program} could not be started: ${error.message}`);
+    });
+    child2.on("close", (code, signal) => {
+      if (timedOut) finish(null, `${program} did not finish within ${String(options.timeoutMs)} ms and was killed`);
+      else if (outputTooLarge) finish(null, `${program} printed more than ${String(cap)} bytes and was killed`);
+      else if (code === null) finish(null, `${program} was ended by ${signal ?? "a signal"}`);
+      else finish(code, null);
+    });
+  });
 }
 
 // src/platform/programs.ts
@@ -6615,8 +6524,8 @@ async function writeIfUnchanged(target, next, mode) {
 }
 
 // src/cli/daemon-client.ts
-var import_node_os6 = require("node:os");
-var import_node_path15 = require("node:path");
+var import_node_os5 = require("node:os");
+var import_node_path13 = require("node:path");
 
 // src/core/proxy-rules.ts
 var ROUTE_PATHS = [
@@ -6996,195 +6905,6 @@ function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
   }
 }
 
-// src/core/keychain-service.ts
-var import_node_crypto7 = require("node:crypto");
-var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
-function keychainService(secureStorageDir) {
-  if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
-  const digest = (0, import_node_crypto7.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
-  return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
-}
-
-// src/core/credentials.ts
-function parseCredentials(text2) {
-  try {
-    const parsed = JSON.parse(text2);
-    const oauth = parsed?.claudeAiOauth;
-    if (typeof oauth?.accessToken !== "string" || oauth.accessToken.trim().length === 0) return null;
-    return {
-      accessToken: oauth.accessToken,
-      expiresAt: typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt) ? oauth.expiresAt : null,
-      hasRefreshToken: typeof oauth.refreshToken === "string" && oauth.refreshToken.trim().length > 0
-    };
-  } catch {
-    return null;
-  }
-}
-
-// src/daemon/keychain.ts
-var KEYCHAIN_CACHE_MS = 6e4;
-var KEYCHAIN_READ_TIMEOUT_MS = 3e3;
-var MAX_OUTPUT_BYTES = 256 * 1024;
-var MAX_REASON_CHARS = 500;
-function keychainHoldsSecret(platform = process.platform) {
-  return platform === "darwin";
-}
-var KeychainReadError = class extends Error {
-  constructor(reason, code, timedOut = false, outputTooLarge = false) {
-    super(reason);
-    this.reason = reason;
-    this.code = code;
-    this.timedOut = timedOut;
-    this.outputTooLarge = outputTooLarge;
-  }
-  reason;
-  code;
-  timedOut;
-  outputTooLarge;
-};
-var NO_SUCH_ITEM_EXIT_CODE = 44;
-var KEYCHAIN_NOT_ALLOWED_EXIT_CODE = 36;
-async function readKeychainItem(securityProgram, service, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
-  const result = await runProgram(
-    securityProgram,
-    ["find-generic-password", "-w", "-s", service],
-    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
-  );
-  const failure2 = failureOf(result, timeoutMs);
-  if (failure2 !== null) throw new KeychainReadError(failure2, result.code, result.timedOut, result.outputTooLarge);
-  return result.stdout.trim().length === 0 ? null : result.stdout;
-}
-function failureOf(result, timeoutMs) {
-  if (result.timedOut) return `it did not answer within ${seconds(timeoutMs)} seconds`;
-  if (result.outputTooLarge) return `it printed more than ${String(MAX_OUTPUT_BYTES)} bytes, which is not a credentials record`;
-  if (result.error !== null) return result.error;
-  if (result.code === 0) return null;
-  const said = result.stderr.trim();
-  return said.length > 0 ? said.slice(0, MAX_REASON_CHARS) : "it printed nothing on stderr";
-}
-function seconds(ms) {
-  return String(ms / 1e3);
-}
-var KeychainCredentialsReader = class {
-  constructor(options) {
-    this.options = options;
-  }
-  options;
-  cache = /* @__PURE__ */ new Map();
-  /** The read of each login going on now, with the `invalidations` count it started under. */
-  reading = /* @__PURE__ */ new Map();
-  /** How often each login was invalidated. */
-  invalidations = /* @__PURE__ */ new Map();
-  /** The logins whose failed read has been logged, until a read of one works. */
-  failureLogged = /* @__PURE__ */ new Set();
-  /**
-   * The items whose read was killed at its deadline. A `security` that does not answer is most
-   * likely showing a Keychain dialog that nobody is there to answer, and reading the item again
-   * would show another one, so none of these is read again by this reader. Neither `invalidate`
-   * nor `clear` empties it.
-   */
-  unanswered = /* @__PURE__ */ new Set();
-  read(id) {
-    return this.cache.get(id)?.value ?? null;
-  }
-  async prime(ids) {
-    await Promise.all([...new Set(ids)].map((id) => this.refresh(id)));
-  }
-  invalidate(id) {
-    this.invalidations.set(id, this.invalidatedCount(id) + 1);
-    const cached = this.cache.get(id);
-    if (cached !== void 0) this.cache.set(id, { ...cached, readAt: Number.NEGATIVE_INFINITY });
-  }
-  clear() {
-    this.cache.clear();
-    for (const id of this.reading.keys()) this.invalidations.set(id, this.invalidatedCount(id) + 1);
-  }
-  /**
-   * One read per login at a time; a second caller waits for the one already running. A read
-   * that started before the latest `invalidate` is waited for and then followed by a new one.
-   */
-  refresh(id) {
-    const cached = this.cache.get(id);
-    if (cached && this.now() - cached.readAt < KEYCHAIN_CACHE_MS) return Promise.resolve();
-    const invalidated = this.invalidatedCount(id);
-    const running = this.reading.get(id);
-    if (running !== void 0) {
-      return running.invalidated === invalidated ? running.promise : running.promise.then(() => this.refresh(id));
-    }
-    const promise = this.load(id, invalidated).finally(() => {
-      this.reading.delete(id);
-    });
-    this.reading.set(id, { promise, invalidated });
-    return promise;
-  }
-  invalidatedCount(id) {
-    return this.invalidations.get(id) ?? 0;
-  }
-  async load(id, invalidated) {
-    const timeoutMs = this.options.readTimeoutMs ?? KEYCHAIN_READ_TIMEOUT_MS;
-    const run2 = this.options.run ?? ((service2) => readKeychainItem(this.options.securityProgram, service2, timeoutMs));
-    const service = keychainService(this.options.accounts.secureStorageDir(id));
-    const keep = (value2) => {
-      if (this.invalidatedCount(id) !== invalidated) return false;
-      this.cache.set(id, { readAt: this.now(), value: value2 });
-      return true;
-    };
-    if (this.unanswered.has(service)) {
-      keep(null);
-      return;
-    }
-    let value = null;
-    let failure2 = null;
-    try {
-      const secret = await run2(service);
-      value = secret === null ? null : parseCredentials(secret);
-      if (secret === null) failure2 = { text: "the item is empty", kind: "empty", code: null };
-      else if (value === null) failure2 = { text: "the item holds no OAuth token", kind: "not_credentials", code: null };
-    } catch (error) {
-      if (error instanceof KeychainReadError && error.timedOut) {
-        this.unanswered.add(service);
-        keep(null);
-        this.options.log?.(`reading login ${id} from the Keychain item "${service}" did not answer within ${seconds(timeoutMs)} seconds, so the proxy holds no token for it, and this daemon will not read that item again until it restarts. A read that waits is usually a Keychain dialog: either a program other than the Claude CLI created the item or changed its access list, so /usr/bin/security may read it only after somebody allows it, or the login Keychain is locked. Reading again would put up another dialog.`);
-        this.options.onFailure?.({ id, kind: "timeout", code: null });
-        return;
-      }
-      if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
-        failure2 = error instanceof KeychainReadError ? {
-          text: `${error.code === null ? "no exit code" : `exit ${String(error.code)}`}: ${error.reason}`,
-          kind: failureKindOf(error),
-          code: error.code
-        } : { text: `it threw: ${error instanceof Error ? error.message : String(error)}`, kind: "failed", code: null };
-      }
-    }
-    if (!keep(value)) return;
-    if (failure2 === null) {
-      this.failureLogged.delete(id);
-    } else if (!this.failureLogged.has(id)) {
-      this.failureLogged.add(id);
-      this.options.log?.(`reading login ${id} from the Keychain item "${service}" failed, so the proxy holds no token for it (${failure2.text})`);
-      this.options.onFailure?.({ id, kind: failure2.kind, code: failure2.code });
-    }
-  }
-  now() {
-    return this.options.now?.() ?? Date.now();
-  }
-};
-function failureKindOf(error) {
-  if (error.outputTooLarge) return "too_large";
-  if (error.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE) return "not_allowed";
-  if (error.code === null) return "not_run";
-  return "failed";
-}
-async function probeLoginKeychain(securityProgram, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
-  const result = await runProgram(
-    securityProgram,
-    ["show-keychain-info", "login.keychain"],
-    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
-  );
-  const failure2 = failureOf(result, timeoutMs);
-  return failure2 === null ? { readable: true } : { readable: false, reason: failure2 };
-}
-
 // src/daemon/lifecycle.ts
 var import_node_http = require("node:http");
 var import_node_net = require("node:net");
@@ -7312,405 +7032,58 @@ function processExists(pid) {
   }
 }
 
-// src/platform/launchd.ts
-var import_node_crypto8 = require("node:crypto");
-var import_node_fs11 = require("node:fs");
-var import_node_os5 = require("node:os");
-var import_node_path13 = require("node:path");
-var LAUNCHCTL_PROGRAM = realSystemProgram("launchctl");
-var LAUNCHCTL_VARIABLE = SYSTEM_PROGRAM_VARIABLES.launchctl;
-var LAUNCHCTL_TIMEOUT_MS = 3e4;
-var AUTOSTART_LABEL = "kurmis.daemon";
-var ONE_SHOT_LABEL_PREFIX = "kurmis.start";
-var DAEMON_START_ARGS = ["daemon", "start", "--no-launchd"];
-function launchctlProgram(env = process.env, processEnv = process.env) {
-  return systemProgram("launchctl", env, processEnv);
-}
-function launchctlFor(env = process.env) {
-  const program = launchctlProgram(env);
-  return (args) => runProgram(program, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS, env });
-}
-function currentUid() {
-  return typeof process.getuid === "function" ? process.getuid() : 0;
-}
-function guiDomain(uid = currentUid()) {
-  return `gui/${String(uid)}`;
-}
-function launchAgentsDir() {
-  return (0, import_node_path13.join)((0, import_node_os5.homedir)(), "Library", "LaunchAgents");
-}
-function autostartPlistPath() {
-  return (0, import_node_path13.join)(launchAgentsDir(), `${AUTOSTART_LABEL}.plist`);
-}
-function escapeXml(text2) {
-  return text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-function plistXml(root) {
-  const lines = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-    '<plist version="1.0">',
-    "<dict>"
-  ];
-  const string = (value) => `<string>${escapeXml(value)}</string>`;
-  const scalar2 = (value) => typeof value === "boolean" ? value ? "<true/>" : "<false/>" : string(value);
-  for (const [key, value] of Object.entries(root)) {
-    lines.push(`  <key>${escapeXml(key)}</key>`);
-    if (typeof value === "string" || typeof value === "boolean") lines.push(`  ${scalar2(value)}`);
-    else if (Array.isArray(value)) lines.push("  <array>", ...value.map((item) => `    ${string(item)}`), "  </array>");
-    else {
-      lines.push("  <dict>");
-      for (const [name, item] of Object.entries(value)) {
-        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar2(item)}`);
-      }
-      lines.push("  </dict>");
-    }
+// src/platform/system-programs.ts
+var SYSTEM_PROGRAM_VARIABLES = {
+  launchctl: "KURMIS_LAUNCHCTL_PROGRAM",
+  security: "KURMIS_SECURITY_PROGRAM",
+  powershell: "KURMIS_POWERSHELL_PROGRAM",
+  reg: "KURMIS_REG_PROGRAM",
+  taskkill: "KURMIS_TASKKILL_PROGRAM",
+  wscript: "KURMIS_WSCRIPT_PROGRAM"
+};
+function lookup(env, name) {
+  const exact = env[name];
+  if (exact !== void 0 && exact !== "") return exact;
+  const upper = name.toUpperCase();
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
   }
-  lines.push("</dict>", "</plist>", "");
-  return lines.join("\n");
+  return void 0;
 }
-var DAEMON_JOB_VARIABLES = [
-  "KURMIS_HOME",
-  "KURMIS_CLAUDE_BIN",
-  "KURMIS_CODEX_BIN",
-  "KURMIS_UPSTREAM_URL",
-  "KURMIS_SECURITY_PROGRAM",
-  "KURMIS_ENTRY",
-  ...Object.values(SYSTEM_PROGRAM_VARIABLES).filter((name) => name !== "KURMIS_SECURITY_PROGRAM"),
-  GUARD_VARIABLE,
-  REFUSAL_LOG_VARIABLE
-];
-var FALLBACK_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-function daemonJobEnvironment(env = process.env, processEnv = process.env) {
-  const out = {
-    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os5.homedir)(),
-    PATH: env.PATH !== void 0 && env.PATH !== "" ? env.PATH : FALLBACK_PATH
-  };
-  const hooks = inheritedTestHooks(env, processEnv);
-  for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name] || hooks[name];
-    if (value === void 0 || value === "") continue;
-    out[name] = name === "KURMIS_HOME" ? (0, import_node_path13.resolve)(value) : value;
-  }
-  return out;
+function systemRoot(env = process.env) {
+  const value = lookup(env, "SystemRoot") ?? lookup(env, "windir");
+  return value === void 0 ? "C:\\Windows" : value.replace(/[\\/]+$/, "");
 }
-function daemonJobPlist(job) {
-  return plistXml({
-    Label: job.label,
-    ProgramArguments: job.programArguments,
-    EnvironmentVariables: job.environment,
-    WorkingDirectory: job.environment.HOME ?? (0, import_node_os5.homedir)(),
-    RunAtLoad: true,
-    AbandonProcessGroup: true,
-    StandardOutPath: "/dev/null",
-    StandardErrorPath: "/dev/null"
-  });
-}
-function parseLaunchctlPrint(result) {
-  if (result.code !== 0) return { loaded: false, path: null, pid: null, lastExitCode: null };
-  const top = /* @__PURE__ */ new Map();
-  for (const match of result.stdout.matchAll(/^\t([^\t=][^=\n]*?) = (.*)$/gm)) {
-    const key = match[1] ?? "";
-    if (!top.has(key)) top.set(key, (match[2] ?? "").trim());
-  }
-  const pid = Number(top.get("pid"));
-  const exit = /^-?\d+/.exec(top.get("last exit code") ?? "");
-  return {
-    loaded: true,
-    path: top.get("path") ?? null,
-    pid: top.get("state") === "running" && Number.isSafeInteger(pid) && pid > 0 ? pid : null,
-    lastExitCode: exit === null ? null : Number(exit[0])
-  };
-}
-async function jobState(label, launchctl = launchctlFor(), uid) {
-  return parseLaunchctlPrint(await launchctl(["print", `${guiDomain(uid)}/${label}`]));
-}
-function launchctlSaid(result) {
-  if (result.error !== null) return result.error;
-  const said = `${result.stderr}
-${result.stdout}`.replace(/\s+/g, " ").trim();
-  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
-}
-function isNotLoaded(result) {
-  if (result.code === 3 || result.code === 113) return true;
-  return /no such process|could not find (specified )?service/i.test(`${result.stderr}
-${result.stdout}`);
-}
-function isMissingGuiDomain(result) {
-  if (result.code === 125 || result.code === 112) return true;
-  return /domain does not support specified action|could not find domain/i.test(`${result.stderr}
-${result.stdout}`);
-}
-function bootstrapFailure(result, domain) {
-  const said = launchctlSaid(result);
-  if (result.error === null && isMissingGuiDomain(result)) {
-    return `launchd could not load the job into ${domain} (${said}). This usually means nobody is logged in at this Mac's screen: the GUI session, the only one that can read the login Keychain, exists only while you are logged in there or through Screen Sharing.`;
-  }
-  return `launchd could not load the job into ${domain} (${said}).`;
-}
-async function bootstrapJob(plistPath, launchctl = launchctlFor(), uid) {
-  const domain = guiDomain(uid);
-  const result = await launchctl(["bootstrap", domain, plistPath]);
-  if (result.code !== 0 || result.error !== null) throw new Error(bootstrapFailure(result, domain));
-}
-async function bootoutJob(label, launchctl = launchctlFor(), uid) {
-  const target = `${guiDomain(uid)}/${label}`;
-  const result = await launchctl(["bootout", target]);
-  if (result.code === 0 && result.error === null) return true;
-  if (result.error === null && isNotLoaded(result)) return false;
-  throw new Error(`launchd could not unload ${target} (${launchctlSaid(result)}).`);
-}
-var STALE_ONE_SHOT_MS = 10 * 6e4;
-async function removeStaleOneShotJobs(folder, launchctl, now, uid) {
-  let names;
-  try {
-    names = (0, import_node_fs11.readdirSync)(folder);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    if (!name.startsWith(`${ONE_SHOT_LABEL_PREFIX}.`) || !name.endsWith(".plist")) continue;
-    const file = (0, import_node_path13.join)(folder, name);
-    try {
-      if (now - (0, import_node_fs11.statSync)(file).mtimeMs < STALE_ONE_SHOT_MS) continue;
-    } catch {
-      continue;
-    }
-    await launchctl(["bootout", `${guiDomain(uid)}/${name.slice(0, -".plist".length)}`]);
-    (0, import_node_fs11.rmSync)(file, { force: true });
+function realSystemProgram(program, env = process.env) {
+  switch (program) {
+    case "launchctl":
+      return "/bin/launchctl";
+    case "security":
+      return "/usr/bin/security";
+    case "powershell":
+      return `${systemRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    case "reg":
+      return `${systemRoot(env)}\\System32\\reg.exe`;
+    case "taskkill":
+      return `${systemRoot(env)}\\System32\\taskkill.exe`;
+    case "wscript":
+      return `${systemRoot(env)}\\System32\\wscript.exe`;
   }
 }
-function oneShotLabel() {
-  return `${ONE_SHOT_LABEL_PREFIX}.${(0, import_node_crypto8.randomBytes)(4).toString("hex")}`;
+function systemProgram(program, env = process.env, processEnv = process.env) {
+  const variable = SYSTEM_PROGRAM_VARIABLES[program];
+  return lookup(env, variable) ?? lookup(processEnv, variable) ?? realSystemProgram(program, env);
 }
-async function startThroughLaunchd(start2) {
-  const launchctl = start2.launchctl ?? launchctlFor(start2.env);
-  const folder = start2.folder ?? launchdJobFolder();
-  await removeStaleOneShotJobs(folder, launchctl, (start2.now ?? Date.now)(), start2.uid);
-  const label = oneShotLabel();
-  const plistPath = (0, import_node_path13.join)(folder, `${label}.plist`);
-  await writeFileAtomic(plistPath, daemonJobPlist({
-    label,
-    programArguments: start2.programArguments,
-    environment: daemonJobEnvironment(start2.env)
-  }), { mode: PRIVATE_FILE_MODE });
-  try {
-    await bootstrapJob(plistPath, launchctl, start2.uid);
-  } catch (error) {
-    (0, import_node_fs11.rmSync)(plistPath, { force: true });
-    throw error;
-  }
-  let removed = false;
-  return {
-    label,
-    plistPath,
-    state: () => jobState(label, launchctl, start2.uid),
-    async remove() {
-      if (removed) return;
-      removed = true;
-      await launchctl(["bootout", `${guiDomain(start2.uid)}/${label}`]);
-      (0, import_node_fs11.rmSync)(plistPath, { force: true });
-    }
-  };
-}
-
-// src/platform/windows-autostart.ts
-var import_node_fs12 = require("node:fs");
-var import_node_path14 = require("node:path");
-var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-var RUN_VALUE_NAME = "kurmis";
-var REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg;
-var REG_TIMEOUT_MS = 3e4;
-var RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`;
-function regProgram(env = process.env, processEnv = process.env) {
-  return systemProgram("reg", env, processEnv);
-}
-function wscriptPath(env = process.env, processEnv = process.env) {
-  return systemProgram("wscript", env, processEnv);
-}
-function regFor(env = process.env) {
-  const program = regProgram(env);
-  return (args) => runProgram(program, args, { timeoutMs: REG_TIMEOUT_MS, env });
-}
-function runValueData(wscript, scriptPath) {
-  return windowsCommandLine([wscript, "//B", "//Nologo", "//E:JScript", scriptPath]);
-}
-var SCRIPT_HOST_SETTINGS_KEYS = [
-  "HKCU\\Software\\Microsoft\\Windows Script Host\\Settings",
-  "HKLM\\Software\\Microsoft\\Windows Script Host\\Settings"
-];
-function scriptHostDisabled(query) {
-  if (query.code !== 0 || query.error !== null) return false;
-  const value = parseRegQuery(query.stdout, "Enabled");
-  return value !== null && /^(0x0+|0)$/i.test(value.data.trim());
-}
-function sameRunData(read, written) {
-  const pattern = (written.match(/[\u0080-\uffff]+|[^\u0080-\uffff]+/g) ?? []).map((part) => {
-    if (part.charCodeAt(0) < 128) return part.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
-    return `[\\s\\S]{1,${String(part.length * 2)}}`;
-  }).join("");
-  return new RegExp(`^${pattern}$`).test(read);
-}
-function regAddArgs(data) {
-  return ["add", RUN_KEY, "/v", RUN_VALUE_NAME, "/t", "REG_SZ", "/d", data, "/f"];
-}
-function regQueryArgs() {
-  return ["query", RUN_KEY, "/v", RUN_VALUE_NAME];
-}
-function regDeleteArgs() {
-  return ["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"];
-}
-function parseRegQuery(stdout, name) {
-  for (const line of stdout.split(/\r?\n/)) {
-    const match = /^ {4}(.+?) {4}(REG_[A-Z_]+)(?: {4}(.*))?$/.exec(line);
-    if (match !== null && (match[1] ?? "").toLowerCase() === name.toLowerCase()) {
-      return { type: match[2] ?? "", data: match[3] ?? "" };
-    }
-  }
-  return null;
-}
-function jscriptString(text2) {
-  if (/[\r\n\u2028\u2029]/.test(text2)) throw new Error("a value for the logon script has a line break in it");
-  return `"${text2.replace(/[\\"]/g, (char) => `\\${char}`)}"`;
-}
-function windowsAutostartEnvironment(env = process.env, processEnv = process.env) {
+function inheritedTestHooks(env, processEnv = process.env) {
   const out = {};
-  const hooks = inheritedTestHooks(env, processEnv);
-  for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name] || hooks[name];
-    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path14.win32.resolve(value) : value;
+  const guarded = lookup(env, GUARD_VARIABLE) === "1" || lookup(processEnv, GUARD_VARIABLE) === "1";
+  const names = [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, ...guarded ? TEST_HOME_VARIABLES : []];
+  for (const name of names) {
+    if (lookup(env, name) !== void 0) continue;
+    const value = lookup(processEnv, name);
+    if (value !== void 0) out[name] = value;
   }
   return out;
-}
-function autostartCommandLine(script) {
-  const assignments = Object.entries(script.environment).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
-  return windowsCommandLine([...script.programArguments, ...assignments]);
-}
-var PERCENT_SIGN_VARIABLE = "KURMIS_PERCENT_SIGN";
-function autostartScript(script) {
-  const command = autostartCommandLine(script);
-  const lines = [
-    "// Written by kurmis setup: starts the kurmis daemon at logon without a console window.",
-    "// kurmis setup --undo removes it.",
-    'var shell = new ActiveXObject("WScript.Shell");',
-    `shell.CurrentDirectory = ${jscriptString(script.cwd)};`
-  ];
-  if (command.includes("%")) {
-    const escaped = command.replaceAll("%", `%${PERCENT_SIGN_VARIABLE}%`);
-    lines.push(
-      `// shell.Run replaces %NAME% with the variable NAME, so each percent sign is written as ${PERCENT_SIGN_VARIABLE}.`,
-      `shell.Environment("Process").Item(${jscriptString(PERCENT_SIGN_VARIABLE)}) = "%";`,
-      `var command = ${jscriptString(escaped)};`,
-      `if (shell.ExpandEnvironmentStrings(command) == ${jscriptString(command)}) shell.Run(command, 0, false);`
-    );
-  } else {
-    lines.push(`shell.Run(${jscriptString(command)}, 0, false);`);
-  }
-  return `${lines.join("\r\n")}\r
-`;
-}
-var UTF16_BOM = Buffer.from([255, 254]);
-function encodeScript(text2) {
-  return Buffer.concat([UTF16_BOM, Buffer.from(text2, "utf16le")]);
-}
-function readScript(path) {
-  let bytes;
-  try {
-    bytes = (0, import_node_fs12.readFileSync)(path);
-  } catch {
-    return null;
-  }
-  if (bytes.length >= 2 && bytes[0] === 255 && bytes[1] === 254) return bytes.subarray(2).toString("utf16le");
-  return bytes.toString("utf8");
-}
-function regSaid(result) {
-  if (result.error !== null) return result.error;
-  const said = `${result.stderr}
-${result.stdout}`.replace(/\s+/g, " ").trim();
-  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
-}
-var ok = (result) => result.code === 0 && result.error === null;
-function userProfile(env) {
-  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path14.dirname)(windowsAutostartScriptPath());
-}
-async function scriptHostProblem(wscript, reg) {
-  if (!(0, import_node_fs12.existsSync)(wscript)) {
-    return `${wscript} does not exist, so Windows Script Host, which starts the daemon at logon without a console window, is not installed or was removed.`;
-  }
-  for (const key of SCRIPT_HOST_SETTINGS_KEYS) {
-    if (scriptHostDisabled(await reg(["query", key, "/v", "Enabled"]))) {
-      return `Windows Script Host, which starts the daemon at logon without a console window, is turned off ("Enabled" is 0 under ${key}). Turn it on, or ask whoever manages this machine, and run kurmis setup again.`;
-    }
-  }
-  return null;
-}
-function removeOldVbsScript(scriptPath) {
-  const old = (0, import_node_path14.join)((0, import_node_path14.dirname)(scriptPath), "autostart.vbs");
-  if (old === scriptPath || !(0, import_node_fs12.existsSync)(old)) return false;
-  (0, import_node_fs12.rmSync)(old, { force: true });
-  return true;
-}
-async function registerWindowsAutostart(options) {
-  const reg = options.reg ?? regFor(options.env);
-  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
-  if (options.programArguments === void 0) throw new Error("registerWindowsAutostart needs programArguments");
-  let text2;
-  try {
-    text2 = autostartScript({
-      programArguments: options.programArguments,
-      environment: windowsAutostartEnvironment(options.env),
-      cwd: userProfile(options.env)
-    });
-  } catch (error) {
-    return { changed: false, where: null, warning: `The logon entry was not written: ${error.message}.` };
-  }
-  const wscript = wscriptPath(options.env);
-  const unusable = await scriptHostProblem(wscript, reg);
-  if (unusable !== null) {
-    return {
-      changed: false,
-      where: null,
-      warning: `The logon entry was not written: ${unusable} The next kurmis command starts the daemon anyway.`,
-      noEntryPossible: true
-    };
-  }
-  let changed = false;
-  if (readScript(scriptPath) !== text2) {
-    makePrivateDirSync((0, import_node_path14.dirname)(scriptPath));
-    (0, import_node_fs12.writeFileSync)(scriptPath, encodeScript(text2));
-    changed = true;
-  }
-  const data = runValueData(wscript, scriptPath);
-  const query = await reg(regQueryArgs());
-  const current = ok(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null;
-  if (current !== null && current.type === "REG_SZ" && sameRunData(current.data, data)) {
-    if (removeOldVbsScript(scriptPath)) changed = true;
-    return { changed, where: RUN_ENTRY_DESCRIPTION };
-  }
-  const added = await reg(regAddArgs(data));
-  if (!ok(added)) {
-    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` };
-  }
-  removeOldVbsScript(scriptPath);
-  return { changed: true, where: RUN_ENTRY_DESCRIPTION };
-}
-async function unregisterWindowsAutostart(options) {
-  const reg = options.reg ?? regFor(options.env);
-  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
-  let changed = false;
-  let warning;
-  const query = await reg(regQueryArgs());
-  if (ok(query) && parseRegQuery(query.stdout, RUN_VALUE_NAME) !== null) {
-    const deleted = await reg(regDeleteArgs());
-    if (ok(deleted)) changed = true;
-    else warning = `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}).`;
-  }
-  if (readScript(scriptPath) !== null) {
-    (0, import_node_fs12.rmSync)(scriptPath, { force: true });
-    changed = true;
-  }
-  if (removeOldVbsScript(scriptPath)) changed = true;
-  return warning === void 0 ? { changed, where: RUN_ENTRY_DESCRIPTION } : { changed, where: RUN_ENTRY_DESCRIPTION, warning };
 }
 
 // src/cli/daemon-client.ts
@@ -7721,10 +7094,7 @@ var DaemonError = class extends Error {
   }
 };
 var FIND_TIMEOUT_MS = 1e4;
-var DIRECT_START_TIMEOUT_MS = 15e3;
-var OUTSIDE_START_TIMEOUT_MS = 3e4;
-var LAUNCHD_ANSWER_TIMEOUT_MS = 5e3;
-var LAUNCHD_STATE_POLL_MS = 500;
+var START_TIMEOUT_MS = 15e3;
 var PROBE_TIMEOUT_MS = 9e4;
 var STOP_TIMEOUT_MS = 3e4;
 var STOP_GRACE_MS = 1e4;
@@ -7783,12 +7153,6 @@ function removeDaemonFileIfDamaged() {
   } catch {
   }
 }
-async function chooseStartMethod(input) {
-  if (input.platform === "win32") return inSshSession(input.env) ? "wmi" : "direct";
-  if (input.platform !== "darwin" || input.noLaunchd) return "direct";
-  if (inSshSession(input.env)) return "launchd";
-  return await input.keychainReadable() ? "direct" : "launchd";
-}
 var NOT_FOR_THE_DAEMON = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -7799,12 +7163,8 @@ var NOT_FOR_THE_DAEMON = [
 function daemonEnvironment(env, processEnv = process.env) {
   const out = { ...env, ...inheritedTestHooks(env, processEnv) };
   for (const name of NOT_FOR_THE_DAEMON) delete out[name];
-  if (out.KURMIS_HOME !== void 0 && out.KURMIS_HOME !== "") out.KURMIS_HOME = (0, import_node_path15.resolve)(out.KURMIS_HOME);
+  if (out.KURMIS_HOME !== void 0 && out.KURMIS_HOME !== "") out.KURMIS_HOME = (0, import_node_path13.resolve)(out.KURMIS_HOME);
   return out;
-}
-function wmiDaemonArguments(node, entry, env, processEnv = process.env) {
-  const assignments = Object.entries(windowsAutostartEnvironment(env, processEnv)).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
-  return [node, entry, "daemon", "run", ...assignments];
 }
 function portBusyMessage(port, reason) {
   return `Port ${String(port)} on 127.0.0.1 is in use by another program (${reason}), so the kurmis daemon cannot listen there. Set "port" in ${configPath()} to a free port from 1024 to 65535, then run the command again.`;
@@ -7816,7 +7176,7 @@ async function startDaemon(options) {
   let replaced = null;
   if (found !== null) {
     if (found.port === port && !shouldReplace(found.version, version)) {
-      return { connection: found, started: false, replaced: null, method: null };
+      return { connection: found, started: false, replaced: null };
     }
     replaced = found.version;
     if (found.port !== port) {
@@ -7843,132 +7203,27 @@ async function startDaemon(options) {
       throw new DaemonError(portBusyMessage(port, holder.reason));
     }
     if (holder.kind === "kurmis" && !shouldReplace(holder.status.version, version)) {
-      return { connection: connectionOf(holder.status, key), started: false, replaced: null, method: null };
+      return { connection: connectionOf(holder.status, key), started: false, replaced: null };
     }
   }
   const entry = options.entry ?? kurmisEntry({ env: options.env });
   if (entry === null) {
     throw new DaemonError('This kurmis runs from its source tree, so there is no bundle to start the daemon from. Run "pnpm bundle" and use dist/kurmis.cjs, or set KURMIS_ENTRY to a built bundle.');
   }
-  const platform = options.platform ?? process.platform;
-  const method = await chooseStartMethod({
-    platform,
-    env: options.env,
-    noLaunchd: options.noLaunchd === true,
-    keychainReadable: async () => {
-      return (await probeLoginKeychain(systemProgram("security", options.env))).readable;
-    }
-  });
   const env = daemonEnvironment(options.env);
-  const warn = options.onWarning ?? (() => void 0);
-  let child2 = null;
-  let used = method;
-  if (method === "launchd") {
-    const fallBack = (reason) => {
-      warn(`The daemon could not be started through launchd (${reason}), so it is started from this login, where it cannot read the login Keychain: logins whose token is in the Keychain will not be routed until it is started from a login at the screen.`);
-      used = "direct";
-    };
-    let job = null;
-    try {
-      job = await startThroughLaunchd({
-        programArguments: [nodeForJobs({ env: options.env, platform }), entry, "daemon", "start", "--no-launchd"],
-        env
-      });
-    } catch (error) {
-      fallBack(error instanceof Error ? error.message : String(error));
-    }
-    if (job !== null) {
-      try {
-        const outcome = await waitForLaunchdJob({
-          port,
-          version,
-          job,
-          answerTimeoutMs: options.launchdAnswerTimeoutMs ?? LAUNCHD_ANSWER_TIMEOUT_MS,
-          timeoutMs: options.startTimeoutMs ?? OUTSIDE_START_TIMEOUT_MS
-        });
-        if ("connection" in outcome) return { connection: outcome.connection, started: true, replaced, method: "launchd" };
-        fallBack(outcome.failure);
-      } finally {
-        await job.remove().catch(() => void 0);
-      }
-    }
-  } else if (method === "wmi") {
-    try {
-      await createThroughWmi(wmiDaemonArguments(process.execPath, entry, options.env), (0, import_node_os6.homedir)(), env);
-    } catch (error) {
-      warn(`The daemon could not be started outside this ssh session (${error instanceof Error ? error.message : String(error)}), so it is started inside it and ends when the session closes.`);
-      used = "direct";
-    }
-  }
-  if (used === "direct") {
-    try {
-      child2 = await spawnDetached({ command: process.execPath, args: [entry, "daemon", "run"], env, cwd: (0, import_node_os6.homedir)() });
-    } catch (error) {
-      throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  const connection = await waitForDaemon({
-    port,
-    version,
-    child: child2,
-    timeoutMs: options.startTimeoutMs ?? (used === "direct" ? DIRECT_START_TIMEOUT_MS : OUTSIDE_START_TIMEOUT_MS)
-  });
-  return { connection, started: true, replaced, method: used };
-}
-var LAUNCHD_MIN_STEP_MS = 250;
-async function within(work, ms) {
-  let timer;
-  const late = new Promise((resolve8) => {
-    timer = setTimeout(() => resolve8(null), ms);
-  });
+  let child2;
   try {
-    return await Promise.race([work, late]);
-  } finally {
-    clearTimeout(timer);
+    child2 = await spawnDetached({ command: process.execPath, args: [entry, "daemon", "run"], env, cwd: (0, import_node_os5.homedir)() });
+  } catch (error) {
+    throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`);
   }
-}
-async function waitForLaunchdJob(wait) {
-  const started = Date.now();
-  let deadline = started + wait.answerTimeoutMs;
-  let nextState = started;
-  const left = () => Math.max(LAUNCHD_MIN_STEP_MS, deadline - Date.now());
-  let pendingState = null;
-  let exitedOk = false;
-  for (; ; ) {
-    const found = await findDaemon({ env: {} }, left());
-    if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return { connection: found };
-    if (Date.now() >= nextState) {
-      if (pendingState === null) {
-        pendingState = wait.job.state();
-        pendingState.catch(() => void 0);
-      }
-      const state = await within(pendingState, left());
-      if (state !== null) pendingState = null;
-      nextState = Date.now() + LAUNCHD_STATE_POLL_MS;
-      const code = state?.lastExitCode ?? null;
-      if (code !== null && code !== 0) {
-        return {
-          failure: `its job exited with code ${String(code)}` + (code === 78 ? ", which launchd answers when it cannot start the program, for example one on an external volume" : "")
-        };
-      }
-      if (code === 0) {
-        exitedOk = true;
-        deadline = Math.max(deadline, started + wait.timeoutMs);
-      }
-    }
-    if (Date.now() >= deadline) {
-      const seconds3 = (deadline - started) / 1e3;
-      return {
-        failure: `no daemon answered within ${String(seconds3)} ${seconds3 === 1 ? "second" : "seconds"} of loading its job` + (exitedOk ? ", although the job exited with code 0" : "")
-      };
-    }
-    await delay2(POLL_MS);
-  }
+  const connection = await waitForDaemon({ port, version, child: child2, timeoutMs: options.startTimeoutMs ?? START_TIMEOUT_MS });
+  return { connection, started: true, replaced };
 }
 async function waitForDaemon(wait) {
   const deadline = Date.now() + wait.timeoutMs;
   let exitCode;
-  void wait.child?.exited.then((code) => {
+  void wait.child.exited.then((code) => {
     exitCode = code;
   });
   for (; ; ) {
@@ -7986,7 +7241,7 @@ async function waitForDaemon(wait) {
 async function ensureDaemon(options) {
   return (await startDaemon(options)).connection;
 }
-function failureOf2(result, connection, what) {
+function failureOf(result, connection, what) {
   const port = String(connection.port);
   if (result.kind === "refused") return new DaemonError(`The kurmis daemon is not running (nothing answers on port ${port}).`);
   if (result.kind === "failed") return new DaemonError(`The kurmis daemon on port ${port} did not answer ${what}: ${result.reason}.`);
@@ -7999,7 +7254,7 @@ function failureOf2(result, connection, what) {
 async function readStatus3(connection) {
   const result = await controlRequest({ port: connection.port, key: connection.key, method: "GET", path: CONTROL_PATHS.status });
   if (result.kind === "answered" && result.status === 200 && isStatusAnswer(result.body)) return result.body;
-  throw failureOf2(result, connection, "a status request");
+  throw failureOf(result, connection, "a status request");
 }
 async function requestProbe(connection, logins, signal) {
   const result = await controlRequest({
@@ -8012,12 +7267,12 @@ async function requestProbe(connection, logins, signal) {
     ...signal === void 0 ? {} : { signal }
   });
   if (result.kind === "answered" && result.status === 200 && isStatusAnswer(result.body)) return result.body;
-  throw failureOf2(result, connection, "a usage probe");
+  throw failureOf(result, connection, "a usage probe");
 }
 async function requestReload(connection) {
   const result = await controlRequest({ port: connection.port, key: connection.key, method: "POST", path: CONTROL_PATHS.reload });
   if (result.kind === "answered" && result.status === 200 && isPlainObject(result.body) && result.body.ok === true) return;
-  throw failureOf2(result, connection, "a reload");
+  throw failureOf(result, connection, "a reload");
 }
 async function waitForExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -8066,7 +7321,7 @@ async function stopDaemon(options) {
   const waitMs = options.stopTimeoutMs ?? STOP_TIMEOUT_MS;
   const body = { maxWaitMs: waitMs };
   const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop, body });
-  if (result.kind === "answered" && result.status !== 200) throw failureOf2(result, found, "the stop request");
+  if (result.kind === "answered" && result.status !== 200) throw failureOf(result, found, "the stop request");
   const graceMs = platform === "win32" ? options.stopGraceMs ?? STOP_GRACE_MS : 0;
   if (await waitForExit(found.pid, waitMs + graceMs)) return true;
   const kill = options.kill ?? ((pid, signal) => process.kill(pid, signal));
@@ -8089,7 +7344,7 @@ async function restartDaemon(options) {
       throw new DaemonError(`The running kurmis daemon is version ${found.version}, newer than this kurmis (${version}), so this kurmis does not replace it. Update kurmis, or run "kurmis daemon stop" first.`);
     }
     const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop });
-    if (result.kind === "answered" && result.status !== 200) throw failureOf2(result, found, "the stop request");
+    if (result.kind === "answered" && result.status !== 200) throw failureOf(result, found, "the stop request");
     if (!await waitForPortFree(found.port, PORT_FREE_TIMEOUT_MS)) {
       throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but still holds port ${String(found.port)}.`);
     }
@@ -8105,7 +7360,7 @@ function silentDaemon() {
 
 // src/cli/wrapper.ts
 var import_node_child_process3 = require("node:child_process");
-var import_node_os7 = require("node:os");
+var import_node_os6 = require("node:os");
 var WRAPPER_PIDS_VARIABLE = "KURMIS_WRAPPER_PIDS";
 var MAX_WRAPPER_DEPTH = 8;
 function wrapperPids(env) {
@@ -8227,7 +7482,7 @@ var CORE_SIGNALS = /* @__PURE__ */ new Set([
   "SIGIOT"
 ]);
 function signalExitCode(signal) {
-  const number = import_node_os7.constants.signals[signal];
+  const number = import_node_os6.constants.signals[signal];
   return 128 + (number ?? 0);
 }
 function finishLikeChild(end, options) {
@@ -8305,10 +7560,10 @@ async function settleWithin(start2, ms) {
 }
 
 // src/cli/settings-arg.ts
-var import_node_crypto9 = require("node:crypto");
-var import_node_fs13 = require("node:fs");
-var import_node_os8 = require("node:os");
-var import_node_path16 = require("node:path");
+var import_node_crypto7 = require("node:crypto");
+var import_node_fs11 = require("node:fs");
+var import_node_os7 = require("node:os");
+var import_node_path14 = require("node:path");
 
 // src/cli/json-error.ts
 var NotJson = class extends Error {
@@ -8484,10 +7739,10 @@ function readUserSettingsArg(args, options) {
     const settings2 = parseSettings(text2, `the JSON given to ${FLAG}`);
     return "error" in settings2 ? settings2 : { settings: settings2.value, source: "inline", rest };
   }
-  const path = (0, import_node_path16.isAbsolute)(value) ? value : (0, import_node_path16.resolve)(options.cwd, value);
+  const path = (0, import_node_path14.isAbsolute)(value) ? value : (0, import_node_path14.resolve)(options.cwd, value);
   let fileText;
   try {
-    fileText = (options.readFile ?? ((file) => (0, import_node_fs13.readFileSync)(file, "utf8")))(path);
+    fileText = (options.readFile ?? ((file) => (0, import_node_fs11.readFileSync)(file, "utf8")))(path);
   } catch (error) {
     const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
     const why = code === "ENOENT" ? "it does not exist" : error instanceof Error ? error.message : String(error);
@@ -8542,28 +7797,28 @@ var RUN_SETTINGS_FILE_NAME = /^run-(\d+)-[0-9a-f]{16}\.json$/;
 function storeSettings(text2, holdsUserSettings, folder = wrapperSettingsFolder(), now = Date.now(), pid = process.pid) {
   if (!holdsUserSettings) return { path: storeSettingsFile(text2, folder, now), remove: () => void 0 };
   pruneSettingsFiles(folder, now, null);
-  const path = (0, import_node_path16.join)(folder, `run-${String(pid)}-${(0, import_node_crypto9.randomBytes)(8).toString("hex")}.json`);
+  const path = (0, import_node_path14.join)(folder, `run-${String(pid)}-${(0, import_node_crypto7.randomBytes)(8).toString("hex")}.json`);
   writeFileAtomicSync(path, text2, { mode: PRIVATE_FILE_MODE });
   return {
     path,
     remove: () => {
       try {
-        (0, import_node_fs13.rmSync)(path, { force: true });
+        (0, import_node_fs11.rmSync)(path, { force: true });
       } catch {
       }
     }
   };
 }
 function storeSettingsFile(text2, folder = wrapperSettingsFolder(), now = Date.now()) {
-  const path = (0, import_node_path16.join)(folder, `${(0, import_node_crypto9.createHash)("sha256").update(text2).digest("hex").slice(0, 32)}.json`);
+  const path = (0, import_node_path14.join)(folder, `${(0, import_node_crypto7.createHash)("sha256").update(text2).digest("hex").slice(0, 32)}.json`);
   let current = false;
   try {
-    current = (0, import_node_fs13.readFileSync)(path, "utf8") === text2;
+    current = (0, import_node_fs11.readFileSync)(path, "utf8") === text2;
   } catch {
   }
   if (current) {
     try {
-      (0, import_node_fs13.utimesSync)(path, now / 1e3, now / 1e3);
+      (0, import_node_fs11.utimesSync)(path, now / 1e3, now / 1e3);
     } catch {
     }
   } else {
@@ -8575,26 +7830,26 @@ function storeSettingsFile(text2, folder = wrapperSettingsFolder(), now = Date.n
 function pruneSettingsFiles(folder, now, keep) {
   let names;
   try {
-    names = (0, import_node_fs13.readdirSync)(folder);
+    names = (0, import_node_fs11.readdirSync)(folder);
   } catch {
     return;
   }
   for (const name of names) {
-    const file = (0, import_node_path16.join)(folder, name);
+    const file = (0, import_node_path14.join)(folder, name);
     const run2 = RUN_SETTINGS_FILE_NAME.exec(name);
     if (!SETTINGS_FILE_NAME.test(name) && run2 === null || file === keep) continue;
     try {
-      const old = now - (0, import_node_fs13.statSync)(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS;
-      if (old || run2 !== null && !isProcessAlive(Number(run2[1]))) (0, import_node_fs13.rmSync)(file, { force: true });
+      const old = now - (0, import_node_fs11.statSync)(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS;
+      if (old || run2 !== null && !isProcessAlive(Number(run2[1]))) (0, import_node_fs11.rmSync)(file, { force: true });
     } catch {
     }
   }
 }
-function claudeUserSettingsPath(env, home = (0, import_node_os8.homedir)()) {
+function claudeUserSettingsPath(env, home = (0, import_node_os7.homedir)()) {
   const configDir = env.CLAUDE_CONFIG_DIR;
-  return configDir !== void 0 && configDir !== "" ? (0, import_node_path16.join)(configDir, "settings.json") : (0, import_node_path16.join)(home, ".claude", "settings.json");
+  return configDir !== void 0 && configDir !== "" ? (0, import_node_path14.join)(configDir, "settings.json") : (0, import_node_path14.join)(home, ".claude", "settings.json");
 }
-function readUserSettingsEnv(path, readFile3 = (file) => (0, import_node_fs13.readFileSync)(file, "utf8")) {
+function readUserSettingsEnv(path, readFile3 = (file) => (0, import_node_fs11.readFileSync)(file, "utf8")) {
   let text2;
   try {
     text2 = readFile3(path);
@@ -8711,8 +7966,8 @@ function createClaudeCommand(overrides = {}) {
     loadConfig: () => loadConfig(),
     platform: process.platform,
     cwd: () => process.cwd(),
-    homeDir: () => (0, import_node_os9.homedir)(),
-    folderExists: (path) => (0, import_node_fs14.existsSync)(path) && (0, import_node_fs14.statSync)(path).isDirectory(),
+    homeDir: () => (0, import_node_os8.homedir)(),
+    folderExists: (path) => (0, import_node_fs12.existsSync)(path) && (0, import_node_fs12.statSync)(path).isDirectory(),
     storeSettings: (text2, holdsUserSettings) => storeSettings(text2, holdsUserSettings),
     ...overrides
   };
@@ -9008,8 +8263,8 @@ function messageOf2(error) {
 var import_node_http3 = require("node:http");
 
 // src/data/log.ts
-var import_node_fs15 = require("node:fs");
-var import_node_path17 = require("node:path");
+var import_node_fs13 = require("node:fs");
+var import_node_path15 = require("node:path");
 var LOG_EVENTS = [
   "daemon_started",
   "daemon_stopping",
@@ -9135,16 +8390,16 @@ function openDaemonLog(options = {}) {
   let size = null;
   const currentSize = () => {
     try {
-      return (0, import_node_fs15.statSync)(path).size;
+      return (0, import_node_fs13.statSync)(path).size;
     } catch {
       return 0;
     }
   };
   const rotate = () => {
     try {
-      retryWhileLockedSync(() => (0, import_node_fs15.renameSync)(path, previous));
+      retryWhileLockedSync(() => (0, import_node_fs13.renameSync)(path, previous));
     } catch {
-      (0, import_node_fs15.rmSync)(path, { force: true });
+      (0, import_node_fs13.rmSync)(path, { force: true });
     }
     size = 0;
   };
@@ -9154,14 +8409,14 @@ function openDaemonLog(options = {}) {
         const line = formatLogLine(event, fields, now());
         const bytes = Buffer.byteLength(line);
         if (size === null) {
-          makePrivateDirSync((0, import_node_path17.dirname)(path));
+          makePrivateDirSync((0, import_node_path15.dirname)(path));
           size = currentSize();
         }
         if (size + bytes > maxBytes) {
           size = currentSize();
           if (size + bytes > maxBytes && size > 0) rotate();
         }
-        (0, import_node_fs15.appendFileSync)(path, line, { mode: PRIVATE_FILE_MODE });
+        (0, import_node_fs13.appendFileSync)(path, line, { mode: PRIVATE_FILE_MODE });
         size += bytes;
       } catch {
       }
@@ -9170,15 +8425,15 @@ function openDaemonLog(options = {}) {
 }
 
 // src/data/identity.ts
-var import_node_fs16 = require("node:fs");
-var import_node_os10 = require("node:os");
-var import_node_path18 = require("node:path");
+var import_node_fs14 = require("node:fs");
+var import_node_os9 = require("node:os");
+var import_node_path16 = require("node:path");
 var CLAUDE_PROFILE_FILE = ".claude.json";
-function claudeIdentityFiles(id, home = (0, import_node_os10.homedir)()) {
+function claudeIdentityFiles(id, home = (0, import_node_os9.homedir)()) {
   if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return [(0, import_node_path18.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path18.join)(home, CLAUDE_PROFILE_FILE)];
+    return [(0, import_node_path16.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE)];
   }
-  return [(0, import_node_path18.join)(loginFolder(id), CLAUDE_PROFILE_FILE)];
+  return [(0, import_node_path16.join)(loginFolder(id), CLAUDE_PROFILE_FILE)];
 }
 function parseClaudeIdentity(text2) {
   try {
@@ -9202,7 +8457,7 @@ function textOf(value) {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 var ClaudeIdentityReader = class {
-  constructor(home = import_node_os10.homedir) {
+  constructor(home = import_node_os9.homedir) {
     this.home = home;
   }
   home;
@@ -9217,12 +8472,12 @@ var ClaudeIdentityReader = class {
   }
   readFile(file) {
     try {
-      const stat2 = (0, import_node_fs16.statSync)(file);
+      const stat2 = (0, import_node_fs14.statSync)(file);
       const cached = this.cache.get(file);
       if (cached?.mtime === stat2.mtimeMs && cached.size === stat2.size) return cached.value;
       let value = null;
       try {
-        value = parseClaudeIdentity((0, import_node_fs16.readFileSync)(file, "utf8"));
+        value = parseClaudeIdentity((0, import_node_fs14.readFileSync)(file, "utf8"));
       } catch {
       }
       this.cache.set(file, { mtime: stat2.mtimeMs, size: stat2.size, value });
@@ -9233,7 +8488,7 @@ var ClaudeIdentityReader = class {
     }
   }
 };
-function readClaudeIdentity(id, home = (0, import_node_os10.homedir)()) {
+function readClaudeIdentity(id, home = (0, import_node_os9.homedir)()) {
   return new ClaudeIdentityReader(() => home).read(id);
 }
 
@@ -9452,7 +8707,7 @@ function probeFailure(signedIn, reason, error) {
 function abortedProbe(signedIn) {
   return probeFailure(signedIn, "shutdown", "The usage probe was stopped because the daemon is shutting down.");
 }
-function seconds2(ms) {
+function seconds(ms) {
   return String(Math.round(ms / 100) / 10);
 }
 function failureForExit(program, exit, timeoutMs, signedIn) {
@@ -9460,7 +8715,7 @@ function failureForExit(program, exit, timeoutMs, signedIn) {
     case "aborted":
       return abortedProbe(signedIn);
     case "timeout":
-      return probeFailure(signedIn, "timeout", `The usage probe timed out after ${seconds2(timeoutMs)} s.`);
+      return probeFailure(signedIn, "timeout", `The usage probe timed out after ${seconds(timeoutMs)} s.`);
     case "output_too_large":
       return probeFailure(signedIn, "invalid", `${program} printed more output than the usage probe accepts.`);
     case "refused":
@@ -9791,7 +9046,7 @@ function createControl(options) {
           }
           const fresh = table.logins().filter((login) => table.probedSignedIn(login.id) === null).map((login) => login.id);
           if (fresh.length > 0) void poller.probeMany(fresh, "config");
-          answer(res, 200, ok2());
+          answer(res, 200, ok());
           return;
         }
         case CONTROL_PATHS.stop: {
@@ -9808,7 +9063,7 @@ function createControl(options) {
           res.once("finish", () => {
             options.onStopRequested(asked);
           });
-          answer(res, 200, ok2());
+          answer(res, 200, ok());
           return;
         }
         default:
@@ -9833,7 +9088,7 @@ function allow(req, res, method) {
 function answer(res, status2, body) {
   res.writeHead(status2, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
 }
-function ok2() {
+function ok() {
   return { ok: true };
 }
 function failure(error) {
@@ -11281,13 +10536,31 @@ function waitForPool(table, until, now, signal) {
 }
 
 // src/daemon/tokens.ts
-var import_node_fs18 = require("node:fs");
-var import_node_os12 = require("node:os");
-var import_node_path20 = require("node:path");
+var import_node_fs16 = require("node:fs");
+var import_node_os11 = require("node:os");
+var import_node_path18 = require("node:path");
 
 // src/daemon/credentials.ts
-var import_node_fs17 = require("node:fs");
-var import_node_path19 = require("node:path");
+var import_node_fs15 = require("node:fs");
+var import_node_path17 = require("node:path");
+
+// src/core/credentials.ts
+function parseCredentials(text2) {
+  try {
+    const parsed = JSON.parse(text2);
+    const oauth = parsed?.claudeAiOauth;
+    if (typeof oauth?.accessToken !== "string" || oauth.accessToken.trim().length === 0) return null;
+    return {
+      accessToken: oauth.accessToken,
+      expiresAt: typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt) ? oauth.expiresAt : null,
+      hasRefreshToken: typeof oauth.refreshToken === "string" && oauth.refreshToken.trim().length > 0
+    };
+  } catch {
+    return null;
+  }
+}
+
+// src/daemon/credentials.ts
 var CREDENTIALS_FILE_NAME = ".credentials.json";
 var CredentialsFileReader = class {
   constructor(options) {
@@ -11298,12 +10571,12 @@ var CredentialsFileReader = class {
   read(id) {
     const path = this.pathOf(id);
     try {
-      const stat2 = (0, import_node_fs17.statSync)(path);
+      const stat2 = (0, import_node_fs15.statSync)(path);
       const cached = this.cache.get(path);
       if (cached?.mtime === stat2.mtimeMs && cached.size === stat2.size) return cached.value;
       let value = null;
       try {
-        value = parseCredentials((0, import_node_fs17.readFileSync)(path, "utf8"));
+        value = parseCredentials((0, import_node_fs15.readFileSync)(path, "utf8"));
       } catch {
       }
       this.cache.set(path, { mtime: stat2.mtimeMs, size: stat2.size, value });
@@ -11324,12 +10597,32 @@ var CredentialsFileReader = class {
     this.cache.clear();
   }
   pathOf(id) {
-    return (0, import_node_path19.join)(this.options.credentialsDir(id), CREDENTIALS_FILE_NAME);
+    return (0, import_node_path17.join)(this.options.credentialsDir(id), CREDENTIALS_FILE_NAME);
   }
 };
 
 // src/platform/windows-credentials.ts
-var import_node_os11 = require("node:os");
+var import_node_os10 = require("node:os");
+
+// src/core/keychain-service.ts
+var import_node_crypto8 = require("node:crypto");
+var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
+function keychainService(secureStorageDir) {
+  if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
+  const digest = (0, import_node_crypto8.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
+  return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
+}
+
+// src/platform/windows-credentials.ts
+function powerShellQuote(text2) {
+  return `'${text2.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`;
+}
+function powerShellInvocation(script, env) {
+  return {
+    program: systemProgram("powershell", env),
+    args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]
+  };
+}
 var CREDENTIAL_USER_NAME = "claude-code-user";
 var CHUNK_CHARS = 2400;
 var MAX_CHUNKS = 256;
@@ -11423,7 +10716,7 @@ function credentialBatches(filters, maxChars = MAX_ENCODED_COMMAND_CHARS) {
   if (batch.length > 0) batches.push(batch);
   return batches;
 }
-function failureOf3(result) {
+function failureOf2(result) {
   if (result.error !== null) return result.error;
   const said = result.stderr.replace(/\s+/g, " ").trim();
   return `PowerShell exited with code ${String(result.code)}${said === "" ? "" : `: ${said.slice(0, 300)}`}`;
@@ -11434,7 +10727,7 @@ function powerShellCredentialRead(env, run2 = runProgram) {
     for (const batch of credentialBatches(filters)) {
       const { program, args } = powerShellInvocation(credEnumScript(batch), env);
       const result = await run2(program, args, { timeoutMs: CREDENTIAL_READ_TIMEOUT_MS, env, maxOutputBytes: 16 * 1024 * 1024 });
-      if (result.code !== 0 || result.error !== null) throw new Error(failureOf3(result));
+      if (result.code !== 0 || result.error !== null) throw new Error(failureOf2(result));
       const answers = parseCredEnumOutput(result.stdout, batch.length);
       if (answers === null) throw new Error("PowerShell did not answer for every login");
       all.push(...answers);
@@ -11442,7 +10735,7 @@ function powerShellCredentialRead(env, run2 = runProgram) {
     return all;
   };
 }
-function preferredAccounts(env = process.env, userName = () => (0, import_node_os11.userInfo)().username) {
+function preferredAccounts(env = process.env, userName = () => (0, import_node_os10.userInfo)().username) {
   let name;
   try {
     name = env.USER || userName();
@@ -11522,6 +10815,161 @@ async function holdsStoredRecord(secureStorageDir, env, platform = process.platf
   } catch {
     return false;
   }
+}
+
+// src/daemon/keychain.ts
+var KEYCHAIN_CACHE_MS = 6e4;
+var KEYCHAIN_READ_TIMEOUT_MS = 3e3;
+var MAX_OUTPUT_BYTES = 256 * 1024;
+var MAX_REASON_CHARS = 500;
+function keychainHoldsSecret(platform = process.platform) {
+  return platform === "darwin";
+}
+var KeychainReadError = class extends Error {
+  constructor(reason, code, timedOut = false, outputTooLarge = false) {
+    super(reason);
+    this.reason = reason;
+    this.code = code;
+    this.timedOut = timedOut;
+    this.outputTooLarge = outputTooLarge;
+  }
+  reason;
+  code;
+  timedOut;
+  outputTooLarge;
+};
+var NO_SUCH_ITEM_EXIT_CODE = 44;
+var KEYCHAIN_NOT_ALLOWED_EXIT_CODE = 36;
+async function readKeychainItem(securityProgram, service, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
+  const result = await runProgram(
+    securityProgram,
+    ["find-generic-password", "-w", "-s", service],
+    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
+  );
+  const failure2 = failureOf3(result, timeoutMs);
+  if (failure2 !== null) throw new KeychainReadError(failure2, result.code, result.timedOut, result.outputTooLarge);
+  return result.stdout.trim().length === 0 ? null : result.stdout;
+}
+function failureOf3(result, timeoutMs) {
+  if (result.timedOut) return `it did not answer within ${seconds2(timeoutMs)} seconds`;
+  if (result.outputTooLarge) return `it printed more than ${String(MAX_OUTPUT_BYTES)} bytes, which is not a credentials record`;
+  if (result.error !== null) return result.error;
+  if (result.code === 0) return null;
+  const said = result.stderr.trim();
+  return said.length > 0 ? said.slice(0, MAX_REASON_CHARS) : "it printed nothing on stderr";
+}
+function seconds2(ms) {
+  return String(ms / 1e3);
+}
+var KeychainCredentialsReader = class {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  cache = /* @__PURE__ */ new Map();
+  /** The read of each login going on now, with the `invalidations` count it started under. */
+  reading = /* @__PURE__ */ new Map();
+  /** How often each login was invalidated. */
+  invalidations = /* @__PURE__ */ new Map();
+  /** The logins whose failed read has been logged, until a read of one works. */
+  failureLogged = /* @__PURE__ */ new Set();
+  /**
+   * The items whose read was killed at its deadline. A `security` that does not answer is most
+   * likely showing a Keychain dialog that nobody is there to answer, and reading the item again
+   * would show another one, so none of these is read again by this reader. Neither `invalidate`
+   * nor `clear` empties it.
+   */
+  unanswered = /* @__PURE__ */ new Set();
+  read(id) {
+    return this.cache.get(id)?.value ?? null;
+  }
+  async prime(ids) {
+    await Promise.all([...new Set(ids)].map((id) => this.refresh(id)));
+  }
+  invalidate(id) {
+    this.invalidations.set(id, this.invalidatedCount(id) + 1);
+    const cached = this.cache.get(id);
+    if (cached !== void 0) this.cache.set(id, { ...cached, readAt: Number.NEGATIVE_INFINITY });
+  }
+  clear() {
+    this.cache.clear();
+    for (const id of this.reading.keys()) this.invalidations.set(id, this.invalidatedCount(id) + 1);
+  }
+  /**
+   * One read per login at a time; a second caller waits for the one already running. A read
+   * that started before the latest `invalidate` is waited for and then followed by a new one.
+   */
+  refresh(id) {
+    const cached = this.cache.get(id);
+    if (cached && this.now() - cached.readAt < KEYCHAIN_CACHE_MS) return Promise.resolve();
+    const invalidated = this.invalidatedCount(id);
+    const running = this.reading.get(id);
+    if (running !== void 0) {
+      return running.invalidated === invalidated ? running.promise : running.promise.then(() => this.refresh(id));
+    }
+    const promise = this.load(id, invalidated).finally(() => {
+      this.reading.delete(id);
+    });
+    this.reading.set(id, { promise, invalidated });
+    return promise;
+  }
+  invalidatedCount(id) {
+    return this.invalidations.get(id) ?? 0;
+  }
+  async load(id, invalidated) {
+    const timeoutMs = this.options.readTimeoutMs ?? KEYCHAIN_READ_TIMEOUT_MS;
+    const run2 = this.options.run ?? ((service2) => readKeychainItem(this.options.securityProgram, service2, timeoutMs));
+    const service = keychainService(this.options.accounts.secureStorageDir(id));
+    const keep = (value2) => {
+      if (this.invalidatedCount(id) !== invalidated) return false;
+      this.cache.set(id, { readAt: this.now(), value: value2 });
+      return true;
+    };
+    if (this.unanswered.has(service)) {
+      keep(null);
+      return;
+    }
+    let value = null;
+    let failure2 = null;
+    try {
+      const secret = await run2(service);
+      value = secret === null ? null : parseCredentials(secret);
+      if (secret === null) failure2 = { text: "the item is empty", kind: "empty", code: null };
+      else if (value === null) failure2 = { text: "the item holds no OAuth token", kind: "not_credentials", code: null };
+    } catch (error) {
+      if (error instanceof KeychainReadError && error.timedOut) {
+        this.unanswered.add(service);
+        keep(null);
+        this.options.log?.(`reading login ${id} from the Keychain item "${service}" did not answer within ${seconds2(timeoutMs)} seconds, so the proxy holds no token for it, and this daemon will not read that item again until it restarts. A read that waits is usually a Keychain dialog: either a program other than the Claude CLI created the item or changed its access list, so /usr/bin/security may read it only after somebody allows it, or the login Keychain is locked. Reading again would put up another dialog.`);
+        this.options.onFailure?.({ id, kind: "timeout", code: null });
+        return;
+      }
+      if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
+        failure2 = error instanceof KeychainReadError ? {
+          text: `${error.code === null ? "no exit code" : `exit ${String(error.code)}`}: ${error.reason}`,
+          kind: failureKindOf(error),
+          code: error.code
+        } : { text: `it threw: ${error instanceof Error ? error.message : String(error)}`, kind: "failed", code: null };
+      }
+    }
+    if (!keep(value)) return;
+    if (failure2 === null) {
+      this.failureLogged.delete(id);
+    } else if (!this.failureLogged.has(id)) {
+      this.failureLogged.add(id);
+      this.options.log?.(`reading login ${id} from the Keychain item "${service}" failed, so the proxy holds no token for it (${failure2.text})`);
+      this.options.onFailure?.({ id, kind: failure2.kind, code: failure2.code });
+    }
+  }
+  now() {
+    return this.options.now?.() ?? Date.now();
+  }
+};
+function failureKindOf(error) {
+  if (error.outputTooLarge) return "too_large";
+  if (error.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE) return "not_allowed";
+  if (error.code === null) return "not_run";
+  return "failed";
 }
 
 // src/daemon/credential-manager.ts
@@ -11658,14 +11106,14 @@ function claudeSecureStorageDir(id) {
   return isDefaultLoginId(checkedClaudeId(id)) ? null : loginFolder(id);
 }
 function claudeCredentialsDir(id, home) {
-  return isDefaultLoginId(checkedClaudeId(id)) ? (0, import_node_path20.join)(home, ".claude") : loginFolder(id);
+  return isDefaultLoginId(checkedClaudeId(id)) ? (0, import_node_path18.join)(home, ".claude") : loginFolder(id);
 }
 function createTokenSource(options) {
-  const home = options.home ?? import_node_os12.homedir;
+  const home = options.home ?? import_node_os11.homedir;
   const file = new CredentialsFileReader({ credentialsDir: (id) => claudeCredentialsDir(id, home()) });
   const credentialManager = (options.platform ?? process.platform) === "win32" ? new CredentialManagerReader({
     secureStorageDir: claudeSecureStorageDir,
-    fileExists: (id) => (0, import_node_fs18.existsSync)((0, import_node_path20.join)(claudeCredentialsDir(id, home()), CREDENTIALS_FILE_NAME)),
+    fileExists: (id) => (0, import_node_fs16.existsSync)((0, import_node_path18.join)(claudeCredentialsDir(id, home()), CREDENTIALS_FILE_NAME)),
     read: options.credentialRead ?? powerShellCredentialRead(options.env),
     now: options.now,
     onFailure: (failure2) => {
@@ -12276,10 +11724,145 @@ function messageOf4(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+// src/platform/launchd.ts
+var import_node_os12 = require("node:os");
+var import_node_path19 = require("node:path");
+var LAUNCHCTL_PROGRAM = realSystemProgram("launchctl");
+var LAUNCHCTL_VARIABLE = SYSTEM_PROGRAM_VARIABLES.launchctl;
+var LAUNCHCTL_TIMEOUT_MS = 3e4;
+var AUTOSTART_LABEL = "kurmis.daemon";
+var DAEMON_START_ARGS = ["daemon", "start"];
+function launchctlProgram(env = process.env, processEnv = process.env) {
+  return systemProgram("launchctl", env, processEnv);
+}
+function launchctlFor(env = process.env) {
+  const program = launchctlProgram(env);
+  return (args) => runProgram(program, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS, env });
+}
+function currentUid() {
+  return typeof process.getuid === "function" ? process.getuid() : 0;
+}
+function guiDomain(uid = currentUid()) {
+  return `gui/${String(uid)}`;
+}
+function launchAgentsDir() {
+  return (0, import_node_path19.join)((0, import_node_os12.homedir)(), "Library", "LaunchAgents");
+}
+function autostartPlistPath() {
+  return (0, import_node_path19.join)(launchAgentsDir(), `${AUTOSTART_LABEL}.plist`);
+}
+function escapeXml(text2) {
+  return text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function plistXml(root) {
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>"
+  ];
+  const string = (value) => `<string>${escapeXml(value)}</string>`;
+  const scalar2 = (value) => typeof value === "boolean" ? value ? "<true/>" : "<false/>" : string(value);
+  for (const [key, value] of Object.entries(root)) {
+    lines.push(`  <key>${escapeXml(key)}</key>`);
+    if (typeof value === "string" || typeof value === "boolean") lines.push(`  ${scalar2(value)}`);
+    else if (Array.isArray(value)) lines.push("  <array>", ...value.map((item) => `    ${string(item)}`), "  </array>");
+    else {
+      lines.push("  <dict>");
+      for (const [name, item] of Object.entries(value)) {
+        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar2(item)}`);
+      }
+      lines.push("  </dict>");
+    }
+  }
+  lines.push("</dict>", "</plist>", "");
+  return lines.join("\n");
+}
+var DAEMON_JOB_VARIABLES = [
+  "KURMIS_HOME",
+  "KURMIS_CLAUDE_BIN",
+  "KURMIS_CODEX_BIN",
+  "KURMIS_UPSTREAM_URL",
+  "KURMIS_SECURITY_PROGRAM",
+  "KURMIS_ENTRY",
+  ...Object.values(SYSTEM_PROGRAM_VARIABLES).filter((name) => name !== "KURMIS_SECURITY_PROGRAM"),
+  GUARD_VARIABLE,
+  REFUSAL_LOG_VARIABLE
+];
+var FALLBACK_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+function daemonJobEnvironment(env = process.env, processEnv = process.env) {
+  const out = {
+    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os12.homedir)(),
+    PATH: env.PATH !== void 0 && env.PATH !== "" ? env.PATH : FALLBACK_PATH
+  };
+  const hooks = inheritedTestHooks(env, processEnv);
+  for (const name of DAEMON_JOB_VARIABLES) {
+    const value = env[name] || hooks[name];
+    if (value === void 0 || value === "") continue;
+    out[name] = name === "KURMIS_HOME" ? (0, import_node_path19.resolve)(value) : value;
+  }
+  return out;
+}
+function daemonJobPlist(job) {
+  return plistXml({
+    Label: job.label,
+    ProgramArguments: job.programArguments,
+    EnvironmentVariables: job.environment,
+    WorkingDirectory: job.environment.HOME ?? (0, import_node_os12.homedir)(),
+    RunAtLoad: true,
+    AbandonProcessGroup: true,
+    StandardOutPath: "/dev/null",
+    StandardErrorPath: "/dev/null"
+  });
+}
+function parseLaunchctlPrint(result) {
+  if (result.code !== 0) return { loaded: false, path: null };
+  const path = /^\tpath = (.*)$/m.exec(result.stdout);
+  return { loaded: true, path: path === null ? null : (path[1] ?? "").trim() };
+}
+async function jobState(label, launchctl = launchctlFor(), uid) {
+  return parseLaunchctlPrint(await launchctl(["print", `${guiDomain(uid)}/${label}`]));
+}
+function launchctlSaid(result) {
+  if (result.error !== null) return result.error;
+  const said = `${result.stderr}
+${result.stdout}`.replace(/\s+/g, " ").trim();
+  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
+}
+function isNotLoaded(result) {
+  if (result.code === 3 || result.code === 113) return true;
+  return /no such process|could not find (specified )?service/i.test(`${result.stderr}
+${result.stdout}`);
+}
+function isMissingGuiDomain(result) {
+  if (result.code === 125 || result.code === 112) return true;
+  return /domain does not support specified action|could not find domain/i.test(`${result.stderr}
+${result.stdout}`);
+}
+function bootstrapFailure(result, domain) {
+  const said = launchctlSaid(result);
+  if (result.error === null && isMissingGuiDomain(result)) {
+    return `launchd could not load the job into ${domain} (${said}). This usually means nobody is logged in at this Mac's screen: the GUI session, the only one that can read the login Keychain, exists only while you are logged in there or through Screen Sharing.`;
+  }
+  return `launchd could not load the job into ${domain} (${said}).`;
+}
+async function bootstrapJob(plistPath, launchctl = launchctlFor(), uid) {
+  const domain = guiDomain(uid);
+  const result = await launchctl(["bootstrap", domain, plistPath]);
+  if (result.code !== 0 || result.error !== null) throw new Error(bootstrapFailure(result, domain));
+}
+async function bootoutJob(label, launchctl = launchctlFor(), uid) {
+  const target = `${guiDomain(uid)}/${label}`;
+  const result = await launchctl(["bootout", target]);
+  if (result.code === 0 && result.error === null) return true;
+  if (result.error === null && isNotLoaded(result)) return false;
+  throw new Error(`launchd could not unload ${target} (${launchctlSaid(result)}).`);
+}
+
 // src/cli/commands/daemon.ts
 var RUN_EXIT_FALLBACK_MS = 2e3;
-function clientOptions(context, noLaunchd = false) {
-  return { env: context.env, noLaunchd, onWarning: (text2) => writeLine(context.stderr, `kurmis daemon: ${text2}`) };
+function clientOptions(context) {
+  return { env: context.env };
 }
 function failed(error, context) {
   if (!(error instanceof DaemonError)) throw error;
@@ -12297,31 +11880,27 @@ function describeStart(result) {
     return newer ? `A newer kurmis daemon (${connection.version}) already runs ${where}; this kurmis is ${kurmisVersion}.` : `The kurmis daemon ${connection.version} already runs ${where}.`;
   }
   const replaced = result.replaced === null ? "" : `, replacing version ${result.replaced}, which stops once its open requests finish`;
-  const through = result.method === "launchd" ? " through launchd" : result.method === "wmi" ? " through WMI" : "";
-  return `Started the kurmis daemon ${connection.version}${through} ${where}${replaced}.`;
+  return `Started the kurmis daemon ${connection.version} ${where}${replaced}.`;
 }
 var start = async (args, context) => {
-  const parsed = parseCommandArgs("daemon start", args, {
-    "no-launchd": { type: "boolean" },
-    env: { type: "string", multiple: true }
-  }, context);
+  const parsed = parseCommandArgs("daemon start", args, { env: { type: "string", multiple: true } }, context);
   if (typeof parsed === "number") return parsed;
-  const assignments = daemonRunAssignments(parsed.values.env ?? []);
+  const assignments = daemonStartAssignments(parsed.values.env ?? []);
   if (typeof assignments === "string") return usageError("daemon start", assignments, context);
   for (const [name, value] of Object.entries(assignments)) process.env[name] = value;
   const startContext = { ...context, env: { ...context.env, ...assignments } };
   try {
-    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(startContext, parsed.values["no-launchd"] === true))));
+    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(startContext))));
     return EXIT_OK;
   } catch (error) {
     return failed(error, context);
   }
 };
 var restart = async (args, context) => {
-  const parsed = parseCommandArgs("daemon restart", args, { "no-launchd": { type: "boolean" } }, context);
+  const parsed = parseCommandArgs("daemon restart", args, {}, context);
   if (typeof parsed === "number") return parsed;
   try {
-    writeLine(context.stdout, describeStart(await restartDaemon(clientOptions(context, parsed.values["no-launchd"] === true))));
+    writeLine(context.stdout, describeStart(await restartDaemon(clientOptions(context))));
     return EXIT_OK;
   } catch (error) {
     return failed(error, context);
@@ -12399,7 +11978,7 @@ var status = async (args, context) => {
     return failed(error, context);
   }
 };
-function daemonRunAssignments(values) {
+function daemonStartAssignments(values) {
   const out = {};
   for (const value of values) {
     const at2 = value.indexOf("=");
@@ -12412,13 +11991,9 @@ function daemonRunAssignments(values) {
   return out;
 }
 var run = async (args, context) => {
-  const parsed = parseCommandArgs("daemon run", args, { env: { type: "string", multiple: true } }, context);
+  const parsed = parseCommandArgs("daemon run", args, {}, context);
   if (typeof parsed === "number") return parsed;
-  const assignments = daemonRunAssignments(parsed.values.env ?? []);
-  if (typeof assignments === "string") return usageError("daemon run", assignments, context);
-  for (const [name, value] of Object.entries(assignments)) process.env[name] = value;
-  const env = { ...context.env, ...assignments };
-  const code = await runDaemon({ env, stdout: context.stdout, stderr: context.stderr });
+  const code = await runDaemon({ env: context.env, stdout: context.stdout, stderr: context.stderr });
   setTimeout(() => process.exit(code), RUN_EXIT_FALLBACK_MS).unref();
   return code;
 };
@@ -12431,20 +12006,20 @@ var daemonCommand = {
 The daemon is the background process that routes Claude requests. "kurmis claude" starts it
 when it is not running, so it seldom needs starting by hand.
 
-  start [--no-launchd]    Start it in the background, replacing one of an older version.
-                          --env NAME=VALUE sets a kurmis variable, as for "run"; the
-                          Windows logon entry uses it.
+  start                   Start it in the background, replacing one of an older version.
+                          --env NAME=VALUE sets a kurmis variable in the daemon's
+                          environment; the Windows logon entry uses it.
   stop                    Stop it after it finishes the requests it has open, waiting at most
                           30 seconds for them.
-  restart [--no-launchd]  Start a new one now; the old one finishes its open requests first.
+  restart                 Start a new one now; the old one finishes its open requests first.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
   run                     Run it in this terminal instead of the background (what "start"
-                          launches). --env NAME=VALUE sets a kurmis variable in its
-                          environment; kurmis uses it when it starts the daemon through WMI.
+                          launches).
 
-On macOS, a daemon started from an ssh login could not read the login Keychain, so "start"
-asks launchd to start it in your desktop session; --no-launchd starts it directly instead.
+On macOS, a daemon started from an ssh login cannot read the login Keychain. Run "kurmis
+setup" in a terminal at the screen: the daemon then runs in your desktop session, starts
+again at each login, and ssh sessions use it.
 
 Options:
   -h, --help              Show this help.`,
@@ -12458,34 +12033,34 @@ Options:
 };
 
 // src/cli/commands/list.ts
-var import_node_fs19 = require("node:fs");
+var import_node_fs17 = require("node:fs");
 var import_node_os13 = require("node:os");
-var import_node_path21 = require("node:path");
+var import_node_path20 = require("node:path");
 var CODEX_LOGIN_STATUS_TIMEOUT_MS = 1e4;
 function namesAccount(file) {
   try {
-    return parseClaudeIdentity((0, import_node_fs19.readFileSync)(file, "utf8")) !== null;
+    return parseClaudeIdentity((0, import_node_fs17.readFileSync)(file, "utf8")) !== null;
   } catch {
     return false;
   }
 }
 function hasLocalCredentials(id, env, home) {
   if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return (0, import_node_fs19.existsSync)((0, import_node_path21.join)(home, ".claude", ".credentials.json")) || namesAccount((0, import_node_path21.join)(home, CLAUDE_PROFILE_FILE));
+    return (0, import_node_fs17.existsSync)((0, import_node_path20.join)(home, ".claude", ".credentials.json")) || namesAccount((0, import_node_path20.join)(home, CLAUDE_PROFILE_FILE));
   }
-  if (id.startsWith("codex:")) return (0, import_node_fs19.existsSync)((0, import_node_path21.join)(codexHomeOf(id, env, home), "auth.json"));
+  if (id.startsWith("codex:")) return (0, import_node_fs17.existsSync)((0, import_node_path20.join)(codexHomeOf(id, env, home), "auth.json"));
   const folder = loginFolder(id);
-  return (0, import_node_fs19.existsSync)((0, import_node_path21.join)(folder, ".credentials.json")) || namesAccount((0, import_node_path21.join)(folder, CLAUDE_PROFILE_FILE));
+  return (0, import_node_fs17.existsSync)((0, import_node_path20.join)(folder, ".credentials.json")) || namesAccount((0, import_node_path20.join)(folder, CLAUDE_PROFILE_FILE));
 }
 function codexHomeOf(id, env, home, platform = process.platform) {
   const patched = applyEnvPatch(env, codexLoginEnv(id, env, platform), platform === "win32");
   const named = platform === "win32" ? windowsEnv(patched, "CODEX_HOME") : patched["CODEX_HOME"];
-  return named !== void 0 && named !== "" ? named : (0, import_node_path21.join)(home, ".codex");
+  return named !== void 0 && named !== "" ? named : (0, import_node_path20.join)(home, ".codex");
 }
 function codexKeepsSignInElsewhere(codexHome) {
   let text2;
   try {
-    text2 = (0, import_node_fs19.readFileSync)((0, import_node_path21.join)(codexHome, "config.toml"), "utf8");
+    text2 = (0, import_node_fs17.readFileSync)((0, import_node_path20.join)(codexHome, "config.toml"), "utf8");
   } catch {
     return false;
   }
@@ -12579,20 +12154,20 @@ Options:
 var listCommand = createListCommand();
 
 // src/cli/commands/login.ts
-var import_node_fs21 = require("node:fs");
+var import_node_fs19 = require("node:fs");
 var import_node_os14 = require("node:os");
-var import_node_path23 = require("node:path");
+var import_node_path22 = require("node:path");
 
 // src/platform/remove-tree.ts
-var import_node_fs20 = require("node:fs");
-var import_node_path22 = require("node:path");
+var import_node_fs18 = require("node:fs");
+var import_node_path21 = require("node:path");
 var nodeFs = {
-  lstatSync: (path) => (0, import_node_fs20.lstatSync)(path),
-  readdirSync: (path) => (0, import_node_fs20.readdirSync)(path),
-  unlinkSync: (path) => (0, import_node_fs20.unlinkSync)(path),
-  rmdirSync: (path) => (0, import_node_fs20.rmdirSync)(path),
-  chmodSync: (path, mode) => (0, import_node_fs20.chmodSync)(path, mode),
-  realpathSync: (path) => import_node_fs20.realpathSync.native(path)
+  lstatSync: (path) => (0, import_node_fs18.lstatSync)(path),
+  readdirSync: (path) => (0, import_node_fs18.readdirSync)(path),
+  unlinkSync: (path) => (0, import_node_fs18.unlinkSync)(path),
+  rmdirSync: (path) => (0, import_node_fs18.rmdirSync)(path),
+  chmodSync: (path, mode) => (0, import_node_fs18.chmodSync)(path, mode),
+  realpathSync: (path) => import_node_fs18.realpathSync.native(path)
 };
 function codeOf2(error) {
   return error?.code;
@@ -12601,8 +12176,8 @@ function removeTreeSync(path, options = {}) {
   removeEntry2(path, options.fs ?? nodeFs, options.platform ?? process.platform, null);
 }
 function insideWindowsFolder(path, root) {
-  const a = import_node_path22.win32.normalize(path).replace(/^\\\\\?\\/, "").toLowerCase();
-  const b = import_node_path22.win32.normalize(root).replace(/^\\\\\?\\/, "").replace(/\\+$/, "").toLowerCase();
+  const a = import_node_path21.win32.normalize(path).replace(/^\\\\\?\\/, "").toLowerCase();
+  const b = import_node_path21.win32.normalize(root).replace(/^\\\\\?\\/, "").replace(/\\+$/, "").toLowerCase();
   return a === b || a.startsWith(`${b}\\`);
 }
 function removeEntry2(path, fs, platform, root) {
@@ -12630,7 +12205,7 @@ function removeEntry2(path, fs, platform, root) {
       }
       inside = root ?? real;
     }
-    for (const name of fs.readdirSync(path)) removeEntry2((0, import_node_path22.join)(path, name), fs, platform, inside);
+    for (const name of fs.readdirSync(path)) removeEntry2((0, import_node_path21.join)(path, name), fs, platform, inside);
     retryWhileLockedSync(() => fs.rmdirSync(path), platform);
   } else {
     removeFile2(path, fs, platform);
@@ -12692,7 +12267,7 @@ var LOGIN_PROBE_WAIT_MS = 15e3;
 function freeLoginName(provider, config, skip = /* @__PURE__ */ new Set()) {
   for (let number = 2; ; number++) {
     const id = `${provider}:${String(number)}`;
-    if (!skip.has(String(number)) && findLogin(config, id) === void 0 && !(0, import_node_fs21.existsSync)(loginFolder(id))) return String(number);
+    if (!skip.has(String(number)) && findLogin(config, id) === void 0 && !(0, import_node_fs19.existsSync)(loginFolder(id))) return String(number);
   }
 }
 function loginTarget(argument, name, config, skip = /* @__PURE__ */ new Set()) {
@@ -12719,7 +12294,7 @@ function loginTarget(argument, name, config, skip = /* @__PURE__ */ new Set()) {
 }
 function homeIdentity(home) {
   try {
-    return parseClaudeIdentity((0, import_node_fs21.readFileSync)((0, import_node_path23.join)(home, CLAUDE_PROFILE_FILE), "utf8"));
+    return parseClaudeIdentity((0, import_node_fs19.readFileSync)((0, import_node_path22.join)(home, CLAUDE_PROFILE_FILE), "utf8"));
   } catch {
     return null;
   }
@@ -12746,7 +12321,7 @@ function reserveLogin(argument, name) {
     try {
       const config = loadConfig();
       const listed = findLogin(config, target.id) !== void 0;
-      if (numbered && (listed || (0, import_node_fs21.existsSync)(loginFolder(target.id)))) {
+      if (numbered && (listed || (0, import_node_fs19.existsSync)(loginFolder(target.id)))) {
         lock.release();
         skip.add(target.id.slice(target.id.indexOf(":") + 1));
         continue;
@@ -12789,14 +12364,14 @@ async function signIn(run2) {
   const isDefault = isDefaultLoginId(id);
   const folder = isDefault ? null : loginFolder(id);
   let created = false;
-  if (folder !== null && !(0, import_node_fs21.existsSync)(folder)) {
+  if (folder !== null && !(0, import_node_fs19.existsSync)(folder)) {
     makePrivateDirSync(folder);
     created = true;
   }
   const cleanUp = () => {
     if (!created || folder === null) return;
     removeTreeSync(folder);
-    if (provider === "codex") (0, import_node_fs21.rmSync)(codexMergedRecordPath(id), { force: true });
+    if (provider === "codex") (0, import_node_fs19.rmSync)(codexMergedRecordPath(id), { force: true });
   };
   const notAdded = isNew ? ` ${id} was not added.` : "";
   if (provider === "codex" && !isDefault) {
@@ -12825,7 +12400,7 @@ async function signIn(run2) {
     return fail2(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`);
   }
   if (provider === "claude" && isDefault) {
-    (0, import_node_fs21.rmSync)((0, import_node_path23.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
+    (0, import_node_fs19.rmSync)((0, import_node_path22.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
   }
   const identity = provider === "claude" ? isDefault ? homeIdentity(run2.deps.home()) : readClaudeIdentity(id, run2.deps.home()) : null;
   if (identity === null && !await hasCredentials(id, context.env, run2.deps.home(), run2.deps)) {
@@ -12925,11 +12500,11 @@ Options:
 var loginCommand = createLoginCommand();
 
 // src/cli/commands/logout.ts
-var import_node_fs22 = require("node:fs");
+var import_node_fs20 = require("node:fs");
 var LOGOUT_TIMEOUT_MS = 3e4;
 function exists(path) {
   try {
-    (0, import_node_fs22.lstatSync)(path);
+    (0, import_node_fs20.lstatSync)(path);
     return true;
   } catch {
     return false;
@@ -13013,7 +12588,7 @@ Options:
     if (!listed && !hasFolder) {
       const record2 = provider === "codex" ? codexMergedRecordPath(id) : null;
       if (record2 === null || !exists(record2)) return fail3(context, `there is no login ${id}; "kurmis list" shows them`);
-      (0, import_node_fs22.rmSync)(record2, { force: true });
+      (0, import_node_fs20.rmSync)(record2, { force: true });
       writeLine(context.stdout, `Deleted the record of what was merged into ${id}'s home, which ${id} left behind.`);
       return EXIT_OK;
     }
@@ -13024,7 +12599,7 @@ Options:
     }
     try {
       removeTreeSync(folder);
-      if (provider === "codex") (0, import_node_fs22.rmSync)(codexMergedRecordPath(id), { force: true });
+      if (provider === "codex") (0, import_node_fs20.rmSync)(codexMergedRecordPath(id), { force: true });
     } catch (error) {
       return fail3(context, `${listed ? `${id} is removed from kurmis, but ` : ""}its folder ${folder} could not be deleted (${error instanceof Error ? error.message : String(error)}). Close what uses it and run "kurmis logout ${id}" again.`);
     }
@@ -13153,7 +12728,208 @@ var import_node_os15 = require("node:os");
 var import_node_path25 = require("node:path");
 
 // src/platform/autostart.ts
-var import_node_fs23 = require("node:fs");
+var import_node_fs22 = require("node:fs");
+
+// src/platform/windows-autostart.ts
+var import_node_fs21 = require("node:fs");
+var import_node_path23 = require("node:path");
+var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+var RUN_VALUE_NAME = "kurmis";
+var REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg;
+var REG_TIMEOUT_MS = 3e4;
+var RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`;
+function regProgram(env = process.env, processEnv = process.env) {
+  return systemProgram("reg", env, processEnv);
+}
+function wscriptPath(env = process.env, processEnv = process.env) {
+  return systemProgram("wscript", env, processEnv);
+}
+function regFor(env = process.env) {
+  const program = regProgram(env);
+  return (args) => runProgram(program, args, { timeoutMs: REG_TIMEOUT_MS, env });
+}
+function runValueData(wscript, scriptPath) {
+  return windowsCommandLine([wscript, "//B", "//Nologo", "//E:JScript", scriptPath]);
+}
+var SCRIPT_HOST_SETTINGS_KEYS = [
+  "HKCU\\Software\\Microsoft\\Windows Script Host\\Settings",
+  "HKLM\\Software\\Microsoft\\Windows Script Host\\Settings"
+];
+function scriptHostDisabled(query) {
+  if (query.code !== 0 || query.error !== null) return false;
+  const value = parseRegQuery(query.stdout, "Enabled");
+  return value !== null && /^(0x0+|0)$/i.test(value.data.trim());
+}
+function sameRunData(read, written) {
+  const pattern = (written.match(/[\u0080-\uffff]+|[^\u0080-\uffff]+/g) ?? []).map((part) => {
+    if (part.charCodeAt(0) < 128) return part.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+    return `[\\s\\S]{1,${String(part.length * 2)}}`;
+  }).join("");
+  return new RegExp(`^${pattern}$`).test(read);
+}
+function regAddArgs(data) {
+  return ["add", RUN_KEY, "/v", RUN_VALUE_NAME, "/t", "REG_SZ", "/d", data, "/f"];
+}
+function regQueryArgs() {
+  return ["query", RUN_KEY, "/v", RUN_VALUE_NAME];
+}
+function regDeleteArgs() {
+  return ["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"];
+}
+function parseRegQuery(stdout, name) {
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^ {4}(.+?) {4}(REG_[A-Z_]+)(?: {4}(.*))?$/.exec(line);
+    if (match !== null && (match[1] ?? "").toLowerCase() === name.toLowerCase()) {
+      return { type: match[2] ?? "", data: match[3] ?? "" };
+    }
+  }
+  return null;
+}
+function jscriptString(text2) {
+  if (/[\r\n\u2028\u2029]/.test(text2)) throw new Error("a value for the logon script has a line break in it");
+  return `"${text2.replace(/[\\"]/g, (char) => `\\${char}`)}"`;
+}
+function windowsAutostartEnvironment(env = process.env, processEnv = process.env) {
+  const out = {};
+  const hooks = inheritedTestHooks(env, processEnv);
+  for (const name of DAEMON_JOB_VARIABLES) {
+    const value = env[name] || hooks[name];
+    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path23.win32.resolve(value) : value;
+  }
+  return out;
+}
+function autostartCommandLine(script) {
+  const assignments = Object.entries(script.environment).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
+  return windowsCommandLine([...script.programArguments, ...assignments]);
+}
+var PERCENT_SIGN_VARIABLE = "KURMIS_PERCENT_SIGN";
+function autostartScript(script) {
+  const command = autostartCommandLine(script);
+  const lines = [
+    "// Written by kurmis setup: starts the kurmis daemon at logon without a console window.",
+    "// kurmis setup --undo removes it.",
+    'var shell = new ActiveXObject("WScript.Shell");',
+    `shell.CurrentDirectory = ${jscriptString(script.cwd)};`
+  ];
+  if (command.includes("%")) {
+    const escaped = command.replaceAll("%", `%${PERCENT_SIGN_VARIABLE}%`);
+    lines.push(
+      `// shell.Run replaces %NAME% with the variable NAME, so each percent sign is written as ${PERCENT_SIGN_VARIABLE}.`,
+      `shell.Environment("Process").Item(${jscriptString(PERCENT_SIGN_VARIABLE)}) = "%";`,
+      `var command = ${jscriptString(escaped)};`,
+      `if (shell.ExpandEnvironmentStrings(command) == ${jscriptString(command)}) shell.Run(command, 0, false);`
+    );
+  } else {
+    lines.push(`shell.Run(${jscriptString(command)}, 0, false);`);
+  }
+  return `${lines.join("\r\n")}\r
+`;
+}
+var UTF16_BOM = Buffer.from([255, 254]);
+function encodeScript(text2) {
+  return Buffer.concat([UTF16_BOM, Buffer.from(text2, "utf16le")]);
+}
+function readScript(path) {
+  let bytes;
+  try {
+    bytes = (0, import_node_fs21.readFileSync)(path);
+  } catch {
+    return null;
+  }
+  if (bytes.length >= 2 && bytes[0] === 255 && bytes[1] === 254) return bytes.subarray(2).toString("utf16le");
+  return bytes.toString("utf8");
+}
+function regSaid(result) {
+  if (result.error !== null) return result.error;
+  const said = `${result.stderr}
+${result.stdout}`.replace(/\s+/g, " ").trim();
+  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
+}
+var ok2 = (result) => result.code === 0 && result.error === null;
+function userProfile(env) {
+  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path23.dirname)(windowsAutostartScriptPath());
+}
+async function scriptHostProblem(wscript, reg) {
+  if (!(0, import_node_fs21.existsSync)(wscript)) {
+    return `${wscript} does not exist, so Windows Script Host, which starts the daemon at logon without a console window, is not installed or was removed.`;
+  }
+  for (const key of SCRIPT_HOST_SETTINGS_KEYS) {
+    if (scriptHostDisabled(await reg(["query", key, "/v", "Enabled"]))) {
+      return `Windows Script Host, which starts the daemon at logon without a console window, is turned off ("Enabled" is 0 under ${key}). Turn it on, or ask whoever manages this machine, and run kurmis setup again.`;
+    }
+  }
+  return null;
+}
+function removeOldVbsScript(scriptPath) {
+  const old = (0, import_node_path23.join)((0, import_node_path23.dirname)(scriptPath), "autostart.vbs");
+  if (old === scriptPath || !(0, import_node_fs21.existsSync)(old)) return false;
+  (0, import_node_fs21.rmSync)(old, { force: true });
+  return true;
+}
+async function registerWindowsAutostart(options) {
+  const reg = options.reg ?? regFor(options.env);
+  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
+  if (options.programArguments === void 0) throw new Error("registerWindowsAutostart needs programArguments");
+  let text2;
+  try {
+    text2 = autostartScript({
+      programArguments: options.programArguments,
+      environment: windowsAutostartEnvironment(options.env),
+      cwd: userProfile(options.env)
+    });
+  } catch (error) {
+    return { changed: false, where: null, warning: `The logon entry was not written: ${error.message}.` };
+  }
+  const wscript = wscriptPath(options.env);
+  const unusable = await scriptHostProblem(wscript, reg);
+  if (unusable !== null) {
+    return {
+      changed: false,
+      where: null,
+      warning: `The logon entry was not written: ${unusable} The next kurmis command starts the daemon anyway.`,
+      noEntryPossible: true
+    };
+  }
+  let changed = false;
+  if (readScript(scriptPath) !== text2) {
+    makePrivateDirSync((0, import_node_path23.dirname)(scriptPath));
+    (0, import_node_fs21.writeFileSync)(scriptPath, encodeScript(text2));
+    changed = true;
+  }
+  const data = runValueData(wscript, scriptPath);
+  const query = await reg(regQueryArgs());
+  const current = ok2(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null;
+  if (current !== null && current.type === "REG_SZ" && sameRunData(current.data, data)) {
+    if (removeOldVbsScript(scriptPath)) changed = true;
+    return { changed, where: RUN_ENTRY_DESCRIPTION };
+  }
+  const added = await reg(regAddArgs(data));
+  if (!ok2(added)) {
+    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` };
+  }
+  removeOldVbsScript(scriptPath);
+  return { changed: true, where: RUN_ENTRY_DESCRIPTION };
+}
+async function unregisterWindowsAutostart(options) {
+  const reg = options.reg ?? regFor(options.env);
+  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
+  let changed = false;
+  let warning;
+  const query = await reg(regQueryArgs());
+  if (ok2(query) && parseRegQuery(query.stdout, RUN_VALUE_NAME) !== null) {
+    const deleted = await reg(regDeleteArgs());
+    if (ok2(deleted)) changed = true;
+    else warning = `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}).`;
+  }
+  if (readScript(scriptPath) !== null) {
+    (0, import_node_fs21.rmSync)(scriptPath, { force: true });
+    changed = true;
+  }
+  if (removeOldVbsScript(scriptPath)) changed = true;
+  return warning === void 0 ? { changed, where: RUN_ENTRY_DESCRIPTION } : { changed, where: RUN_ENTRY_DESCRIPTION, warning };
+}
+
+// src/platform/autostart.ts
 var UNSUPPORTED = "Starting the daemon at login is not supported on this platform; the next kurmis command starts it.";
 var NO_ENTRY = "kurmis is not running from its bundle, so there is no program to start at login; run kurmis setup from the installed kurmis.";
 function loginProgram(options, platform) {
@@ -13164,7 +12940,7 @@ function loginProgram(options, platform) {
 }
 function readText2(path) {
   try {
-    return (0, import_node_fs23.readFileSync)(path, "utf8");
+    return (0, import_node_fs22.readFileSync)(path, "utf8");
   } catch {
     return null;
   }
@@ -13230,14 +13006,14 @@ async function unregisterLaunchAgent(options) {
     warning = `${error.message} The login item's file is removed, so it does not start the daemon at the next login.`;
   }
   if (readText2(path) !== null) {
-    (0, import_node_fs23.rmSync)(path, { force: true });
+    (0, import_node_fs22.rmSync)(path, { force: true });
     changed = true;
   }
   return warning === void 0 ? { changed, where: path } : { changed, where: path, warning };
 }
 
 // src/cli/global-settings.ts
-var import_node_fs24 = require("node:fs");
+var import_node_fs23 = require("node:fs");
 var import_node_path24 = require("node:path");
 var BASE_URL = "ANTHROPIC_BASE_URL";
 var CUSTOM_HEADERS2 = "ANTHROPIC_CUSTOM_HEADERS";
@@ -13621,7 +13397,7 @@ function backupPathFor(settingsPath) {
 }
 function readText3(path) {
   try {
-    return (0, import_node_fs24.readFileSync)(path, "utf8");
+    return (0, import_node_fs23.readFileSync)(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -13629,7 +13405,7 @@ function readText3(path) {
 }
 function writeTarget(path) {
   try {
-    return (0, import_node_fs24.realpathSync)(path);
+    return (0, import_node_fs23.realpathSync)(path);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -13637,19 +13413,19 @@ function writeTarget(path) {
   for (let hop = 0; hop < 40; hop++) {
     let stats;
     try {
-      stats = (0, import_node_fs24.lstatSync)(current);
+      stats = (0, import_node_fs23.lstatSync)(current);
     } catch (error) {
       if (error.code === "ENOENT") return current;
       throw error;
     }
     if (!stats.isSymbolicLink()) return current;
-    current = (0, import_node_path24.resolve)((0, import_node_path24.dirname)(current), (0, import_node_fs24.readlinkSync)(current));
+    current = (0, import_node_path24.resolve)((0, import_node_path24.dirname)(current), (0, import_node_fs23.readlinkSync)(current));
   }
   throw new SettingsFileError(`${path} is a chain of more than 40 symbolic links`);
 }
 function linkTargetOf(path) {
   try {
-    if (!(0, import_node_fs24.lstatSync)(path).isSymbolicLink()) return null;
+    if (!(0, import_node_fs23.lstatSync)(path).isSymbolicLink()) return null;
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -13668,21 +13444,21 @@ function backUp(path, replace, platform) {
   const backup = backupPathFor(path);
   if (!replace) {
     try {
-      (0, import_node_fs24.copyFileSync)(path, backup, import_node_fs24.constants.COPYFILE_EXCL);
+      (0, import_node_fs23.copyFileSync)(path, backup, import_node_fs23.constants.COPYFILE_EXCL);
     } catch (error) {
       if (error.code === "EEXIST") return null;
       throw error;
     }
-    if (platform !== "win32") (0, import_node_fs24.chmodSync)(backup, PRIVATE_FILE_MODE);
+    if (platform !== "win32") (0, import_node_fs23.chmodSync)(backup, PRIVATE_FILE_MODE);
     return backup;
   }
   const temp = `${backup}.${String(process.pid)}.tmp`;
   try {
-    (0, import_node_fs24.copyFileSync)(path, temp);
-    if (platform !== "win32") (0, import_node_fs24.chmodSync)(temp, PRIVATE_FILE_MODE);
+    (0, import_node_fs23.copyFileSync)(path, temp);
+    if (platform !== "win32") (0, import_node_fs23.chmodSync)(temp, PRIVATE_FILE_MODE);
     replaceFileSync(temp, backup);
   } catch (error) {
-    (0, import_node_fs24.rmSync)(temp, { force: true });
+    (0, import_node_fs23.rmSync)(temp, { force: true });
     throw error;
   }
   return backup;
@@ -13696,7 +13472,7 @@ function readOnlyError(target) {
 function writeEdit(path, edit, existed, userOnly, platform) {
   const target = writeTarget(path);
   if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target, platform) : null };
-  const before = existed ? (0, import_node_fs24.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
+  const before = existed ? (0, import_node_fs23.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
   if (platform === "win32" && existed && isReadOnly(before)) {
     throw readOnlyError(target);
   }
@@ -13712,7 +13488,7 @@ function writeEdit(path, edit, existed, userOnly, platform) {
     throw error;
   }
   if (platform === "win32") return { backup, modeBefore: null };
-  (0, import_node_fs24.chmodSync)(target, mode);
+  (0, import_node_fs23.chmodSync)(target, mode);
   return { backup, modeBefore: existed && mode !== before ? before : null };
 }
 function failWith2(path, error) {
@@ -13746,7 +13522,7 @@ function checkSetupSettingsFile(path, values, platform = process.platform) {
   try {
     const text2 = readText3(path);
     const edit = applySetupToText(text2, values);
-    if (platform === "win32" && text2 !== null && isReadOnly((0, import_node_fs24.statSync)(writeTarget(path)).mode)) {
+    if (platform === "win32" && text2 !== null && isReadOnly((0, import_node_fs23.statSync)(writeTarget(path)).mode)) {
       throw readOnlyError(writeTarget(path));
     }
     return edit.hadKurmis;

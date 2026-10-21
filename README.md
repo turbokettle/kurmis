@@ -240,6 +240,23 @@ Setup also warns when the file's `env` sets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH
 reported) and the start at login. The daemon keeps running until you stop it, because
 `kurmis claude` still uses it.
 
+**Working over ssh.** On macOS, a daemon started from an ssh login cannot read the login
+Keychain, so the logins whose token is in the Keychain are not routed. `kurmis status` shows
+them without a token. Run `kurmis setup` in a terminal at the screen: the daemon then runs in
+your desktop session, starts again at each login, and kurmis commands over ssh use it. Without
+setup, run any kurmis command once in a terminal at the screen before you work over ssh. When a
+daemon started from ssh already runs, `kurmis daemon restart` at the screen replaces it. After
+an update, the first kurmis command replaces the older daemon with one started from where that
+command runs, so run it at the screen too.
+
+On Windows, a daemon started from an ssh session ends when that session ends, and the next
+kurmis command starts it again. After `kurmis setup`, the daemon started at logon keeps running
+and ssh sessions use it.
+
+On macOS, launchd may not be able to start the login item when Node, kurmis or the kurmis data
+folder is on an external volume. Then the daemon does not start at login, and the next kurmis
+command starts it.
+
 ### `kurmis daemon`
 
 ```sh
@@ -281,25 +298,10 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
 - **macOS asks whether `security` may use a Keychain item.** That is the daemon reading a
   login's token, which the macOS `security` program fetches. Choose "Always Allow" so it does
   not ask again for that login.
-- **Working over ssh on a Mac.** A program started from an ssh session cannot read the login
-  Keychain, which is where Claude Code keeps its tokens on macOS. So when kurmis has to start the
-  daemon from an ssh session, it starts it through launchd in your desktop session instead,
-  which works while you are logged in at the Mac. If nobody is logged in at the Mac, start the
-  daemon there once, or run `kurmis setup` there so it starts at login; `kurmis claude` over ssh
-  then uses that daemon.
+- **Working over ssh on a Mac.** See "Working over ssh" under `kurmis setup`.
 - **"kurmis was started by the program it started".** The `claude` or `codex` that kurmis found
   on your `PATH` is a script or alias that runs kurmis again. Take it off `PATH`, or set
   `KURMIS_CLAUDE_BIN` (or `KURMIS_CODEX_BIN`) to the full path of the real program.
-- **"The daemon could not be started through launchd (its job exited with code 78 …)" or "(no
-  daemon answered within 5 seconds …)" (30 seconds when the job exited with code 0).** A
-  launchd job may be unable to reach a program or a folder on an external volume: launchd then
-  answers exit 78, or the job hangs. This happens when Node, the kurmis install or the kurmis data
-  folder (`KURMIS_HOME`) is on such a volume. Kurmis then starts the daemon directly from the
-  command you ran (an ssh session, or another session where the login Keychain could not be read),
-  and such a daemon cannot read the Keychain either, so logins whose token is in the Keychain are
-  not routed until the daemon is started from a login at the screen. Give the program that runs the
-  job access to the volume (System Settings, Privacy & Security, Files and Folders or Full Disk
-  Access), or keep Node, kurmis and its data folder on the internal disk.
 - **Windows: PowerShell says running `kurmis.ps1` is disabled on this system.** PowerShell's
   default execution policy blocks the `kurmis.ps1` script npm installs next to `kurmis.cmd`.
   Run `kurmis.cmd` instead (it takes the same arguments), or allow local scripts for your user

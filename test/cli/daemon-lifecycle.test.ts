@@ -3,7 +3,7 @@
 // fake request handling. Every daemon a test started is killed after it, once it is shown to be
 // one (`test/daemon/own-daemons.ts`).
 import { execFile, spawn, spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, realpathSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -246,20 +246,7 @@ describe('kurmis daemon', () => {
     await waitUntil(() => !processExists(before), 10_000, 'the old daemon to exit')
   }, 60_000)
 
-  it.runIf(process.platform === 'win32')('tries WMI from an ssh login on Windows, and starts the daemon directly when it fails', async () => {
-    const { home } = await newHome()
-    const powershellDir = join(home, 'fake-powershell')
-    const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_POWERSHELL_DIR: powershellDir }
-    const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
-    expect(started.code).toBe(0)
-    expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 on')
-    // PowerShell is the stand-in of test/setup.ts, which records the call and fails.
-    expect(started.stderr).toContain('could not be started outside this ssh session')
-    expect(readFileSync(join(powershellDir, 'calls.jsonl'), 'utf8')).toContain('Win32_Process')
-    expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
-  }, 60_000)
-
-  it.runIf(process.platform === 'linux')('starts the daemon directly from an ssh login on Linux, with no launchd or WMI', async () => {
+  it('starts the daemon directly from an ssh login, with no launchctl or PowerShell', async () => {
     const { home } = await newHome()
     const launchctlDir = join(home, 'fake-launchctl')
     const powershellDir = join(home, 'fake-powershell')
@@ -270,31 +257,5 @@ describe('kurmis daemon', () => {
     expect(existsSync(join(launchctlDir, 'calls.jsonl'))).toBe(false)
     expect(existsSync(join(powershellDir, 'calls.jsonl'))).toBe(false)
     expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
-  }, 60_000)
-
-  it.runIf(process.platform === 'darwin')('starts the daemon through launchd from an ssh login on macOS', async () => {
-    const { home } = await newHome()
-    const launchctlDir = join(home, 'fake-launchctl')
-    const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_LAUNCHCTL_RUN: '1', FAKE_LAUNCHCTL_DIR: launchctlDir }
-    const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
-    expect(started).toMatchObject({ code: 0, stderr: '' })
-    expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 through launchd')
-    const calls = readFileSync(join(launchctlDir, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[])
-    // The CLI also asks for the job's state (print) while it waits.
-    expect(calls.map((call) => call[0]).filter((name) => name !== 'print')).toEqual(['bootstrap', 'bootout'])
-    // The one-shot plist is gone once the daemon answers.
-    expect(readdirSync(join(home, 'launchd')).filter((name) => name.endsWith('.plist'))).toEqual([])
-    const runs = readFileSync(join(launchctlDir, 'runs.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { program: string[] })
-    expect(runs[0]?.program.slice(-3)).toEqual(['daemon', 'start', '--no-launchd'])
-    expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
-  }, 60_000)
-
-  it.runIf(process.platform === 'darwin')('starts the daemon directly with a warning when launchd refuses', async () => {
-    const { home } = await newHome()
-    const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_LAUNCHCTL_FAIL_BOOTSTRAP: '125', FAKE_LAUNCHCTL_DIR: join(home, 'fake-launchctl') }
-    const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
-    expect(started.code).toBe(0)
-    expect(started.stderr).toContain('could not be started through launchd')
-    expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 on')
   }, 60_000)
 })
