@@ -227,6 +227,10 @@ test('a claude that cannot be found is an error with a fixed sentence', async ()
   const result = await probeClaudeUsage('claude:missing', { env })
   expect(result).toMatchObject({ ok: false, signedIn: null, reason: 'missing' })
   expectFixedError(result)
+  // The daemon looks it up on the PATH it was started with, and the sentence says so.
+  expect(result).toMatchObject({ error: expect.stringContaining('on the PATH the kurmis daemon was started with') })
+  expect(result).toMatchObject({ error: expect.stringContaining('kurmis daemon restart') })
+  expect(result).toMatchObject({ error: expect.stringContaining('KURMIS_CLAUDE_BIN') })
 })
 
 test('a claude that does not exist at the named path is a failed start', async () => {

@@ -13,10 +13,11 @@ describe('the routed environment', () => {
         // Without this the CLI sees a base URL whose host is not api.anthropic.com and stops
         // deferring MCP tools, putting every schema in every turn's prompt.
         ENABLE_TOOL_SEARCH: 'true',
-        CLAUDE_CODE_MAX_RETRIES: '15'
+        CLAUDE_CODE_MAX_RETRIES: '15',
+        // The default credentials, also when CLAUDE_CONFIG_DIR names another folder.
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: ''
       },
-      unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
-        'CLAUDE_SECURESTORAGE_CONFIG_DIR']
+      unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR']
     })
     expect(ROUTED_CLI_MAX_RETRIES).toBe(15)
   })
@@ -28,11 +29,15 @@ describe('the routed environment', () => {
     expect(env.unset).toEqual(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
   })
 
-  test('on the machine\'s own login: pinned, with no folder variable', () => {
+  test('on the machine\'s own login: pinned, with the folder variable empty, which means the default credentials', () => {
     const env = routedClaudeEnv({ port: 1, key: 'k', login: 'claude:default', secureStorageDir: FOLDER })
     expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: claude:default')
-    expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBeUndefined()
-    expect(env.unset).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
+    expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('')
+    expect(env.unset).not.toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR')
+    // An inherited folder, from a session on another login, is replaced.
+    expect(applyRoutedEnv({ CLAUDE_SECURESTORAGE_CONFIG_DIR: FOLDER, CLAUDE_CONFIG_DIR: '/x' }, env)).toMatchObject({
+      CLAUDE_SECURESTORAGE_CONFIG_DIR: '', CLAUDE_CONFIG_DIR: '/x'
+    })
   })
 
   test('keeps the person\'s own custom headers', () => {

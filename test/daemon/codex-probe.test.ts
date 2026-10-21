@@ -149,4 +149,8 @@ test('a codex that cannot be found is an error with a fixed sentence', async () 
   const result = await probeCodexUsage('codex:missing', { env })
   expect(result).toMatchObject({ ok: false, signedIn: null, reason: 'missing' })
   expectFixedError(result)
+  // The daemon looks it up on the PATH it was started with, and the sentence says so.
+  expect(result).toMatchObject({ error: expect.stringContaining('on the PATH the kurmis daemon was started with') })
+  expect(result).toMatchObject({ error: expect.stringContaining('kurmis daemon restart') })
+  expect(result).toMatchObject({ error: expect.stringContaining('KURMIS_CODEX_BIN') })
 })

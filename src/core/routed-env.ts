@@ -70,6 +70,15 @@ export interface RoutedEnvInput {
   inheritedCustomHeaders?: string | null
 }
 
+/**
+ * The value of `CLAUDE_SECURESTORAGE_CONFIG_DIR` for a CLI started on `claude:default`. The CLI
+ * reads the empty string as "the default credentials": `~/.claude/.credentials.json` and the
+ * Keychain item with the plain name, which are what the daemon reads for `claude:default`,
+ * whatever `CLAUDE_CONFIG_DIR` says. Without it, a CLI with `CLAUDE_CONFIG_DIR` set would read
+ * the credentials in that folder, which may be another account's (`keychain-service.ts`).
+ */
+export const DEFAULT_SECURE_STORAGE_DIR = ''
+
 /** Variables to set, and variables to remove, on top of the inherited environment. */
 export interface RoutedEnv {
   set: Record<string, string>
@@ -89,8 +98,10 @@ export interface RoutedEnv {
  *   came apart from the account uuid.
  * - `CLAUDE_CODE_MAX_RETRIES`, see `ROUTED_CLI_MAX_RETRIES`.
  * - `CLAUDE_SECURESTORAGE_CONFIG_DIR` names the folder of the login the CLI is started on when
- *   that is not the machine's own login. On the machine's own login it is removed, so a CLI started from inside a session
- *   on another login does not keep that login's folder.
+ *   that is not the machine's own login. On the machine's own login it is the empty string
+ *   (`DEFAULT_SECURE_STORAGE_DIR`), so the CLI signs in with `claude:default`'s credentials even
+ *   when `CLAUDE_CONFIG_DIR` is set, and a CLI started from inside a session on another login
+ *   does not keep that login's folder.
  * - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed: a key would sign the requests
  *   itself and no subscription would be billed.
  * - `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` are removed, see
@@ -110,7 +121,7 @@ export function routedClaudeEnv(input: RoutedEnvInput): RoutedEnv {
   const unset = [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES]
   const credentialsOf = startedOn ?? input.login ?? CLAUDE_DEFAULT_ACCOUNT_ID
   if (credentialsOf === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    unset.push('CLAUDE_SECURESTORAGE_CONFIG_DIR')
+    set['CLAUDE_SECURESTORAGE_CONFIG_DIR'] = DEFAULT_SECURE_STORAGE_DIR
   } else {
     if (input.secureStorageDir === null || input.secureStorageDir.length === 0) {
       throw new Error(`routedClaudeEnv: login ${credentialsOf} needs its folder`)

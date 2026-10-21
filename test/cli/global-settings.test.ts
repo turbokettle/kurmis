@@ -38,6 +38,11 @@ describe('kurmisEnvValues', () => {
   it('keeps the user\'s own header lines ahead of kurmis\'', () => {
     expect(kurmisEnvValues(VALUES, 'X-Team: blue').ANTHROPIC_CUSTOM_HEADERS).toBe(`X-Team: blue\n${HEADERS}`)
   })
+
+  it('for a CLAUDE_CONFIG_DIR with credentials of its own, adds started-on none after the user\'s lines as written', () => {
+    expect(kurmisEnvValues({ ...VALUES, credentialsOfItsOwn: true }, 'X-Team:  blue').ANTHROPIC_CUSTOM_HEADERS)
+      .toBe(`X-Team:  blue\n${HEADERS}\nx-kurmis-started-on: none`)
+  })
 })
 
 describe('applySetupToText', () => {

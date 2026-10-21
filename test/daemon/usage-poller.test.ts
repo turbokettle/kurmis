@@ -106,6 +106,60 @@ describe('a probe', () => {
     expect(table.isRefused('claude:default')).toBe(false)
   })
 
+  /** A table and poller on a clock the test moves. */
+  function clocked(probe: ProbeFunction): { table: LoginTable; poller: UsagePoller; clock: { now: number } } {
+    const clock = { now: 1_000_000 }
+    const table = new LoginTable({ tokens: source, log: { write: () => undefined }, now: () => clock.now, stateWriteMs: 0 })
+    table.load()
+    const poller = new UsagePoller({ table, tokens: source, env: {}, log: { write: () => undefined }, now: () => clock.now,
+      probeClaude: probe, probeCodex: probe })
+    return { table, poller, clock }
+  }
+
+  const refusal = (observedAt: number): Parameters<LoginTable['noteObservation']>[1] => ({
+    observedAt, status: 'rejected', resetsAt: null, representativeClaim: 'five_hour',
+    windows: { '5h': { utilization: 1, resetsAt: null, status: 'rejected' } }, overageStatus: null, overageDisabledReason: null
+  })
+
+  test('that started before an answer\'s usage-limit refusal does not undo it', async () => {
+    writeLogins({})
+    let release: () => void = () => undefined
+    const reset = new Date(Date.now() + 3_600_000).toISOString()
+    // The probe measured the login with room left, before the refusal came.
+    const { table, poller, clock } = clocked((id) => new Promise((resolve) => {
+      release = () => { resolve({ ok: true, signedIn: true, usage: { ...usage(id, 40, reset), subscriptionType: 'max' } }) }
+    }))
+    const probing = poller.probe('claude:default', 'request')
+    clock.now += 500
+    // A 429 that names no reset: the login is skipped until a probe says it is back.
+    table.noteObservation('claude:default', refusal(clock.now))
+    table.setCooldown('claude:default', Infinity)
+    table.markRefused('claude:default')
+    clock.now += 500
+    release()
+    await probing
+    const after = table.usage('claude:default')
+    expect(after?.status).toBe('rejected')
+    expect(after?.fiveHour?.utilization).toBe(100)
+    // What the headers do not carry comes from the probe.
+    expect(after?.subscriptionType).toBe('max')
+    expect(table.cooldown('claude:default')).toBe(Infinity)
+    expect(table.isRefused('claude:default')).toBe(true)
+  })
+
+  test('that started after an answer\'s refusal ends it as before', async () => {
+    writeLogins({})
+    const { table, poller, clock } = clocked((id) => Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 40) }))
+    table.noteObservation('claude:default', refusal(clock.now))
+    table.setCooldown('claude:default', Infinity)
+    table.markRefused('claude:default')
+    clock.now += 1_000
+    await poller.probe('claude:default', 'request')
+    expect(table.usage('claude:default')?.fiveHour?.utilization).toBe(40)
+    expect(table.cooldown('claude:default')).toBeNull()
+    expect(table.isRefused('claude:default')).toBe(false)
+  })
+
   test('for a stale reading is remembered for a minute, whether it succeeded or not', async () => {
     writeLogins({})
     let clock = 1_000_000
@@ -156,5 +210,24 @@ describe('the poll', () => {
     expect(probed.slice(0, 3).sort()).toEqual(['claude:default', 'claude:work', 'codex:default'])
     expect(probed.slice(3)).not.toContain('claude:work')
     expect(poller.pollable()).toEqual(['claude:default', 'codex:default'])
+  })
+
+  test('stops when the daemon starts to stop, while a probe asked for still runs', async () => {
+    writeLogins({})
+    let probes = 0
+    const { poller } = setup((id) => {
+      probes++
+      return Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 1) })
+    })
+    poller.start()
+    await expect.poll(() => probes).toBeGreaterThanOrEqual(4)
+    poller.stopPolling()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const stoppedAt = probes
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(probes).toBe(stoppedAt)
+    await poller.probe('claude:default', 'renewal')
+    expect(probes).toBe(stoppedAt + 1)
+    poller.close()
   })
 })

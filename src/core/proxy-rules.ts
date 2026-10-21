@@ -76,14 +76,15 @@ export type IncomingHeaders = Readonly<Record<string, string | string[] | undefi
  * The request to send upstream: every header the CLI sent except the hop-by-hop ones, kurmis'
  * own (`KURMIS_HEADERS`) and the five the proxy replaces, with `authorization` set to sign for
  * the chosen login and `accept-encoding: identity` so the answer can be forwarded as it comes.
- * The body is the CLI's JSON, rebuilt with the chosen login's account uuid (`outgoingBody`).
+ * The body is the CLI's bytes, with only the account uuid in `metadata.user_id` changed to the
+ * chosen login's (`outgoingBody`).
  *
  * `authorization` is `Bearer <token>` for a token the daemon read, or the CLI's own
  * `authorization` header when the chosen login is the one the CLI was started on and the
  * daemon holds no token for it.
  */
-export function upstreamRequest(incoming: IncomingHeaders, body: unknown, authorization: string,
-  accountUuid: string | null): { headers: Record<string, string>; body: string | undefined } {
+export function upstreamRequest(incoming: IncomingHeaders, body: Buffer | undefined, authorization: string,
+  accountUuid: string | null): { headers: Record<string, string>; body: Buffer | undefined } {
   const connection = incoming['connection']
   const drop = droppedHeaders(Array.isArray(connection) ? connection.join(',') : connection)
   const headers: Record<string, string> = {}
@@ -94,8 +95,8 @@ export function upstreamRequest(incoming: IncomingHeaders, body: unknown, author
   }
   headers['authorization'] = authorization
   headers['accept-encoding'] = 'identity'
-  const outgoing = outgoingBody(body, accountUuid)
-  if (outgoing !== undefined) headers['content-length'] = String(Buffer.byteLength(outgoing))
+  const outgoing = body === undefined ? undefined : outgoingBody(body, accountUuid)
+  if (outgoing !== undefined) headers['content-length'] = String(outgoing.length)
   return { headers, body: outgoing }
 }
 
@@ -114,33 +115,148 @@ export function downstreamResponseHeaders(upstream: Iterable<[string, string]>):
 
 /**
  * `metadata.user_id` with its `account_uuid` set to the chosen login's. The CLI sends a JSON
- * string with `device_id`, `account_uuid`, `session_id` and more; every other field and their
- * order are kept, and a value that is not a JSON object is left as it is. the original router does this on
- * every request and has measured that a conversation moved between logins this way goes on
- * working; whether the rewrite is needed at all was not measured.
+ * string with `device_id`, `account_uuid`, `session_id` and more. Only the `account_uuid` value
+ * is replaced in the text, or added at the end of the object when it is missing, so every other
+ * field keeps its bytes and its place. A value that is not a JSON object is left as it is.
+ * the original router does this on every request and has measured that a conversation moved between logins
+ * this way goes on working; whether the rewrite is needed at all was not measured.
  */
 export function rewriteUserId(userId: string, accountUuid: string): string {
+  let value: unknown
   try {
-    const value: unknown = JSON.parse(userId)
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return userId
-    const record = value as Record<string, unknown>
-    record['account_uuid'] = accountUuid
-    return JSON.stringify(record)
+    value = JSON.parse(userId)
   } catch {
     return userId
   }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return userId
+  if ((value as Record<string, unknown>)['account_uuid'] === accountUuid) return userId
+  const bytes = Buffer.from(userId, 'utf8')
+  const open = skipWhitespace(bytes, 0)
+  const found = memberValue(bytes, open, 'account_uuid')
+  const uuid = Buffer.from(JSON.stringify(accountUuid), 'utf8')
+  if (found.span !== null) return splice(bytes, found.span.start, found.span.end, uuid).toString('utf8')
+  // The closing brace of the object: add the member just before it.
+  const close = skipValue(bytes, open) - 1
+  const member = Buffer.concat([Buffer.from(`${found.members > 0 ? ',' : ''}"account_uuid":`, 'utf8'), uuid])
+  return splice(bytes, close, close, member).toString('utf8')
 }
 
-/** The request body as sent upstream: the CLI's JSON, with `rewriteUserId` applied when a uuid is known. */
-export function outgoingBody(body: unknown, accountUuid: string | null): string | undefined {
-  if (body === undefined) return undefined
-  if (accountUuid !== null && body !== null && typeof body === 'object' && 'metadata' in body) {
-    const metadata = body.metadata
-    if (metadata !== null && typeof metadata === 'object' && 'user_id' in metadata && typeof metadata.user_id === 'string') {
-      return JSON.stringify({ ...body, metadata: { ...metadata, user_id: rewriteUserId(metadata.user_id, accountUuid) } })
-    }
+/**
+ * The request body as sent upstream: the CLI's bytes, unchanged unless an account uuid is known
+ * and the body has a string `metadata.user_id` whose `account_uuid` differs from it. Then only
+ * that string is replaced (`rewriteUserId`), so the rest of the body keeps its exact bytes: key
+ * order, white space, and numbers that a parse and a re-serialization would change, such as
+ * integers above 2^53. `body` must be valid JSON; the proxy checks that before it gets here.
+ */
+export function outgoingBody(body: Buffer, accountUuid: string | null): Buffer {
+  if (accountUuid === null) return body
+  const open = skipWhitespace(body, 0)
+  if (body[open] !== BRACE_OPEN) return body
+  const metadata = memberValue(body, open, 'metadata').span
+  if (metadata === null || body[metadata.start] !== BRACE_OPEN) return body
+  const userId = memberValue(body, metadata.start, 'user_id').span
+  if (userId === null || body[userId.start] !== QUOTE) return body
+  const current = JSON.parse(body.subarray(userId.start, userId.end).toString('utf8')) as string
+  const rewritten = rewriteUserId(current, accountUuid)
+  if (rewritten === current) return body
+  return splice(body, userId.start, userId.end, Buffer.from(JSON.stringify(rewritten), 'utf8'))
+}
+
+// A small scanner over JSON text as UTF-8 bytes, enough to find where one member's value is
+// without parsing the rest. Every byte it looks at is ASCII, and in UTF-8 no byte of a
+// multi-byte character is, so it never stops inside a character. It assumes valid JSON.
+
+const QUOTE = 0x22
+const BACKSLASH = 0x5c
+const BRACE_OPEN = 0x7b
+const BRACE_CLOSE = 0x7d
+const BRACKET_OPEN = 0x5b
+const BRACKET_CLOSE = 0x5d
+const COMMA = 0x2c
+const COLON = 0x3a
+
+function isWhitespace(byte: number | undefined): boolean {
+  return byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d
+}
+
+function skipWhitespace(bytes: Buffer, index: number): number {
+  let at = index
+  while (at < bytes.length && isWhitespace(bytes[at])) at++
+  return at
+}
+
+/** The index just after the string whose opening quote is at `index`. */
+function skipString(bytes: Buffer, index: number): number {
+  let at = index + 1
+  while (at < bytes.length) {
+    const byte = bytes[at]
+    if (byte === BACKSLASH) at += 2
+    else if (byte === QUOTE) return at + 1
+    else at++
   }
-  return JSON.stringify(body)
+  return at
+}
+
+/** The index just after the value that starts at `index`. */
+function skipValue(bytes: Buffer, index: number): number {
+  const first = bytes[index]
+  if (first === QUOTE) return skipString(bytes, index)
+  if (first === BRACE_OPEN || first === BRACKET_OPEN) {
+    let depth = 0
+    let at = index
+    while (at < bytes.length) {
+      const byte = bytes[at]
+      if (byte === QUOTE) {
+        at = skipString(bytes, at)
+        continue
+      }
+      if (byte === BRACE_OPEN || byte === BRACKET_OPEN) depth++
+      else if (byte === BRACE_CLOSE || byte === BRACKET_CLOSE) {
+        depth--
+        if (depth === 0) return at + 1
+      }
+      at++
+    }
+    return at
+  }
+  // A number, true, false or null: it runs to the next separator.
+  let at = index
+  while (at < bytes.length) {
+    const byte = bytes[at]
+    if (byte === COMMA || byte === BRACE_CLOSE || byte === BRACKET_CLOSE || isWhitespace(byte)) break
+    at++
+  }
+  return at
+}
+
+/**
+ * Where the value of the member `name` is in the object whose `{` is at `open`: its start and
+ * the index just after it, or null when the object has no such member. A name that is repeated
+ * gives the last one, as `JSON.parse` keeps the last. `members` is how many members the object has.
+ */
+function memberValue(bytes: Buffer, open: number, name: string): { span: { start: number; end: number } | null; members: number } {
+  let span: { start: number; end: number } | null = null
+  let members = 0
+  let at = skipWhitespace(bytes, open + 1)
+  while (at < bytes.length && bytes[at] === QUOTE) {
+    const keyEnd = skipString(bytes, at)
+    const key = JSON.parse(bytes.subarray(at, keyEnd).toString('utf8')) as string
+    at = skipWhitespace(bytes, keyEnd)
+    if (bytes[at] !== COLON) break
+    const start = skipWhitespace(bytes, at + 1)
+    const end = skipValue(bytes, start)
+    members++
+    if (key === name) span = { start, end }
+    at = skipWhitespace(bytes, end)
+    if (bytes[at] !== COMMA) break
+    at = skipWhitespace(bytes, at + 1)
+  }
+  return { span, members }
+}
+
+/** `bytes` with `[start, end)` replaced by `insert`. */
+function splice(bytes: Buffer, start: number, end: number, insert: Buffer): Buffer {
+  return Buffer.concat([bytes.subarray(0, start), insert, bytes.subarray(end)])
 }
 
 /** An answer the proxy makes itself. */
@@ -189,21 +305,28 @@ export function withoutExpiringTokens(rows: readonly RouteAccount[], now: number
  * a usage limit (`poolLimitAnswer`); a pool with nothing it can sign for could not have served
  * the request whatever anybody's usage said, and gets the proxy's own 599 (`noSignerAnswer`).
  */
-export function refusalAnswer(session: RouteSession, rows: readonly RouteAccount[], now: number):
-  ProxyAnswer & { kind: 'no-signer' | 'pool-limit'; resetAt: number | null } {
+export function refusalAnswer(session: RouteSession, rows: readonly RouteAccount[], now: number,
+  cliOnOwnCredentials = false): ProxyAnswer & { kind: 'no-signer' | 'pool-limit'; resetAt: number | null } {
   const usable = withoutExpiringTokens(rows, now, session)
-  if (accountsInScope(session, usable).length === 0) return { ...noSignerAnswer(), kind: 'no-signer', resetAt: null }
+  if (accountsInScope(session, usable).length === 0) return { ...noSignerAnswer(cliOnOwnCredentials), kind: 'no-signer', resetAt: null }
   return { ...poolLimitAnswer(session, usable, now), kind: 'pool-limit' }
 }
 
 /**
  * The proxy's own 599 for a request no login here can sign. Not a usage limit, and never a 401,
  * which would send the CLI off to renew a token that is not the problem. The CLI retries a 5xx
- * and honours `retry-after`.
+ * and honours `retry-after`. `cliOnOwnCredentials` is a request whose CLI said its credentials
+ * are no kurmis login's (`STARTED_ON_NONE`), and the message then says why `claude:default` was
+ * not used.
  */
-export function noSignerAnswer(): ProxyAnswer {
-  const message = 'No Claude login kurmis may use for this session could sign the request. ' +
-    'Run `kurmis status` to see which logins are signed in.'
+export function noSignerAnswer(cliOnOwnCredentials = false): ProxyAnswer {
+  const message = cliOnOwnCredentials
+    ? 'No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with ' +
+      'CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not kurmis\' claude:default, ' +
+      'and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude ' +
+      'with `kurmis claude`, or run `kurmis setup --undo` with that CLAUDE_CONFIG_DIR.'
+    : 'No Claude login kurmis may use for this session could sign the request. ' +
+      'Run `kurmis status` to see which logins are signed in.'
   return {
     status: ROUTER_REFUSAL_STATUS,
     headers: { 'content-type': 'application/json', 'retry-after': '5' },

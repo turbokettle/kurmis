@@ -75,7 +75,8 @@ export type Reply =
   })
   | (ReplyBase & { kind: 'unauthorized'; message?: string })
   | (ReplyBase & { kind: 'serverError'; status?: number })
-  | (ReplyBase & { kind: 'raw'; status: number; body?: string })
+  /** `stall` sends the headers and the body but never ends the answer, so the body stays open until the client gives up. */
+  | (ReplyBase & { kind: 'raw'; status: number; body?: string; stall?: boolean })
   /** Never answers. The request stays open until the client gives up or the server closes. */
   | (ReplyBase & { kind: 'hang' })
   /** Destroys the connection without an answer. */
@@ -138,7 +139,7 @@ export const reply = {
   rateLimited: (options: Omit<Extract<Reply, { kind: 'rateLimited' }>, 'kind'> = {}): Reply => ({ kind: 'rateLimited', ...options }),
   unauthorized: (options: Omit<Extract<Reply, { kind: 'unauthorized' }>, 'kind'> = {}): Reply => ({ kind: 'unauthorized', ...options }),
   serverError: (status = 500, options: ReplyBase = {}): Reply => ({ kind: 'serverError', status, ...options }),
-  raw: (status: number, body = '', options: ReplyBase = {}): Reply => ({ kind: 'raw', status, body, ...options }),
+  raw: (status: number, body = '', options: ReplyBase & { stall?: boolean } = {}): Reply => ({ kind: 'raw', status, body, ...options }),
   hang: (): Reply => ({ kind: 'hang' }),
   drop: (): Reply => ({ kind: 'drop' })
 }
@@ -351,7 +352,9 @@ async function answer(chosen: Reply, record: RecordedRequest, res: ServerRespons
       sendError(res, chosen.status ?? 500, 'api_error', 'Internal server error', { ...base, ...extra })
       return
     case 'raw':
-      res.writeHead(chosen.status, { ...base, ...extra }).end(chosen.body ?? '')
+      res.writeHead(chosen.status, { ...base, ...extra })
+      if (chosen.stall === true) res.write(chosen.body ?? '')
+      else res.end(chosen.body ?? '')
       return
     case 'hang':
       return

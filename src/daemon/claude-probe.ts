@@ -52,6 +52,7 @@ import {
   PendingReplies,
   PROBE_CLOSE_GRACE_MS,
   probeFailure,
+  programMissingText,
   replyOrExit,
   type ProbeOptions,
   type ProbeResult,
@@ -108,7 +109,7 @@ export async function probeClaudeUsage(id: string, options: ProbeOptions): Promi
     program = findProgram('claude', { env: options.env })
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, 'missing', 'The claude program was not found. Install Claude Code, or put claude on PATH.')
+      return probeFailure(null, 'missing', programMissingText('claude'))
     }
     return probeFailure(null, 'other', 'The claude program could not be looked up.')
   }

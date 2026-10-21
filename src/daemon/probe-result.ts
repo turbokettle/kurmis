@@ -34,6 +34,18 @@ export type ProbeFailure = Extract<ProbeResult, { ok: false }>
  */
 export const PROBE_CLOSE_GRACE_MS = 5_000
 
+/**
+ * The error of a probe whose CLI is not found. The daemon looks the program up on the PATH it
+ * was started with, which is the PATH of the shell or login item that started it, so a CLI
+ * installed or put on PATH since is found only after a restart from a shell that has it.
+ */
+export function programMissingText(tool: 'claude' | 'codex'): string {
+  const product = tool === 'claude' ? 'Claude Code' : 'Codex'
+  const variable = tool === 'claude' ? 'KURMIS_CLAUDE_BIN' : 'KURMIS_CODEX_BIN'
+  return `The ${tool} program was not found on the PATH the kurmis daemon was started with. Install ${product}, ` +
+    `or put ${tool} on PATH, and run "kurmis daemon restart" from a shell that finds it; or set ${variable} to the program.`
+}
+
 export function probeFailure(signedIn: boolean | null, reason: LogReason, error: string): ProbeFailure {
   return { ok: false, signedIn, reason, error }
 }

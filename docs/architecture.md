@@ -52,7 +52,9 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   default Codex home (see "Codex").
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
-  names its own pid, so a replaced daemon never removes its successor's file. The CLI removes a
+  names its own pid, so a replaced daemon never removes its successor's file. The file is renamed
+  aside and checked again there before it is deleted, and one that names another pid by then is
+  linked back, so a file written between the check and the removal is kept. The CLI removes a
   `daemon.json` whose pid no longer exists, and one that is damaged.
 - `launchd/` holds the plists of the short-lived launchd jobs that start the daemon from an ssh
   login on macOS. Each is removed once its job has run.
@@ -66,8 +68,11 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   it is renamed to `daemon.log.1`, replacing the previous one.
 
 The machine's own logins are `claude:default` and `codex:default`. They are always listed and
-cannot be removed, and they have no folder here. A CLI on them runs with the environment left as
-it was inherited, apart from the routing variables.
+cannot be removed, and they have no folder here. `claude:default` is the login in `~/.claude`:
+`~/.claude/.credentials.json` and the Keychain item with the plain name, whatever
+`CLAUDE_CONFIG_DIR` says (see "`claude:default` and `CLAUDE_CONFIG_DIR`" below). A CLI on a
+default login runs with the environment left as it was inherited, apart from the routing
+variables and, for Claude, `CLAUDE_SECURESTORAGE_CONFIG_DIR`.
 
 **Login ids** are `claude:<name>` and `codex:<name>`. A name is 1 to 32 lowercase letters,
 digits, `-` and `_`, starting with a letter or digit, and not a Windows device name such as
@@ -144,9 +149,15 @@ older version, after that daemon finishes the requests it has open.
 - **The proxy** is every other routed path (`src/daemon/proxy.ts`). A request needs the header
   `x-kurmis-key: <secret>`, which reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`, else it gets
   403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
-  login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on. Either one
-  naming no Claude login is a 400. None of them is forwarded upstream. The body is read whole
-  (at most 64 MB), because a request may have to be sent more than once. A larger body gets a
+  login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on, or
+  `x-kurmis-started-on: none`, which says the CLI's credentials are no kurmis login's (below,
+  "`claude:default` and `CLAUDE_CONFIG_DIR`"). Either one naming no Claude login, `none` aside,
+  is a 400. None of them is forwarded upstream. The body is read whole
+  (at most 64 MB), because a request may have to be sent more than once. A body that is not JSON
+  is a 400. Otherwise it goes upstream as the bytes that came, except for the account uuid in
+  `metadata.user_id`, which is set to the chosen login's (`outgoingBody` in
+  `src/core/proxy-rules.ts`): only that string is replaced in the text, so key order, white space
+  and integers above 2^53 reach Anthropic as the CLI sent them. A larger body gets a
   413 with an error in the shape of Anthropic's own (`request_too_large`), which the CLI does
   not retry. The proxy then goes on reading the rest of the body and throws it away, for at most
   5 s after the answer (`TOO_LARGE_LINGER_MS`), and closes the connection, for the same reason
@@ -156,14 +167,19 @@ older version, after that daemon finishes the requests it has open.
   login is not started again within a minute of the last one (`STALE_PROBE_INTERVAL_MS` in
   `usage-poller.ts`), by any request, so a probe that keeps failing does not run before every
   request; meanwhile the stale reading counts as empty, as it does anyway. A login whose token
-  is about to expire is chosen as if it were fresh and then renewed by a usage probe; on Auto,
+  is about to expire is chosen as if it were fresh. Its token is then read again, past the
+  minute a Keychain answer is kept, since the CLI may have renewed it, and only a token that is
+  still about to expire is renewed by a usage probe; on Auto,
   when another login could take the request, the request waits at most 5 s
   (`RENEWAL_WAIT_MS`) for that and then goes to the other login. A login whose record has no
   refresh token is never renewed: it just becomes unusable when its token is about to expire.
 - **Signing.** The proxy signs with `Bearer <token>` for the token it read for the chosen login.
   When the chosen login is the one the CLI was started on and no token was read for it, the
   CLI's own `authorization` header is forwarded instead. No other login is ever signed with the
-  CLI's header. A 401 is handled this way:
+  CLI's header. A request with `x-kurmis-started-on: none` is never signed with the CLI's header,
+  and `claude:default` is left out of its pool, because the CLI is signed in to another account
+  than `claude:default`'s; when no other login can take it, the proxy's 599 says so. A 401 is
+  handled this way:
   - A 401 on the CLI's own header goes to the CLI as it is: the CLI owns that token.
   - A 401 on a token the proxy read makes it read the token again. When the record has a
     refresh token, the proxy renews it once through a probe (the probe's CLI renews a refused
@@ -185,6 +201,9 @@ older version, after that daemon finishes the requests it has open.
   one exhausted account. The proxy answers its own 429 (`poolLimitAnswer`) instead when it holds
   no real one (logins skipped for limits it already knew about), or when a login it did not try
   is back earlier than every one that refused. A pinned session gets its login's 429 as it is.
+  The body of a 429 the proxy keeps to pass on later, and of the 400 before a move back (below),
+  is read for at most 5 s (`KEPT_ANSWER_TIMEOUT_MS`), so a body that stalls does not hold the
+  request back from the next login; what came by then is what the CLI gets.
 - **No capacity.** A 529, or a 429 without usage-limit headers, puts that login into the
   session's backoff (`CapacityCooling` in `src/core/capacity-hold.ts`) and the request goes to
   another login at once when the session may use one that is not cooling. Otherwise it waits for
@@ -203,7 +222,8 @@ older version, after that daemon finishes the requests it has open.
   after a usage limit, or has a window at 100% (the held login is measured like a pinned one,
   not to its own limits), or when it answers a usage-limit 429, which is then sent again on
   another login as on Auto. The hold is kept in memory only, so a daemon restart ends it too:
-  `state.json` keeps only the login each session was last on.
+  `state.json` keeps only the login each session was last on. A hold unused for 7 days, and any
+  beyond the 2000 most recently used, is dropped, the same bounds as session placements.
 - **No login can sign** (none signed in, no token readable and no header of the CLI's own for
   the login it was started on): the proxy's own 599 (`noSignerAnswer`), which the CLI retries.
 - **The upstream connection** (`src/daemon/upstream.ts`) uses `node:https`, not `fetch`, because
@@ -212,8 +232,11 @@ older version, after that daemon finishes the requests it has open.
   gives up, and that aborts the upstream request at once. The only other end set on a request is
   the capacity hold's, and only until the answer's headers arrive. A connection that carries no
   data in either direction for 20 minutes fails; a new connection must be ready within 30 s; TCP
-  keep-alive probes start after 30 s of silence; idle connections are kept for reuse for 30 s,
-  and a request that meets a reset on a reused connection before any answer is sent once more.
+  keep-alive probes start after 30 s of silence; idle connections are kept for reuse for 30 s.
+  A request that meets a reset on a reused connection before any answer is sent once more, but
+  only when the reset came while the request was being written or within 2 s after
+  (`RESEND_WINDOW_MS`): that is a connection the server closed while it was idle. A later reset
+  may follow a request the server worked on, and goes to the CLI as a 502 instead.
   Answers are passed on byte for byte as they arrive, with backpressure: a CLI that reads slowly
   pauses the upstream connection. The daemon's HTTP client decodes nothing, so
   `content-encoding` is passed on with the body.
@@ -221,7 +244,10 @@ older version, after that daemon finishes the requests it has open.
   yet), and on demand: the control API's `probe`, a stale reading, a token renewal, and a login
   added to `config.json`. One probe per login runs at a time; a second request waits for it. A
   failed probe keeps the previous windows and records the error on the snapshot. The daemon also
-  updates usage from the rate-limit headers of every answer it forwards. The code is
+  updates usage from the rate-limit headers of every answer it forwards. A probe describes the
+  login as it was when the probe started, so what an answer said after that wins: the last
+  answer's rate-limit headers are applied again on top of the probe's snapshot, and a cooldown
+  or a refused token recorded after the probe started is not ended by it. The code is
   `src/daemon/usage-poller.ts`, with the probes in `claude-probe.ts` and `codex-probe.ts`.
   A Claude probe is `claude -p` in stream-json mode, sending `initialize` and `get_usage`, with
   `claudeProbeEnv`, `--setting-sources=` (no settings file, so no `env` block or hook of the
@@ -230,7 +256,10 @@ older version, after that daemon finishes the requests it has open.
   `codexLoginEnv`, sending `initialize`, `account/read` and `account/rateLimits/read`. Each probe
   has 30 s from start to exit and is killed with its child processes after that, or when the
   daemon closes (`src/platform/frame-process.ts`). After its answer the probe closes the CLI's
-  input and waits for it to exit, so a token the CLI renewed is on disk when the probe ends.
+  input and waits for it to exit, so a token the CLI renewed is on disk when the probe ends. The
+  daemon finds `claude` and `codex` on the PATH it was started with, so a CLI installed or put on
+  PATH later is found only after a `kurmis daemon restart` from a shell that finds it; the error
+  a probe records when the program is missing says that.
 - **Tokens** (`src/daemon/tokens.ts`). On macOS the login's Keychain item comes first
   (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read
   when the Keychain gives no token: the CLI falls back to the file when it cannot use the
@@ -267,6 +296,11 @@ per user. When the port is busy, the daemon asks the holder for its status with 
 - any other program is an error, exit 1, that says to set `"port"` in `config.json` (1024 to
   65535).
 
+A bind that fails with EACCES or EADDRNOTAVAIL is an error, exit 1, with the same advice and
+the command that lists the port ranges Windows reserves (`netsh int ipv4 show excludedportrange
+protocol=tcp`): on Windows a port inside such a range (Hyper-V, WSL and Docker reserve them) is
+refused with EACCES although nothing listens on it.
+
 Only after the bind does the daemon write `daemon.json` and start the request handling, which
 reads `state.json`, so a daemon that loses the bind never touches the state. Requests that
 arrive while the request handling starts wait for it.
@@ -276,7 +310,8 @@ Windows a SIGTERM from another process cannot be caught: Node's `process.kill` e
 at once there. So on Windows only a control `stop`, and Ctrl-C or closing the console of a
 `daemon run` in a terminal (SIGINT, SIGHUP), stop it this way. The daemon:
 
-1. stops accepting at once, which frees the port;
+1. stops accepting at once, which frees the port, and stops the 15-minute usage poll (probes
+   that run and probes its open requests ask for still run);
 2. closes idle keep-alive connections, again every second, and marks its answers
    `connection: close`, so a CLI's next request opens a connection to whatever holds the port
    next;
@@ -293,7 +328,10 @@ requests and exits 1. The next kurmis command starts a new one.
 
 **Version handover.** A CLI that finds a daemon of an older version starts a new daemon, and the
 new daemon does the handover: it sends the old one a control `stop` and tries the bind every
-100 ms for up to 10 seconds. The old daemon frees the port as soon as it has answered, and
+100 ms for up to 10 seconds. While the old daemon closes, its port may answer the status request
+with nothing or with an error; once the stop is sent that counts as the old daemon going away,
+not as another program, and the bind is tried again. The old daemon frees the port as soon as
+it has answered, and
 finishes its open requests in the background while the new one serves. A routed Claude CLI
 retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
 in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older
@@ -427,8 +465,9 @@ since `process.execPath` names a versioned folder that a Homebrew upgrade remove
   when the person sets either themselves, in their `--settings`, the user settings file or the
   environment, to a value that is not empty: routing works without them, so their value stays,
   as `kurmis setup` keeps it in `settings.json`;
-- `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the login's folder when a login other than the
-  default was named;
+- `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the folder of the login it starts on, or set to the
+  empty string on `claude:default`, which the CLI reads as the default credentials, so that also
+  a CLI with `CLAUDE_CONFIG_DIR` set signs in as `claude:default`;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
   itself and no subscription would be billed;
 - `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` removed, because a CLI
@@ -501,7 +540,8 @@ So the wrapper passes exactly one `--settings`, first, ahead of the person's arg
 **Global mode** is `kurmis setup` (`src/cli/global-settings.ts`, `src/cli/commands/setup.ts`). It
 puts the routing variables in the `env` block of the user settings file, so a plain `claude` and
 the IDE extensions are routed too. The values are those of an Auto CLI with no started-on
-header, so a plain `claude` runs on `claude:default`. It also registers the daemon to start at
+header, so a plain `claude` runs on `claude:default`, except in a `$CLAUDE_CONFIG_DIR/settings.json`
+whose CLIs have credentials of their own (below). It also registers the daemon to start at
 login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon.
 
 The daemon is started first. Once the file names the daemon, every Claude Code on the machine
@@ -558,6 +598,30 @@ Claude Code sessions that are already open keep the settings they started with.
 
 Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
 headers. The proxy answers that path itself.
+
+**`claude:default` and `CLAUDE_CONFIG_DIR`.** `claude:default` is the login in `~/.claude`: the
+daemon reads its token from the Keychain item with the plain name or from
+`~/.claude/.credentials.json`, its probe runs with `CLAUDE_SECURESTORAGE_CONFIG_DIR` empty, and
+`kurmis login claude:default` runs without `CLAUDE_CONFIG_DIR`. Claude Code 2.1.306 (read from
+its bundled source) takes its credentials from `CLAUDE_SECURESTORAGE_CONFIG_DIR` when that is
+set, the empty string meaning the default ones, and otherwise from `CLAUDE_CONFIG_DIR`: the file
+in that folder, and a Keychain item named after the variable's value (`keychain-service.ts`). So
+a CLI started with `CLAUDE_CONFIG_DIR` set may be signed in to another account than
+`claude:default`. The daemon is one per user and cannot follow a variable that each shell sets
+for itself, so kurmis keeps `claude:default` fixed and makes sure no request is signed as
+`claude:default` for a CLI on other credentials:
+
+- `kurmis claude` on `claude:default` sets `CLAUDE_SECURESTORAGE_CONFIG_DIR` to the empty string,
+  so the CLI signs in with `claude:default`'s own credentials while its settings and transcripts
+  still come from `CLAUDE_CONFIG_DIR`. When `CLAUDE_CONFIG_DIR` is set it says so on stderr.
+- `kurmis setup` from a shell with `CLAUDE_CONFIG_DIR` set writes
+  `$CLAUDE_CONFIG_DIR/settings.json`, which only CLIs with that variable read, and those sign in
+  with the credentials in that folder. So setup adds `x-kurmis-started-on: none` to the custom
+  headers there, and says so. The proxy then signs those CLIs' requests only with extra logins.
+- On macOS and Windows any value of `CLAUDE_CONFIG_DIR` counts, the path of `~/.claude` too,
+  because the CLI names its Keychain or Credential Manager item after the value. On Linux a
+  value that resolves to `~/.claude` is the same file and does not count
+  (`configDirHasOwnCredentials` in `src/data/login-env.ts`).
 
 ## The wrapper
 
@@ -850,6 +914,12 @@ These are known and left as they are.
   could add to tell the nested CLI apart is overridden or never sent, because the `env` of
   `settings.json` beats the process environment and the proxy only sees headers. Use
   `kurmis claude` inside such a session instead.
+- **A plain `claude` inside a `kurmis claude` session on `claude:default`, with
+  `CLAUDE_CONFIG_DIR` set and global mode set up from it.** The session's
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` is empty, and a shell started from it passes that on, so the
+  plain `claude` signs in as `claude:default`. It reads `$CLAUDE_CONFIG_DIR/settings.json`, whose
+  headers say `x-kurmis-started-on: none`, so the proxy does not use `claude:default` for it
+  although it could. Its requests go to the extra logins, or get the 599 when there is none.
 - **Version handover.** The new daemon reads `state.json` once, when it starts. While the old
   daemon finishes its open requests, the usage, cooldowns and session placements it records stay
   in its own memory, and the new daemon does not see them. Both daemons write the whole

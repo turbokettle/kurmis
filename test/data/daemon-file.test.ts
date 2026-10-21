@@ -49,6 +49,23 @@ describe('daemon.json', () => {
     expect(readDaemonFile().status).toBe('missing')
     expect(removeDaemonFile(100)).toBe(false)
   })
+
+  it('written by another daemon between the check and the removal is kept', () => {
+    writeDaemonFile(info({ pid: 100 }))
+    expect(removeDaemonFile(100, daemonFilePath(), () => { writeDaemonFile(info({ pid: 300 })) })).toBe(false)
+    expect(readDaemonFile()).toMatchObject({ status: 'ok', info: { pid: 300 } })
+    expect(readdirSync(kurmisHome()).filter((name) => name.endsWith('.removing'))).toEqual([])
+  })
+
+  it('that is damaged is removed, but not a good one written in its place in the meantime', () => {
+    mkdirSync(kurmisHome(), { recursive: true })
+    writeFileSync(daemonFilePath(), 'not json')
+    expect(removeDaemonFile(-1)).toBe(true)
+    expect(readDaemonFile().status).toBe('missing')
+    writeFileSync(daemonFilePath(), 'not json')
+    expect(removeDaemonFile(-1, daemonFilePath(), () => { writeDaemonFile(info({ pid: 300 })) })).toBe(false)
+    expect(readDaemonFile()).toMatchObject({ status: 'ok', info: { pid: 300 } })
+  })
 })
 
 describe('the key file', () => {

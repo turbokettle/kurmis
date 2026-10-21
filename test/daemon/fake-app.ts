@@ -29,13 +29,13 @@ export interface FakeAppBehaviour {
 
 export interface FakeDaemonApp extends DaemonApp {
   readonly options: DaemonAppOptions
-  readonly calls: { start: number; close: number }
+  readonly calls: { start: number; stopPolling: number; close: number }
 }
 
 export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAppBehaviour = {}): FakeDaemonApp {
   let open = 0
   let waiters: Array<() => void> = []
-  const calls = { start: 0, close: 0 }
+  const calls = { start: 0, stopPolling: 0, close: 0 }
 
   const settle = (): void => {
     if (open > 0) return
@@ -125,6 +125,9 @@ export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAp
     },
     openRequests: () => open,
     drained: () => open === 0 ? Promise.resolve() : new Promise<void>((resolve) => waiters.push(resolve)),
+    stopPolling() {
+      calls.stopPolling++
+    },
     async close() {
       calls.close++
     }

@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   formatCustomHeaders, KEY_HEADER, LOGIN_HEADER, parseCustomHeaders, readRouteRequest, routeKeyMatches,
-  SESSION_HEADER, STARTED_ON_HEADER, withRouteHeaders
+  SESSION_HEADER, STARTED_ON_HEADER, STARTED_ON_NONE, withRouteHeaders
 } from '../../src/core/route-headers.ts'
 
 describe('ANTHROPIC_CUSTOM_HEADERS', () => {
@@ -44,6 +44,12 @@ describe('a request to the proxy', () => {
   test('names the login the CLI was started on, claude:default without the header', () => {
     expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'claude:work' })).startedOn).toBe('claude:work')
     expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'codex:work' })).startedOn).toBe('invalid')
+  })
+
+  test('reads started-on none as no kurmis login', () => {
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: STARTED_ON_NONE })).startedOn).toBeNull()
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: ' None ' })).startedOn).toBeNull()
+    expect(withRouteHeaders('X-Team: blue', 'k', null, STARTED_ON_NONE)).toBe('X-Team: blue\nx-kurmis-key: k\nx-kurmis-started-on: none')
   })
 
   test.each(['codex:work', 'work', 'claude:', 'claude:Work', 'claude:con'])('a login header of %j is invalid', (value) => {

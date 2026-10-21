@@ -261,7 +261,20 @@ describe('kurmis setup', () => {
     expect(result.stdout).toContain(`Claude Code settings: ${join(dir, 'settings.json')}`)
     expect(existsSync(join(dir, 'settings.json'))).toBe(true)
     expect(existsSync(settingsPath)).toBe(false)
+    // A CLI that reads that file signs in with the login in that folder, not claude:default.
+    const env = (JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')) as { env: Record<string, string> }).env
+    expect(env['ANTHROPIC_CUSTOM_HEADERS']).toMatch(/\nx-kurmis-started-on: none$/)
+    expect(result.stdout).toContain('CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder')
+    // Undo takes the line out with the other kurmis headers.
+    expect((await run(command, ['--undo'], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+    expect(readFileSync(join(dir, 'settings.json'), 'utf8')).not.toContain('x-kurmis')
     rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on claude:default', async () => {
+    const { command } = setup()
+    expect((await run(command, [])).code).toBe(0)
+    expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis-started-on')
   })
 
   it('rejects an unknown option or argument', async () => {

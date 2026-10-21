@@ -19,7 +19,7 @@
 // loses the bind never reads or writes the daemon's state.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { Output } from '../cli/command.ts'
-import { CONTROL_PATHS } from '../core/control-api.ts'
+import { CONTROL_PATHS, type StatusAnswer } from '../core/control-api.ts'
 import { ConfigError, loadConfig, MAX_PORT, MIN_PORT } from '../data/config.ts'
 import { readOrCreateKey, removeDaemonFile, writeDaemonFile } from '../data/daemon-file.ts'
 import { errorCodeOf, openDaemonLog, type DaemonLog, type LogReason } from '../data/log.ts'
@@ -237,6 +237,13 @@ async function serve(options: ServeOptions): Promise<number> {
 
   await stop.firstRequest
   log.write('daemon_stopping', { reason: stop.reason ?? 'other' })
+  // A daemon that is stopping, in a version handover too, probes no more logins on its own: the
+  // one that takes the port does. Probes its open requests ask for still run.
+  try {
+    app.stopPolling()
+  } catch (error) {
+    log.write('internal_error', { code: errorCodeOf(error) })
+  }
   // Stops accepting at once, which frees the port for a successor. Open connections stay.
   server.close()
   server.closeIdleConnections()
@@ -288,18 +295,23 @@ async function drain(app: DaemonApp, options: ServeOptions): Promise<void> {
 async function bindPort(server: Server, options: ServeOptions): Promise<number | null> {
   const { version, key, port, log, stop, say, complain } = options
   let deadline = Date.now() + options.bindDeadlineMs
-  let askedToStop: number | null = null
+  /** The older daemon this one asked to stop, once it has. */
+  let askedToStop: StatusAnswer | null = null
   for (;;) {
     if (stop.requested) return stop.exitCode
     const error = await listenOnce(server, port)
     if (error === null) return null
     if (error.code !== 'EADDRINUSE') {
-      log.write('internal_error', { code: errorCodeOf(error), port })
-      complain(`could not listen on ${DAEMON_HOST}:${String(port)} (${error.code ?? error.message})`)
+      const refused = error.code !== undefined && UNUSABLE_PORT_CODES.has(error.code)
+      log.write(refused ? 'port_in_use' : 'internal_error', { code: errorCodeOf(error), port })
+      complain(refused ? unusablePortText(port, error.code ?? '', configPath())
+        : `could not listen on ${DAEMON_HOST}:${String(port)} (${error.code ?? error.message})`)
       return 1
     }
     const holder = await portHolder(port, key)
-    if (holder.kind === 'other') {
+    // A daemon that was asked to stop may answer nothing, or something else, while it closes;
+    // that is not another program, and the bind is tried again until the deadline.
+    if (holder.kind === 'other' && askedToStop === null) {
       log.write('port_in_use', { port })
       complain(`port ${String(port)} on ${DAEMON_HOST} is used by another program. To use another port, set ` +
         `"port" in ${configPath()} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)}.`)
@@ -311,8 +323,8 @@ async function bindPort(server: Server, options: ServeOptions): Promise<number |
         say(`kurmis daemon ${other.version} already runs on port ${String(port)} (pid ${String(other.pid)})`)
         return 0
       }
-      if (askedToStop !== other.pid) {
-        askedToStop = other.pid
+      if (askedToStop?.pid !== other.pid) {
+        askedToStop = other
         deadline = Date.now() + options.bindDeadlineMs
         log.write('daemon_replacing_older', { pid: other.pid, port })
         say(`Replacing kurmis daemon ${other.version} (pid ${String(other.pid)}) on port ${String(port)}`)
@@ -322,13 +334,28 @@ async function bindPort(server: Server, options: ServeOptions): Promise<number |
     if (Date.now() >= deadline) {
       log.write('port_in_use', { port, reason: 'timeout' })
       const seconds = String(Math.round(options.bindDeadlineMs / 1000))
-      complain(holder.kind === 'kurmis'
-        ? `the kurmis daemon ${holder.status.version} (pid ${String(holder.status.pid)}) did not give up port ${String(port)} within ${seconds} s`
+      complain(askedToStop !== null
+        ? `the kurmis daemon ${askedToStop.version} (pid ${String(askedToStop.pid)}) did not give up port ${String(port)} within ${seconds} s`
         : `port ${String(port)} on ${DAEMON_HOST} stayed busy for ${seconds} s with nothing answering on it`)
       return 1
     }
     await delay(BIND_RETRY_MS)
   }
+}
+
+/**
+ * Errors from `listen` that mean this port cannot be used here, whoever holds it. On Windows a
+ * port inside a range the system reserves (for Hyper-V, WSL or Docker, for example) gives
+ * EACCES even though nothing listens on it.
+ */
+const UNUSABLE_PORT_CODES: ReadonlySet<string> = new Set(['EACCES', 'EADDRNOTAVAIL'])
+
+/** What the daemon says when `listen` failed with one of `UNUSABLE_PORT_CODES`. */
+export function unusablePortText(port: number, code: string, configFile: string): string {
+  return `could not listen on ${DAEMON_HOST}:${String(port)} (${code}): the system does not let this program use the port. ` +
+    'On Windows a port inside a range the system reserves is refused this way; ' +
+    '"netsh int ipv4 show excludedportrange protocol=tcp" lists those ranges. To use another port, set ' +
+    `"port" in ${configFile} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)} outside them.`
 }
 
 /** One `listen`. Resolves null once the server listens, or with the error. */

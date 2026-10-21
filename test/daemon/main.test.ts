@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CONTROL_API_VERSION, CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
 import { KEY_HEADER } from '../../src/core/route-headers.ts'
 import { readDaemonFile, readOrCreateKey } from '../../src/data/daemon-file.ts'
-import { runDaemon, type RunDaemonOptions } from '../../src/daemon/main.ts'
+import { runDaemon, unusablePortText, type RunDaemonOptions } from '../../src/daemon/main.ts'
 import { controlRequest, type ControlResult } from '../../src/daemon/lifecycle.ts'
 import { fakeAppFactory, HOLD_PATH, type FakeAppBehaviour } from './fake-app.ts'
 import { collector, dataFolderWithPort, freePort, waitUntil, type Collector } from './helpers.ts'
@@ -327,6 +327,48 @@ describe('runDaemon', () => {
     expect(logText()).toMatch(/daemon_replacing_older pid=\d+ port=\d+/)
   })
 
+  it('goes on trying the port when the older daemon it asked to stop answers nothing while it closes', async () => {
+    const fakeKey = key()
+    let stopping = false
+    const older = createServer((incoming, response) => {
+      incoming.resume()
+      if (stopping) {
+        // Closing: the status request gets no proper answer.
+        response.destroy()
+        return
+      }
+      if (incoming.url === CONTROL_PATHS.stop && incoming.headers[KEY_HEADER] === fakeKey) {
+        stopping = true
+        response.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}')
+        // The port is given up a moment later.
+        setTimeout(() => { void closeServer(older) }, 500)
+        return
+      }
+      const body: StatusAnswer = { ok: true, apiVersion: CONTROL_API_VERSION, version: '0.1.0', pid: 4242, port, startedAt: 1, logins: [] }
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body))
+    })
+    await listen(older)
+    const replacement = start({ version: '0.2.0', behaviour: { version: '0.2.0' }, bindDeadlineMs: 10_000 })
+    await waitUntil(async () => {
+      const answer = await status()
+      return answer.kind === 'answered' && (answer.body as StatusAnswer | null)?.version === '0.2.0'
+    }, 15_000, 'the new daemon to answer')
+    expect(replacement.exited).toBe(false)
+    expect(replacement.stderr.text()).toBe('')
+  }, 30_000)
+
+  it('stops the usage poll as soon as it starts to stop', async () => {
+    const daemon = await startListening()
+    const open = hold(500)
+    await waitUntil(() => daemon.factory.apps[0]?.openRequests() === 1, 2_000, 'the open request')
+    daemon.events.emit('SIGTERM')
+    await waitUntil(() => daemon.factory.apps[0]?.calls.stopPolling === 1, 2_000, 'stopPolling')
+    // Still draining: the app is not closed yet.
+    expect(daemon.factory.apps[0]?.calls.close).toBe(0)
+    await open
+    expect(await daemon.exit).toBe(0)
+  })
+
   it('gives up when an older daemon does not free the port', async () => {
     const fakeKey = key()
     const stubborn = createServer((incoming, response) => {
@@ -351,6 +393,13 @@ describe('runDaemon', () => {
     } finally {
       await closeServer(stubborn)
     }
+  })
+
+  it('says how to find the reserved port ranges and how to change the port when the system refuses the port', () => {
+    const text = unusablePortText(28411, 'EACCES', '/home/example/.kurmis/config.json')
+    expect(text).toContain('127.0.0.1:28411 (EACCES)')
+    expect(text).toContain('netsh int ipv4 show excludedportrange protocol=tcp')
+    expect(text).toContain('"port" in /home/example/.kurmis/config.json to a number from 1024 to 65535')
   })
 
   it('exits 1 with the message when config.json is wrong', async () => {

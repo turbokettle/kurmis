@@ -155,6 +155,20 @@ describe('choosing and signing', () => {
     })
   })
 
+  test('the body goes upstream byte for byte, and only the account uuid changes when it must', async () => {
+    const h = await twoLogins()
+    writeClaudeIdentity(join(loginFolder('claude:work'), '.claude.json'),
+      { email: 'work@example.com', accountUuid: '00000000-0000-4000-8000-00000000a0a0' })
+    const userId = JSON.stringify(JSON.stringify({ device_id: 'device-1', account_uuid: '00000000-0000-4000-8000-00000000c11e' }))
+    const text = `{ "model" : "claude-sonnet-5",\n "max_tokens": 100, "seed": 18446744073709551615, "stream": true,\n` +
+      ` "messages": [{"role":"user","content":"caf\u00e9"}], "metadata": {"user_id": ${userId}} }`
+    // claude:default has no identity here, so its request is not rewritten at all.
+    await call(h, '/v1/messages?beta=true', { headers: { ...routed(S1), 'content-type': 'application/json' }, text })
+    expect(h.api.apiRequests()[0]!.body).toBe(text)
+    await call(h, '/v1/messages?beta=true', { headers: { ...routed(S2, { 'x-kurmis-login': 'claude:work' }), 'content-type': 'application/json' }, text })
+    expect(h.api.apiRequests()[1]!.body).toBe(text.replace('00000000c11e', '00000000a0a0'))
+  })
+
   test('with no token anywhere and no header of its own, the CLI gets the proxy\'s 599', async () => {
     harness = await startHarness({ logins: { 'claude:work': {} } })
     const answer = await messages(harness, S1)
