@@ -271,10 +271,10 @@ var require_code_point = __commonJS({
       return cp >= 0 && cp <= 31;
     }
     exports2.isControl = isControl;
-    function isWhitespace2(cp) {
+    function isWhitespace3(cp) {
       return cp === 9 || cp === 32;
     }
-    exports2.isWhitespace = isWhitespace2;
+    exports2.isWhitespace = isWhitespace3;
     function isEOL(cp) {
       return cp === 10 || cp === 13;
     }
@@ -2696,16 +2696,16 @@ var require_traverse = __commonJS({
       const child2 = node[key];
       if (Array.isArray(child2)) {
         for (const c of child2) {
-          if (isNode(c)) {
+          if (isNode2(c)) {
             yield c;
           }
         }
-      } else if (isNode(child2)) {
+      } else if (isNode2(child2)) {
         yield child2;
       }
     }
     exports2.getNodes = getNodes;
-    function isNode(x) {
+    function isNode2(x) {
       return x !== null && typeof x === "object" && typeof x.type === "string";
     }
     function traverse(node, parent, visitor) {
@@ -2976,8 +2976,8 @@ function parseCommandArgs(command, args, options, context, allowPositionals = fa
 }
 
 // src/cli/commands/claude.ts
-var import_node_fs12 = require("node:fs");
-var import_node_os7 = require("node:os");
+var import_node_fs14 = require("node:fs");
+var import_node_os9 = require("node:os");
 
 // src/core/accounts.ts
 var ACCOUNT_PROVIDERS = ["claude", "codex"];
@@ -3369,11 +3369,10 @@ function windowsOfBucket(bucket) {
   return out;
 }
 function statusOf(buckets) {
-  for (const bucket of buckets) {
-    if (bucket.spendControlReached === true) return "rejected";
-    if (typeof bucket.rateLimitReachedType === "string") return "rejected";
-  }
-  return null;
+  if (buckets.some((bucket) => bucket.spendControlReached === true)) return "rejected";
+  const general = buckets.filter((bucket) => (bucket.limitId ?? CODEX_GENERAL_LIMIT_ID) === CODEX_GENERAL_LIMIT_ID);
+  const plan = general.length > 0 ? general : buckets;
+  return plan.some((bucket) => typeof bucket.rateLimitReachedType === "string") ? "rejected" : null;
 }
 function isSnapshot(value) {
   return typeof value === "object" && value !== null;
@@ -3789,6 +3788,7 @@ var import_node_crypto = require("node:crypto");
 var KEY_HEADER = "x-kurmis-key";
 var LOGIN_HEADER = "x-kurmis-login";
 var STARTED_ON_HEADER = "x-kurmis-started-on";
+var STARTED_ON_NONE = "none";
 var SESSION_HEADER = "x-claude-code-session-id";
 var KURMIS_HEADERS = [KEY_HEADER, LOGIN_HEADER, STARTED_ON_HEADER];
 function parseCustomHeaders(value) {
@@ -3819,7 +3819,7 @@ function readRouteRequest(get) {
   return {
     key,
     login: named === null ? null : claudeLoginOrInvalid(named),
-    startedOn: startedOn === null ? CLAUDE_DEFAULT_ACCOUNT_ID : claudeLoginOrInvalid(startedOn),
+    startedOn: startedOn === null ? CLAUDE_DEFAULT_ACCOUNT_ID : startedOn.toLowerCase() === STARTED_ON_NONE ? null : claudeLoginOrInvalid(startedOn),
     sessionId: nonEmpty(get(SESSION_HEADER))
   };
 }
@@ -3840,12 +3840,20 @@ function nonEmpty(value) {
 // src/core/routed-env.ts
 var ROUTED_CLI_MAX_RETRIES = 15;
 var UNROUTED_KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+var OAUTH_TOKEN_VARIABLES = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"];
 var ROUTING_VARIABLES = [
   "ANTHROPIC_BASE_URL",
   "ANTHROPIC_CUSTOM_HEADERS",
   "ENABLE_TOOL_SEARCH",
   "CLAUDE_CODE_MAX_RETRIES"
 ];
+var USER_OWNED_ROUTING_VARIABLES = ["ENABLE_TOOL_SEARCH", "CLAUDE_CODE_MAX_RETRIES"];
+function withoutRoutedVariables(routed, names) {
+  const set = {};
+  for (const [name, value] of Object.entries(routed.set)) if (!names.includes(name)) set[name] = value;
+  return { set, unset: routed.unset };
+}
+var DEFAULT_SECURE_STORAGE_DIR = "";
 function routedClaudeEnv(input) {
   const startedOn = input.startedOn ?? null;
   if (input.login !== null && startedOn !== null && startedOn !== input.login) {
@@ -3857,10 +3865,10 @@ function routedClaudeEnv(input) {
     ENABLE_TOOL_SEARCH: "true",
     CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES)
   };
-  const unset = [...UNROUTED_KEY_VARIABLES];
+  const unset = [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES];
   const credentialsOf = startedOn ?? input.login ?? CLAUDE_DEFAULT_ACCOUNT_ID;
   if (credentialsOf === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    unset.push("CLAUDE_SECURESTORAGE_CONFIG_DIR");
+    set["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = DEFAULT_SECURE_STORAGE_DIR;
   } else {
     if (input.secureStorageDir === null || input.secureStorageDir.length === 0) {
       throw new Error(`routedClaudeEnv: login ${credentialsOf} needs its folder`);
@@ -3870,14 +3878,17 @@ function routedClaudeEnv(input) {
   return { set, unset };
 }
 function applyRoutedEnv(env, routed, windows = false) {
-  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
+  const same2 = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
   const replaced = [...routed.unset, ...Object.keys(routed.set)];
   const out = {};
   for (const [name, value] of Object.entries(env)) {
-    if (value === void 0 || replaced.some((other) => same(name, other))) continue;
+    if (value === void 0 || replaced.some((other) => same2(name, other))) continue;
     out[name] = value;
   }
   return { ...out, ...routed.set };
+}
+function inheritedOAuthTokenVariables(env, windows = false) {
+  return Object.entries(env).filter(([name, value]) => value !== void 0 && value !== "" && OAUTH_TOKEN_VARIABLES.some((other) => windows ? other.toUpperCase() === name.toUpperCase() : other === name)).map(([name]) => name);
 }
 
 // src/data/config.ts
@@ -3919,9 +3930,9 @@ function retryWhileLockedSync(operation, platform = process.platform) {
     try {
       return operation();
     } catch (error) {
-      const delay2 = RENAME_RETRY_DELAYS_MS[attempt];
-      if (platform !== "win32" || delay2 === void 0 || !isLockedFileError(error)) throw error;
-      sleepSync(delay2);
+      const delay3 = RENAME_RETRY_DELAYS_MS[attempt];
+      if (platform !== "win32" || delay3 === void 0 || !isLockedFileError(error)) throw error;
+      sleepSync(delay3);
     }
   }
 }
@@ -3930,9 +3941,9 @@ async function retryWhileLocked(operation, platform = process.platform) {
     try {
       return await operation();
     } catch (error) {
-      const delay2 = RENAME_RETRY_DELAYS_MS[attempt];
-      if (platform !== "win32" || delay2 === void 0 || !isLockedFileError(error)) throw error;
-      await new Promise((resolve7) => setTimeout(resolve7, delay2));
+      const delay3 = RENAME_RETRY_DELAYS_MS[attempt];
+      if (platform !== "win32" || delay3 === void 0 || !isLockedFileError(error)) throw error;
+      await new Promise((resolve8) => setTimeout(resolve8, delay3));
     }
   }
 }
@@ -4036,6 +4047,16 @@ function readJsonFileSync(path) {
   let text2;
   try {
     text2 = (0, import_node_fs2.readFileSync)(path, "utf8");
+  } catch (error) {
+    if (isMissing(error)) return { status: "missing" };
+    throw error;
+  }
+  return parseJsonText(text2);
+}
+async function readJsonFile(path) {
+  let text2;
+  try {
+    text2 = await (0, import_promises2.readFile)(path, "utf8");
   } catch (error) {
     if (isMissing(error)) return { status: "missing" };
     throw error;
@@ -4202,7 +4223,7 @@ function breakIfStale(path, options) {
 }
 function acquireFileLockSync(path, options = {}) {
   if (heldByThisProcess.has(path)) throw new Error(`${path} is already locked by this process.`);
-  const settings2 = {
+  const settings = {
     staleMs: options.staleMs ?? DEFAULT_LOCK_STALE_MS,
     isAlive: options.isAlive ?? ((pid) => isProcessAlive(pid)),
     now: options.now ?? Date.now,
@@ -4214,10 +4235,10 @@ function acquireFileLockSync(path, options = {}) {
   const started = Date.now();
   makePrivateDirSync((0, import_node_path2.dirname)(path));
   for (; ; ) {
-    const contents = { pid: process.pid, createdAt: settings2.now(), token };
+    const contents = { pid: process.pid, createdAt: settings.now(), token };
     if (createExclusive(path, `${JSON.stringify(contents)}
-`, settings2.platform)) break;
-    breakIfStale(path, settings2);
+`, settings.platform)) break;
+    breakIfStale(path, settings);
     const waited = Date.now() - started;
     if (waited >= timeoutMs) throw new LockTimeoutError(path, readLockHolder(path), waited);
     sleepSync2(Math.min(timeoutMs - waited, 1 + Math.floor(Math.random() * retryMs)));
@@ -4232,11 +4253,11 @@ function acquireFileLockSync(path, options = {}) {
       heldByThisProcess.delete(path);
       let current;
       try {
-        current = retryWhileLockedSync(() => readLock(path), settings2.platform);
+        current = retryWhileLockedSync(() => readLock(path), settings.platform);
       } catch {
         return;
       }
-      if (current?.token === token) removeFile(path, settings2.platform);
+      if (current?.token === token) removeFile(path, settings.platform);
     }
   };
 }
@@ -4291,7 +4312,7 @@ function launchdJobFolder() {
   return (0, import_node_path3.join)(kurmisHome(), "launchd");
 }
 function windowsAutostartScriptPath() {
-  return (0, import_node_path3.join)(kurmisHome(), "autostart.vbs");
+  return (0, import_node_path3.join)(kurmisHome(), "autostart.js");
 }
 function providerFolder(provider) {
   return (0, import_node_path3.join)(kurmisHome(), provider);
@@ -4302,6 +4323,17 @@ function loginFolder(id) {
     throw new Error(`${checked} is the machine's own login and has no folder in the kurmis data folder.`);
   }
   return (0, import_node_path3.join)(providerFolder(providerOfLoginId(checked)), nameOfLoginId(checked));
+}
+function loginLockPath(id) {
+  const checked = toLoginId(id);
+  return (0, import_node_path3.join)(kurmisHome(), "locks", `${providerOfLoginId(checked)}-${nameOfLoginId(checked)}.lock`);
+}
+function codexMergedRecordPath(id) {
+  const checked = toLoginId(id);
+  if (isDefaultLoginId(checked) || providerOfLoginId(checked) !== "codex") {
+    throw new Error(`${checked} is not an extra Codex login.`);
+  }
+  return (0, import_node_path3.join)(kurmisHome(), "codex-merged", `${nameOfLoginId(checked)}.json`);
 }
 
 // src/data/validate.ts
@@ -4515,2862 +4547,10 @@ function configStamp(path = configPath()) {
   }
 }
 
-// src/platform/programs.ts
+// src/data/login-env.ts
 var import_node_fs5 = require("node:fs");
-var import_node_path5 = require("node:path");
-
-// src/platform/npm-shim.ts
-var import_node_path4 = require("node:path");
-function parseCmdShim(text2, shimPath) {
-  const folder = import_node_path4.win32.dirname(import_node_path4.win32.resolve(shimPath));
-  const lines = text2.split(/\r?\n/).map((line) => line.trim());
-  const progValues = lines.map((line) => /^@?set\s+"_prog=([^"]*)"$/i.exec(line)?.[1]).filter((value) => value !== void 0);
-  const runLines = [];
-  for (const line of lines) {
-    if (!/(^|\s)%\*$/.test(line)) continue;
-    const command = lastCommand(line.replace(/^@/, ""));
-    const tokens = tokenize(command);
-    if (tokens === null) return { unreadable: `the line ${JSON.stringify(line)} is not a plain command` };
-    tokens.pop();
-    const [program, ...rest] = tokens;
-    if (program === void 0) return { unreadable: `the line ${JSON.stringify(line)} names no program` };
-    const programs = /^@?%_prog%$/i.test(program) ? progValues : [program.replace(/^@/, "")];
-    if (programs.length === 0) return { unreadable: "the shim starts %_prog% but never sets it" };
-    runLines.push({ programs, rest });
-  }
-  if (runLines.length === 0) return { unreadable: "no line passes the arguments on (%*)" };
-  let shim = null;
-  for (const run2 of runLines) {
-    const reading = readRunLine(run2, folder);
-    if ("unreadable" in reading) return reading;
-    if (shim === null) {
-      shim = reading;
-      continue;
-    }
-    if (!sameCall(shim, reading)) return { unreadable: "its lines start different programs" };
-    for (const interpreter of reading.interpreters) {
-      if (!shim.interpreters.includes(interpreter)) shim.interpreters.push(interpreter);
-    }
-  }
-  return shim;
-}
-function cmdShimInvocation(shim, options) {
-  if (/\.(cmd|bat)$/i.test(shim.target)) {
-    return { refused: `${shim.target} is a batch file, which only cmd.exe can start` };
-  }
-  if (shim.interpreters.length === 0) {
-    if (!/\.(exe|com)$/i.test(shim.target)) {
-      return { refused: `the shim starts ${shim.target} directly, and that is not an .exe` };
-    }
-    return { command: shim.target, args: [...shim.targetArgs] };
-  }
-  for (const interpreter of shim.interpreters) {
-    const command = isAbsoluteWindowsPath(interpreter) ? options.isFile(interpreter) ? interpreter : null : /^node(\.exe)?$/i.test(interpreter) ? options.nodePath : null;
-    if (command !== null) {
-      return { command, args: [...shim.interpreterArgs, shim.target, ...shim.targetArgs] };
-    }
-  }
-  return { refused: `the shim starts ${shim.target} with ${shim.interpreters.join(" or ")}, which kurmis does not start` };
-}
-function isAbsoluteWindowsPath(path) {
-  return /^[a-z]:\\/i.test(path) || path.startsWith("\\\\");
-}
-function readRunLine(run2, folder) {
-  const expanded = [];
-  for (const program of run2.programs) {
-    const value = expand(program, folder);
-    if (value === null) return { unreadable: `it starts ${program}, which is neither an absolute path nor a program name` };
-    expanded.push(value);
-  }
-  if (run2.rest.length === 0) {
-    const [target2] = expanded;
-    if (expanded.length !== 1 || target2 === void 0 || !isAbsoluteWindowsPath(target2)) {
-      return { unreadable: "it starts no file by its path" };
-    }
-    return { target: target2, interpreters: [], interpreterArgs: [], targetArgs: [] };
-  }
-  const targetIndex = run2.rest.findIndex((token) => /%~dp0|%dp0%/i.test(token) || isAbsoluteWindowsPath(token));
-  if (targetIndex < 0) return { unreadable: "it starts no file by its path" };
-  const rest = [];
-  for (const token of run2.rest) {
-    const value = expand(token, folder);
-    if (value === null) return { unreadable: `it uses ${token}, which kurmis cannot work out` };
-    rest.push(value);
-  }
-  const target = rest[targetIndex];
-  if (!isAbsoluteWindowsPath(target)) return { unreadable: `its target ${run2.rest[targetIndex]} is not an absolute path` };
-  return {
-    target,
-    interpreters: expanded,
-    interpreterArgs: rest.slice(0, targetIndex),
-    targetArgs: rest.slice(targetIndex + 1)
-  };
-}
-function expand(token, folder) {
-  const replaced = token.replace(/%~dp0|%dp0%/gi, `${folder}\\`);
-  if (replaced.includes("%")) return null;
-  if (isAbsoluteWindowsPath(replaced)) return import_node_path4.win32.normalize(replaced);
-  if (replaced.includes("\\") || replaced.includes("/")) return null;
-  return replaced;
-}
-function lastCommand(line) {
-  let quoted = false;
-  let start2 = 0;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (char === '"') quoted = !quoted;
-    else if (char === "&" && !quoted) start2 = i + 1;
-  }
-  return line.slice(start2).trim();
-}
-function tokenize(command) {
-  const tokens = [];
-  for (const match of command.matchAll(/"([^"]*)"|([^\s"]+)/g)) {
-    const quoted = match[1];
-    const bare = match[2];
-    if (bare !== void 0 && /[|<>^()]/.test(bare)) return null;
-    tokens.push(quoted ?? bare ?? "");
-  }
-  return tokens;
-}
-function sameCall(a, b) {
-  return a.target === b.target && a.interpreters.length === 0 === (b.interpreters.length === 0) && a.interpreterArgs.join("\0") === b.interpreterArgs.join("\0") && a.targetArgs.join("\0") === b.targetArgs.join("\0");
-}
-
-// src/platform/run.ts
-var import_node_child_process = require("node:child_process");
-var import_node_timers = require("node:timers");
-var DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
-function invocationFor(program, args, nodePath = process.execPath) {
-  if (/\.(cmd|bat)$/i.test(program)) {
-    return { refused: `${program} is a batch file, which only cmd.exe can start; kurmis never starts a program through a shell` };
-  }
-  if (/\.(js|cjs|mjs)$/i.test(program)) return { command: nodePath, args: [program, ...args] };
-  return { command: program, args: [...args] };
-}
-function runProgram(program, args, options) {
-  const invocation = invocationFor(program, args);
-  if ("refused" in invocation) {
-    return Promise.resolve({ stdout: "", stderr: "", code: null, timedOut: false, outputTooLarge: false, error: invocation.refused });
-  }
-  const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-  return new Promise((resolve7) => {
-    const stdout = [];
-    const stderr = [];
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let timedOut = false;
-    let outputTooLarge = false;
-    let settled = false;
-    const child2 = (0, import_node_child_process.spawn)(invocation.command, invocation.args, {
-      // Standard input is closed, so a program that reads it gets end-of-file at once rather
-      // than waiting on a terminal until the deadline.
-      stdio: ["ignore", "pipe", "pipe"],
-      env: options.env ?? process.env,
-      cwd: options.cwd,
-      shell: false,
-      windowsHide: true
-    });
-    const finish = (code, error) => {
-      if (settled) return;
-      settled = true;
-      (0, import_node_timers.clearTimeout)(timer);
-      resolve7({
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-        code,
-        timedOut,
-        outputTooLarge,
-        error
-      });
-    };
-    const kill = () => {
-      child2.kill("SIGKILL");
-      child2.stdout.destroy();
-      child2.stderr.destroy();
-    };
-    const timer = (0, import_node_timers.setTimeout)(() => {
-      timedOut = true;
-      kill();
-    }, options.timeoutMs);
-    const keep = (chunks, chunk, kept) => {
-      if (outputTooLarge || timedOut) return kept;
-      if (kept + chunk.length > cap) {
-        chunks.push(chunk.subarray(0, cap - kept));
-        outputTooLarge = true;
-        kill();
-        return cap;
-      }
-      chunks.push(chunk);
-      return kept + chunk.length;
-    };
-    child2.stdout.on("data", (chunk) => {
-      stdoutBytes = keep(stdout, chunk, stdoutBytes);
-    });
-    child2.stderr.on("data", (chunk) => {
-      stderrBytes = keep(stderr, chunk, stderrBytes);
-    });
-    child2.on("error", (error) => {
-      if (child2.pid === void 0) finish(null, `${program} could not be started: ${error.message}`);
-    });
-    child2.on("close", (code, signal) => {
-      if (timedOut) finish(null, `${program} did not finish within ${String(options.timeoutMs)} ms and was killed`);
-      else if (outputTooLarge) finish(null, `${program} printed more than ${String(cap)} bytes and was killed`);
-      else if (code === null) finish(null, `${program} was ended by ${signal ?? "a signal"}`);
-      else finish(code, null);
-    });
-  });
-}
-
-// src/platform/programs.ts
-var ProgramNotFoundError = class extends Error {
-  constructor(tool, message) {
-    super(message);
-    this.tool = tool;
-    this.name = "ProgramNotFoundError";
-  }
-  tool;
-};
-var PROGRAM_VARIABLES = {
-  claude: "KURMIS_CLAUDE_BIN",
-  codex: "KURMIS_CODEX_BIN"
-};
-var TOOL_NAMES = {
-  claude: "Claude Code",
-  codex: "Codex"
-};
-var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
-var MAX_SHIM_BYTES = 64 * 1024;
-function findProgram(tool, options = {}) {
-  const env = options.env ?? process.env;
-  const platform = options.platform ?? process.platform;
-  const nodePath = options.nodePath ?? process.execPath;
-  const files = options.files ?? realFiles;
-  const variable = PROGRAM_VARIABLES[tool];
-  const named = platform === "win32" ? windowsEnv(env, variable) : env[variable];
-  if (named !== void 0 && named !== "") {
-    const invocation = invocationFor(named, [], nodePath);
-    if ("refused" in invocation) throw new ProgramNotFoundError(tool, `${variable}: ${invocation.refused}`);
-    return { command: invocation.command, args: invocation.args, source: "env" };
-  }
-  return platform === "win32" ? findOnWindows(tool, env, nodePath, files) : findOnPosix(tool, env, nodePath, files);
-}
-function findOnPosix(tool, env, nodePath, files) {
-  const folders = posixPathFolders(env.PATH);
-  for (const folder of folders) {
-    const candidate = import_node_path5.posix.join(folder, tool);
-    if (!files.isExecutable(candidate)) continue;
-    const real = files.realPath(candidate);
-    if (real !== null && /\.(js|cjs|mjs)$/i.test(real)) return { command: nodePath, args: [real], source: "path" };
-    return { command: candidate, args: [], source: "path" };
-  }
-  const looked = [`the ${countFolders(folders.length)} on PATH`];
-  if (tool === "claude" && env.HOME !== void 0 && import_node_path5.posix.isAbsolute(env.HOME)) {
-    const native = import_node_path5.posix.join(env.HOME, ".local", "bin", "claude");
-    if (files.isExecutable(native)) return { command: native, args: [], source: "native-installer" };
-    looked.push(native);
-  }
-  throw notFound(tool, looked, []);
-}
-function findOnWindows(tool, env, nodePath, files) {
-  const folders = windowsPathFolders(windowsEnv(env, "PATH"));
-  const extensions = pathExtensions(windowsEnv(env, "PATHEXT"));
-  const skipped = [];
-  for (const folder of folders) {
-    for (const extension of extensions) {
-      const candidate = import_node_path5.win32.join(folder, tool + extension);
-      if (!files.isFile(candidate)) continue;
-      if (extension === ".exe" || extension === ".com") return { command: candidate, args: [], source: "path" };
-      const resolved = resolveShim(tool, candidate, nodePath, files);
-      if ("refused" in resolved) skipped.push(`${candidate}: ${resolved.refused}`);
-      else return resolved;
-    }
-  }
-  const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => tool + extension).join(", ")})`];
-  const home = windowsEnv(env, "USERPROFILE");
-  if (tool === "claude" && home !== void 0 && isAbsoluteWindowsPath(home)) {
-    const native = import_node_path5.win32.join(home, ".local", "bin", "claude.exe");
-    if (files.isFile(native)) return { command: native, args: [], source: "native-installer" };
-    looked.push(native);
-  }
-  throw notFound(tool, looked, skipped);
-}
-function resolveShim(tool, shimPath, nodePath, files) {
-  const text2 = files.read(shimPath, MAX_SHIM_BYTES);
-  if (text2 === null) return { refused: "it could not be read" };
-  const shim = parseCmdShim(text2, shimPath);
-  if ("unreadable" in shim) return { refused: `it is not a package manager shim kurmis can read (${shim.unreadable})` };
-  if (!files.isFile(shim.target)) return { refused: `it starts ${shim.target}, which does not exist` };
-  const invocation = cmdShimInvocation(shim, { nodePath, isFile: (path) => files.isFile(path) });
-  if ("refused" in invocation) return invocation;
-  if (invocation.command === shim.target && !startsLikeWindowsProgram(files, shim.target)) {
-    const wrapper = import_node_path5.win32.join(import_node_path5.win32.dirname(import_node_path5.win32.dirname(shim.target)), "cli-wrapper.cjs");
-    if (tool === "claude" && files.isFile(wrapper)) {
-      return { command: nodePath, args: [wrapper, ...invocation.args], source: "npm-shim" };
-    }
-    return {
-      refused: `it starts ${shim.target}, which is not a Windows program; if this is the npm package, its install step did not run (reinstall it without --ignore-scripts)`
-    };
-  }
-  return { command: invocation.command, args: invocation.args, source: "npm-shim" };
-}
-function startsLikeWindowsProgram(files, path) {
-  return files.read(path, 2) === "MZ";
-}
-function notFound(tool, looked, skipped) {
-  const lines = [`${TOOL_NAMES[tool]} (${tool}) was not found. Looked in ${looked.join(" and at ")}.`];
-  if (skipped.length > 0) lines.push(`Skipped:
-${skipped.map((line) => `  ${line}`).join("\n")}`);
-  lines.push(`Install ${TOOL_NAMES[tool]}, or set ${PROGRAM_VARIABLES[tool]} to the full path of the program.`);
-  return new ProgramNotFoundError(tool, lines.join("\n"));
-}
-function countFolders(count) {
-  return count === 1 ? "1 folder" : `${String(count)} folders`;
-}
-function posixPathFolders(value) {
-  return (value ?? "").split(":").filter((folder) => folder !== "" && import_node_path5.posix.isAbsolute(folder));
-}
-function windowsPathFolders(value) {
-  return (value ?? "").split(";").map((folder) => folder.trim().replace(/^"(.*)"$/, "$1")).filter((folder) => isAbsoluteWindowsPath(folder));
-}
-function pathExtensions(value) {
-  const listed = (value === void 0 || value.trim() === "" ? DEFAULT_PATHEXT : value).split(";").map((extension) => extension.trim().toLowerCase());
-  return [...new Set(listed)].filter((extension) => [".com", ".exe", ".bat", ".cmd"].includes(extension));
-}
-function windowsEnv(env, name) {
-  const exact = env[name];
-  if (exact !== void 0 && exact !== "") return exact;
-  const upper = name.toUpperCase();
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
-  }
-  return exact;
-}
-function regularFile(path) {
-  try {
-    return (0, import_node_fs5.statSync)(path, { throwIfNoEntry: false })?.isFile() ?? false;
-  } catch {
-    return false;
-  }
-}
-var realFiles = {
-  isFile(path) {
-    return regularFile(path);
-  },
-  isExecutable(path) {
-    if (!regularFile(path)) return false;
-    try {
-      (0, import_node_fs5.accessSync)(path, import_node_fs5.constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  realPath(path) {
-    try {
-      return (0, import_node_fs5.realpathSync)(path);
-    } catch {
-      return null;
-    }
-  },
-  read(path, maxBytes) {
-    let fd;
-    try {
-      fd = (0, import_node_fs5.openSync)(path, "r");
-    } catch {
-      return null;
-    }
-    try {
-      const buffer = Buffer.alloc(maxBytes);
-      const length = (0, import_node_fs5.readSync)(fd, buffer, 0, maxBytes, 0);
-      return buffer.subarray(0, length).toString("latin1");
-    } catch {
-      return null;
-    } finally {
-      (0, import_node_fs5.closeSync)(fd);
-    }
-  }
-};
-
-// src/cli/codex-home-files.ts
-var import_node_crypto5 = require("node:crypto");
-var import_node_fs6 = require("node:fs");
-var import_promises4 = require("node:fs/promises");
 var import_node_os2 = require("node:os");
-var import_node_path8 = require("node:path");
-
-// src/core/codex-home.ts
-var import_node_path6 = require("node:path");
-
-// src/core/codex-account-config.ts
-var import_toml_eslint_parser = __toESM(require_lib(), 1);
-var OPAQUE_KEY = /^(env|environment|set|http_headers|headers|env_http_headers|bearer_token_env_var|auth|authentication)$/i;
-var SECRET_KEY = /(?:api.?key|secret|password|credential|access.?token|refresh.?token|authorization|oauth|private.?key)/i;
-var SECRET_TEXT = /(?:\bBearer\s+\S+|\b(?:sk|ghp|github_pat|xox[baprs])[-_][a-z\d_-]{8,}|-----BEGIN [\w ]*PRIVATE KEY-----|https?:\/\/[^\s/@:]*:[^\s/@]+@|[?&](?:token|key|secret|signature|password)=[^&#\s]+|(?:api[_-]?key|secret|password|authorization|access[_-]?token)\s*[=:]\s*["']?[^\s,"'}]+)/i;
-function secretLooking(text2) {
-  return SECRET_TEXT.test(text2) || /--(?:token|api-key|password|secret)(?:[=\s]+)\S+/i.test(text2);
-}
-function opaqueKey(key) {
-  return OPAQUE_KEY.test(key) || SECRET_KEY.test(key);
-}
-var TRUST_TABLES = [
-  { parent: ["projects"], fields: ["trust_level"] },
-  { parent: ["hooks", "state"], fields: ["trusted_hash", "enabled"] }
-];
-function trustNameIndex(path, table) {
-  for (const { parent, fields } of TRUST_TABLES) {
-    if (!parent.every((key, index) => path[index] === key)) continue;
-    const name = parent.length;
-    if (table ? path.length === name + 1 : path.length === name + 2 && fields.includes(path[name + 1])) return name;
-  }
-  return -1;
-}
-function opaquePath(path, table) {
-  const name = trustNameIndex(path, table);
-  return path.some((key, index) => index !== name && typeof key === "string" && opaqueKey(key));
-}
-var TomlScalar = class {
-  kind;
-  text;
-  constructor(kind, text2) {
-    this.kind = kind;
-    this.text = text2;
-  }
-};
-function floatText(value) {
-  if (Number.isNaN(value)) return "nan";
-  if (!Number.isFinite(value)) return value > 0 ? "inf" : "-inf";
-  if (Object.is(value, -0)) return "-0.0";
-  const text2 = String(value);
-  return /[.e]/.test(text2) ? text2 : `${text2}.0`;
-}
-function scalar(node) {
-  switch (node.kind) {
-    case "string":
-    case "boolean":
-      return node.value;
-    case "integer":
-      return new TomlScalar("integer", node.bigint.toString());
-    case "float":
-      return new TomlScalar("float", floatText(node.value));
-    default:
-      return new TomlScalar(node.kind, node.datetime.replace(/^(\d{4}-\d{2}-\d{2})[ t]/i, "$1T").toUpperCase());
-  }
-}
-function isTable(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof TomlScalar);
-}
-function trustValue(path) {
-  return trustNameIndex(path, false) >= 0;
-}
-function mergedTrust(path, own2, fromDefault) {
-  if (fromDefault === void 0) return own2;
-  const field = path.at(-1);
-  if (field === "enabled") return own2 === false || fromDefault === false ? false : own2;
-  if (field === "trust_level") return fromDefault === "untrusted" ? fromDefault : own2;
-  return own2;
-}
-function opaqueArguments(value) {
-  return Array.isArray(value) && value.some((arg) => typeof arg === "string" && /^(?:-H|--(?:env|header|headers|token|api-key|password|secret|authorization))(?:=|$)/i.test(arg));
-}
-function dict() {
-  return /* @__PURE__ */ Object.create(null);
-}
-function own(value, key) {
-  return isTable(value) && Object.hasOwn(value, key) ? value[key] : void 0;
-}
-function record(value) {
-  return isTable(value) ? value : dict();
-}
-function at(root, path) {
-  return path.reduce((value, key) => typeof key === "number" ? Array.isArray(value) ? value[key] : void 0 : own(value, key), root);
-}
-function stableJson(value) {
-  if (value instanceof TomlScalar) return `${value.kind}:${JSON.stringify(value.text)}`;
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-function parseToml(text2) {
-  try {
-    return (0, import_toml_eslint_parser.parseTOML)(text2, { tomlVersion: "1.0" });
-  } catch {
-    throw new Error("config.toml is not valid TOML");
-  }
-}
-function keyParts(key) {
-  return key.keys.map((part) => part.type === "TOMLBare" ? part.name : part.value);
-}
-function tableValue(ast, convert) {
-  const child2 = (table, key) => {
-    if (!Object.hasOwn(table, key)) table[key] = dict();
-    return table[key];
-  };
-  const put = (table, keys, value) => {
-    let into = table;
-    for (const key of keys.slice(0, -1)) into = child2(into, key);
-    into[keys.at(-1)] = value;
-  };
-  const content = (node) => {
-    if (node.type === "TOMLArray") return node.elements.map(content);
-    if (node.type !== "TOMLInlineTable") return convert(node);
-    const table = dict();
-    for (const entry of node.body) put(table, keyParts(entry.key), content(entry.value));
-    return table;
-  };
-  const root = dict();
-  for (const node of ast.body[0].body) {
-    if (node.type === "TOMLKeyValue") {
-      put(root, keyParts(node.key), content(node.value));
-      continue;
-    }
-    let table = root;
-    node.resolvedKey.forEach((key, index) => {
-      if (typeof key === "number") {
-        const list = table;
-        table = list[key] ??= dict();
-        return;
-      }
-      const parent = table;
-      if (!Object.hasOwn(parent, key)) parent[key] = typeof node.resolvedKey[index + 1] === "number" ? [] : dict();
-      table = parent[key];
-    });
-    for (const entry of node.body) put(table, keyParts(entry.key), content(entry.value));
-  }
-  return root;
-}
-function typedValue(ast) {
-  return tableValue(ast, scalar);
-}
-function typedToml(text2) {
-  return typedValue(parseToml(text2));
-}
-function inArray(path) {
-  return path.some((key) => typeof key === "number");
-}
-function tomlEntries(ast) {
-  const entries = [];
-  const visit = (node, base, holder) => {
-    const path = [...base, ...keyParts(node.key)];
-    entries.push({ path, node, holder, tables: [] });
-    if (node.value.type === "TOMLInlineTable") for (const child2 of node.value.body) visit(child2, path, node.value);
-  };
-  for (const node of ast.body[0].body) {
-    if (node.type === "TOMLKeyValue") {
-      visit(node, [], null);
-      continue;
-    }
-    const index = node.resolvedKey.findIndex((key) => typeof key === "number");
-    if (index >= 0) {
-      const path = node.resolvedKey.slice(0, index);
-      const array = entries.find((entry) => entry.node === null && samePath(entry.path, path));
-      if (array === void 0) entries.push({ path, node: null, holder: null, tables: [node] });
-      else array.tables.push(node);
-    }
-    for (const child2 of node.body) visit(child2, [...node.resolvedKey], null);
-  }
-  return entries;
-}
-function settings(ast) {
-  return tomlEntries(ast).filter((entry) => !inArray(entry.path));
-}
-function inlineEntry(entry) {
-  return entry.node?.value.type === "TOMLInlineTable";
-}
-function entryStart(entry) {
-  return entry.node?.range[0] ?? entry.tables[0].range[0];
-}
-function tomlLiteral(value) {
-  if (typeof value === "string") return JSON.stringify(value).replace(/\u007f/g, "\\u007f");
-  if (typeof value === "boolean") return String(value);
-  if (value instanceof TomlScalar) return value.text;
-  if (Array.isArray(value)) return `[${value.map(tomlLiteral).join(", ")}]`;
-  if (value !== null && typeof value === "object") return `{ ${Object.entries(value).map(([k, v]) => `${tomlKey(k)} = ${tomlLiteral(v)}`).join(", ")} }`;
-  throw new Error("config.toml holds a value that cannot be written back");
-}
-function tomlKey(key) {
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlLiteral(key);
-}
-function samePath(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-function withValue(root, path, value) {
-  if (path.length === 0) return value;
-  const [key, ...rest] = path;
-  if (typeof key === "number") {
-    const list = Array.isArray(root) ? [...root] : [];
-    list[key] = withValue(list[key], rest, value);
-    return list;
-  }
-  const table = Object.assign(dict(), record(root));
-  table[key] = withValue(own(root, key), rest, value);
-  return table;
-}
-function newline(text2) {
-  return text2.includes("\r\n") ? "\r\n" : "\n";
-}
-function lineEnd(text2, offset) {
-  const end = text2.indexOf("\n", offset);
-  return end < 0 ? text2.length : end + 1;
-}
-function insertLines(text2, offset, lines, nl) {
-  const before = text2.slice(0, offset);
-  return `${before}${before.length === 0 || before.endsWith("\n") ? "" : nl}${lines}${text2.slice(offset)}`;
-}
-function arrayTables(path, value, nl) {
-  const header = `[[${path.map((key) => tomlKey(String(key))).join(".")}]]${nl}`;
-  return value.map((table) => header + Object.entries(record(table)).map(([key, child2]) => `${tomlKey(key)} = ${tomlLiteral(child2)}${nl}`).join("")).join("");
-}
-function insertions(text2, ast, entries, path, value) {
-  const nl = newline(text2);
-  const literal = tomlLiteral(value);
-  const tables = ast.body[0].body.filter((node) => node.type === "TOMLTable");
-  const inTable = (depth) => {
-    const rest = path.slice(depth);
-    if (inArray(rest)) return null;
-    const line = `${rest.map((key) => tomlKey(String(key))).join(".")} = ${literal}`;
-    const prefix = path.slice(0, depth);
-    const inline = entries.find((row) => inlineEntry(row) && samePath(row.path, prefix))?.node?.value;
-    if (inline?.type === "TOMLInlineTable") {
-      const last = inline.body.at(-1);
-      if (last !== void 0) return `${text2.slice(0, last.range[1])}, ${line}${text2.slice(last.range[1])}`;
-      const close = inline.range[1] - 1;
-      return `${text2.slice(0, close)} ${line} ${text2.slice(close)}`;
-    }
-    if (depth === 0) return `${line}${nl}${text2}`;
-    const table = tables.find((node) => samePath(node.resolvedKey, prefix));
-    if (table === void 0) return null;
-    return insertLines(text2, lineEnd(text2, table.range[1]), `${line}${nl}`, nl);
-  };
-  const parents = path.slice(0, -1);
-  const candidates = [];
-  if (!inArray(path) && Array.isArray(value) && value.length > 0 && value.every(isTable)) {
-    candidates.push(insertLines(text2, text2.length, arrayTables(path, value, nl), nl));
-  }
-  candidates.push(inTable(parents.length));
-  if (parents.length > 0 && !inArray(path)) {
-    const header = `[${parents.map((key) => tomlKey(String(key))).join(".")}]${nl}${tomlKey(String(path.at(-1)))} = ${literal}${nl}`;
-    candidates.push(insertLines(text2, text2.length, header, nl));
-  }
-  for (let depth = parents.length - 1; depth >= 0; depth--) candidates.push(inTable(depth));
-  return candidates.filter((candidate) => candidate !== null);
-}
-function leaves(value, base = []) {
-  return Object.entries(record(value)).flatMap(([key, child2]) => isTable(child2) && Object.keys(child2).length > 0 ? leaves(child2, [...base, key]) : [[...base, key]]);
-}
-function replaceArrayOfTables(text2, path, old, value) {
-  if (!Array.isArray(old) || !Array.isArray(value) || value.length === 0 || !value.every(isTable)) return null;
-  const nl = newline(text2);
-  const array = (current) => tomlEntries(parseToml(current)).find((entry) => entry.node === null && samePath(entry.path, path));
-  let out = text2;
-  try {
-    for (let index = 0; index < Math.min(old.length, value.length); index++) {
-      for (const leaf of leaves(old[index])) {
-        if (at(value[index], leaf) !== void 0) continue;
-        const row = tomlEntries(parseToml(out)).find((entry) => samePath(entry.path, [...path, index, ...leaf]));
-        if (row === void 0) return null;
-        out = removeEntry(out, row);
-      }
-      for (const leaf of leaves(value[index])) out = patchToml(out, [...path, index, ...leaf], at(value[index], leaf));
-    }
-    const extra = array(out)?.tables.filter((table) => table.resolvedKey[path.length] >= value.length) ?? [];
-    if (extra.length > 0) out = removeEntry(out, { path: [...path], node: null, holder: null, tables: extra });
-    if (value.length > old.length) {
-      const tables = array(out)?.tables ?? [];
-      if (tables.length === 0) return null;
-      const end = lineEnd(out, Math.max(...tables.map((table) => table.range[1])));
-      out = insertLines(out, end, arrayTables(path, value.slice(old.length), nl), nl);
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
-function patchToml(text2, path, value) {
-  if (path.length === 0 || opaquePath(path, false)) throw new Error("a secret key cannot be copied");
-  const ast = parseToml(text2);
-  const literal = tomlLiteral(value);
-  if (secretLooking(literal) || opaqueTree(value)) throw new Error("a secret value cannot be copied");
-  const current = typedValue(ast);
-  const entries = tomlEntries(ast);
-  const entry = entries.find((row) => samePath(row.path, path));
-  if (entry && stableJson(at(current, path)) === stableJson(value)) return text2;
-  const wanted = stableJson(withValue(current, path, value));
-  const fits = (candidate) => {
-    try {
-      return stableJson(typedValue((0, import_toml_eslint_parser.parseTOML)(candidate, { tomlVersion: "1.0" }))) === wanted;
-    } catch {
-      return false;
-    }
-  };
-  let candidates;
-  if (entry?.node) candidates = [text2.slice(0, entry.node.value.range[0]) + literal + text2.slice(entry.node.value.range[1])];
-  else if (entry) {
-    const inPlace = replaceArrayOfTables(text2, path, at(current, path), value);
-    const rest = removeEntry(text2, entry);
-    const restAst = parseToml(rest);
-    candidates = [...inPlace === null ? [] : [inPlace], ...insertions(rest, restAst, tomlEntries(restAst), path, value)];
-  } else candidates = insertions(text2, ast, entries, path, value);
-  const found = candidates.find(fits);
-  if (found === void 0) throw new Error("config.toml has no place for a setting that keeps it valid TOML");
-  return found;
-}
-function removeEntry(text2, { node, holder, tables }) {
-  if (node === null) {
-    return tables.map((table) => table.range).sort((a, b) => b[0] - a[0]).reduce((out, [start3, end2]) => out.slice(0, start3) + out.slice(end2), text2);
-  }
-  let [start2, end] = node.range;
-  if (holder !== null) {
-    const index = holder.body.indexOf(node);
-    if (index > 0) start2 = holder.body[index - 1].range[1];
-    else if (holder.body.length > 1) end = holder.body[1].range[0];
-  }
-  return text2.slice(0, start2) + text2.slice(end);
-}
-function withoutEmptyTables(value) {
-  if (!isTable(value)) return value;
-  const out = dict();
-  for (const [key, child2] of Object.entries(value)) {
-    const kept = withoutEmptyTables(child2);
-    if (!isTable(kept) || Object.keys(kept).length > 0) out[key] = kept;
-  }
-  return out;
-}
-function protectedValue(value) {
-  if (Array.isArray(value)) return opaqueArguments(value) || value.some(opaqueTree);
-  if (typeof value === "string") return secretLooking(value);
-  if (value instanceof TomlScalar) return secretLooking(value.text);
-  return false;
-}
-function opaqueTree(value) {
-  return protectedValue(value) || (isTable(value) || Array.isArray(value)) && Object.entries(value).some(([key, child2]) => opaqueKey(key) || opaqueTree(child2));
-}
-function publicAccountConfig(text2) {
-  let result = "";
-  const visit = (value, path) => {
-    if (opaquePath(path, isTable(value)) || protectedValue(value)) return;
-    if (isTable(value)) {
-      for (const [key, child2] of Object.entries(value)) visit(child2, [...path, key]);
-    } else result = patchToml(result, path, value);
-  };
-  visit(typedToml(text2), []);
-  if (secretLooking(result)) throw new Error("config.toml could not be copied without its secrets");
-  return result;
-}
-function mergeAccountConfig(source, target) {
-  const targetValues = typedToml(target);
-  const kept = (entry) => opaquePath(entry.path, inlineEntry(entry)) || protectedValue(at(targetValues, entry.path));
-  const targetEntries = settings(parseToml(target));
-  const opaque = targetEntries.filter(kept);
-  let publicSource = publicAccountConfig(source);
-  const publicValues = typedToml(publicSource);
-  for (const entry of targetEntries) {
-    if (inlineEntry(entry) || !trustValue(entry.path) || kept(entry)) continue;
-    const merged = mergedTrust(entry.path, at(targetValues, entry.path), at(publicValues, entry.path));
-    publicSource = patchToml(publicSource, entry.path, merged);
-  }
-  const values = typedToml(publicSource);
-  const preserve = (current, incoming2, path) => {
-    const next = Object.assign(dict(), record(incoming2));
-    for (const [key, value] of Object.entries(record(current))) {
-      if (opaquePath([...path, key], isTable(value)) || protectedValue(value)) next[key] = value;
-      else if (isTable(value)) {
-        const child2 = preserve(value, next[key], [...path, key]);
-        if (Object.keys(record(child2)).length > 0) next[key] = child2;
-      }
-    }
-    return next;
-  };
-  const desired = preserve(targetValues, values, []);
-  let content = target;
-  const incoming = settings(parseToml(publicSource)).filter((entry) => !inlineEntry(entry));
-  for (const { path } of incoming) {
-    if (opaque.some((entry) => samePath(entry.path, path))) continue;
-    content = patchToml(content, path, at(values, path));
-  }
-  for (; ; ) {
-    const remove = settings(parseToml(content)).filter((entry) => !inlineEntry(entry) && !opaquePath(entry.path, false) && !protectedValue(at(targetValues, entry.path)) && at(values, entry.path) === void 0);
-    const last = remove.sort((a, b) => entryStart(b) - entryStart(a))[0];
-    if (last === void 0) break;
-    content = removeEntry(content, last);
-  }
-  if (stableJson(withoutEmptyTables(typedToml(content))) !== stableJson(withoutEmptyTables(desired))) {
-    throw new Error("the login's own secrets and trust in config.toml could not be kept in place");
-  }
-  const sourceValues = typedToml(source);
-  const sourceOpaque = settings(parseToml(source)).filter((entry) => opaquePath(entry.path, inlineEntry(entry)) || protectedValue(at(sourceValues, entry.path)));
-  const missingSecrets = sourceOpaque.some(({ path }) => !opaque.some((row) => samePath(row.path, path)));
-  return { content, missingSecrets };
-}
-function sameTomlSettings(a, b) {
-  return stableJson(typedToml(a)) === stableJson(typedToml(b));
-}
-function validToml(text2) {
-  try {
-    parseToml(text2);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// src/core/codex-home.ts
-var CODEX_CONFIG_FILE = "config.toml";
-var CODEX_AGENTS_FILE = "AGENTS.md";
-var CODEX_CONFIG_MERGE_ATTEMPTS = 3;
-var PRIVATE_DIRS = /* @__PURE__ */ new Set([".tmp", "tmp"]);
-function codexPrivateName(name) {
-  return /^(?:auth\.json|\.credentials\.json|secrets(?:\..*)?|\.sandbox-secrets|\.env(?:\..*)?|vault(?:\..*)?|.*keychain.*|.*keyring.*|.*keystore.*|(?:.*[-_.])?(?:credentials?|oauth|tokens?)(?:[-_.].*)?|.*\.(?:db|sqlite|sqlite3|p12|pfx))$/i.test(name);
-}
-function codexHomeEntryAction(name, kind) {
-  if (kind === "directory") return PRIVATE_DIRS.has(name) || codexPrivateName(name) ? "skip" : "link";
-  if (kind !== "file") return "skip";
-  if (name === CODEX_CONFIG_FILE) return "merge";
-  if (name === CODEX_AGENTS_FILE) return "copy";
-  return "skip";
-}
-function codexLinkAction(place, source, platform = process.platform) {
-  if (place.kind === "missing") return "create";
-  if (place.kind === "link" && sameFolderPath(place.target, source, platform)) return "linked";
-  return "conflict";
-}
-function sameFolderPath(a, b, platform) {
-  if (platform !== "win32") return import_node_path6.posix.resolve(a) === import_node_path6.posix.resolve(b);
-  return import_node_path6.win32.resolve(a).toLowerCase() === import_node_path6.win32.resolve(b).toLowerCase();
-}
-function codexAgentsCopy(source, current) {
-  if (source === null || current === source) return null;
-  return source;
-}
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-function codexConfigRefresh(source, current) {
-  const keep = (missingSecrets, mergeFailure) => ({ action: "keep", content: null, missingSecrets, mergeFailure });
-  if (source === null) return keep(false, null);
-  if (current !== null && !validToml(current)) return keep(false, "the login's config.toml is not valid TOML, so it was left as it is");
-  let merged;
-  try {
-    merged = mergeAccountConfig(source, current ?? "");
-  } catch (error) {
-    return keep(false, `the default home's config.toml could not be merged in: ${errorText(error)}`);
-  }
-  try {
-    if (current !== null && sameTomlSettings(current, merged.content)) return keep(merged.missingSecrets, null);
-  } catch (error) {
-    return keep(merged.missingSecrets, `the merged config.toml could not be compared: ${errorText(error)}`);
-  }
-  return { action: "write", content: merged.content, missingSecrets: merged.missingSecrets, mergeFailure: null };
-}
-
-// src/platform/links.ts
-var import_promises3 = require("node:fs/promises");
-var import_node_path7 = require("node:path");
-function pathsOf(platform) {
-  return platform === "win32" ? import_node_path7.win32 : import_node_path7.posix;
-}
-function normaliseLinkTarget(target, platform) {
-  if (platform !== "win32") return target;
-  const unc = /^(?:\\\\\?\\|\\\?\?\\)UNC\\/i.exec(target);
-  if (unc !== null) return `\\\\${target.slice(unc[0].length)}`;
-  const long = /^(?:\\\\\?\\|\\\?\?\\)(?=[a-z]:)/i.exec(target);
-  if (long !== null) return target.slice(long[0].length);
-  return target;
-}
-function linkTargetPath(place, target, platform) {
-  const paths = pathsOf(platform);
-  return paths.resolve(paths.dirname(place), normaliseLinkTarget(target, platform));
-}
-function errorCode(error) {
-  const code = error?.code;
-  return typeof code === "string" ? code : void 0;
-}
-async function readFolderLink(place, platform = process.platform) {
-  let stats;
-  try {
-    stats = await (0, import_promises3.lstat)(place);
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return { kind: "missing" };
-    throw error;
-  }
-  if (!stats.isSymbolicLink()) return { kind: "other" };
-  return { kind: "link", target: linkTargetPath(place, await (0, import_promises3.readlink)(place), platform) };
-}
-async function linkFolder(target, place, platform = process.platform) {
-  const absolute = pathsOf(platform).resolve(target);
-  if (platform !== "win32") {
-    await (0, import_promises3.symlink)(absolute, place, "dir");
-    return;
-  }
-  try {
-    await (0, import_promises3.symlink)(absolute, place, "junction");
-  } catch (error) {
-    if (errorCode(error) === "EEXIST") throw error;
-    try {
-      await (0, import_promises3.symlink)(absolute, place, "dir");
-    } catch {
-      throw error;
-    }
-  }
-}
-
-// src/cli/codex-home-files.ts
-async function prepareCodexHome(id, options) {
-  const login = toLoginId(id);
-  if (providerOfLoginId(login) !== "codex") throw new Error(`${login} is not a Codex login.`);
-  if (isDefaultLoginId(login)) return { codexHome: null, warnings: [] };
-  const platform = options.platform ?? process.platform;
-  const home = loginFolder(login);
-  try {
-    makePrivateDirSync(home);
-  } catch (error) {
-    throw new Error(`Could not create the Codex home of ${login} at ${home}: ${errorText2(error)}`, { cause: error });
-  }
-  const source = codexSourceHome(options.env, platform);
-  const warnings = [];
-  await linkSharedFolders(source, home, platform, warnings);
-  await copyAgents(source, home, warnings);
-  await refreshConfig(source, home, warnings);
-  return { codexHome: home, warnings };
-}
-function codexSourceHome(env, platform = process.platform) {
-  const fallback = (0, import_node_path8.join)((0, import_node_os2.homedir)(), ".codex");
-  const named = env.CODEX_HOME;
-  if (named === void 0 || named === "") return fallback;
-  const home = (0, import_node_path8.resolve)(named);
-  return insideFolder(providerFolder("codex"), home, platform) ? fallback : home;
-}
-function insideFolder(folder, path, platform) {
-  const paths = pathsOf(platform);
-  const fold = (text2) => platform === "win32" ? text2.toLowerCase() : text2;
-  const relative2 = paths.relative(fold(paths.resolve(folder)), fold(paths.resolve(path)));
-  return relative2 === "" || !relative2.startsWith("..") && !paths.isAbsolute(relative2);
-}
-function errorText2(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-function errorCode2(error) {
-  const code = error?.code;
-  return typeof code === "string" ? code : void 0;
-}
-function entryKind(entry) {
-  if (entry.isSymbolicLink()) return "symlink";
-  if (entry.isDirectory()) return "directory";
-  if (entry.isFile()) return "file";
-  return "other";
-}
-async function linkSharedFolders(source, home, platform, warnings) {
-  let entries;
-  try {
-    entries = await (0, import_promises4.readdir)(source, { withFileTypes: true });
-  } catch (error) {
-    if (errorCode2(error) !== "ENOENT") warnings.push(`Could not list ${source} to link its folders into ${home}: ${errorText2(error)}`);
-    return;
-  }
-  for (const entry of entries) {
-    if (codexHomeEntryAction(entry.name, entryKind(entry)) !== "link") continue;
-    const from = (0, import_node_path8.join)(source, entry.name);
-    const place = (0, import_node_path8.join)(home, entry.name);
-    try {
-      const action = codexLinkAction(await readFolderLink(place, platform), from, platform);
-      if (action === "create") await linkFolder(from, place, platform);
-      else if (action === "conflict") {
-        warnings.push(`${place} is a real folder or a link to somewhere else, so it was left as it is and not linked to ${from}. Move it away to share ${from} with this login.`);
-      }
-    } catch (error) {
-      warnings.push(`Could not link ${place} to ${from}: ${errorText2(error)}`);
-    }
-  }
-}
-async function copyAgents(source, home, warnings) {
-  const from = (0, import_node_path8.join)(source, CODEX_AGENTS_FILE);
-  const target = (0, import_node_path8.join)(home, CODEX_AGENTS_FILE);
-  try {
-    const text2 = await readText(from);
-    const outcome = await writeIfUnchanged(target, (current) => codexAgentsCopy(text2, current), 420);
-    if (outcome === "changing") warnings.push(changingWarning(target));
-  } catch (error) {
-    warnings.push(`Could not copy ${from} to ${target}: ${errorText2(error)}`);
-  }
-}
-async function refreshConfig(source, home, warnings) {
-  const from = (0, import_node_path8.join)(source, CODEX_CONFIG_FILE);
-  const target = (0, import_node_path8.join)(home, CODEX_CONFIG_FILE);
-  try {
-    const text2 = await readText(from);
-    const said = { missingSecrets: false, mergeFailure: null };
-    const outcome = await writeIfUnchanged(target, (current) => {
-      const refresh = codexConfigRefresh(text2, current);
-      said.missingSecrets = refresh.missingSecrets;
-      said.mergeFailure = refresh.mergeFailure;
-      return refresh.action === "write" ? refresh.content : null;
-    }, PRIVATE_FILE_MODE);
-    if (said.mergeFailure !== null) warnings.push(`Could not refresh ${target} from ${from}: ${said.mergeFailure}.`);
-    if (said.missingSecrets) {
-      warnings.push(`${from} has a secret, such as an MCP server's env table, that ${target} lacks. It is never copied; add it to ${target} if this login needs it.`);
-    }
-    if (outcome === "changing") warnings.push(changingWarning(target));
-  } catch (error) {
-    warnings.push(`Could not refresh ${target} from ${from}: ${errorText2(error)}`);
-  }
-}
-function changingWarning(target) {
-  return `${target} kept changing while kurmis refreshed it, so it was left as it is. The next start refreshes it again.`;
-}
-async function readText(path) {
-  try {
-    return await (0, import_promises4.readFile)(path, "utf8");
-  } catch (error) {
-    if (errorCode2(error) === "ENOENT") return null;
-    throw error;
-  }
-}
-var TEMP_FLAGS2 = import_node_fs6.constants.O_WRONLY | import_node_fs6.constants.O_CREAT | import_node_fs6.constants.O_EXCL;
-async function writeIfUnchanged(target, next, mode) {
-  for (let attempt = 1; attempt <= CODEX_CONFIG_MERGE_ATTEMPTS; attempt++) {
-    const current = await readText(target);
-    const text2 = next(current);
-    if (text2 === null) return "unchanged";
-    const temp = `${target}.${String(process.pid)}.${(0, import_node_crypto5.randomBytes)(4).toString("hex")}.tmp`;
-    const handle = await (0, import_promises4.open)(temp, TEMP_FLAGS2, mode);
-    try {
-      try {
-        await handle.writeFile(text2);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      if (await readText(target) !== current) {
-        await (0, import_promises4.rm)(temp, { force: true });
-        continue;
-      }
-      await replaceFile(temp, target);
-    } catch (error) {
-      await (0, import_promises4.rm)(temp, { force: true });
-      throw error;
-    }
-    await syncDirectory((0, import_node_path8.dirname)(target));
-    return "written";
-  }
-  return "changing";
-}
-
-// src/cli/daemon-client.ts
-var import_node_os4 = require("node:os");
-var import_node_path13 = require("node:path");
-
-// src/core/proxy-rules.ts
-var ROUTE_PATHS = [
-  { method: "POST", path: "/v1/messages" },
-  { method: "POST", path: "/v1/messages/count_tokens" },
-  { method: "GET", path: "/v1/models" }
-];
-var HELLO_PATH = "/api/hello";
-var CONTROL_PREFIX = "/_kurmis/";
-function requestKind(method, url) {
-  const path = (url ?? "").split("?")[0] ?? "";
-  if (path === HELLO_PATH && (method === "HEAD" || method === "GET")) return { kind: "hello" };
-  if (path.startsWith(CONTROL_PREFIX)) return { kind: "control", path };
-  if (ROUTE_PATHS.some((entry) => entry.method === method && entry.path === path)) return { kind: "route", path };
-  return { kind: "unknown" };
-}
-var ROUTER_REFUSAL_STATUS = 599;
-var HOP_HEADERS = /* @__PURE__ */ new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade"
-]);
-var REPLACED_REQUEST_HEADERS = /* @__PURE__ */ new Set([
-  "authorization",
-  "x-api-key",
-  "host",
-  "content-length",
-  "accept-encoding"
-]);
-function droppedHeaders(connection) {
-  return /* @__PURE__ */ new Set([...HOP_HEADERS, ...(connection ?? "").toLowerCase().split(",").map((name) => name.trim())]);
-}
-function upstreamRequest(incoming, body, authorization, accountUuid) {
-  const connection = incoming["connection"];
-  const drop = droppedHeaders(Array.isArray(connection) ? connection.join(",") : connection);
-  const headers = {};
-  for (const [rawName, value] of Object.entries(incoming)) {
-    const name = rawName.toLowerCase();
-    if (value === void 0 || drop.has(name) || REPLACED_REQUEST_HEADERS.has(name) || KURMIS_HEADERS.includes(name)) continue;
-    headers[name] = Array.isArray(value) ? value.join(", ") : value;
-  }
-  headers["authorization"] = authorization;
-  headers["accept-encoding"] = "identity";
-  const outgoing = outgoingBody(body, accountUuid);
-  if (outgoing !== void 0) headers["content-length"] = String(Buffer.byteLength(outgoing));
-  return { headers, body: outgoing };
-}
-function downstreamResponseHeaders(upstream) {
-  const entries = [...upstream].map(([name, value]) => [name.toLowerCase(), value]);
-  const drop = droppedHeaders(entries.find(([name]) => name === "connection")?.[1]);
-  return entries.filter(([name]) => !drop.has(name) && name !== "content-length");
-}
-function rewriteUserId(userId, accountUuid) {
-  try {
-    const value = JSON.parse(userId);
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return userId;
-    const record2 = value;
-    record2["account_uuid"] = accountUuid;
-    return JSON.stringify(record2);
-  } catch {
-    return userId;
-  }
-}
-function outgoingBody(body, accountUuid) {
-  if (body === void 0) return void 0;
-  if (accountUuid !== null && body !== null && typeof body === "object" && "metadata" in body) {
-    const metadata = body.metadata;
-    if (metadata !== null && typeof metadata === "object" && "user_id" in metadata && typeof metadata.user_id === "string") {
-      return JSON.stringify({ ...body, metadata: { ...metadata, user_id: rewriteUserId(metadata.user_id, accountUuid) } });
-    }
-  }
-  return JSON.stringify(body);
-}
-function staleUsageLogins(session, rows, now, refreshed) {
-  const pinned = effectivePin(session, rows);
-  return rows.filter((row) => {
-    const reset = busiestPlanWindow(row.usage)?.resetsAt;
-    return !refreshed.has(row.id) && row.loggedIn && row.credentialsReadable && (pinned === null ? row.autoRoute : row.id === pinned) && reset != null && Date.parse(reset) <= now;
-  }).map((row) => row.id);
-}
-function withoutExpiringTokens(rows, now, session) {
-  const pinned = effectivePin(session, rows);
-  return rows.map((row) => row.tokenExpiresAt !== null && !tokenIsFresh(row.tokenExpiresAt, now) && (pinned === null || poolReadyAt([row], now, pinned, session.homeAccountId) === now) ? { ...row, credentialsReadable: false } : row);
-}
-function refusalAnswer(session, rows, now) {
-  const usable = withoutExpiringTokens(rows, now, session);
-  if (accountsInScope(session, usable).length === 0) return { ...noSignerAnswer(), kind: "no-signer", resetAt: null };
-  return { ...poolLimitAnswer(session, usable, now), kind: "pool-limit" };
-}
-function noSignerAnswer() {
-  const message = "No Claude login kurmis may use for this session could sign the request. Run `kurmis status` to see which logins are signed in.";
-  return {
-    status: ROUTER_REFUSAL_STATUS,
-    headers: { "content-type": "application/json", "retry-after": "5" },
-    body: JSON.stringify({ type: "error", error: { type: "api_error", message } })
-  };
-}
-function poolLimitAnswer(session, all, now) {
-  const pinned = effectivePin(session, all);
-  const rows = all.filter((row) => pinned === null || row.id === pinned);
-  const reset = poolReadyAt(rows, now, pinned, session.homeAccountId);
-  const next = reset === null ? void 0 : rows.find((row) => poolReadyAt([row], now, pinned, session.homeAccountId) === reset);
-  const blocking = next === void 0 ? void 0 : planUsageWindows(usageAsOf(next.usage, now)).filter((window) => window.utilization >= (pinned === null ? limitForWindow(next, window) : 100)).sort((a, b) => Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? ""))[0];
-  const claim = blocking?.key ?? next?.usage?.limited?.window ?? "five_hour";
-  const message = `Usage limit reached for every login kurmis may use.${reset === null ? "" : ` Resets at ${new Date(reset).toISOString()}.`}`;
-  return {
-    status: 429,
-    headers: {
-      "content-type": "application/json",
-      "anthropic-ratelimit-unified-status": "rejected",
-      "anthropic-ratelimit-unified-representative-claim": claim,
-      ...reset === null ? {} : { "anthropic-ratelimit-unified-reset": String(reset / 1e3) },
-      "retry-after": String(reset === null ? 1 : Math.max(1, Math.ceil((reset - now) / 1e3)))
-    },
-    body: JSON.stringify({ type: "error", error: { type: "rate_limit_error", message } }),
-    resetAt: reset
-  };
-}
-function cooldownAfterProbe(cooldownUntil, snapshot) {
-  if (cooldownUntil !== Infinity || snapshot.source !== "probe" || snapshot.error !== null || !snapshot.rateLimitsAvailable) {
-    return cooldownUntil;
-  }
-  const reset = resetsAtFromUsage(snapshot);
-  if (reset !== null && Number.isFinite(Date.parse(reset))) return Date.parse(reset);
-  return snapshot.status === "rejected" ? cooldownUntil : null;
-}
-function routeBlockText(block, keychain = false, startedOn = false) {
-  switch (block.kind) {
-    case "auto-route-off":
-      return "not opted in to routing";
-    case "signed-out":
-      return "signed out";
-    case "no-credentials":
-      if (!keychain) return "no token, its .credentials.json did not read";
-      return startedOn ? "no token, its Keychain item did not read and the request carried no authorization header of its own" : "no token, its Keychain item did not read and the CLI signs only for the login it was started on";
-    case "token-expiring":
-      return "its token expires within 5 minutes";
-    case "cooldown":
-      return block.until === null ? "cooling down until a usage probe says it is back" : `cooling down until ${new Date(block.until).toISOString()}`;
-    case "over-limit":
-      return `at its limit, the ${block.window} window is at ${String(Math.round(block.utilization))}% of ${String(block.limitPercent)}%`;
-  }
-}
-
-// src/core/control-api.ts
-var CONTROL_API_VERSION = 1;
-var CONTROL_PATHS = {
-  /** `GET`: `StatusAnswer`. */
-  status: `${CONTROL_PREFIX}status`,
-  /** `POST` with a `ProbeRequest`: probes the logins now and answers `StatusAnswer` when done. */
-  probe: `${CONTROL_PREFIX}probe`,
-  /** `POST`: reads `config.json` again. Answers `OkAnswer`. */
-  reload: `${CONTROL_PREFIX}reload`,
-  /**
-   * `POST` with an optional `StopRequest` (no body is the same as `{}`): answers `OkAnswer`,
-   * then stops taking new requests and exits once the open ones have finished.
-   */
-  stop: `${CONTROL_PREFIX}stop`
-};
-var MAX_CONTROL_BODY_BYTES = 64 * 1024;
-
-// src/data/daemon-file.ts
-var import_node_crypto6 = require("node:crypto");
-var import_node_fs7 = require("node:fs");
-var import_node_path9 = require("node:path");
-function generateDaemonSecret() {
-  return (0, import_node_crypto6.randomBytes)(32).toString("hex");
-}
-var SECRET_PATTERN = /^[0-9a-f]{64}$/;
-function readKey(path = keyPath()) {
-  let text2;
-  try {
-    text2 = (0, import_node_fs7.readFileSync)(path, "utf8").trim();
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-  return SECRET_PATTERN.test(text2) ? text2 : null;
-}
-function readOrCreateKey(path = keyPath()) {
-  const existing = readKey(path);
-  if (existing !== null) return existing;
-  makePrivateDirSync((0, import_node_path9.dirname)(path));
-  const key = generateDaemonSecret();
-  const temporary = (0, import_node_path9.join)((0, import_node_path9.dirname)(path), `.key-${process.pid}-${(0, import_node_crypto6.randomBytes)(4).toString("hex")}`);
-  writeFileAtomicSync(temporary, `${key}
-`, { mode: PRIVATE_FILE_MODE });
-  try {
-    (0, import_node_fs7.linkSync)(temporary, path);
-    return key;
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    const theirs = readKey(path);
-    if (theirs !== null) return theirs;
-    writeFileAtomicSync(path, `${key}
-`, { mode: PRIVATE_FILE_MODE });
-    return key;
-  } finally {
-    (0, import_node_fs7.rmSync)(temporary, { force: true });
-  }
-}
-function isPositiveInteger(value) {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
-function parseDaemonInfo(value) {
-  if (!isPlainObject(value)) return "is not an object";
-  if (!isPositiveInteger(value.pid)) return "pid must be a positive whole number";
-  if (!isPositiveInteger(value.port) || value.port > 65535) return "port must be a whole number from 1 to 65535";
-  if (typeof value.version !== "string" || value.version === "") return "version must be a string";
-  if (typeof value.startedAt !== "number" || !Number.isFinite(value.startedAt)) return "startedAt must be a number";
-  return { pid: value.pid, port: value.port, version: value.version, startedAt: value.startedAt };
-}
-function readDaemonFile(path = daemonFilePath()) {
-  let read;
-  try {
-    read = readJsonFileSync(path);
-  } catch (error) {
-    return { status: "invalid", reason: `${path} could not be read (${String(error.code)})` };
-  }
-  if (read.status === "missing") return { status: "missing" };
-  if (read.status === "corrupt") return { status: "invalid", reason: `${path} is not valid JSON` };
-  const info = parseDaemonInfo(read.value);
-  return typeof info === "string" ? { status: "invalid", reason: `${path}: ${info}` } : { status: "ok", info };
-}
-function writeDaemonFile(info, path = daemonFilePath()) {
-  writeJsonFileSync(path, info, { mode: PRIVATE_FILE_MODE });
-}
-function removeDaemonFile(pid, path = daemonFilePath()) {
-  const read = readDaemonFile(path);
-  if (read.status === "ok" && read.info.pid !== pid) return false;
-  if (read.status === "missing") return false;
-  (0, import_node_fs7.rmSync)(path, { force: true });
-  return true;
-}
-
-// src/core/keychain-service.ts
-var import_node_crypto7 = require("node:crypto");
-var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
-function keychainService(secureStorageDir) {
-  if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
-  const digest = (0, import_node_crypto7.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
-  return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
-}
-
-// src/core/credentials.ts
-function parseCredentials(text2) {
-  try {
-    const parsed = JSON.parse(text2);
-    const oauth = parsed?.claudeAiOauth;
-    if (typeof oauth?.accessToken !== "string" || oauth.accessToken.trim().length === 0) return null;
-    return {
-      accessToken: oauth.accessToken,
-      expiresAt: typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt) ? oauth.expiresAt : null,
-      hasRefreshToken: typeof oauth.refreshToken === "string" && oauth.refreshToken.trim().length > 0
-    };
-  } catch {
-    return null;
-  }
-}
-
-// src/daemon/keychain.ts
-var SECURITY_PROGRAM = "/usr/bin/security";
-var KEYCHAIN_CACHE_MS = 6e4;
-var KEYCHAIN_READ_TIMEOUT_MS = 3e3;
-var MAX_OUTPUT_BYTES = 256 * 1024;
-var MAX_REASON_CHARS = 500;
-function keychainHoldsSecret(platform = process.platform) {
-  return platform === "darwin";
-}
-var KeychainReadError = class extends Error {
-  constructor(reason, code, timedOut = false, outputTooLarge = false) {
-    super(reason);
-    this.reason = reason;
-    this.code = code;
-    this.timedOut = timedOut;
-    this.outputTooLarge = outputTooLarge;
-  }
-  reason;
-  code;
-  timedOut;
-  outputTooLarge;
-};
-var NO_SUCH_ITEM_EXIT_CODE = 44;
-var KEYCHAIN_NOT_ALLOWED_EXIT_CODE = 36;
-async function readKeychainItem(securityProgram, service, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
-  const result = await runProgram(
-    securityProgram,
-    ["find-generic-password", "-w", "-s", service],
-    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
-  );
-  const failure2 = failureOf(result, timeoutMs);
-  if (failure2 !== null) throw new KeychainReadError(failure2, result.code, result.timedOut, result.outputTooLarge);
-  return result.stdout.trim().length === 0 ? null : result.stdout;
-}
-function failureOf(result, timeoutMs) {
-  if (result.timedOut) return `it did not answer within ${seconds(timeoutMs)} seconds`;
-  if (result.outputTooLarge) return `it printed more than ${String(MAX_OUTPUT_BYTES)} bytes, which is not a credentials record`;
-  if (result.error !== null) return result.error;
-  if (result.code === 0) return null;
-  const said = result.stderr.trim();
-  return said.length > 0 ? said.slice(0, MAX_REASON_CHARS) : "it printed nothing on stderr";
-}
-function seconds(ms) {
-  return String(ms / 1e3);
-}
-var KeychainCredentialsReader = class {
-  constructor(options) {
-    this.options = options;
-  }
-  options;
-  cache = /* @__PURE__ */ new Map();
-  reading = /* @__PURE__ */ new Map();
-  /** The logins whose failed read has been logged, until a read of one works. */
-  failureLogged = /* @__PURE__ */ new Set();
-  /**
-   * The items whose read was killed at its deadline. A `security` that does not answer is most
-   * likely showing a Keychain dialog that nobody is there to answer, and reading the item again
-   * would show another one, so none of these is read again by this reader. Neither `invalidate`
-   * nor `clear` empties it.
-   */
-  unanswered = /* @__PURE__ */ new Set();
-  read(id) {
-    return this.cache.get(id)?.value ?? null;
-  }
-  async prime(ids) {
-    await Promise.all([...new Set(ids)].map((id) => this.refresh(id)));
-  }
-  invalidate(id) {
-    this.cache.delete(id);
-  }
-  clear() {
-    this.cache.clear();
-  }
-  /** One read per login at a time; a second caller waits for the one already running. */
-  refresh(id) {
-    const cached = this.cache.get(id);
-    if (cached && this.now() - cached.readAt < KEYCHAIN_CACHE_MS) return Promise.resolve();
-    let running = this.reading.get(id);
-    if (!running) {
-      running = this.load(id).finally(() => {
-        this.reading.delete(id);
-      });
-      this.reading.set(id, running);
-    }
-    return running;
-  }
-  async load(id) {
-    const timeoutMs = this.options.readTimeoutMs ?? KEYCHAIN_READ_TIMEOUT_MS;
-    const run2 = this.options.run ?? ((service2) => readKeychainItem(this.options.securityProgram, service2, timeoutMs));
-    const service = keychainService(this.options.accounts.secureStorageDir(id));
-    if (this.unanswered.has(service)) {
-      this.cache.set(id, { readAt: this.now(), value: null });
-      return;
-    }
-    let value = null;
-    let failure2 = null;
-    try {
-      const secret = await run2(service);
-      value = secret === null ? null : parseCredentials(secret);
-      if (secret === null) failure2 = { text: "the item is empty", kind: "empty", code: null };
-      else if (value === null) failure2 = { text: "the item holds no OAuth token", kind: "not_credentials", code: null };
-    } catch (error) {
-      if (error instanceof KeychainReadError && error.timedOut) {
-        this.unanswered.add(service);
-        this.cache.set(id, { readAt: this.now(), value: null });
-        this.options.log?.(`reading login ${id} from the Keychain item "${service}" did not answer within ${seconds(timeoutMs)} seconds, so the proxy holds no token for it, and this daemon will not read that item again until it restarts. A read that waits is usually a Keychain dialog: either a program other than the Claude CLI created the item or changed its access list, so /usr/bin/security may read it only after somebody allows it, or the login Keychain is locked. Reading again would put up another dialog.`);
-        this.options.onFailure?.({ id, kind: "timeout", code: null });
-        return;
-      }
-      if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
-        failure2 = error instanceof KeychainReadError ? {
-          text: `${error.code === null ? "no exit code" : `exit ${String(error.code)}`}: ${error.reason}`,
-          kind: failureKindOf(error),
-          code: error.code
-        } : { text: `it threw: ${error instanceof Error ? error.message : String(error)}`, kind: "failed", code: null };
-      }
-    }
-    this.cache.set(id, { readAt: this.now(), value });
-    if (failure2 === null) {
-      this.failureLogged.delete(id);
-    } else if (!this.failureLogged.has(id)) {
-      this.failureLogged.add(id);
-      this.options.log?.(`reading login ${id} from the Keychain item "${service}" failed, so the proxy holds no token for it (${failure2.text})`);
-      this.options.onFailure?.({ id, kind: failure2.kind, code: failure2.code });
-    }
-  }
-  now() {
-    return this.options.now?.() ?? Date.now();
-  }
-};
-function failureKindOf(error) {
-  if (error.outputTooLarge) return "too_large";
-  if (error.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE) return "not_allowed";
-  if (error.code === null) return "not_run";
-  return "failed";
-}
-async function probeLoginKeychain(securityProgram, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
-  const result = await runProgram(
-    securityProgram,
-    ["show-keychain-info", "login.keychain"],
-    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
-  );
-  const failure2 = failureOf(result, timeoutMs);
-  return failure2 === null ? { readable: true } : { readable: false, reason: failure2 };
-}
-
-// src/daemon/lifecycle.ts
-var import_node_http = require("node:http");
-var import_node_net = require("node:net");
-var DAEMON_HOST = "127.0.0.1";
-var CONTROL_TIMEOUT_MS = 5e3;
-var MAX_ANSWER_BYTES = 4 * 1024 * 1024;
-function controlRequest(options) {
-  const timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
-  const payload = options.body === void 0 ? void 0 : JSON.stringify(options.body);
-  return new Promise((resolve7) => {
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve7(result);
-    };
-    const headers = { [KEY_HEADER]: options.key, connection: "close" };
-    if (payload !== void 0) {
-      headers["content-type"] = "application/json";
-      headers["content-length"] = String(Buffer.byteLength(payload));
-    }
-    const outgoing = (0, import_node_http.request)(
-      { host: DAEMON_HOST, port: options.port, method: options.method, path: options.path, headers, agent: false },
-      (incoming) => {
-        const chunks = [];
-        let size = 0;
-        incoming.on("data", (chunk) => {
-          size += chunk.length;
-          if (size > MAX_ANSWER_BYTES) {
-            finish({ kind: "failed", reason: "the answer was too large" });
-            outgoing.destroy();
-            return;
-          }
-          chunks.push(chunk);
-        });
-        incoming.on("error", (error) => finish({ kind: "failed", reason: error.message }));
-        incoming.on("end", () => {
-          const text2 = Buffer.concat(chunks).toString("utf8");
-          let body;
-          try {
-            body = text2 === "" ? null : JSON.parse(text2);
-          } catch {
-            body = null;
-          }
-          finish({ kind: "answered", status: incoming.statusCode ?? 0, body });
-        });
-      }
-    );
-    const timer = setTimeout(() => {
-      finish({ kind: "failed", reason: `no answer within ${String(timeoutMs)} ms` });
-      outgoing.destroy();
-    }, timeoutMs);
-    outgoing.on("error", (error) => {
-      finish(error.code === "ECONNREFUSED" ? { kind: "refused" } : { kind: "failed", reason: error.code ?? error.message });
-    });
-    outgoing.end(payload);
-  });
-}
-function isStatusAnswer(value) {
-  return isPlainObject(value) && value.ok === true && typeof value.version === "string" && typeof value.pid === "number" && typeof value.port === "number" && typeof value.startedAt === "number" && Array.isArray(value.logins);
-}
-async function portHolder(port, key, timeoutMs = CONTROL_TIMEOUT_MS) {
-  const result = await controlRequest({ port, key, method: "GET", path: CONTROL_PATHS.status, timeoutMs });
-  if (result.kind === "refused") return { kind: "free" };
-  if (result.kind === "failed") return { kind: "other", reason: result.reason };
-  if (result.status === 200 && isStatusAnswer(result.body)) return { kind: "kurmis", status: result.body };
-  return { kind: "other", reason: `it answered ${String(result.status)} to a kurmis status request`, status: result.status };
-}
-function portAcceptsConnections(port, timeoutMs = 1e3) {
-  return new Promise((resolve7) => {
-    const socket = (0, import_node_net.createConnection)({ host: DAEMON_HOST, port });
-    const done = (accepted) => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve7(accepted);
-    };
-    const timer = setTimeout(() => done(true), timeoutMs);
-    socket.once("connect", () => done(true));
-    socket.once("error", (error) => done(error.code !== "ECONNREFUSED"));
-  });
-}
-function compareVersions(a, b) {
-  const left = parseVersion(a);
-  const right = parseVersion(b);
-  if (left === null || right === null) return null;
-  const length = Math.max(left.parts.length, right.parts.length);
-  for (let index = 0; index < length; index++) {
-    const x = left.parts[index] ?? 0;
-    const y = right.parts[index] ?? 0;
-    if (x !== y) return x < y ? -1 : 1;
-  }
-  if (left.pre === right.pre) return 0;
-  if (left.pre === null) return 1;
-  if (right.pre === null) return -1;
-  return left.pre < right.pre ? -1 : 1;
-}
-function parseVersion(text2) {
-  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(text2.trim());
-  if (match === null) return null;
-  return { parts: (match[1] ?? "").split(".").map(Number), pre: match[2] ?? null };
-}
-function shouldReplace(daemonVersion, cliVersion) {
-  return compareVersions(daemonVersion, cliVersion) === -1;
-}
-function delay(ms) {
-  return new Promise((resolve7) => {
-    setTimeout(resolve7, ms);
-  });
-}
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
-
-// src/platform/detach.ts
-var import_node_child_process2 = require("node:child_process");
-var import_node_fs8 = require("node:fs");
-var import_node_path10 = require("node:path");
-var ENTRY_VARIABLE = "KURMIS_ENTRY";
-function bundleFile() {
-  const file = typeof __filename === "string" ? __filename : null;
-  return file !== null && /\.c?js$/i.test(file) ? file : null;
-}
-function kurmisEntry(options = {}) {
-  const env = options.env ?? process.env;
-  const named = env[ENTRY_VARIABLE];
-  if (named !== void 0 && named !== "") return named;
-  const file = options.moduleFile === void 0 ? bundleFile() : options.moduleFile;
-  if (file === null) return null;
-  try {
-    return (0, import_node_fs8.realpathSync)(file);
-  } catch {
-    return file;
-  }
-}
-function nodeForJobs(options = {}) {
-  const env = options.env ?? process.env;
-  const platform = options.platform ?? process.platform;
-  const execPath = options.execPath ?? process.execPath;
-  const realpath = options.realpath ?? import_node_fs8.realpathSync;
-  let target;
-  try {
-    target = realpath(execPath);
-  } catch {
-    return execPath;
-  }
-  const name = platform === "win32" ? "node.exe" : "node";
-  const pathValue = (platform === "win32" ? env.Path ?? env.PATH : env.PATH) ?? "";
-  const separator = platform === "win32" ? ";" : import_node_path10.delimiter;
-  for (const folder of pathValue.split(separator)) {
-    if (folder === "") continue;
-    const candidate = platform === "win32" ? `${folder.replace(/[\\/]+$/, "")}\\${name}` : (0, import_node_path10.join)(folder, name);
-    try {
-      if (!(0, import_node_fs8.statSync)(candidate).isFile()) continue;
-      return realpath(candidate) === target ? candidate : execPath;
-    } catch {
-      continue;
-    }
-  }
-  return execPath;
-}
-function inSshSession(env = process.env) {
-  return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY);
-}
-function spawnDetached(start2) {
-  return new Promise((resolve7, reject) => {
-    const child2 = (0, import_node_child_process2.spawn)(start2.command, [...start2.args], {
-      detached: true,
-      stdio: "ignore",
-      env: start2.env,
-      cwd: start2.cwd,
-      shell: false,
-      windowsHide: true
-    });
-    const exited = new Promise((done) => {
-      child2.once("exit", (code) => done(code));
-    });
-    child2.once("error", (error) => {
-      if (child2.pid === void 0) reject(error);
-    });
-    child2.once("spawn", () => {
-      child2.unref();
-      if (child2.pid === void 0) reject(new Error(`${start2.command} could not be started`));
-      else resolve7({ pid: child2.pid, exited });
-    });
-  });
-}
-function windowsCommandLine(argv) {
-  return argv.map(quoteWindowsArgument).join(" ");
-}
-function quoteWindowsArgument(arg) {
-  if (arg !== "" && !/[\s"]/.test(arg)) return arg;
-  let out = '"';
-  let backslashes = 0;
-  for (const char of arg) {
-    if (char === "\\") {
-      backslashes++;
-      continue;
-    }
-    if (char === '"') out += "\\".repeat(backslashes * 2 + 1) + '"';
-    else out += "\\".repeat(backslashes) + char;
-    backslashes = 0;
-  }
-  return `${out}${"\\".repeat(backslashes * 2)}"`;
-}
-function powerShellQuote(text2) {
-  return `'${text2.replace(/'/g, "''")}'`;
-}
-function wmiCreateScript(argv, cwd) {
-  return [
-    "$ProgressPreference='SilentlyContinue'",
-    "$ErrorActionPreference='Stop'",
-    `$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${powerShellQuote(windowsCommandLine(argv))};CurrentDirectory=${powerShellQuote(cwd)}}`,
-    'if($r.ReturnValue -ne 0){[Console]::Error.WriteLine("Win32_Process.Create answered $($r.ReturnValue)");exit 1}',
-    "[Console]::Out.WriteLine('pid '+$r.ProcessId)"
-  ].join("\n");
-}
-function powerShellInvocation(script, env) {
-  const root = env.SystemRoot ?? env.SYSTEMROOT ?? "C:\\Windows";
-  return {
-    program: `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
-    args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]
-  };
-}
-function parseWmiCreateAnswer(result) {
-  const match = /^pid ([1-9]\d*)$/m.exec(result.stdout.trim());
-  if (result.code === 0 && match !== null) return Number(match[1]);
-  const said = (result.error ?? result.stderr.trim()) || result.stdout.trim() || `exit ${String(result.code)}`;
-  throw new Error(`WMI did not create the process: ${said}`);
-}
-async function createThroughWmi(argv, cwd, env, run2 = runProgram) {
-  const { program, args } = powerShellInvocation(wmiCreateScript(argv, cwd), env);
-  return parseWmiCreateAnswer(await run2(program, args, { timeoutMs: 6e4, env }));
-}
-
-// src/platform/launchd.ts
-var import_node_crypto8 = require("node:crypto");
-var import_node_fs9 = require("node:fs");
-var import_node_os3 = require("node:os");
-var import_node_path11 = require("node:path");
-var LAUNCHCTL_PROGRAM = "/bin/launchctl";
-var LAUNCHCTL_VARIABLE = "KURMIS_LAUNCHCTL_PROGRAM";
-var LAUNCHCTL_TIMEOUT_MS = 3e4;
-var AUTOSTART_LABEL = "kurmis.daemon";
-var ONE_SHOT_LABEL_PREFIX = "kurmis.start";
-var DAEMON_START_ARGS = ["daemon", "start", "--no-launchd"];
-function launchctlProgram(env = process.env) {
-  const named = env[LAUNCHCTL_VARIABLE];
-  return named !== void 0 && named !== "" ? named : LAUNCHCTL_PROGRAM;
-}
-function launchctlFor(env = process.env) {
-  const program = launchctlProgram(env);
-  return (args) => runProgram(program, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS, env });
-}
-function currentUid() {
-  return typeof process.getuid === "function" ? process.getuid() : 0;
-}
-function guiDomain(uid = currentUid()) {
-  return `gui/${String(uid)}`;
-}
-function launchAgentsDir() {
-  return (0, import_node_path11.join)((0, import_node_os3.homedir)(), "Library", "LaunchAgents");
-}
-function autostartPlistPath() {
-  return (0, import_node_path11.join)(launchAgentsDir(), `${AUTOSTART_LABEL}.plist`);
-}
-function escapeXml(text2) {
-  return text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-function plistXml(root) {
-  const lines = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-    '<plist version="1.0">',
-    "<dict>"
-  ];
-  const string = (value) => `<string>${escapeXml(value)}</string>`;
-  const scalar2 = (value) => typeof value === "boolean" ? value ? "<true/>" : "<false/>" : string(value);
-  for (const [key, value] of Object.entries(root)) {
-    lines.push(`  <key>${escapeXml(key)}</key>`);
-    if (typeof value === "string" || typeof value === "boolean") lines.push(`  ${scalar2(value)}`);
-    else if (Array.isArray(value)) lines.push("  <array>", ...value.map((item) => `    ${string(item)}`), "  </array>");
-    else {
-      lines.push("  <dict>");
-      for (const [name, item] of Object.entries(value)) {
-        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar2(item)}`);
-      }
-      lines.push("  </dict>");
-    }
-  }
-  lines.push("</dict>", "</plist>", "");
-  return lines.join("\n");
-}
-var DAEMON_JOB_VARIABLES = [
-  "KURMIS_HOME",
-  "KURMIS_CLAUDE_BIN",
-  "KURMIS_CODEX_BIN",
-  "KURMIS_UPSTREAM_URL",
-  "KURMIS_SECURITY_PROGRAM",
-  "KURMIS_ENTRY",
-  "KURMIS_LAUNCHCTL_PROGRAM",
-  "KURMIS_REG_PROGRAM"
-];
-var FALLBACK_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-function daemonJobEnvironment(env = process.env) {
-  const out = {
-    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os3.homedir)(),
-    PATH: env.PATH !== void 0 && env.PATH !== "" ? env.PATH : FALLBACK_PATH
-  };
-  for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name];
-    if (value === void 0 || value === "") continue;
-    out[name] = name === "KURMIS_HOME" ? (0, import_node_path11.resolve)(value) : value;
-  }
-  return out;
-}
-function daemonJobPlist(job) {
-  return plistXml({
-    Label: job.label,
-    ProgramArguments: job.programArguments,
-    EnvironmentVariables: job.environment,
-    WorkingDirectory: job.environment.HOME ?? (0, import_node_os3.homedir)(),
-    RunAtLoad: true,
-    AbandonProcessGroup: true,
-    StandardOutPath: "/dev/null",
-    StandardErrorPath: "/dev/null"
-  });
-}
-function parseLaunchctlPrint(result) {
-  if (result.code !== 0) return { loaded: false, path: null, pid: null };
-  const top = /* @__PURE__ */ new Map();
-  for (const match of result.stdout.matchAll(/^\t([^\t=][^=\n]*?) = (.*)$/gm)) {
-    const key = match[1] ?? "";
-    if (!top.has(key)) top.set(key, (match[2] ?? "").trim());
-  }
-  const pid = Number(top.get("pid"));
-  return {
-    loaded: true,
-    path: top.get("path") ?? null,
-    pid: top.get("state") === "running" && Number.isSafeInteger(pid) && pid > 0 ? pid : null
-  };
-}
-async function jobState(label, launchctl = launchctlFor(), uid) {
-  return parseLaunchctlPrint(await launchctl(["print", `${guiDomain(uid)}/${label}`]));
-}
-function launchctlSaid(result) {
-  if (result.error !== null) return result.error;
-  const said = `${result.stderr}
-${result.stdout}`.replace(/\s+/g, " ").trim();
-  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
-}
-function isNotLoaded(result) {
-  if (result.code === 3 || result.code === 113) return true;
-  return /no such process|could not find (specified )?service/i.test(`${result.stderr}
-${result.stdout}`);
-}
-function isMissingGuiDomain(result) {
-  if (result.code === 125 || result.code === 112) return true;
-  return /domain does not support specified action|could not find domain/i.test(`${result.stderr}
-${result.stdout}`);
-}
-function bootstrapFailure(result, domain) {
-  const said = launchctlSaid(result);
-  if (result.error === null && isMissingGuiDomain(result)) {
-    return `launchd could not load the job into ${domain} (${said}). This usually means nobody is logged in at this Mac's screen: the GUI session, the only one that can read the login Keychain, exists only while you are logged in there or through Screen Sharing.`;
-  }
-  return `launchd could not load the job into ${domain} (${said}).`;
-}
-async function bootstrapJob(plistPath, launchctl = launchctlFor(), uid) {
-  const domain = guiDomain(uid);
-  const result = await launchctl(["bootstrap", domain, plistPath]);
-  if (result.code !== 0 || result.error !== null) throw new Error(bootstrapFailure(result, domain));
-}
-async function bootoutJob(label, launchctl = launchctlFor(), uid) {
-  const target = `${guiDomain(uid)}/${label}`;
-  const result = await launchctl(["bootout", target]);
-  if (result.code === 0 && result.error === null) return true;
-  if (result.error === null && isNotLoaded(result)) return false;
-  throw new Error(`launchd could not unload ${target} (${launchctlSaid(result)}).`);
-}
-var STALE_ONE_SHOT_MS = 10 * 6e4;
-async function removeStaleOneShotJobs(folder, launchctl, now, uid) {
-  let names;
-  try {
-    names = (0, import_node_fs9.readdirSync)(folder);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    if (!name.startsWith(`${ONE_SHOT_LABEL_PREFIX}.`) || !name.endsWith(".plist")) continue;
-    const file = (0, import_node_path11.join)(folder, name);
-    try {
-      if (now - (0, import_node_fs9.statSync)(file).mtimeMs < STALE_ONE_SHOT_MS) continue;
-    } catch {
-      continue;
-    }
-    await launchctl(["bootout", `${guiDomain(uid)}/${name.slice(0, -".plist".length)}`]);
-    (0, import_node_fs9.rmSync)(file, { force: true });
-  }
-}
-function oneShotLabel() {
-  return `${ONE_SHOT_LABEL_PREFIX}.${(0, import_node_crypto8.randomBytes)(4).toString("hex")}`;
-}
-async function startThroughLaunchd(start2) {
-  const launchctl = start2.launchctl ?? launchctlFor(start2.env);
-  const folder = start2.folder ?? launchdJobFolder();
-  await removeStaleOneShotJobs(folder, launchctl, (start2.now ?? Date.now)(), start2.uid);
-  const label = oneShotLabel();
-  const plistPath = (0, import_node_path11.join)(folder, `${label}.plist`);
-  await writeFileAtomic(plistPath, daemonJobPlist({
-    label,
-    programArguments: start2.programArguments,
-    environment: daemonJobEnvironment(start2.env)
-  }), { mode: PRIVATE_FILE_MODE });
-  try {
-    await bootstrapJob(plistPath, launchctl, start2.uid);
-  } catch (error) {
-    (0, import_node_fs9.rmSync)(plistPath, { force: true });
-    throw error;
-  }
-  let removed = false;
-  return {
-    label,
-    plistPath,
-    async remove() {
-      if (removed) return;
-      removed = true;
-      await launchctl(["bootout", `${guiDomain(start2.uid)}/${label}`]);
-      (0, import_node_fs9.rmSync)(plistPath, { force: true });
-    }
-  };
-}
-
-// src/platform/windows-autostart.ts
-var import_node_fs10 = require("node:fs");
-var import_node_path12 = require("node:path");
-var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-var RUN_VALUE_NAME = "kurmis";
-var REG_VARIABLE = "KURMIS_REG_PROGRAM";
-var REG_TIMEOUT_MS = 3e4;
-var RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`;
-function systemRoot(env = process.env) {
-  for (const name of ["SystemRoot", "SYSTEMROOT", "windir", "WINDIR"]) {
-    const value = env[name];
-    if (value !== void 0 && value !== "") return value.replace(/[\\/]+$/, "");
-  }
-  return "C:\\Windows";
-}
-function regProgram(env = process.env) {
-  const named = env[REG_VARIABLE];
-  return named !== void 0 && named !== "" ? named : `${systemRoot(env)}\\System32\\reg.exe`;
-}
-function wscriptPath(env = process.env) {
-  return `${systemRoot(env)}\\System32\\wscript.exe`;
-}
-function regFor(env = process.env) {
-  const program = regProgram(env);
-  return (args) => runProgram(program, args, { timeoutMs: REG_TIMEOUT_MS, env });
-}
-function runValueData(wscript, scriptPath) {
-  return windowsCommandLine([wscript, "//B", "//Nologo", scriptPath]);
-}
-function regAddArgs(data) {
-  return ["add", RUN_KEY, "/v", RUN_VALUE_NAME, "/t", "REG_SZ", "/d", data, "/f"];
-}
-function regQueryArgs() {
-  return ["query", RUN_KEY, "/v", RUN_VALUE_NAME];
-}
-function regDeleteArgs() {
-  return ["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"];
-}
-function parseRegQuery(stdout, name) {
-  for (const line of stdout.split(/\r?\n/)) {
-    const match = /^ {4}(.+?) {4}(REG_[A-Z_]+)(?: {4}(.*))?$/.exec(line);
-    if (match !== null && (match[1] ?? "").toLowerCase() === name.toLowerCase()) {
-      return { type: match[2] ?? "", data: match[3] ?? "" };
-    }
-  }
-  return null;
-}
-function vbsString(text2) {
-  if (/[\r\n]/.test(text2)) throw new Error("a value for the logon script has a line break in it");
-  return `"${text2.replace(/"/g, '""')}"`;
-}
-function windowsAutostartEnvironment(env = process.env) {
-  const out = {};
-  for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name];
-    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path12.win32.resolve(value) : value;
-  }
-  return out;
-}
-function autostartScript(script) {
-  const lines = [
-    "' Written by kurmis setup: starts the kurmis daemon at logon without a console window.",
-    "' kurmis setup --undo removes it.",
-    'Set shell = CreateObject("WScript.Shell")',
-    ...Object.entries(script.environment).map(([name, value]) => `shell.Environment("Process")(${vbsString(name)}) = ${vbsString(value)}`),
-    `shell.CurrentDirectory = ${vbsString(script.cwd)}`,
-    `shell.Run ${vbsString(windowsCommandLine(script.programArguments))}, 0, False`
-  ];
-  return `${lines.join("\r\n")}\r
-`;
-}
-var UTF16_BOM = Buffer.from([255, 254]);
-function encodeScript(text2) {
-  return Buffer.concat([UTF16_BOM, Buffer.from(text2, "utf16le")]);
-}
-function readScript(path) {
-  let bytes;
-  try {
-    bytes = (0, import_node_fs10.readFileSync)(path);
-  } catch {
-    return null;
-  }
-  if (bytes.length >= 2 && bytes[0] === 255 && bytes[1] === 254) return bytes.subarray(2).toString("utf16le");
-  return bytes.toString("utf8");
-}
-function regSaid(result) {
-  if (result.error !== null) return result.error;
-  const said = `${result.stderr}
-${result.stdout}`.replace(/\s+/g, " ").trim();
-  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
-}
-var ok = (result) => result.code === 0 && result.error === null;
-function userProfile(env) {
-  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path12.dirname)(windowsAutostartScriptPath());
-}
-async function registerWindowsAutostart(options) {
-  const reg = options.reg ?? regFor(options.env);
-  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
-  if (options.programArguments === void 0) throw new Error("registerWindowsAutostart needs programArguments");
-  let text2;
-  try {
-    text2 = autostartScript({
-      programArguments: options.programArguments,
-      environment: windowsAutostartEnvironment(options.env),
-      cwd: userProfile(options.env)
-    });
-  } catch (error) {
-    return { changed: false, where: null, warning: `The logon entry was not written: ${error.message}.` };
-  }
-  let changed = false;
-  if (readScript(scriptPath) !== text2) {
-    makePrivateDirSync((0, import_node_path12.dirname)(scriptPath));
-    (0, import_node_fs10.writeFileSync)(scriptPath, encodeScript(text2));
-    changed = true;
-  }
-  const data = runValueData(wscriptPath(options.env), scriptPath);
-  const query = await reg(regQueryArgs());
-  const current = ok(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null;
-  if (current !== null && current.type === "REG_SZ" && current.data === data) {
-    return { changed, where: RUN_ENTRY_DESCRIPTION };
-  }
-  const added = await reg(regAddArgs(data));
-  if (!ok(added)) {
-    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` };
-  }
-  return { changed: true, where: RUN_ENTRY_DESCRIPTION };
-}
-async function unregisterWindowsAutostart(options) {
-  const reg = options.reg ?? regFor(options.env);
-  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
-  let changed = false;
-  let warning;
-  const query = await reg(regQueryArgs());
-  if (ok(query) && parseRegQuery(query.stdout, RUN_VALUE_NAME) !== null) {
-    const deleted = await reg(regDeleteArgs());
-    if (ok(deleted)) changed = true;
-    else warning = `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}).`;
-  }
-  if (readScript(scriptPath) !== null) {
-    (0, import_node_fs10.rmSync)(scriptPath, { force: true });
-    changed = true;
-  }
-  return warning === void 0 ? { changed, where: RUN_ENTRY_DESCRIPTION } : { changed, where: RUN_ENTRY_DESCRIPTION, warning };
-}
-
-// src/cli/daemon-client.ts
-var DaemonError = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "DaemonError";
-  }
-};
-var FIND_TIMEOUT_MS = 3e3;
-var DIRECT_START_TIMEOUT_MS = 15e3;
-var OUTSIDE_START_TIMEOUT_MS = 3e4;
-var PROBE_TIMEOUT_MS = 9e4;
-var STOP_TIMEOUT_MS = 3e4;
-var STOP_GRACE_MS = 1e4;
-var KILL_WAIT_MS = 5e3;
-var PORT_FREE_TIMEOUT_MS = 5e3;
-var POLL_MS = 100;
-function configuredPort() {
-  try {
-    return loadConfig().port;
-  } catch (error) {
-    if (error instanceof ConfigError) throw new DaemonError(error.message);
-    throw error;
-  }
-}
-function connectionOf(status2, key) {
-  return { port: status2.port, key, pid: status2.pid, version: status2.version };
-}
-async function findDaemon(options) {
-  void options;
-  const key = readKey();
-  if (key === null) return null;
-  const read = readDaemonFile();
-  let triedPort = null;
-  if (read.status === "invalid") {
-    removeDaemonFileIfDamaged();
-  } else if (read.status === "ok") {
-    const { pid, port: port2 } = read.info;
-    if (!processExists(pid)) {
-      removeDaemonFile(pid);
-    } else {
-      triedPort = port2;
-      const holder2 = await portHolder(port2, key, FIND_TIMEOUT_MS);
-      if (holder2.kind === "kurmis") return connectionOf(holder2.status, key);
-    }
-  }
-  let port;
-  try {
-    port = loadConfig().port;
-  } catch {
-    return null;
-  }
-  if (port === triedPort) return null;
-  const holder = await portHolder(port, key, FIND_TIMEOUT_MS);
-  return holder.kind === "kurmis" ? connectionOf(holder.status, key) : null;
-}
-function removeDaemonFileIfDamaged() {
-  const again = readDaemonFile();
-  if (again.status !== "invalid") return;
-  try {
-    removeDaemonFile(-1);
-  } catch {
-  }
-}
-async function chooseStartMethod(input) {
-  if (input.platform === "win32") return inSshSession(input.env) ? "wmi" : "direct";
-  if (input.platform !== "darwin" || input.noLaunchd) return "direct";
-  if (inSshSession(input.env)) return "launchd";
-  return await input.keychainReadable() ? "direct" : "launchd";
-}
-var NOT_FOR_THE_DAEMON = [
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_CUSTOM_HEADERS",
-  "CLAUDE_SECURESTORAGE_CONFIG_DIR"
-];
-function daemonEnvironment(env) {
-  const out = { ...env };
-  for (const name of NOT_FOR_THE_DAEMON) delete out[name];
-  if (out.KURMIS_HOME !== void 0 && out.KURMIS_HOME !== "") out.KURMIS_HOME = (0, import_node_path13.resolve)(out.KURMIS_HOME);
-  return out;
-}
-function wmiDaemonArguments(node, entry, env) {
-  const assignments = Object.entries(windowsAutostartEnvironment(env)).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
-  return [node, entry, "daemon", "run", ...assignments];
-}
-function portBusyMessage(port, reason) {
-  return `Port ${String(port)} on 127.0.0.1 is in use by another program (${reason}), so the kurmis daemon cannot listen there. Set "port" in ${configPath()} to a free port from 1024 to 65535, then run the command again.`;
-}
-async function startDaemon(options) {
-  const version = options.version ?? kurmisVersion;
-  const port = configuredPort();
-  const found = await findDaemon(options);
-  let replaced = null;
-  if (found !== null) {
-    if (found.port === port && !shouldReplace(found.version, version)) {
-      return { connection: found, started: false, replaced: null, method: null };
-    }
-    replaced = found.version;
-    if (found.port !== port) {
-      const order = compareVersions(found.version, version);
-      if (order === 1 || order === null && found.version !== version) {
-        throw new DaemonError(`The kurmis daemon ${found.version} runs on port ${String(found.port)}, but ${configPath()} names port ${String(port)}. Its version is ${order === 1 ? "newer than" : "not comparable with"} this kurmis (${version}), so this kurmis does not stop it to move it. Update kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`);
-      }
-      await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop });
-    }
-  }
-  const key = readOrCreateKey();
-  if (found === null) {
-    const refusing = await keyRefusingDaemon(key);
-    if (refusing !== null) throw new DaemonError(keyRefusedMessage(refusing, options.platform ?? process.platform));
-    const holder = await portHolder(port, key, FIND_TIMEOUT_MS);
-    if (holder.kind === "other") throw new DaemonError(portBusyMessage(port, holder.reason));
-    if (holder.kind === "kurmis" && !shouldReplace(holder.status.version, version)) {
-      return { connection: connectionOf(holder.status, key), started: false, replaced: null, method: null };
-    }
-  }
-  const entry = options.entry ?? kurmisEntry({ env: options.env });
-  if (entry === null) {
-    throw new DaemonError('This kurmis runs from its source tree, so there is no bundle to start the daemon from. Run "pnpm bundle" and use dist/kurmis.cjs, or set KURMIS_ENTRY to a built bundle.');
-  }
-  const platform = options.platform ?? process.platform;
-  const method = await chooseStartMethod({
-    platform,
-    env: options.env,
-    noLaunchd: options.noLaunchd === true,
-    keychainReadable: async () => {
-      const program = options.env.KURMIS_SECURITY_PROGRAM || SECURITY_PROGRAM;
-      return (await probeLoginKeychain(program)).readable;
-    }
-  });
-  const env = daemonEnvironment(options.env);
-  const warn = options.onWarning ?? (() => void 0);
-  let child2 = null;
-  let removeJob = null;
-  let used = method;
-  if (method === "launchd") {
-    try {
-      const job = await startThroughLaunchd({
-        programArguments: [nodeForJobs({ env: options.env, platform }), entry, "daemon", "start", "--no-launchd"],
-        env
-      });
-      removeJob = () => job.remove();
-    } catch (error) {
-      warn(`The daemon could not be started through launchd (${error instanceof Error ? error.message : String(error)}), so it is started from this login, where it cannot read the login Keychain: logins whose token is in the Keychain will not be routed until it is started from a login at the screen.`);
-      used = "direct";
-    }
-  } else if (method === "wmi") {
-    try {
-      await createThroughWmi(wmiDaemonArguments(process.execPath, entry, options.env), (0, import_node_os4.homedir)(), env);
-    } catch (error) {
-      warn(`The daemon could not be started outside this ssh session (${error instanceof Error ? error.message : String(error)}), so it is started inside it and ends when the session closes.`);
-      used = "direct";
-    }
-  }
-  if (used === "direct") {
-    try {
-      child2 = await spawnDetached({ command: process.execPath, args: [entry, "daemon", "run"], env, cwd: (0, import_node_os4.homedir)() });
-    } catch (error) {
-      throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  try {
-    const connection = await waitForDaemon({
-      port,
-      version,
-      child: child2,
-      timeoutMs: options.startTimeoutMs ?? (used === "direct" ? DIRECT_START_TIMEOUT_MS : OUTSIDE_START_TIMEOUT_MS)
-    });
-    return { connection, started: true, replaced, method: used };
-  } finally {
-    if (removeJob !== null) await removeJob().catch(() => void 0);
-  }
-}
-async function waitForDaemon(wait) {
-  const deadline = Date.now() + wait.timeoutMs;
-  let exitCode;
-  void wait.child?.exited.then((code) => {
-    exitCode = code;
-  });
-  for (; ; ) {
-    const found = await findDaemon({ env: {} });
-    if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return found;
-    if (exitCode !== void 0 && exitCode !== 0) {
-      throw new DaemonError(`The kurmis daemon exited at start (${exitCode === null ? "ended by a signal" : `exit code ${String(exitCode)}`}). Run "kurmis daemon run" to see why, or look in ${logPath()}.`);
-    }
-    if (Date.now() >= deadline) {
-      throw new DaemonError(`The kurmis daemon did not answer on port ${String(wait.port)} within ${String(Math.round(wait.timeoutMs / 1e3))} seconds of starting. Run "kurmis daemon run" to see why, or look in ${logPath()}.`);
-    }
-    await delay(POLL_MS);
-  }
-}
-async function ensureDaemon(options) {
-  return (await startDaemon(options)).connection;
-}
-function failureOf2(result, connection, what) {
-  const port = String(connection.port);
-  if (result.kind === "refused") return new DaemonError(`The kurmis daemon is not running (nothing answers on port ${port}).`);
-  if (result.kind === "failed") return new DaemonError(`The kurmis daemon on port ${port} did not answer ${what}: ${result.reason}.`);
-  if (result.status === 403) {
-    return new DaemonError(`The program on port ${port} did not accept the key in ${keyPath()}. If it is a kurmis daemon of another data folder, stop it, or set another "port" in config.json.`);
-  }
-  const said = isPlainObject(result.body) && typeof result.body.error === "string" ? result.body.error : `HTTP ${String(result.status)}`;
-  return new DaemonError(`The kurmis daemon refused ${what}: ${said}`);
-}
-async function readStatus3(connection) {
-  const result = await controlRequest({ port: connection.port, key: connection.key, method: "GET", path: CONTROL_PATHS.status });
-  if (result.kind === "answered" && result.status === 200 && isStatusAnswer(result.body)) return result.body;
-  throw failureOf2(result, connection, "a status request");
-}
-async function requestProbe(connection, logins) {
-  const result = await controlRequest({
-    port: connection.port,
-    key: connection.key,
-    method: "POST",
-    path: CONTROL_PATHS.probe,
-    body: logins === void 0 ? {} : { logins },
-    timeoutMs: PROBE_TIMEOUT_MS
-  });
-  if (result.kind === "answered" && result.status === 200 && isStatusAnswer(result.body)) return result.body;
-  throw failureOf2(result, connection, "a usage probe");
-}
-async function requestReload(connection) {
-  const result = await controlRequest({ port: connection.port, key: connection.key, method: "POST", path: CONTROL_PATHS.reload });
-  if (result.kind === "answered" && result.status === 200 && isPlainObject(result.body) && result.body.ok === true) return;
-  throw failureOf2(result, connection, "a reload");
-}
-async function waitForExit(pid, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (processExists(pid)) {
-    if (Date.now() >= deadline) return false;
-    await delay(POLL_MS);
-  }
-  return true;
-}
-async function waitForPortFree(port, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (await portAcceptsConnections(port)) {
-    if (Date.now() >= deadline) return false;
-    await delay(POLL_MS);
-  }
-  return true;
-}
-async function keyRefusingDaemon(key) {
-  const read = readDaemonFile();
-  if (read.status !== "ok" || !processExists(read.info.pid)) return null;
-  const holder = await portHolder(read.info.port, key, FIND_TIMEOUT_MS);
-  return holder.kind === "other" && holder.status === 403 ? read.info : null;
-}
-function keyRefusedMessage(info, platform) {
-  const pid = String(info.pid);
-  const stopIt = platform === "win32" ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
-  return `The program on port ${String(info.port)} refused the key in ${keyPath()}, and daemon.json names pid ${pid} on that port, which still runs. Most likely that is a kurmis daemon started before the key file was changed or deleted, so its key no longer matches the key file. If pid ${pid} is that daemon, stop it with "${stopIt}" and run the command again. If you ran "kurmis setup", run it again after that, so your Claude Code settings hold the key from the key file.`;
-}
-async function keyRefusedProblem(options) {
-  const refusing = await keyRefusingDaemon(readKey() ?? "");
-  return refusing === null ? null : keyRefusedMessage(refusing, options.platform ?? process.platform);
-}
-async function stopDaemon(options) {
-  const platform = options.platform ?? process.platform;
-  const found = await findDaemon(options);
-  if (found === null) {
-    const problem = await keyRefusedProblem(options);
-    if (problem !== null) throw new DaemonError(problem);
-    return false;
-  }
-  const waitMs = options.stopTimeoutMs ?? STOP_TIMEOUT_MS;
-  const body = { maxWaitMs: waitMs };
-  const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop, body });
-  if (result.kind === "answered" && result.status !== 200) throw failureOf2(result, found, "the stop request");
-  const graceMs = platform === "win32" ? options.stopGraceMs ?? STOP_GRACE_MS : 0;
-  if (await waitForExit(found.pid, waitMs + graceMs)) return true;
-  try {
-    process.kill(found.pid, "SIGTERM");
-  } catch {
-    return true;
-  }
-  if (await waitForExit(found.pid, KILL_WAIT_MS)) return true;
-  throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running.`);
-}
-async function restartDaemon(options) {
-  const version = options.version ?? kurmisVersion;
-  const found = await findDaemon(options);
-  if (found !== null) {
-    if (compareVersions(found.version, version) === 1) {
-      throw new DaemonError(`The running kurmis daemon is version ${found.version}, newer than this kurmis (${version}), so this kurmis does not replace it. Update kurmis, or run "kurmis daemon stop" first.`);
-    }
-    const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop });
-    if (result.kind === "answered" && result.status !== 200) throw failureOf2(result, found, "the stop request");
-    if (!await waitForPortFree(found.port, PORT_FREE_TIMEOUT_MS)) {
-      throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but still holds port ${String(found.port)}.`);
-    }
-  }
-  const started = await startDaemon(options);
-  return { ...started, replaced: found?.version ?? started.replaced };
-}
-function silentDaemon() {
-  const read = readDaemonFile();
-  if (read.status !== "ok" || !processExists(read.info.pid)) return null;
-  return { pid: read.info.pid, port: read.info.port, version: read.info.version };
-}
-
-// src/cli/wrapper.ts
-var import_node_child_process3 = require("node:child_process");
-var import_node_os5 = require("node:os");
-function ignoredSignals(platform) {
-  return platform === "win32" ? ["SIGINT", "SIGBREAK", "SIGHUP"] : ["SIGINT", "SIGQUIT"];
-}
-function forwardedSignals(platform) {
-  return platform === "win32" ? [] : ["SIGTERM", "SIGHUP"];
-}
-async function runInteractive(spec, options = {}) {
-  const platform = options.platform ?? process.platform;
-  const proc = options.process ?? process;
-  const spawn4 = options.spawn ?? import_node_child_process3.spawn;
-  return await new Promise((resolve7) => {
-    const installed = [];
-    let child2;
-    let started = false;
-    let settled = false;
-    const finish = (end) => {
-      if (settled) return;
-      settled = true;
-      for (const [signal, listener] of installed) proc.removeListener(signal, listener);
-      resolve7(end);
-    };
-    const forward = (signal) => {
-      if (child2?.pid === void 0) return;
-      try {
-        child2.kill(signal);
-      } catch {
-      }
-    };
-    for (const signal of ignoredSignals(platform)) {
-      const listener = () => {
-      };
-      installed.push([signal, listener]);
-      proc.on(signal, listener);
-    }
-    for (const signal of forwardedSignals(platform)) {
-      const listener = () => forward(signal);
-      installed.push([signal, listener]);
-      proc.on(signal, listener);
-    }
-    try {
-      child2 = spawn4(spec.command, spec.args, {
-        stdio: "inherit",
-        env: spec.env,
-        cwd: spec.cwd,
-        shell: false,
-        // Interactive programs need their console window on Windows, so it is not hidden.
-        windowsHide: false
-      });
-    } catch (error) {
-      finish(notStarted(spec.command, error));
-      return;
-    }
-    child2.once("spawn", () => {
-      started = true;
-    });
-    child2.once("error", (error) => {
-      if (!started) finish(notStarted(spec.command, error));
-    });
-    child2.once("exit", (code, signal) => {
-      if (signal !== null) finish({ kind: "signal", signal });
-      else finish({ kind: "exit", code: code ?? 1 });
-    });
-  });
-}
-function notStarted(command, error) {
-  const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "UNKNOWN";
-  const why = {
-    ENOENT: "there is no such program",
-    EACCES: "it is not executable, or a folder on the way to it cannot be read",
-    EPERM: "the system does not allow starting it",
-    ENOEXEC: "it is not a program this system can run",
-    EISDIR: "it is a folder"
-  };
-  const reason = why[code] ?? (error instanceof Error ? error.message : String(error));
-  return { kind: "not-started", code, message: `could not start ${command}: ${reason} (${code})` };
-}
-function notStartedExitCode(code) {
-  if (code === "ENOENT") return 127;
-  if (code === "EACCES" || code === "EPERM" || code === "ENOEXEC" || code === "EISDIR") return 126;
-  return 1;
-}
-var CORE_SIGNALS = /* @__PURE__ */ new Set([
-  "SIGQUIT",
-  "SIGABRT",
-  "SIGILL",
-  "SIGTRAP",
-  "SIGFPE",
-  "SIGBUS",
-  "SIGSEGV",
-  "SIGSYS",
-  "SIGXCPU",
-  "SIGXFSZ",
-  "SIGIOT"
-]);
-function signalExitCode(signal) {
-  const number = import_node_os5.constants.signals[signal];
-  return 128 + (number ?? 0);
-}
-function finishLikeChild(end, options) {
-  switch (end.kind) {
-    case "exit":
-      return end.code;
-    case "not-started":
-      options.stderr.write(`kurmis: ${options.name}: ${end.message}
-`);
-      return notStartedExitCode(end.code);
-    case "signal": {
-      const platform = options.platform ?? process.platform;
-      if (platform !== "win32" && !CORE_SIGNALS.has(end.signal)) {
-        const proc = options.process ?? process;
-        proc.removeAllListeners(end.signal);
-        try {
-          proc.kill(proc.pid, end.signal);
-        } catch {
-        }
-      }
-      return signalExitCode(end.signal);
-    }
-  }
-}
-
-// src/cli/command-deps.ts
-var realDaemonClient = { findDaemon, ensureDaemon, readStatus: readStatus3, requestProbe, requestReload };
-var realChildRunner = { runInteractive, finishLikeChild };
-var realFindProgram = findProgram;
-var realPrepareCodexHome = prepareCodexHome;
-async function reloadIfRunning(client, env) {
-  try {
-    const connection = await client.findDaemon({ env });
-    if (connection === null) return { kind: "not-running" };
-    await client.requestReload(connection);
-    return { kind: "reloaded" };
-  } catch (error) {
-    return { kind: "failed", message: error instanceof DaemonError || error instanceof Error ? error.message : String(error) };
-  }
-}
-function reloadText(result) {
-  switch (result.kind) {
-    case "reloaded":
-      return "The running daemon has read the change.";
-    case "not-running":
-      return null;
-    case "failed":
-      return `The daemon could not be told about the change (${result.message}); it reads config.json again once it notices the change.`;
-  }
-}
-async function settleWithin(promise, ms) {
-  let timer;
-  const timeout = new Promise((resolve7) => {
-    timer = setTimeout(() => resolve7({ kind: "timeout" }), ms);
-    timer.unref();
-  });
-  const settled = promise.then(
-    (value) => ({ kind: "done", value }),
-    (error) => ({ kind: "failed", error })
-  );
-  try {
-    return await Promise.race([settled, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// src/cli/settings-arg.ts
-var import_node_crypto9 = require("node:crypto");
-var import_node_fs11 = require("node:fs");
-var import_node_os6 = require("node:os");
-var import_node_path14 = require("node:path");
-var FLAG = "--settings";
-function readUserSettingsArg(args, options) {
-  const rest = [];
-  let value = null;
-  let index = 0;
-  for (; index < args.length; index++) {
-    const arg = args[index];
-    if (arg === "--") break;
-    if (arg === FLAG) {
-      const next = args[index + 1];
-      if (next === void 0) return { error: `${FLAG} needs a value: a settings file or a JSON object` };
-      value = next;
-      index++;
-      continue;
-    }
-    if (arg.startsWith(`${FLAG}=`)) {
-      value = arg.slice(FLAG.length + 1);
-      continue;
-    }
-    rest.push(arg);
-  }
-  rest.push(...args.slice(index));
-  if (value === null) return { settings: null, source: null, rest };
-  if (value.trim() === "") return { error: `${FLAG} needs a value: a settings file or a JSON object` };
-  const text2 = value.trim();
-  if (text2.startsWith("{") && text2.endsWith("}")) {
-    const settings3 = parseSettings(text2, `the JSON given to ${FLAG}`);
-    return "error" in settings3 ? settings3 : { settings: settings3.value, source: "inline", rest };
-  }
-  const path = (0, import_node_path14.isAbsolute)(value) ? value : (0, import_node_path14.resolve)(options.cwd, value);
-  let fileText;
-  try {
-    fileText = (options.readFile ?? ((file) => (0, import_node_fs11.readFileSync)(file, "utf8")))(path);
-  } catch (error) {
-    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
-    const why = code === "ENOENT" ? "it does not exist" : error instanceof Error ? error.message : String(error);
-    return { error: `${FLAG}: cannot read the settings file ${path}: ${why}` };
-  }
-  const settings2 = parseSettings(fileText, `the settings file ${path}`);
-  return "error" in settings2 ? settings2 : { settings: settings2.value, source: path, rest };
-}
-function parseSettings(text2, what) {
-  let value;
-  try {
-    value = JSON.parse(withoutBom(text2));
-  } catch (error) {
-    return { error: `${FLAG}: ${what} is not valid JSON (${error instanceof Error ? error.message : String(error)})` };
-  }
-  if (!isPlainObject2(value)) return { error: `${FLAG}: ${what} is not a JSON object` };
-  if (value.env !== void 0 && !isPlainObject2(value.env)) {
-    return { error: `${FLAG}: the "env" in ${what} is not an object` };
-  }
-  return { value };
-}
-function withoutBom(text2) {
-  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
-}
-function isPlainObject2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function routingVariables(routed) {
-  const out = {};
-  for (const name of ROUTING_VARIABLES) {
-    const value = routed.set[name];
-    if (value !== void 0) out[name] = value;
-  }
-  return out;
-}
-function mergeRoutingSettings(user, routing) {
-  const userEnv = user !== null && isPlainObject2(user.env) ? user.env : {};
-  return { ...user ?? {}, env: { ...userEnv, ...routing } };
-}
-function claudeArgsWithSettings(user, routing, store = storeSettingsFile) {
-  return [FLAG, store(JSON.stringify(mergeRoutingSettings(user.settings, routing))), ...user.rest];
-}
-var SETTINGS_FILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
-var SETTINGS_FILE_NAME = /^[0-9a-f]{32}\.json$/;
-function storeSettingsFile(text2, folder = wrapperSettingsFolder(), now = Date.now()) {
-  const path = (0, import_node_path14.join)(folder, `${(0, import_node_crypto9.createHash)("sha256").update(text2).digest("hex").slice(0, 32)}.json`);
-  let current = false;
-  try {
-    current = (0, import_node_fs11.readFileSync)(path, "utf8") === text2;
-  } catch {
-  }
-  if (current) {
-    try {
-      (0, import_node_fs11.utimesSync)(path, now / 1e3, now / 1e3);
-    } catch {
-    }
-  } else {
-    writeFileAtomicSync(path, text2, { mode: PRIVATE_FILE_MODE });
-  }
-  pruneSettingsFiles(folder, now, path);
-  return path;
-}
-function pruneSettingsFiles(folder, now, keep) {
-  let names;
-  try {
-    names = (0, import_node_fs11.readdirSync)(folder);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    const file = (0, import_node_path14.join)(folder, name);
-    if (!SETTINGS_FILE_NAME.test(name) || file === keep) continue;
-    try {
-      if (now - (0, import_node_fs11.statSync)(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS) (0, import_node_fs11.rmSync)(file, { force: true });
-    } catch {
-    }
-  }
-}
-function claudeUserSettingsPath(env, home = (0, import_node_os6.homedir)()) {
-  const configDir = env.CLAUDE_CONFIG_DIR;
-  return configDir !== void 0 && configDir !== "" ? (0, import_node_path14.join)(configDir, "settings.json") : (0, import_node_path14.join)(home, ".claude", "settings.json");
-}
-function readUserSettingsEnv(path, readFile3 = (file) => (0, import_node_fs11.readFileSync)(file, "utf8")) {
-  let text2;
-  try {
-    text2 = readFile3(path);
-  } catch (error) {
-    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
-    if (code === "ENOENT" || code === "ENOTDIR") return { env: null, warning: null };
-    return { env: null, warning: `could not read ${path} (${error instanceof Error ? error.message : String(error)})` };
-  }
-  let value;
-  try {
-    value = JSON.parse(withoutBom(text2));
-  } catch {
-    return { env: null, warning: `${path} is not valid JSON, so custom headers set there are not kept` };
-  }
-  if (!isPlainObject2(value) || !isPlainObject2(value.env)) return { env: null, warning: null };
-  return { env: value.env, warning: null };
-}
-var CUSTOM_HEADERS = "ANTHROPIC_CUSTOM_HEADERS";
-function inheritedCustomHeaders(layers) {
-  for (const env of [layers.flagEnv, layers.userSettingsEnv]) {
-    if (env === null || !(CUSTOM_HEADERS in env)) continue;
-    const value = env[CUSTOM_HEADERS];
-    if (typeof value === "string") return value;
-  }
-  for (const [name, value] of Object.entries(layers.processEnv)) {
-    const same = layers.windows === true ? name.toUpperCase() === CUSTOM_HEADERS : name === CUSTOM_HEADERS;
-    if (same && value !== void 0) return value;
-  }
-  return null;
-}
-
-// src/cli/wrapper-args.ts
-function parseWrapperArgs(provider, args) {
-  const result = { help: false, login: null, passThrough: [] };
-  let index = 0;
-  while (index < args.length) {
-    const arg = args[index];
-    if (arg === "--") {
-      index++;
-      break;
-    }
-    if (isHelpFlag(arg)) {
-      result.help = true;
-      index++;
-      continue;
-    }
-    let value;
-    if (arg === "--login") {
-      value = args[index + 1];
-      if (value === void 0) return { error: "--login needs a login id, for example --login work" };
-      index += 2;
-    } else if (arg.startsWith("--login=")) {
-      value = arg.slice("--login=".length);
-      index++;
-    } else {
-      break;
-    }
-    if (result.login !== null) return { error: "--login was given twice" };
-    const login = resolveLogin(provider, value);
-    if (typeof login === "object") return login;
-    result.login = login;
-  }
-  result.passThrough = args.slice(index);
-  return result;
-}
-function resolveLogin(provider, value) {
-  const parsed = parseLoginId(value);
-  if (parsed !== null) {
-    if (parsed.provider !== provider) return { error: `${value} is a ${parsed.provider} login, not a ${provider} one` };
-    return parsed.id;
-  }
-  if (value.includes(":")) return { error: `"${value}" is not a login id` };
-  try {
-    return loginId(provider, value);
-  } catch {
-    return { error: `"${value}" is not a login name` };
-  }
-}
-
-// src/cli/commands/claude.ts
-var USAGE = `Usage: kurmis claude [--login <id>] [--] [claude arguments...]
-
-Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
-which signs each one with a login that has room, and the command exits with claude's exit code.
-The daemon is started first when it is not running.
-
-Options (only before the first argument kurmis does not know):
-  --login <id>   Keep the session on one login, whatever its limits say. <id> is claude:<name>
-                 or just <name>. Without it the session is on Auto.
-  -h, --help     Show this help.
-  --             Pass everything after it to claude, even arguments kurmis knows.
-
-Everything from the first argument kurmis does not know is passed to claude unchanged, except
-claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
-give one (your file is not changed).
-"kurmis claude -- --help" shows claude's own help.`;
-function createClaudeCommand(overrides = {}) {
-  const deps = {
-    daemon: realDaemonClient,
-    child: realChildRunner,
-    findProgram: realFindProgram,
-    loadConfig: () => loadConfig(),
-    platform: process.platform,
-    cwd: () => process.cwd(),
-    homeDir: () => (0, import_node_os7.homedir)(),
-    folderExists: (path) => (0, import_node_fs12.existsSync)(path) && (0, import_node_fs12.statSync)(path).isDirectory(),
-    storeSettings: (text2) => storeSettingsFile(text2),
-    ...overrides
-  };
-  return {
-    name: "claude",
-    summary: "Start Claude Code routed through the kurmis daemon",
-    usage: USAGE,
-    passesArguments: true,
-    run: (args, context) => runClaude(args, context, deps)
-  };
-}
-var claudeCommand = createClaudeCommand();
-async function runClaude(args, context, deps) {
-  const parsed = parseWrapperArgs("claude", args);
-  if ("error" in parsed) return usageError("claude", parsed.error, context);
-  if (parsed.help) {
-    writeLine(context.stdout, USAGE);
-    return EXIT_OK;
-  }
-  const fail4 = (message, code = EXIT_FAILURE) => {
-    writeLine(context.stderr, `kurmis claude: ${message}`);
-    return code;
-  };
-  const userSettings = readUserSettingsArg(parsed.passThrough, { cwd: deps.cwd(), readFile: deps.readFile });
-  if ("error" in userSettings) return fail4(userSettings.error);
-  let program;
-  try {
-    program = deps.findProgram("claude", { env: context.env, platform: deps.platform });
-  } catch (error) {
-    if (error instanceof ProgramNotFoundError) return fail4(error.message, notStartedExitCode("ENOENT"));
-    return fail4(messageOf(error));
-  }
-  if (parsed.login !== null && parsed.login !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-    let config;
-    try {
-      config = deps.loadConfig();
-    } catch (error) {
-      if (!(error instanceof ConfigError)) throw error;
-      return fail4(error.message);
-    }
-    if (findLogin(config, parsed.login) === void 0) {
-      return fail4(`there is no login ${parsed.login}. "kurmis list" shows the logins, and "kurmis login claude" adds one.`);
-    }
-  }
-  let connection;
-  try {
-    connection = await deps.daemon.ensureDaemon({ env: context.env });
-  } catch (error) {
-    return fail4(daemonUnreachable(error));
-  }
-  let startedOn;
-  if (parsed.login !== null) {
-    startedOn = parsed.login;
-  } else {
-    let status2;
-    try {
-      status2 = await deps.daemon.readStatus(connection);
-    } catch (error) {
-      return fail4(daemonUnreachable(error));
-    }
-    startedOn = autoStartLogin(startableLogins(status2));
-    if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-      writeLine(
-        context.stderr,
-        `kurmis claude: ${CLAUDE_DEFAULT_ACCOUNT_ID} is not signed in, so claude starts on ${startedOn}'s credentials; requests are still routed on Auto.`
-      );
-    }
-  }
-  let secureStorageDir = null;
-  if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-    secureStorageDir = loginFolder(startedOn);
-    if (!deps.folderExists(secureStorageDir)) {
-      return fail4(`the folder of ${startedOn} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${startedOn}".`);
-    }
-  }
-  const headers = customHeaders(userSettings, context.env, deps);
-  if (headers.warning !== null) writeLine(context.stderr, `kurmis claude: ${headers.warning}`);
-  const routed = routedClaudeEnv({
-    port: connection.port,
-    key: connection.key,
-    login: parsed.login,
-    startedOn,
-    secureStorageDir,
-    inheritedCustomHeaders: headers.value
-  });
-  const env = applyRoutedEnv(context.env, routed, deps.platform === "win32");
-  let claudeArgs;
-  try {
-    claudeArgs = claudeArgsWithSettings(userSettings, routingVariables(routed), deps.storeSettings);
-  } catch (error) {
-    return fail4(`could not write the settings file for claude: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const end = await deps.child.runInteractive(
-    { command: program.command, args: [...program.args, ...claudeArgs], env },
-    { platform: deps.platform }
-  );
-  return deps.child.finishLikeChild(end, { stderr: context.stderr, name: "claude", platform: deps.platform });
-}
-function startableLogins(status2) {
-  return status2.logins.filter((login) => login.provider === "claude").map((login) => ({
-    id: login.id,
-    loggedIn: login.signedIn ?? login.id === CLAUDE_DEFAULT_ACCOUNT_ID,
-    autoRoute: login.routing
-  }));
-}
-function customHeaders(userSettings, env, deps) {
-  const flagEnv = userSettings.settings?.env;
-  const fromFile = readUserSettingsEnv(claudeUserSettingsPath(env, deps.homeDir()), deps.readFile);
-  const value = inheritedCustomHeaders({
-    flagEnv: typeof flagEnv === "object" && flagEnv !== null && !Array.isArray(flagEnv) ? flagEnv : null,
-    userSettingsEnv: fromFile.env,
-    processEnv: env,
-    windows: deps.platform === "win32"
-  });
-  return { value, warning: fromFile.warning };
-}
-function daemonUnreachable(error) {
-  return `the kurmis daemon could not be reached (${messageOf(error)}). Start it with "kurmis daemon start"; its log is ${logPath()}. Claude is not started unrouted.`;
-}
-function messageOf(error) {
-  return error instanceof Error ? error.message : String(error);
-}
+var import_node_path4 = require("node:path");
 
 // src/core/codex-choice.ts
 var CODEX_USAGE_MAX_AGE_MS = 20 * 6e4;
@@ -7475,11 +4655,13 @@ var NOT_INHERITED = {
   ANTHROPIC_BASE_URL: void 0,
   ANTHROPIC_CUSTOM_HEADERS: void 0
 };
-function claudeLoginEnv(id) {
+var FORCE_CREDENTIAL_MANAGER_VARIABLE = "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN";
+function claudeLoginEnv(id, forceCredentialManager = false) {
+  const force = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: "1" } : {};
   if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return { CLAUDE_CONFIG_DIR: void 0, CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED };
+    return { CLAUDE_CONFIG_DIR: void 0, CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
   }
-  return { CLAUDE_CONFIG_DIR: loginFolder(id), CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED };
+  return { CLAUDE_CONFIG_DIR: loginFolder(id), CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
 }
 function claudeProbeEnv(id) {
   if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
@@ -7493,18 +4675,4208 @@ function codexLoginEnv(id, inherited = {}, platform = process.platform) {
   const home = windows ? Object.entries(inherited).find(([name]) => name.toUpperCase() === "CODEX_HOME")?.[1] : inherited["CODEX_HOME"];
   return isKurmisCodexHome(home, providerFolder("codex"), windows) ? { CODEX_HOME: void 0, ...NOT_INHERITED } : { ...NOT_INHERITED };
 }
+function configDirHasOwnCredentials(env, platform = process.platform, home = (0, import_node_os2.homedir)()) {
+  const value = env["CLAUDE_CONFIG_DIR"];
+  if (value === void 0 || value === "") return false;
+  if (platform === "darwin" || platform === "win32") return true;
+  return !namesDefaultClaudeFolder(value, platform, home);
+}
+function namesDefaultClaudeFolder(value, platform = process.platform, home = (0, import_node_os2.homedir)()) {
+  if (value === "") return false;
+  const real = (path) => {
+    const absolute = (0, import_node_path4.resolve)(path);
+    try {
+      return import_node_fs5.realpathSync.native(absolute);
+    } catch {
+      return absolute;
+    }
+  };
+  const comparable = (path) => platform === "darwin" || platform === "win32" ? real(path).normalize("NFC").toLowerCase() : real(path);
+  return comparable(value) === comparable((0, import_node_path4.join)(home, ".claude"));
+}
+function sharesDefaultSettingsFile(value, platform = process.platform, home = (0, import_node_os2.homedir)()) {
+  if (value === "") return false;
+  const comparable = (path) => {
+    const real = realFilePath((0, import_node_path4.resolve)(path));
+    return platform === "darwin" || platform === "win32" ? real.normalize("NFC").toLowerCase() : real;
+  };
+  return comparable((0, import_node_path4.join)(value, "settings.json")) === comparable((0, import_node_path4.join)(home, ".claude", "settings.json"));
+}
+function realFilePath(path, hops = 0) {
+  try {
+    return import_node_fs5.realpathSync.native(path);
+  } catch {
+  }
+  if (hops < 40) {
+    try {
+      if ((0, import_node_fs5.lstatSync)(path).isSymbolicLink()) return realFilePath((0, import_node_path4.resolve)((0, import_node_path4.dirname)(path), (0, import_node_fs5.readlinkSync)(path)), hops + 1);
+    } catch {
+    }
+  }
+  const parent = (0, import_node_path4.dirname)(path);
+  return parent === path ? path : (0, import_node_path4.join)(realFilePath(parent, hops + 1), (0, import_node_path4.basename)(path));
+}
 function applyEnvPatch(env, patch, windows = process.platform === "win32") {
-  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
+  const same2 = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
   const names = Object.keys(patch);
   const out = {};
   for (const [name, value] of Object.entries(env)) {
-    if (value === void 0 || names.some((other) => same(name, other))) continue;
+    if (value === void 0 || names.some((other) => same2(name, other))) continue;
     out[name] = value;
   }
   for (const [name, value] of Object.entries(patch)) {
     if (value !== void 0) out[name] = value;
   }
   return out;
+}
+
+// src/platform/programs.ts
+var import_node_fs8 = require("node:fs");
+var import_node_path8 = require("node:path");
+
+// src/platform/detach.ts
+var import_node_child_process2 = require("node:child_process");
+var import_node_fs7 = require("node:fs");
+var import_node_os3 = require("node:os");
+var import_node_path6 = require("node:path");
+
+// src/platform/run.ts
+var import_node_child_process = require("node:child_process");
+var import_node_timers = require("node:timers");
+
+// src/platform/system-program-guard.ts
+var import_node_fs6 = require("node:fs");
+var import_node_path5 = require("node:path");
+var GUARD_VARIABLE = "KURMIS_REFUSE_SYSTEM_PROGRAMS";
+var REFUSAL_LOG_VARIABLE = "KURMIS_REFUSED_PROGRAMS_LOG";
+var GUARDED_PROGRAMS = /* @__PURE__ */ new Set([
+  "launchctl",
+  "security",
+  "powershell",
+  "pwsh",
+  "reg",
+  "taskkill",
+  "wscript",
+  "cscript",
+  "wmic",
+  "schtasks",
+  "cmd",
+  "claude",
+  "codex"
+]);
+function guardOn(env) {
+  return process.env[GUARD_VARIABLE] === "1" || env?.[GUARD_VARIABLE] === "1";
+}
+var REAL_CLI_PATHS = [
+  /\/@anthropic-ai\/claude-code[^/]*\//,
+  /\/@openai\/codex[^/]*\//,
+  /\/\.local\/share\/claude\/versions\//
+];
+var TEST_HOME_VARIABLES = [
+  "HOME",
+  "USERPROFILE",
+  "KURMIS_HOME",
+  "KURMIS_CLAUDE_BIN",
+  "KURMIS_CODEX_BIN",
+  "KURMIS_UPSTREAM_URL"
+];
+function refusedByGuard(command, env, args = []) {
+  if (!guardOn(env)) return null;
+  let refused = isRealProgram(command);
+  if (!refused && isNode(command)) {
+    const script = args.find((arg) => !arg.startsWith("-"));
+    refused = script !== void 0 && isRealProgram(script);
+  }
+  if (!refused) return null;
+  const shown = isRealProgram(command) ? command : `${command} ${args.join(" ")}`;
+  recordRefusal(shown, env);
+  return `${shown} is a real system program, which kurmis does not start while ${GUARD_VARIABLE}=1 (tests)`;
+}
+function pathsOf(path) {
+  const paths = [path.replaceAll("\\", "/")];
+  try {
+    const real = (0, import_node_fs6.realpathSync)(path).replaceAll("\\", "/");
+    if (real !== paths[0]) paths.push(real);
+  } catch {
+  }
+  return paths;
+}
+function isRealProgram(path) {
+  return pathsOf(path).some((each) => {
+    const name = (0, import_node_path5.basename)(each).toLowerCase().replace(/\.exe$/, "");
+    const lower = each.toLowerCase();
+    return GUARDED_PROGRAMS.has(name) || REAL_CLI_PATHS.some((pattern) => pattern.test(lower));
+  });
+}
+function isNode(command) {
+  if (command === process.execPath) return true;
+  return pathsOf(command).some((each) => /^node(\.exe)?$/i.test((0, import_node_path5.basename)(each)));
+}
+function refusalLog(env) {
+  const named = env?.[REFUSAL_LOG_VARIABLE] || process.env[REFUSAL_LOG_VARIABLE];
+  return named === void 0 || named === "" ? void 0 : named;
+}
+function recordRefusal(command, env) {
+  const log = refusalLog(env);
+  if (log === void 0) return;
+  try {
+    (0, import_node_fs6.appendFileSync)(log, `${command}
+`, "utf8");
+  } catch {
+  }
+}
+function withGuard(env) {
+  if (!guardOn(env)) return env;
+  const log = refusalLog(env);
+  const out = { ...env ?? process.env, [GUARD_VARIABLE]: "1", ...log === void 0 ? {} : { [REFUSAL_LOG_VARIABLE]: log } };
+  for (const name of TEST_HOME_VARIABLES) {
+    const value = process.env[name];
+    if (!hasVariable(out, name) && value !== void 0 && value !== "") out[name] = value;
+  }
+  return out;
+}
+function hasVariable(env, name) {
+  const upper = name.toUpperCase();
+  return Object.keys(env).some((key) => key.toUpperCase() === upper && env[key] !== void 0);
+}
+
+// src/platform/run.ts
+var DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
+function invocationFor(program, args, nodePath = process.execPath) {
+  if (/\.(cmd|bat)$/i.test(program)) {
+    return { refused: `${program} is a batch file, which only cmd.exe can start; kurmis never starts a program through a shell` };
+  }
+  if (/\.(js|cjs|mjs)$/i.test(program)) return { command: nodePath, args: [program, ...args] };
+  return { command: program, args: [...args] };
+}
+function runProgram(program, args, options) {
+  const invocation = invocationFor(program, args);
+  if ("refused" in invocation) {
+    return Promise.resolve({ stdout: "", stderr: "", code: null, timedOut: false, outputTooLarge: false, error: invocation.refused });
+  }
+  const guarded = refusedByGuard(invocation.command, options.env, invocation.args);
+  if (guarded !== null) {
+    return Promise.resolve({ stdout: "", stderr: "", code: null, timedOut: false, outputTooLarge: false, error: guarded });
+  }
+  const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+  let child2;
+  try {
+    child2 = (0, import_node_child_process.spawn)(invocation.command, invocation.args, {
+      // Standard input is closed, so a program that reads it gets end-of-file at once rather
+      // than waiting on a terminal until the deadline.
+      stdio: ["ignore", "pipe", "pipe"],
+      env: withGuard(options.env ?? process.env),
+      cwd: options.cwd,
+      shell: false,
+      windowsHide: true
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return Promise.resolve({
+      stdout: "",
+      stderr: "",
+      code: null,
+      timedOut: false,
+      outputTooLarge: false,
+      error: `${program} could not be started: ${reason}`
+    });
+  }
+  return new Promise((resolve8) => {
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let outputTooLarge = false;
+    let settled = false;
+    const finish = (code, error) => {
+      if (settled) return;
+      settled = true;
+      (0, import_node_timers.clearTimeout)(timer);
+      resolve8({
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+        code,
+        timedOut,
+        outputTooLarge,
+        error
+      });
+    };
+    const kill = () => {
+      child2.kill("SIGKILL");
+      child2.stdout.destroy();
+      child2.stderr.destroy();
+    };
+    const timer = (0, import_node_timers.setTimeout)(() => {
+      timedOut = true;
+      kill();
+    }, options.timeoutMs);
+    const keep = (chunks, chunk, kept) => {
+      if (outputTooLarge || timedOut) return kept;
+      if (kept + chunk.length > cap) {
+        chunks.push(chunk.subarray(0, cap - kept));
+        outputTooLarge = true;
+        kill();
+        return cap;
+      }
+      chunks.push(chunk);
+      return kept + chunk.length;
+    };
+    child2.stdout.on("data", (chunk) => {
+      stdoutBytes = keep(stdout, chunk, stdoutBytes);
+    });
+    child2.stderr.on("data", (chunk) => {
+      stderrBytes = keep(stderr, chunk, stderrBytes);
+    });
+    child2.on("error", (error) => {
+      if (child2.pid === void 0) finish(null, `${program} could not be started: ${error.message}`);
+    });
+    child2.on("close", (code, signal) => {
+      if (timedOut) finish(null, `${program} did not finish within ${String(options.timeoutMs)} ms and was killed`);
+      else if (outputTooLarge) finish(null, `${program} printed more than ${String(cap)} bytes and was killed`);
+      else if (code === null) finish(null, `${program} was ended by ${signal ?? "a signal"}`);
+      else finish(code, null);
+    });
+  });
+}
+
+// src/platform/system-programs.ts
+var SYSTEM_PROGRAM_VARIABLES = {
+  launchctl: "KURMIS_LAUNCHCTL_PROGRAM",
+  security: "KURMIS_SECURITY_PROGRAM",
+  powershell: "KURMIS_POWERSHELL_PROGRAM",
+  reg: "KURMIS_REG_PROGRAM",
+  taskkill: "KURMIS_TASKKILL_PROGRAM",
+  wscript: "KURMIS_WSCRIPT_PROGRAM"
+};
+function lookup(env, name) {
+  const exact = env[name];
+  if (exact !== void 0 && exact !== "") return exact;
+  const upper = name.toUpperCase();
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
+  }
+  return void 0;
+}
+function systemRoot(env = process.env) {
+  const value = lookup(env, "SystemRoot") ?? lookup(env, "windir");
+  return value === void 0 ? "C:\\Windows" : value.replace(/[\\/]+$/, "");
+}
+function realSystemProgram(program, env = process.env) {
+  switch (program) {
+    case "launchctl":
+      return "/bin/launchctl";
+    case "security":
+      return "/usr/bin/security";
+    case "powershell":
+      return `${systemRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    case "reg":
+      return `${systemRoot(env)}\\System32\\reg.exe`;
+    case "taskkill":
+      return `${systemRoot(env)}\\System32\\taskkill.exe`;
+    case "wscript":
+      return `${systemRoot(env)}\\System32\\wscript.exe`;
+  }
+}
+function systemProgram(program, env = process.env, processEnv = process.env) {
+  const variable = SYSTEM_PROGRAM_VARIABLES[program];
+  return lookup(env, variable) ?? lookup(processEnv, variable) ?? realSystemProgram(program, env);
+}
+function inheritedTestHooks(env, processEnv = process.env) {
+  const out = {};
+  const guarded = lookup(env, GUARD_VARIABLE) === "1" || lookup(processEnv, GUARD_VARIABLE) === "1";
+  const names = [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, ...guarded ? TEST_HOME_VARIABLES : []];
+  for (const name of names) {
+    if (lookup(env, name) !== void 0) continue;
+    const value = lookup(processEnv, name);
+    if (value !== void 0) out[name] = value;
+  }
+  return out;
+}
+
+// src/platform/detach.ts
+var ENTRY_VARIABLE = "KURMIS_ENTRY";
+function bundleFile() {
+  const file = typeof __filename === "string" ? __filename : null;
+  return file !== null && /\.c?js$/i.test(file) ? file : null;
+}
+function kurmisEntry(options = {}) {
+  const env = options.env ?? process.env;
+  const named = env[ENTRY_VARIABLE];
+  if (named !== void 0 && named !== "") return named;
+  const file = options.moduleFile === void 0 ? bundleFile() : options.moduleFile;
+  if (file === null) return null;
+  try {
+    return (0, import_node_fs7.realpathSync)(file);
+  } catch {
+    return file;
+  }
+}
+function temporaryFolders(env = process.env, platform = process.platform) {
+  const named = ["TMPDIR", "TEMP", "TMP"].map((name) => platform === "win32" ? windowsEnv(env, name) : env[name]);
+  const fixed = platform === "win32" ? [] : ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
+  return [...new Set([(0, import_node_os3.tmpdir)(), ...named, ...fixed].filter((folder) => folder !== void 0 && folder !== ""))];
+}
+function isTemporaryPath(path, folders, platform) {
+  const separators = platform === "win32" ? /[\\/]+/ : /\/+/;
+  const fold = (text2) => platform === "win32" ? text2.toLowerCase() : text2;
+  if (path.split(separators).some((part) => fold(part) === "fnm_multishells")) return true;
+  const join16 = platform === "win32" ? "\\" : "/";
+  const plain = fold(path.split(separators).join(join16));
+  return folders.some((folder) => {
+    const root = fold(folder.split(separators).join(join16)).replace(/[\\/]+$/, "");
+    return root !== "" && (plain === root || plain.startsWith(root + join16));
+  });
+}
+function nodeForJobs(options = {}) {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const execPath = options.execPath ?? process.execPath;
+  const realpath = options.realpath ?? import_node_fs7.realpathSync;
+  const temporary = options.temporaryFolders ?? temporaryFolders(env, platform);
+  let target;
+  try {
+    target = realpath(execPath);
+  } catch {
+    return execPath;
+  }
+  const running = isTemporaryPath(execPath, temporary, platform) && !isTemporaryPath(target, temporary, platform) ? target : execPath;
+  const windows = platform === "win32";
+  const folders = windows ? windowsPathFolders(windowsEnv(env, "PATH")) : posixPathFolders(env.PATH);
+  for (const folder of folders) {
+    const candidate = windows ? import_node_path6.win32.join(folder, "node.exe") : import_node_path6.posix.join(folder, "node");
+    try {
+      if (!(0, import_node_fs7.statSync)(candidate).isFile()) continue;
+    } catch {
+      continue;
+    }
+    if (isTemporaryPath(candidate, temporary, platform)) continue;
+    try {
+      return realpath(candidate) === target ? candidate : running;
+    } catch {
+      continue;
+    }
+  }
+  return running;
+}
+function inSshSession(env = process.env) {
+  return Boolean(env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY);
+}
+function spawnDetached(start2) {
+  return new Promise((resolve8, reject) => {
+    const guarded = refusedByGuard(start2.command, start2.env, start2.args);
+    if (guarded !== null) {
+      reject(new Error(guarded));
+      return;
+    }
+    const child2 = (0, import_node_child_process2.spawn)(start2.command, [...start2.args], {
+      detached: true,
+      stdio: "ignore",
+      env: withGuard(start2.env),
+      cwd: start2.cwd,
+      shell: false,
+      windowsHide: true
+    });
+    const exited = new Promise((done) => {
+      child2.once("exit", (code) => done(code));
+    });
+    child2.once("error", (error) => {
+      if (child2.pid === void 0) reject(error);
+    });
+    child2.once("spawn", () => {
+      child2.unref();
+      if (child2.pid === void 0) reject(new Error(`${start2.command} could not be started`));
+      else resolve8({ pid: child2.pid, exited });
+    });
+  });
+}
+function windowsCommandLine(argv) {
+  return argv.map(quoteWindowsArgument).join(" ");
+}
+function quoteWindowsArgument(arg) {
+  if (arg !== "" && !/[\s"]/.test(arg)) return arg;
+  let out = '"';
+  let backslashes = 0;
+  for (const char of arg) {
+    if (char === "\\") {
+      backslashes++;
+      continue;
+    }
+    if (char === '"') out += "\\".repeat(backslashes * 2 + 1) + '"';
+    else out += "\\".repeat(backslashes) + char;
+    backslashes = 0;
+  }
+  return `${out}${"\\".repeat(backslashes * 2)}"`;
+}
+function powerShellQuote(text2) {
+  return `'${text2.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`;
+}
+function wmiCreateScript(argv, cwd) {
+  return [
+    "$ProgressPreference='SilentlyContinue'",
+    "$ErrorActionPreference='Stop'",
+    "$s=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}",
+    `$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${powerShellQuote(windowsCommandLine(argv))};CurrentDirectory=${powerShellQuote(cwd)};ProcessStartupInformation=$s}`,
+    'if($r.ReturnValue -ne 0){Write-Output "Win32_Process.Create answered $($r.ReturnValue)";exit 1}',
+    "Write-Output ('pid '+$r.ProcessId)"
+  ].join("\n");
+}
+function powerShellInvocation(script, env) {
+  return {
+    program: systemProgram("powershell", env),
+    args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")]
+  };
+}
+function parseWmiCreateAnswer(result) {
+  const match = /^pid ([1-9]\d*)$/m.exec(result.stdout.trim());
+  if (result.code === 0 && match !== null) return Number(match[1]);
+  const said = (result.error ?? result.stderr.trim()) || result.stdout.trim() || `exit ${String(result.code)}`;
+  throw new Error(`WMI did not create the process: ${said}`);
+}
+async function createThroughWmi(argv, cwd, env, run2 = runProgram) {
+  const { program, args } = powerShellInvocation(wmiCreateScript(argv, cwd), env);
+  return parseWmiCreateAnswer(await run2(program, args, { timeoutMs: 6e4, env }));
+}
+
+// src/platform/npm-shim.ts
+var import_node_path7 = require("node:path");
+function decodeCmdShim(bytes) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+function parseCmdShim(text2, shimPath) {
+  const folder = import_node_path7.win32.dirname(import_node_path7.win32.resolve(shimPath));
+  const lines = text2.split(/\r?\n/).map((line) => line.trim());
+  const progValues = lines.map((line) => /^@?set\s+"_prog=([^"]*)"$/i.exec(line)?.[1]).filter((value) => value !== void 0);
+  const runLines = [];
+  for (const line of lines) {
+    if (!/(^|\s)%\*$/.test(line)) continue;
+    const command = lastCommand(line.replace(/^@/, ""));
+    const tokens = tokenize(command);
+    if (tokens === null) return { unreadable: `the line ${JSON.stringify(line)} is not a plain command` };
+    tokens.pop();
+    const [program, ...rest] = tokens;
+    if (program === void 0) return { unreadable: `the line ${JSON.stringify(line)} names no program` };
+    const programs = /^@?%_prog%$/i.test(program) ? progValues : [program.replace(/^@/, "")];
+    if (programs.length === 0) return { unreadable: "the shim starts %_prog% but never sets it" };
+    runLines.push({ programs, rest });
+  }
+  if (runLines.length === 0) return { unreadable: "no line passes the arguments on (%*)" };
+  let shim = null;
+  for (const run2 of runLines) {
+    const reading = readRunLine(run2, folder);
+    if ("unreadable" in reading) return reading;
+    if (shim === null) {
+      shim = reading;
+      continue;
+    }
+    if (!sameCall(shim, reading)) return { unreadable: "its lines start different programs" };
+    for (const interpreter of reading.interpreters) {
+      if (!shim.interpreters.includes(interpreter)) shim.interpreters.push(interpreter);
+    }
+  }
+  return shim;
+}
+function cmdShimInvocation(shim, options) {
+  if (/\.(cmd|bat)$/i.test(shim.target)) {
+    return { refused: `${shim.target} is a batch file, which only cmd.exe can start` };
+  }
+  if (shim.interpreters.length === 0) {
+    if (!/\.(exe|com)$/i.test(shim.target)) {
+      return { refused: `the shim starts ${shim.target} directly, and that is not an .exe` };
+    }
+    return { command: shim.target, args: [...shim.targetArgs] };
+  }
+  for (const interpreter of shim.interpreters) {
+    const command = isAbsoluteWindowsPath(interpreter) ? options.isFile(interpreter) ? interpreter : null : /^node(\.exe)?$/i.test(interpreter) ? options.nodePath : null;
+    if (command !== null) {
+      return { command, args: [...shim.interpreterArgs, shim.target, ...shim.targetArgs] };
+    }
+  }
+  return { refused: `the shim starts ${shim.target} with ${shim.interpreters.join(" or ")}, which kurmis does not start` };
+}
+function isAbsoluteWindowsPath(path) {
+  return /^[a-z]:\\/i.test(path) || path.startsWith("\\\\");
+}
+function readRunLine(run2, folder) {
+  const expanded = [];
+  for (const program of run2.programs) {
+    const value = expand(program, folder);
+    if (value === null) return { unreadable: `it starts ${program}, which is neither an absolute path nor a program name` };
+    expanded.push(value);
+  }
+  if (run2.rest.length === 0) {
+    const [target2] = expanded;
+    if (expanded.length !== 1 || target2 === void 0 || !isAbsoluteWindowsPath(target2)) {
+      return { unreadable: "it starts no file by its path" };
+    }
+    return { target: target2, interpreters: [], interpreterArgs: [], targetArgs: [] };
+  }
+  const targetIndex = run2.rest.findIndex((token) => /%~dp0|%dp0%/i.test(token) || isAbsoluteWindowsPath(token));
+  if (targetIndex < 0) return { unreadable: "it starts no file by its path" };
+  const rest = [];
+  for (const token of run2.rest) {
+    const value = expand(token, folder);
+    if (value === null) return { unreadable: `it uses ${token}, which kurmis cannot work out` };
+    rest.push(value);
+  }
+  const target = rest[targetIndex];
+  if (!isAbsoluteWindowsPath(target)) return { unreadable: `its target ${run2.rest[targetIndex]} is not an absolute path` };
+  return {
+    target,
+    interpreters: expanded,
+    interpreterArgs: rest.slice(0, targetIndex),
+    targetArgs: rest.slice(targetIndex + 1)
+  };
+}
+function expand(token, folder) {
+  let otherVariable = false;
+  const replaced = token.replace(/%%|%~dp0|%dp0%|%/gi, (match) => {
+    if (match === "%%") return "%";
+    if (match === "%") {
+      otherVariable = true;
+      return match;
+    }
+    return `${folder}\\`;
+  });
+  if (otherVariable) return null;
+  if (isAbsoluteWindowsPath(replaced)) return import_node_path7.win32.normalize(replaced);
+  if (replaced.includes("\\") || replaced.includes("/")) return null;
+  return replaced;
+}
+function lastCommand(line) {
+  let quoted = false;
+  let start2 = 0;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') quoted = !quoted;
+    else if (char === "&" && !quoted) start2 = i + 1;
+  }
+  return line.slice(start2).trim();
+}
+function tokenize(command) {
+  const tokens = [];
+  for (const match of command.matchAll(/"([^"]*)"|([^\s"]+)/g)) {
+    const quoted = match[1];
+    const bare = match[2];
+    if (bare !== void 0 && /[|<>^()]/.test(bare)) return null;
+    tokens.push(quoted ?? bare ?? "");
+  }
+  return tokens;
+}
+function sameCall(a, b) {
+  return a.target === b.target && a.interpreters.length === 0 === (b.interpreters.length === 0) && a.interpreterArgs.join("\0") === b.interpreterArgs.join("\0") && a.targetArgs.join("\0") === b.targetArgs.join("\0");
+}
+
+// src/platform/programs.ts
+var ProgramNotFoundError = class extends Error {
+  constructor(tool, message) {
+    super(message);
+    this.tool = tool;
+    this.name = "ProgramNotFoundError";
+  }
+  tool;
+};
+var PROGRAM_VARIABLES = {
+  claude: "KURMIS_CLAUDE_BIN",
+  codex: "KURMIS_CODEX_BIN"
+};
+var TOOL_NAMES = {
+  claude: "Claude Code",
+  codex: "Codex"
+};
+var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+var MAX_SHIM_BYTES = 64 * 1024;
+function findProgram(tool, options = {}) {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const nodePath = options.nodePath ?? process.execPath;
+  const files = options.files ?? realFiles;
+  const variable = PROGRAM_VARIABLES[tool];
+  const named = namedProgram(env, variable, platform);
+  if (named !== void 0) {
+    const invocation = invocationFor(named, [], nodePath);
+    if ("refused" in invocation) throw new ProgramNotFoundError(tool, `${variable}: ${invocation.refused}`);
+    return { command: invocation.command, args: invocation.args, source: "env" };
+  }
+  const ownEntry = options.ownEntry === void 0 ? kurmisEntry({ env }) : options.ownEntry;
+  const own2 = ownEntry === null ? null : files.realPath(ownEntry) ?? ownEntry;
+  return platform === "win32" ? findOnWindows(tool, env, nodePath, files, own2) : findOnPosix(tool, env, nodePath, files, own2);
+}
+function namedProgram(env, variable, platform) {
+  const own2 = platform === "win32" ? windowsEnv(env, variable) : env[variable];
+  if (own2 !== void 0 && own2 !== "") return own2;
+  if (!guardOn(env) || hasVariable(env, variable)) return void 0;
+  const inherited = process.env[variable];
+  return inherited === void 0 || inherited === "" ? void 0 : inherited;
+}
+var OWN_BUNDLE = "it is kurmis itself, not the real program";
+function findOnPosix(tool, env, nodePath, files, own2) {
+  const folders = posixPathFolders(env.PATH);
+  const skipped = [];
+  for (const folder of folders) {
+    const candidate = import_node_path8.posix.join(folder, tool);
+    if (!files.isExecutable(candidate)) continue;
+    const real = files.realPath(candidate);
+    if (own2 !== null && real === own2) {
+      skipped.push(`${candidate}: ${OWN_BUNDLE}`);
+      continue;
+    }
+    if (real !== null && /\.(js|cjs|mjs)$/i.test(real)) return { command: nodePath, args: [real], source: "path" };
+    return { command: candidate, args: [], source: "path" };
+  }
+  const looked = [`the ${countFolders(folders.length)} on PATH`];
+  if (tool === "claude" && env.HOME !== void 0 && import_node_path8.posix.isAbsolute(env.HOME)) {
+    const native = import_node_path8.posix.join(env.HOME, ".local", "bin", "claude");
+    if (files.isExecutable(native) && (own2 === null || files.realPath(native) !== own2)) {
+      return { command: native, args: [], source: "native-installer" };
+    }
+    looked.push(native);
+  }
+  throw notFound(tool, looked, skipped);
+}
+function findOnWindows(tool, env, nodePath, files, own2) {
+  const folders = windowsPathFolders(windowsEnv(env, "PATH"));
+  const extensions = pathExtensions(windowsEnv(env, "PATHEXT"));
+  const skipped = [];
+  const isOwn = (path) => own2 !== null && path !== void 0 && (files.realPath(path) ?? path).toLowerCase() === own2.toLowerCase();
+  for (const folder of folders) {
+    for (const extension of extensions) {
+      const candidate = import_node_path8.win32.join(folder, tool + extension);
+      if (!files.isFile(candidate)) continue;
+      if (extension === ".exe" || extension === ".com") return { command: candidate, args: [], source: "path" };
+      const resolved = resolveShim(tool, candidate, nodePath, files);
+      if ("refused" in resolved) skipped.push(`${candidate}: ${resolved.refused}`);
+      else if (isOwn(resolved.args[0])) skipped.push(`${candidate}: ${OWN_BUNDLE}`);
+      else return resolved;
+    }
+  }
+  const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => tool + extension).join(", ")})`];
+  const home = windowsEnv(env, "USERPROFILE");
+  if (tool === "claude" && home !== void 0 && isAbsoluteWindowsPath(home)) {
+    const native = import_node_path8.win32.join(home, ".local", "bin", "claude.exe");
+    if (files.isFile(native)) return { command: native, args: [], source: "native-installer" };
+    looked.push(native);
+  }
+  throw notFound(tool, looked, skipped);
+}
+function resolveShim(tool, shimPath, nodePath, files) {
+  const bytes = files.read(shimPath, MAX_SHIM_BYTES);
+  if (bytes === null) return { refused: "it could not be read" };
+  const text2 = decodeCmdShim(bytes);
+  if (text2 === null) return { refused: "it is not a package manager shim kurmis can read (it is not UTF-8 text)" };
+  const shim = parseCmdShim(text2, shimPath);
+  if ("unreadable" in shim) return { refused: `it is not a package manager shim kurmis can read (${shim.unreadable})` };
+  if (!files.isFile(shim.target)) return { refused: `it starts ${shim.target}, which does not exist` };
+  const invocation = cmdShimInvocation(shim, { nodePath, isFile: (path) => files.isFile(path) });
+  if ("refused" in invocation) return invocation;
+  if (invocation.command === shim.target && !startsLikeWindowsProgram(files, shim.target)) {
+    const wrapper = import_node_path8.win32.join(import_node_path8.win32.dirname(import_node_path8.win32.dirname(shim.target)), "cli-wrapper.cjs");
+    if (tool === "claude" && files.isFile(wrapper)) {
+      return { command: nodePath, args: [wrapper, ...invocation.args], source: "npm-shim" };
+    }
+    return {
+      refused: `it starts ${shim.target}, which is not a Windows program; if this is the npm package, its install step did not run (reinstall it without --ignore-scripts)`
+    };
+  }
+  return { command: invocation.command, args: invocation.args, source: "npm-shim" };
+}
+function startsLikeWindowsProgram(files, path) {
+  const head = files.read(path, 2);
+  return head !== null && head[0] === 77 && head[1] === 90;
+}
+function notFound(tool, looked, skipped) {
+  const lines = [`${TOOL_NAMES[tool]} (${tool}) was not found. Looked in ${looked.join(" and at ")}.`];
+  if (skipped.length > 0) lines.push(`Skipped:
+${skipped.map((line) => `  ${line}`).join("\n")}`);
+  lines.push(`Install ${TOOL_NAMES[tool]}, or set ${PROGRAM_VARIABLES[tool]} to the full path of the program.`);
+  return new ProgramNotFoundError(tool, lines.join("\n"));
+}
+function countFolders(count) {
+  return count === 1 ? "1 folder" : `${String(count)} folders`;
+}
+function posixPathFolders(value) {
+  return (value ?? "").split(":").filter((folder) => folder !== "" && import_node_path8.posix.isAbsolute(folder));
+}
+function windowsPathFolders(value) {
+  return (value ?? "").split(";").map((folder) => folder.trim().replace(/^"(.*)"$/, "$1")).filter((folder) => isAbsoluteWindowsPath(folder));
+}
+function pathExtensions(value) {
+  const listed = (value === void 0 || value.trim() === "" ? DEFAULT_PATHEXT : value).split(";").map((extension) => extension.trim().toLowerCase());
+  return [...new Set(listed)].filter((extension) => [".com", ".exe", ".bat", ".cmd"].includes(extension));
+}
+function windowsEnv(env, name) {
+  const exact = env[name];
+  if (exact !== void 0 && exact !== "") return exact;
+  const upper = name.toUpperCase();
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
+  }
+  return exact;
+}
+function regularFile(path) {
+  try {
+    return (0, import_node_fs8.statSync)(path, { throwIfNoEntry: false })?.isFile() ?? false;
+  } catch {
+    return false;
+  }
+}
+var realFiles = {
+  isFile(path) {
+    return regularFile(path);
+  },
+  isExecutable(path) {
+    if (!regularFile(path)) return false;
+    try {
+      (0, import_node_fs8.accessSync)(path, import_node_fs8.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  realPath(path) {
+    try {
+      return (0, import_node_fs8.realpathSync)(path);
+    } catch {
+      return null;
+    }
+  },
+  read(path, maxBytes) {
+    let fd;
+    try {
+      fd = (0, import_node_fs8.openSync)(path, "r");
+    } catch {
+      return null;
+    }
+    try {
+      const buffer = Buffer.alloc(maxBytes);
+      const length = (0, import_node_fs8.readSync)(fd, buffer, 0, maxBytes, 0);
+      return buffer.subarray(0, length);
+    } catch {
+      return null;
+    } finally {
+      (0, import_node_fs8.closeSync)(fd);
+    }
+  }
+};
+
+// src/cli/codex-home-files.ts
+var import_node_crypto5 = require("node:crypto");
+var import_node_fs9 = require("node:fs");
+var import_promises4 = require("node:fs/promises");
+var import_promises5 = require("node:timers/promises");
+var import_node_os4 = require("node:os");
+var import_node_path11 = require("node:path");
+
+// src/core/codex-home.ts
+var import_node_path9 = require("node:path");
+
+// src/core/codex-account-config.ts
+var import_toml_eslint_parser = __toESM(require_lib(), 1);
+var SECRET_TABLES = /* @__PURE__ */ new Set(["env", "set", "http_headers", "headers", "query_params"]);
+var SECRET_LAST_WORDS = /* @__PURE__ */ new Set(["token", "secret", "secrets", "password", "passwd", "passphrase", "authorization", "cookie", "apikey"]);
+var PUBLIC_KEY_WORDS = /* @__PURE__ */ new Set(["env", "public"]);
+var PUBLIC_NAMES = /* @__PURE__ */ new Set(["client-private-key"]);
+function keyWords(key) {
+  return key.replace(/([a-z\d])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z\d]+/).filter((word) => word.length > 0);
+}
+function secretKeyName(key) {
+  const lower = key.toLowerCase();
+  if (SECRET_TABLES.has(lower)) return true;
+  if (PUBLIC_NAMES.has(lower)) return false;
+  const words = keyWords(key);
+  const last = words.at(-1);
+  if (last === void 0) return false;
+  if (SECRET_LAST_WORDS.has(last)) return true;
+  return last === "key" && !PUBLIC_KEY_WORDS.has(words.at(-2) ?? "");
+}
+var SECRET_TEXT = /(?:\bBearer\s+\S+|\b(?:sk|ghp|github_pat|xox[baprs])[-_][a-z\d_-]{8,}|-----BEGIN [\w ]*PRIVATE KEY-----|https?:\/\/[^\s/@:]*:[^\s/@]+@|[?&](?:token|key|secret|signature|password)=[^&#\s]+|(?:api[_-]?key|secret|password|authorization|access[_-]?token)\s*[=:]\s*["']?[^\s,"'}]+)/i;
+function secretLooking(text2) {
+  return SECRET_TEXT.test(text2) || /--(?:token|api-key|password|secret)(?:[=\s]+)\S+/i.test(text2);
+}
+function secretArguments(value) {
+  return value.some((arg) => typeof arg === "string" && /^(?:-H|--(?:env|header|headers|token|api-key|password|secret|authorization))(?:=|$)/i.test(arg));
+}
+var TRUST_TABLES = [
+  { parent: ["projects"], fields: ["trust_level"] },
+  { parent: ["hooks", "state"], fields: ["trusted_hash", "trusted_content_hash", "enabled"] }
+];
+function trustNameIndex(path) {
+  for (const { parent } of TRUST_TABLES) {
+    if (path.length >= parent.length + 2 && parent.every((key, index) => path[index] === key)) return parent.length;
+  }
+  return -1;
+}
+function trustValue(path) {
+  for (const { parent, fields } of TRUST_TABLES) {
+    if (path.length === parent.length + 2 && parent.every((key, index) => path[index] === key) && fields.includes(path.at(-1))) return true;
+  }
+  return false;
+}
+var NAMED_TABLES = /* @__PURE__ */ new Set(["mcp_servers", "model_providers", "profiles"]);
+function nameIndex(path) {
+  const trust = trustNameIndex(path);
+  if (trust !== -1) return trust;
+  return path.length >= 3 && typeof path[0] === "string" && NAMED_TABLES.has(path[0]) ? 1 : -1;
+}
+function secretPath(path) {
+  const name = nameIndex(path);
+  return path.some((key, index) => index !== name && typeof key === "string" && secretKeyName(key));
+}
+function secretValue(value, named) {
+  if (typeof value === "string") return named || secretLooking(value);
+  if (Array.isArray(value)) return secretArguments(value) || value.some((item) => secretValue(item, named));
+  if (isTable(value)) return Object.entries(value).some(([key, child2]) => secretValue(child2, named || secretKeyName(key)));
+  return false;
+}
+function secretSetting(path, value) {
+  return secretValue(value, secretPath(path));
+}
+var MASK = /* @__PURE__ */ Symbol("secret");
+function masked(value, named) {
+  if (typeof value === "string") return named || secretLooking(value) ? MASK : value;
+  if (Array.isArray(value)) return secretArguments(value) ? MASK : value.map((item) => masked(item, named));
+  if (!isTable(value)) return value;
+  const out = dict();
+  for (const [key, child2] of Object.entries(value)) out[key] = masked(child2, named || secretKeyName(key));
+  return out;
+}
+var TomlScalar = class {
+  kind;
+  text;
+  constructor(kind, text2) {
+    this.kind = kind;
+    this.text = text2;
+  }
+};
+function floatText(value) {
+  if (Number.isNaN(value)) return "nan";
+  if (!Number.isFinite(value)) return value > 0 ? "inf" : "-inf";
+  if (Object.is(value, -0)) return "-0.0";
+  const text2 = String(value);
+  return /[.e]/.test(text2) ? text2 : `${text2}.0`;
+}
+function scalar(node) {
+  switch (node.kind) {
+    case "string":
+    case "boolean":
+      return node.value;
+    case "integer":
+      return new TomlScalar("integer", node.bigint.toString());
+    case "float":
+      return new TomlScalar("float", floatText(node.value));
+    default:
+      return new TomlScalar(node.kind, node.datetime.replace(/^(\d{4}-\d{2}-\d{2})[ t]/i, "$1T").toUpperCase());
+  }
+}
+function isTable(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof TomlScalar);
+}
+function dict() {
+  return /* @__PURE__ */ Object.create(null);
+}
+function own(value, key) {
+  return isTable(value) && Object.hasOwn(value, key) ? value[key] : void 0;
+}
+function record(value) {
+  return isTable(value) ? value : dict();
+}
+function at(root, path) {
+  return path.reduce((value, key) => typeof key === "number" ? Array.isArray(value) ? value[key] : void 0 : own(value, key), root);
+}
+function setAt(root, path, value) {
+  let table = root;
+  for (const key of path.slice(0, -1)) {
+    if (!isTable(own(table, key))) table[key] = dict();
+    table = table[key];
+  }
+  table[path.at(-1)] = value;
+}
+function removeAt(root, path) {
+  const parent = at(root, path.slice(0, -1));
+  if (isTable(parent) && Object.hasOwn(parent, path.at(-1))) delete parent[path.at(-1)];
+}
+function copyTables(value) {
+  if (!isTable(value)) return value;
+  const out = dict();
+  for (const [key, child2] of Object.entries(value)) out[key] = copyTables(child2);
+  return out;
+}
+function stableJson(value) {
+  if (value === MASK) return '"<secret>"';
+  if (value instanceof TomlScalar) return `${value.kind}:${JSON.stringify(value.text)}`;
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+function same(a, b) {
+  return stableJson(a) === stableJson(b);
+}
+function settingsOf(value, base = []) {
+  return Object.entries(record(value)).flatMap(([key, child2]) => isTable(child2) ? settingsOf(child2, [...base, key]) : [{ path: [...base, key], value: child2 }]);
+}
+function tablePaths(value, base = []) {
+  return Object.entries(record(value)).flatMap(([key, child2]) => isTable(child2) ? [[...base, key], ...tablePaths(child2, [...base, key])] : []);
+}
+function holdsOrdinarySetting(value, path) {
+  return settingsOf(value, path).some((setting) => !secretSetting(setting.path, setting.value));
+}
+function withoutEmptyTables(value) {
+  if (!isTable(value)) return value;
+  const out = dict();
+  for (const [key, child2] of Object.entries(value)) {
+    const kept = withoutEmptyTables(child2);
+    if (!isTable(kept) || Object.keys(kept).length > 0) out[key] = kept;
+  }
+  return out;
+}
+function withoutBom(text2) {
+  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
+}
+function parseToml(text2) {
+  try {
+    return (0, import_toml_eslint_parser.parseTOML)(text2, { tomlVersion: "1.0" });
+  } catch {
+    throw new Error("config.toml is not valid TOML");
+  }
+}
+function keyParts(key) {
+  return key.keys.map((part) => part.type === "TOMLBare" ? part.name : part.value);
+}
+function tableValue(ast, convert) {
+  const child2 = (table, key) => {
+    if (!Object.hasOwn(table, key)) table[key] = dict();
+    return table[key];
+  };
+  const put = (table, keys, value) => {
+    let into = table;
+    for (const key of keys.slice(0, -1)) into = child2(into, key);
+    into[keys.at(-1)] = value;
+  };
+  const content = (node) => {
+    if (node.type === "TOMLArray") return node.elements.map(content);
+    if (node.type !== "TOMLInlineTable") return convert(node);
+    const table = dict();
+    for (const entry of node.body) put(table, keyParts(entry.key), content(entry.value));
+    return table;
+  };
+  const root = dict();
+  for (const node of ast.body[0].body) {
+    if (node.type === "TOMLKeyValue") {
+      put(root, keyParts(node.key), content(node.value));
+      continue;
+    }
+    let table = root;
+    node.resolvedKey.forEach((key, index) => {
+      if (typeof key === "number") {
+        const list = table;
+        table = list[key] ??= dict();
+        return;
+      }
+      const parent = table;
+      if (!Object.hasOwn(parent, key)) parent[key] = typeof node.resolvedKey[index + 1] === "number" ? [] : dict();
+      table = parent[key];
+    });
+    for (const entry of node.body) put(table, keyParts(entry.key), content(entry.value));
+  }
+  return root;
+}
+function tomlValue(text2) {
+  return tableValue(parseToml(withoutBom(text2)), (node) => node.value);
+}
+function typedValue(ast) {
+  return tableValue(ast, scalar);
+}
+function typedToml(text2) {
+  return typedValue(parseToml(text2));
+}
+function valueTexts(text2, ast) {
+  const out = /* @__PURE__ */ new Map();
+  const visit = (node, base) => {
+    const path = [...base, ...keyParts(node.key)];
+    if (node.value.type === "TOMLInlineTable") {
+      for (const child2 of node.value.body) visit(child2, path);
+    } else if (node.value.type === "TOMLValue") {
+      out.set(JSON.stringify(path), { text: text2.slice(node.value.range[0], node.value.range[1]), value: scalar(node.value) });
+    }
+  };
+  for (const node of ast.body[0].body) {
+    if (node.type === "TOMLKeyValue") visit(node, []);
+    else if (!node.resolvedKey.some((key) => typeof key === "number")) {
+      for (const child2 of node.body) visit(child2, node.resolvedKey);
+    }
+  }
+  return out;
+}
+function tomlLiteral(value) {
+  if (typeof value === "string") return JSON.stringify(value).replace(/\u007f/g, "\\u007f");
+  if (typeof value === "boolean") return String(value);
+  if (value instanceof TomlScalar) return value.text;
+  if (Array.isArray(value)) return `[${value.map(tomlLiteral).join(", ")}]`;
+  if (value !== null && typeof value === "object") return `{ ${Object.entries(value).map(([k, v]) => `${tomlKey(k)} = ${tomlLiteral(v)}`).join(", ")} }`;
+  throw new Error("config.toml holds a value that cannot be written back");
+}
+function tomlKey(key) {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlLiteral(key);
+}
+function dottedKey(path) {
+  return path.map((key) => tomlKey(String(key))).join(".");
+}
+function literalFor(path, value, texts) {
+  const known = texts.get(JSON.stringify(path));
+  return known !== void 0 && same(known.value, value) ? known.text : tomlLiteral(value);
+}
+function samePath(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+function newline(text2) {
+  return text2.includes("\r\n") ? "\r\n" : "\n";
+}
+function lineEnd(text2, offset) {
+  const end = text2.indexOf("\n", offset);
+  return end < 0 ? text2.length : end + 1;
+}
+function lineStart(text2, offset) {
+  return text2.lastIndexOf("\n", offset - 1) + 1;
+}
+function cutRange(text2, [start2, end]) {
+  const from = lineStart(text2, start2);
+  const to = lineEnd(text2, end);
+  return text2.slice(from, start2).trim() === "" && /^[ \t]*(?:#[^\r\n]*)?\r?\n?$/.test(text2.slice(end, to)) ? [from, to] : [start2, end];
+}
+function insertLines(text2, offset, lines, nl) {
+  const before = text2.slice(0, offset);
+  return `${before}${before.length === 0 || before.endsWith("\n") ? "" : nl}${lines}${text2.slice(offset)}`;
+}
+function arrayTables(path, value, nl) {
+  const header = `[[${dottedKey(path)}]]${nl}`;
+  return value.map((table) => header + Object.entries(record(table)).map(([key, child2]) => `${tomlKey(key)} = ${tomlLiteral(child2)}${nl}`).join("")).join("");
+}
+function isArrayOfTables(value) {
+  return Array.isArray(value) && value.length > 0 && value.every(isTable);
+}
+function rewriteInOnePass(text2, desired, texts) {
+  const ast = parseToml(text2);
+  const current = typedValue(ast);
+  const nl = newline(text2);
+  const edits = [];
+  const held = /* @__PURE__ */ new Set();
+  const headers = /* @__PURE__ */ new Map();
+  const dotted = /* @__PURE__ */ new Map();
+  const sectionEnds = /* @__PURE__ */ new Map([[JSON.stringify([]), 0]]);
+  const cut = (range) => {
+    const [start2, end] = cutRange(text2, range);
+    edits.push({ start: start2, end, text: "" });
+  };
+  const visitKeyValue = (node, section) => {
+    const keys = keyParts(node.key);
+    const path = [...section, ...keys];
+    const want = at(desired, path);
+    const inline = node.value.type === "TOMLInlineTable";
+    if (want === void 0 || isTable(want) && !inline) {
+      cut(node.range);
+      return;
+    }
+    for (let depth = 1; depth < keys.length; depth++) dotted.set(JSON.stringify(path.slice(0, section.length + depth)), section);
+    sectionEnds.set(JSON.stringify(section), lineEnd(text2, node.range[1]));
+    held.add(JSON.stringify(path));
+    if (same(want, at(current, path))) return;
+    edits.push({ start: node.value.range[0], end: node.value.range[1], text: inline ? tomlLiteral(want) : literalFor(path, want, texts) });
+  };
+  const arrays = /* @__PURE__ */ new Map();
+  for (const node of ast.body[0].body) {
+    if (node.type === "TOMLKeyValue") {
+      visitKeyValue(node, []);
+      continue;
+    }
+    const index = node.resolvedKey.findIndex((key) => typeof key === "number");
+    if (index >= 0) {
+      const path2 = node.resolvedKey.slice(0, index);
+      const id = JSON.stringify(path2);
+      const array = arrays.get(id) ?? { path: path2, tables: [] };
+      array.tables.push(node);
+      arrays.set(id, array);
+      continue;
+    }
+    const path = node.resolvedKey;
+    if (!isTable(at(desired, path))) {
+      cut(node.range);
+      continue;
+    }
+    headers.set(JSON.stringify(path), node);
+    sectionEnds.set(JSON.stringify(path), lineEnd(text2, node.range[1]));
+    for (const child2 of node.body) visitKeyValue(child2, path);
+  }
+  for (const [id, { path, tables }] of arrays) {
+    const want = at(desired, path);
+    if (want === void 0) {
+      for (const table of tables) cut(table.range);
+      continue;
+    }
+    held.add(id);
+  }
+  const isHeld = (path) => path.some((_, index) => held.has(JSON.stringify(path.slice(0, index + 1))));
+  const inserts = /* @__PURE__ */ new Map();
+  const insertAt = (offset, lines) => {
+    inserts.set(offset, (inserts.get(offset) ?? "") + lines);
+  };
+  const newTables = /* @__PURE__ */ new Map();
+  const appendToNewTable = (path, line) => {
+    const id = JSON.stringify(path);
+    const table = newTables.get(id) ?? { path, lines: "" };
+    table.lines += line;
+    newTables.set(id, table);
+  };
+  let newArrays = "";
+  for (const { path, value } of settingsOf(desired)) {
+    if (isHeld(path)) continue;
+    if (isArrayOfTables(value)) {
+      newArrays += arrayTables(path, value, nl);
+      continue;
+    }
+    const literal = literalFor(path, value, texts);
+    const parent = path.slice(0, -1);
+    let placed = false;
+    for (let depth = parent.length; depth >= 1 && !placed; depth--) {
+      const table = parent.slice(0, depth);
+      const id = JSON.stringify(table);
+      const section = headers.has(id) ? table : dotted.get(id);
+      if (section === void 0) continue;
+      if (headers.has(id) && depth < parent.length) appendToNewTable(parent, `${tomlKey(path.at(-1))} = ${literal}${nl}`);
+      else insertAt(sectionEnds.get(JSON.stringify(section)), `${dottedKey(path.slice(section.length))} = ${literal}${nl}`);
+      placed = true;
+    }
+    if (placed) continue;
+    if (parent.length === 0) insertAt(sectionEnds.get(JSON.stringify([])), `${tomlKey(path[0])} = ${literal}${nl}`);
+    else appendToNewTable(parent, `${tomlKey(path.at(-1))} = ${literal}${nl}`);
+  }
+  const atEnd = [...newTables.values()].map(({ path, lines }) => `[${dottedKey(path)}]${nl}${lines}`).join("") + newArrays;
+  if (atEnd !== "") insertAt(text2.length, atEnd);
+  for (const [offset, lines] of inserts) {
+    const lead = offset > 0 && text2[offset - 1] !== "\n" ? nl : "";
+    edits.push({ start: offset, end: offset, text: lead + lines });
+  }
+  edits.sort((a, b) => b.start - a.start || b.end - a.end);
+  let out = text2;
+  for (const { start: start2, end, text: replacement } of edits) out = out.slice(0, start2) + replacement + out.slice(end);
+  return out;
+}
+function inArray(path) {
+  return path.some((key) => typeof key === "number");
+}
+function tomlEntries(ast) {
+  const entries = [];
+  const visit = (node, base, holder) => {
+    const path = [...base, ...keyParts(node.key)];
+    entries.push({ path, node, holder, tables: [] });
+    if (node.value.type === "TOMLInlineTable") for (const child2 of node.value.body) visit(child2, path, node.value);
+  };
+  for (const node of ast.body[0].body) {
+    if (node.type === "TOMLKeyValue") {
+      visit(node, [], null);
+      continue;
+    }
+    const index = node.resolvedKey.findIndex((key) => typeof key === "number");
+    if (index >= 0) {
+      const path = node.resolvedKey.slice(0, index);
+      const array = entries.find((entry) => entry.node === null && samePath(entry.path, path));
+      if (array === void 0) entries.push({ path, node: null, holder: null, tables: [node] });
+      else array.tables.push(node);
+    }
+    for (const child2 of node.body) visit(child2, [...node.resolvedKey], null);
+  }
+  return entries;
+}
+function topEntries(ast) {
+  return tomlEntries(ast).filter((entry) => !inArray(entry.path));
+}
+function inlineEntry(entry) {
+  return entry.node?.value.type === "TOMLInlineTable";
+}
+function entryStart(entry) {
+  return entry.node?.range[0] ?? entry.tables[0].range[0];
+}
+function insertions(text2, ast, entries, path, value) {
+  const nl = newline(text2);
+  const literal = tomlLiteral(value);
+  const tables = ast.body[0].body.filter((node) => node.type === "TOMLTable");
+  const inTable = (depth) => {
+    const rest = path.slice(depth);
+    if (inArray(rest)) return null;
+    const line = `${dottedKey(rest)} = ${literal}`;
+    const prefix = path.slice(0, depth);
+    const inline = entries.find((row) => inlineEntry(row) && samePath(row.path, prefix))?.node?.value;
+    if (inline?.type === "TOMLInlineTable") {
+      const last = inline.body.at(-1);
+      if (last !== void 0) return `${text2.slice(0, last.range[1])}, ${line}${text2.slice(last.range[1])}`;
+      const close = inline.range[1] - 1;
+      return `${text2.slice(0, close)} ${line} ${text2.slice(close)}`;
+    }
+    if (depth === 0) return `${line}${nl}${text2}`;
+    const table = tables.find((node) => samePath(node.resolvedKey, prefix));
+    if (table === void 0) return null;
+    return insertLines(text2, lineEnd(text2, table.range[1]), `${line}${nl}`, nl);
+  };
+  const parents = path.slice(0, -1);
+  const candidates = [];
+  if (!inArray(path) && isArrayOfTables(value)) candidates.push(insertLines(text2, text2.length, arrayTables(path, value, nl), nl));
+  candidates.push(inTable(parents.length));
+  if (parents.length > 0 && !inArray(path)) {
+    const header = `[${dottedKey(parents)}]${nl}${tomlKey(String(path.at(-1)))} = ${literal}${nl}`;
+    candidates.push(insertLines(text2, text2.length, header, nl));
+  }
+  for (let depth = parents.length - 1; depth >= 0; depth--) candidates.push(inTable(depth));
+  return candidates.filter((candidate) => candidate !== null);
+}
+function leaves(value, base = []) {
+  return Object.entries(record(value)).flatMap(([key, child2]) => isTable(child2) && Object.keys(child2).length > 0 ? leaves(child2, [...base, key]) : [[...base, key]]);
+}
+function replaceArrayOfTables(text2, path, old, value) {
+  if (!Array.isArray(old) || !isArrayOfTables(value)) return null;
+  const nl = newline(text2);
+  const array = (current) => tomlEntries(parseToml(current)).find((entry) => entry.node === null && samePath(entry.path, path));
+  let out = text2;
+  try {
+    for (let index = 0; index < Math.min(old.length, value.length); index++) {
+      for (const leaf of leaves(old[index])) {
+        if (at(value[index], leaf) !== void 0) continue;
+        const row = tomlEntries(parseToml(out)).find((entry) => samePath(entry.path, [...path, index, ...leaf]));
+        if (row === void 0) return null;
+        out = removeEntry(out, row);
+      }
+      for (const leaf of leaves(value[index])) out = patchToml(out, [...path, index, ...leaf], at(value[index], leaf));
+    }
+    const extra = array(out)?.tables.filter((table) => table.resolvedKey[path.length] >= value.length) ?? [];
+    if (extra.length > 0) out = removeEntry(out, { path: [...path], node: null, holder: null, tables: extra });
+    if (value.length > old.length) {
+      const tables = array(out)?.tables ?? [];
+      if (tables.length === 0) return null;
+      const end = lineEnd(out, Math.max(...tables.map((table) => table.range[1])));
+      out = insertLines(out, end, arrayTables(path, value.slice(old.length), nl), nl);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+function patchToml(text2, path, value) {
+  if (path.length === 0 || secretSetting(path, value)) throw new Error("a secret cannot be copied");
+  const ast = parseToml(text2);
+  const literal = tomlLiteral(value);
+  const current = typedValue(ast);
+  const entries = tomlEntries(ast);
+  const entry = entries.find((row) => samePath(row.path, path));
+  if (entry && same(at(current, path), value)) return text2;
+  const wanted = stableJson(withValue(current, path, value));
+  const fits = (candidate) => {
+    try {
+      return stableJson(typedValue((0, import_toml_eslint_parser.parseTOML)(candidate, { tomlVersion: "1.0" }))) === wanted;
+    } catch {
+      return false;
+    }
+  };
+  let candidates;
+  if (entry?.node) candidates = [text2.slice(0, entry.node.value.range[0]) + literal + text2.slice(entry.node.value.range[1])];
+  else if (entry) {
+    const inPlace = replaceArrayOfTables(text2, path, at(current, path), value);
+    const rest = removeEntry(text2, entry);
+    const restAst = parseToml(rest);
+    candidates = [...inPlace === null ? [] : [inPlace], ...insertions(rest, restAst, tomlEntries(restAst), path, value)];
+  } else candidates = insertions(text2, ast, entries, path, value);
+  const found = candidates.find(fits);
+  if (found === void 0) throw new Error("config.toml has no place for a setting that keeps it valid TOML");
+  return found;
+}
+function withValue(root, path, value) {
+  if (path.length === 0) return value;
+  const [key, ...rest] = path;
+  if (typeof key === "number") {
+    const list = Array.isArray(root) ? [...root] : [];
+    list[key] = withValue(list[key], rest, value);
+    return list;
+  }
+  const table = Object.assign(dict(), record(root));
+  table[key] = withValue(own(root, key), rest, value);
+  return table;
+}
+function removeEntry(text2, { node, holder, tables }) {
+  if (node === null) {
+    return tables.map((table) => table.range).sort((a, b) => b[0] - a[0]).reduce((out, [start3, end2]) => out.slice(0, start3) + out.slice(end2), text2);
+  }
+  let [start2, end] = node.range;
+  if (holder !== null) {
+    const index = holder.body.indexOf(node);
+    if (index > 0) start2 = holder.body[index - 1].range[1];
+    else if (holder.body.length > 1) end = holder.body[1].range[0];
+  }
+  return text2.slice(0, start2) + text2.slice(end);
+}
+function settle(text2, desired) {
+  let out = text2;
+  const now = typedToml(out);
+  for (const { path, value } of settingsOf(desired).filter((setting) => !same(at(now, setting.path), setting.value))) {
+    out = patchToml(out, path, value);
+  }
+  for (; ; ) {
+    const remove = topEntries(parseToml(out)).filter((entry) => !inlineEntry(entry) && at(desired, entry.path) === void 0);
+    const last = remove.sort((a, b) => entryStart(b) - entryStart(a))[0];
+    if (last === void 0) break;
+    out = removeEntry(out, last);
+  }
+  for (; ; ) {
+    const table = parseToml(out).body[0].body.find((node) => node.type === "TOMLTable" && !inArray(node.resolvedKey) && !isTable(at(desired, node.resolvedKey)));
+    if (table === void 0) break;
+    out = out.slice(0, table.range[0]) + out.slice(table.range[1]);
+  }
+  return out;
+}
+function holds(text2, desired) {
+  try {
+    return same(withoutEmptyTables(typedToml(text2)), withoutEmptyTables(desired));
+  } catch {
+    return false;
+  }
+}
+function rewrite(text2, desired, texts) {
+  if (same(typedToml(text2), desired)) return text2;
+  for (const start2 of [() => rewriteInOnePass(text2, desired, texts), () => text2]) {
+    try {
+      const out = settle(start2(), desired);
+      if (holds(out, desired)) return out;
+    } catch {
+    }
+  }
+  throw new Error("config.toml could not be written so that it holds the merged settings");
+}
+function publicSettings(values) {
+  const out = dict();
+  for (const setting of settingsOf(values)) {
+    if (!secretSetting(setting.path, setting.value)) setAt(out, setting.path, setting.value);
+  }
+  return out;
+}
+function mergedTrust(path, own2, fromDefault) {
+  const field = path.at(-1);
+  if (field === "enabled") return own2 === false || fromDefault === false ? false : own2;
+  if (field === "trust_level") return fromDefault === "untrusted" ? fromDefault : own2;
+  return own2;
+}
+function mergeAccountConfig(source, target, lastMerged) {
+  const sourceText = withoutBom(source);
+  const targetText = withoutBom(target);
+  const sourceAst = parseToml(sourceText);
+  const sourceValues = typedValue(sourceAst);
+  const targetValues = typedToml(targetText);
+  const fromSource = publicSettings(sourceValues);
+  let base = null;
+  if (lastMerged !== null && settingsOf(targetValues).length > 0) {
+    try {
+      base = typedToml(withoutBom(lastMerged));
+    } catch {
+      base = null;
+    }
+  }
+  const desired = copyTables(targetValues);
+  const heldBack = [];
+  for (const { path, value } of settingsOf(targetValues)) {
+    if (secretSetting(path, value) || at(sourceValues, path) !== void 0) continue;
+    const trust = trustValue(path);
+    if (base === null) {
+      if (!trust) removeAt(desired, path);
+      continue;
+    }
+    const last = at(base, path);
+    if (last === void 0 || trust && !same(value, last)) continue;
+    removeAt(desired, path);
+  }
+  for (const { path, value } of settingsOf(fromSource)) {
+    const prefixSecret = path.some((_, index) => {
+      const above = at(targetValues, path.slice(0, index + 1));
+      return above !== void 0 && !isTable(above) && secretSetting(path.slice(0, index + 1), above);
+    });
+    const belowSecret = isTable(at(targetValues, path)) && !holdsOnlyOrdinary(at(targetValues, path), path);
+    if (prefixSecret || belowSecret) {
+      if (!same(masked(value, secretPath(path)), masked(at(targetValues, path), secretPath(path)))) heldBack.push(dottedKey(path));
+      continue;
+    }
+    const own2 = at(targetValues, path);
+    if (base !== null && (own2 === void 0 || isTable(own2))) {
+      const unit = unitOf(path);
+      const whole = unit !== null && at(targetValues, unit) === void 0 ? unit : path;
+      const lastWhole = at(base, whole);
+      if (lastWhole !== void 0 && same(at(fromSource, whole), lastWhole)) continue;
+    }
+    const ownValue = own2 !== void 0 && !isTable(own2) ? own2 : void 0;
+    const last = base === null ? void 0 : at(base, path);
+    let next = value;
+    if (trustValue(path)) {
+      if (ownValue !== void 0 && (last === void 0 || !same(ownValue, last))) next = mergedTrust(path, ownValue, value);
+    } else if (ownValue !== void 0 && last !== void 0 && same(value, last) && !same(ownValue, last)) {
+      next = ownValue;
+    }
+    setAt(desired, path, next);
+  }
+  if (base !== null) {
+    for (const unit of unitPaths(targetValues)) {
+      if (at(base, unit) !== void 0 && at(sourceValues, unit) === void 0) removeAt(desired, unit);
+    }
+  }
+  for (const path of tablePaths(targetValues)) {
+    if (!holdsOrdinarySetting(at(targetValues, path), path)) continue;
+    const now = at(desired, path);
+    if (isTable(now) && !holdsOrdinarySetting(now, path)) removeAt(desired, path);
+  }
+  for (const unit of unitPaths(desired)) {
+    const value = at(desired, unit);
+    if (!holdsOrdinarySetting(value, unit) && !UNIT_KEYS[unit[0]].some((key) => own(value, key) !== void 0)) removeAt(desired, unit);
+  }
+  let missingSecrets = false;
+  for (const { path, value } of settingsOf(sourceValues)) {
+    if (!secretSetting(path, value)) continue;
+    const unit = unitOf(path);
+    if (unit !== null && at(desired, unit) === void 0 && at(fromSource, unit) !== void 0) continue;
+    const kept = at(desired, path);
+    if (kept === void 0) missingSecrets = true;
+    else if (!same(masked(value, secretPath(path)), masked(kept, secretPath(path)))) heldBack.push(dottedKey(path));
+  }
+  const texts = valueTexts(sourceText, sourceAst);
+  return {
+    content: rewrite(targetText, desired, texts),
+    merged: rewrite("", fromSource, texts),
+    missingSecrets,
+    heldBack: [...new Set(heldBack)]
+  };
+}
+var UNIT_TABLES = /* @__PURE__ */ new Set(["mcp_servers", "model_providers"]);
+var UNIT_KEYS = { mcp_servers: ["command", "url"], model_providers: ["name"] };
+function unitOf(path) {
+  return path.length >= 3 && UNIT_TABLES.has(path[0]) ? path.slice(0, 2) : null;
+}
+function unitPaths(values) {
+  return [...UNIT_TABLES].flatMap((key) => Object.entries(record(own(values, key))).filter(([, child2]) => isTable(child2)).map(([name]) => [key, name]));
+}
+function holdsOnlyOrdinary(value, path) {
+  return settingsOf(value, path).every((setting) => !secretSetting(setting.path, setting.value));
+}
+function sameTomlSettings(a, b) {
+  return same(typedToml(withoutBom(a)), typedToml(withoutBom(b)));
+}
+function validToml(text2) {
+  try {
+    parseToml(withoutBom(text2));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// src/core/codex-home.ts
+var CODEX_CONFIG_FILE = "config.toml";
+var CODEX_AGENTS_FILES = ["AGENTS.md", "AGENTS.override.md"];
+var CODEX_CONFIG_MERGE_ATTEMPTS = 3;
+var PRIVATE_DIRS = /* @__PURE__ */ new Set([".tmp", "tmp"]);
+function sandboxFolder(name) {
+  return /^\.sandbox(?:[-_.].*)?$/i.test(name);
+}
+function codexPrivateName(name) {
+  return /^(?:auth\.json|\.credentials\.json|secrets(?:\..*)?|\.env(?:\..*)?|vault(?:\..*)?|.*keychain.*|.*keyring.*|.*keystore.*|(?:.*[-_.])?(?:credentials?|oauth|tokens?)(?:[-_.].*)?|.*\.(?:db|sqlite|sqlite3|p12|pfx))$/i.test(name);
+}
+function codexHomeEntryAction(name, kind) {
+  if (kind === "directory" || kind === "directory-link") return PRIVATE_DIRS.has(name) || sandboxFolder(name) || codexPrivateName(name) ? "skip" : "link";
+  if (kind !== "file") return "skip";
+  if (name === CODEX_CONFIG_FILE) return "merge";
+  if (CODEX_AGENTS_FILES.includes(name)) return "copy";
+  return "skip";
+}
+function codexLinkAction(place, source, platform = process.platform) {
+  if (place.kind === "missing") return "create";
+  if (place.kind === "link" && sameFolderPath(place.target, source, platform)) return "linked";
+  return "conflict";
+}
+function sameFolderPath(a, b, platform) {
+  if (platform !== "win32") return import_node_path9.posix.resolve(a) === import_node_path9.posix.resolve(b);
+  return import_node_path9.win32.resolve(a).toLowerCase() === import_node_path9.win32.resolve(b).toLowerCase();
+}
+function codexStaleLink(link, source, shared, platform = process.platform) {
+  const paths = platform === "win32" ? import_node_path9.win32 : import_node_path9.posix;
+  const recorded = link.recorded !== null && sameFolderPath(link.target, link.recorded, platform);
+  if (sameFolderPath(link.target, paths.join(source, link.name), platform)) return !shared && (link.end !== "other" || recorded);
+  return link.end === "nothing" && recorded;
+}
+function codexAgentsCopy(source, current, copiedBefore) {
+  if (source !== null) return current === source ? null : { action: "write", content: source };
+  return current !== null && copiedBefore ? { action: "remove" } : null;
+}
+function errorText(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function codexConfigRefresh(source, current, lastMerged) {
+  const keep = (merged, missingSecrets, heldBack, mergeFailure) => ({ action: "keep", content: null, merged, missingSecrets, heldBack, mergeFailure });
+  if (source === null) return keep(lastMerged === null ? "" : null, false, [], null);
+  if (current !== null && !validToml(current)) return keep(null, false, [], "the login's config.toml is not valid TOML, so it was left as it is");
+  let merge;
+  try {
+    merge = mergeAccountConfig(source, current ?? "", lastMerged);
+  } catch (error) {
+    return keep(null, false, [], `the default home's config.toml could not be merged in: ${errorText(error)}`);
+  }
+  try {
+    if (current !== null && sameTomlSettings(current, merge.content)) return keep(merge.merged, merge.missingSecrets, merge.heldBack, null);
+  } catch (error) {
+    return keep(null, merge.missingSecrets, merge.heldBack, `the merged config.toml could not be compared: ${errorText(error)}`);
+  }
+  return { action: "write", content: merge.content, merged: merge.merged, missingSecrets: merge.missingSecrets, heldBack: merge.heldBack, mergeFailure: null };
+}
+
+// src/platform/links.ts
+var import_promises3 = require("node:fs/promises");
+var import_node_path10 = require("node:path");
+function pathsOf2(platform) {
+  return platform === "win32" ? import_node_path10.win32 : import_node_path10.posix;
+}
+function normaliseLinkTarget(target, platform) {
+  if (platform !== "win32") return target;
+  const unc = /^(?:\\\\\?\\|\\\?\?\\)UNC\\/i.exec(target);
+  if (unc !== null) return `\\\\${target.slice(unc[0].length)}`;
+  const long = /^(?:\\\\\?\\|\\\?\?\\)(?=[a-z]:)/i.exec(target);
+  if (long !== null) return target.slice(long[0].length);
+  return target;
+}
+function linkTargetPath(place, target, platform) {
+  const paths = pathsOf2(platform);
+  return paths.resolve(paths.dirname(place), normaliseLinkTarget(target, platform));
+}
+function errorCode(error) {
+  const code = error?.code;
+  return typeof code === "string" ? code : void 0;
+}
+async function readFolderLink(place, platform = process.platform) {
+  let stats;
+  try {
+    stats = await (0, import_promises3.lstat)(place);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") return { kind: "missing" };
+    throw error;
+  }
+  if (!stats.isSymbolicLink()) return { kind: "other" };
+  return { kind: "link", target: linkTargetPath(place, await (0, import_promises3.readlink)(place), platform) };
+}
+async function linkFolder(target, place, platform = process.platform) {
+  const absolute = pathsOf2(platform).resolve(target);
+  if (platform !== "win32") {
+    await (0, import_promises3.symlink)(absolute, place, "dir");
+    return;
+  }
+  try {
+    await (0, import_promises3.symlink)(absolute, place, "junction");
+  } catch (error) {
+    if (errorCode(error) === "EEXIST") throw error;
+    try {
+      await (0, import_promises3.symlink)(absolute, place, "dir");
+    } catch {
+      throw error;
+    }
+  }
+}
+async function removeFolderLink(place, platform = process.platform) {
+  if (!(await (0, import_promises3.lstat)(place)).isSymbolicLink()) throw new Error(`${place} is not a link`);
+  if (platform !== "win32") {
+    await (0, import_promises3.unlink)(place);
+    return;
+  }
+  try {
+    await (0, import_promises3.unlink)(place);
+  } catch (error) {
+    const code = errorCode(error);
+    if (code !== "EPERM" && code !== "EISDIR" && code !== "EACCES") throw error;
+    await (0, import_promises3.rmdir)(place);
+  }
+}
+
+// src/cli/codex-home-files.ts
+function emptyRecord(config) {
+  return { config, copied: {}, links: {}, conflicts: [] };
+}
+async function prepareCodexHome(id, options) {
+  const login = toLoginId(id);
+  if (providerOfLoginId(login) !== "codex") throw new Error(`${login} is not a Codex login.`);
+  if (isDefaultLoginId(login)) return { codexHome: null, warnings: [] };
+  const platform = options.platform ?? process.platform;
+  const home = loginFolder(login);
+  try {
+    makePrivateDirSync(home);
+  } catch (error) {
+    throw new Error(`Could not create the Codex home of ${login} at ${home}: ${errorText2(error)}`, { cause: error });
+  }
+  const source = codexSourceHome(options.env, platform);
+  const warnings = [];
+  const recordPath = codexMergedRecordPath(login);
+  const isNew = await isEmptyFolder(home);
+  const record2 = isNew ? emptyRecord("") : await readRecord(recordPath, warnings);
+  const next = { config: record2.config, copied: { ...record2.copied }, links: {}, conflicts: [] };
+  await linkSharedFolders(source, home, platform, warnings, record2, next);
+  for (const file of CODEX_AGENTS_FILES) await copyAgents(source, home, file, warnings, record2, next);
+  await refreshConfig(source, home, warnings, record2, next);
+  next.conflicts.sort();
+  if (isNew || formatJson(next) !== formatJson(record2)) {
+    try {
+      await writeJsonFile(recordPath, next, { mode: PRIVATE_FILE_MODE });
+    } catch (error) {
+      warnings.push(`Could not save what was merged into ${home} to ${recordPath}: ${errorText2(error)}`);
+    }
+  }
+  return { codexHome: home, warnings };
+}
+async function isEmptyFolder(folder) {
+  try {
+    return (await (0, import_promises4.readdir)(folder)).length === 0;
+  } catch {
+    return false;
+  }
+}
+async function readRecord(path, warnings) {
+  let read;
+  try {
+    read = await readJsonFile(path);
+  } catch (error) {
+    warnings.push(`Could not read ${path}, so this start keeps every setting of the login's config.toml: ${errorText2(error)}`);
+    return emptyRecord("");
+  }
+  if (read.status === "missing") return emptyRecord(null);
+  if (read.status !== "ok" || read.value === null || typeof read.value !== "object" || Array.isArray(read.value)) {
+    warnings.push(`${path} is damaged, so this start keeps every setting of the login's config.toml.`);
+    return emptyRecord("");
+  }
+  const value = read.value;
+  const conflicts = value["conflicts"];
+  const config = value["config"];
+  return {
+    config: typeof config === "string" ? config : config === null ? null : "",
+    copied: stringRecord(value["copied"]),
+    links: stringRecord(value["links"]),
+    conflicts: Array.isArray(conflicts) ? conflicts.filter((name) => typeof name === "string") : []
+  };
+}
+function stringRecord(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry) => typeof entry[1] === "string"));
+}
+function sha256(text2) {
+  return (0, import_node_crypto5.createHash)("sha256").update(text2).digest("hex");
+}
+function codexSourceHome(env, platform = process.platform) {
+  const fallback = (0, import_node_path11.join)((0, import_node_os4.homedir)(), ".codex");
+  const named = env.CODEX_HOME;
+  if (named === void 0 || named === "") return fallback;
+  const home = (0, import_node_path11.resolve)(named);
+  return insideFolder(providerFolder("codex"), home, platform) ? fallback : home;
+}
+function insideFolder(folder, path, platform) {
+  const paths = pathsOf2(platform);
+  const fold = (text2) => platform === "win32" ? text2.toLowerCase() : text2;
+  const relative2 = paths.relative(fold(paths.resolve(folder)), fold(paths.resolve(path)));
+  return relative2 === "" || !relative2.startsWith("..") && !paths.isAbsolute(relative2);
+}
+function errorText2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function errorCode2(error) {
+  const code = error?.code;
+  return typeof code === "string" ? code : void 0;
+}
+async function entryKind(source, entry) {
+  if (entry.isSymbolicLink()) {
+    try {
+      return (await (0, import_promises4.stat)((0, import_node_path11.join)(source, entry.name))).isDirectory() ? "directory-link" : "symlink";
+    } catch {
+      return "symlink";
+    }
+  }
+  if (entry.isDirectory()) return "directory";
+  if (entry.isFile()) return "file";
+  return "other";
+}
+async function sharedFolders(source, home, warnings) {
+  let entries;
+  try {
+    entries = await (0, import_promises4.readdir)(source, { withFileTypes: true });
+  } catch (error) {
+    if (errorCode2(error) === "ENOENT") return [];
+    warnings.push(`Could not list ${source} to link its folders into ${home}: ${errorText2(error)}`);
+    return null;
+  }
+  const shared = [];
+  for (const entry of entries) {
+    if (codexHomeEntryAction(entry.name, await entryKind(source, entry)) === "link") shared.push(entry.name);
+  }
+  return shared;
+}
+async function linkSharedFolders(source, home, platform, warnings, record2, next) {
+  const shared = await sharedFolders(source, home, warnings);
+  if (shared === null) {
+    next.conflicts = [...record2.conflicts];
+    next.links = { ...record2.links };
+    return;
+  }
+  await removeStaleLinks(source, home, new Set(shared), platform, warnings, record2, next);
+  for (const name of shared) {
+    const from = (0, import_node_path11.join)(source, name);
+    const place = (0, import_node_path11.join)(home, name);
+    try {
+      if (await placeLink(from, place, platform) === "linked") {
+        next.links[name] = from;
+        continue;
+      }
+      next.conflicts.push(name);
+      if (!record2.conflicts.includes(name)) {
+        warnings.push(`${place} is a folder of this login's own with something in it, or a link to somewhere else, so it was left as it is and not linked to ${from}. Move it away to share ${from} with this login. This is said once.`);
+      }
+    } catch (error) {
+      warnings.push(`Could not link ${place} to ${from}: ${errorText2(error)}`);
+    }
+  }
+}
+async function linkEnd(place) {
+  try {
+    return (await (0, import_promises4.stat)(place)).isDirectory() ? "folder" : "other";
+  } catch (error) {
+    const code = errorCode2(error);
+    return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP" ? "nothing" : "other";
+  }
+}
+async function removeStaleLinks(source, home, shared, platform, warnings, record2, next) {
+  let entries;
+  try {
+    entries = await (0, import_promises4.readdir)(home, { withFileTypes: true });
+  } catch (error) {
+    warnings.push(`Could not list ${home} to remove the links that lead nowhere: ${errorText2(error)}`);
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.isFile()) continue;
+    const place = (0, import_node_path11.join)(home, entry.name);
+    try {
+      const found = await readFolderLink(place, platform);
+      if (found.kind !== "link") continue;
+      const recorded = Object.hasOwn(record2.links, entry.name) ? record2.links[entry.name] : null;
+      const link = { name: entry.name, target: found.target, end: await linkEnd(place), recorded };
+      if (!codexStaleLink(link, source, shared.has(entry.name), platform)) {
+        if (recorded !== null) next.links[entry.name] = recorded;
+        continue;
+      }
+      try {
+        await removeFolderLink(place, platform);
+      } catch (error) {
+        if (errorCode2(error) !== "ENOENT") throw error;
+      }
+    } catch (error) {
+      warnings.push(`Could not remove ${place}, a link that leads nowhere or to a folder this login no longer shares: ${errorText2(error)}`);
+    }
+  }
+}
+var LINK_ATTEMPTS = 4;
+var LINK_RETRY_DELAY_MS = 25;
+function retryableLinkError(code, platform) {
+  if (code === "EEXIST" || code === "ENOENT") return true;
+  return platform === "win32" && (code === "EBUSY" || code === "EPERM" || code === "EACCES");
+}
+async function placeLink(from, place, platform, link = linkFolder) {
+  let failure2 = null;
+  for (let attempt = 1; attempt <= LINK_ATTEMPTS; attempt++) {
+    if (attempt > 1) await (0, import_promises5.setTimeout)(LINK_RETRY_DELAY_MS);
+    const found = await readFolderLink(place, platform);
+    const action = codexLinkAction(found, from, platform);
+    if (action === "linked") return "linked";
+    if (action === "conflict") {
+      if (found.kind !== "other") return "conflict";
+      const removed = await removeEmptyFolder(place, platform);
+      if (removed === "kept") return "conflict";
+      if (removed === "again") continue;
+    }
+    try {
+      await link(from, place, platform);
+      return "linked";
+    } catch (error) {
+      if (!retryableLinkError(errorCode2(error), platform)) throw error;
+      failure2 = error;
+    }
+  }
+  if (codexLinkAction(await readFolderLink(place, platform), from, platform) === "linked") return "linked";
+  if (failure2 !== null && errorCode2(failure2) !== "EEXIST") throw failure2;
+  return "conflict";
+}
+async function removeEmptyFolder(place, platform) {
+  try {
+    const stats = await (0, import_promises4.lstat)(place);
+    if (stats.isSymbolicLink()) return "again";
+    if (!stats.isDirectory()) return "kept";
+    await (0, import_promises4.rmdir)(place);
+    return "removed";
+  } catch (error) {
+    const code = errorCode2(error);
+    return code === "ENOTDIR" || code !== "EEXIST" && retryableLinkError(code, platform) ? "again" : "kept";
+  }
+}
+async function copyAgents(source, home, file, warnings, record2, next) {
+  const from = (0, import_node_path11.join)(source, file);
+  const target = (0, import_node_path11.join)(home, file);
+  try {
+    const text2 = await readText(from);
+    const said = { decision: null };
+    const outcome = await writeIfUnchanged(target, (current) => {
+      said.decision = codexAgentsCopy(text2, current, current !== null && record2.copied[file] === sha256(current));
+      return said.decision?.action === "write" ? said.decision.content : null;
+    }, 420);
+    if (outcome === "changing") {
+      warnings.push(changingWarning(target));
+      return;
+    }
+    if (said.decision?.action === "remove") {
+      const current = await readText(target);
+      if (current !== null && record2.copied[file] === sha256(current)) await (0, import_promises4.rm)(target, { force: true });
+    }
+    if (text2 === null) delete next.copied[file];
+    else next.copied[file] = sha256(text2);
+  } catch (error) {
+    warnings.push(`Could not copy ${from} to ${target}: ${errorText2(error)}`);
+  }
+}
+async function refreshConfig(source, home, warnings, record2, next) {
+  const from = (0, import_node_path11.join)(source, CODEX_CONFIG_FILE);
+  const target = (0, import_node_path11.join)(home, CODEX_CONFIG_FILE);
+  try {
+    const text2 = await readText(from);
+    const said = { missingSecrets: false, heldBack: [], mergeFailure: null, merged: null };
+    const outcome = await writeIfUnchanged(target, (current) => {
+      const refresh = codexConfigRefresh(text2, current, record2.config);
+      said.missingSecrets = refresh.missingSecrets;
+      said.heldBack = refresh.heldBack;
+      said.mergeFailure = refresh.mergeFailure;
+      said.merged = refresh.merged;
+      return refresh.action === "write" ? refresh.content : null;
+    }, PRIVATE_FILE_MODE);
+    if (said.mergeFailure !== null) warnings.push(`Could not refresh ${target} from ${from}: ${said.mergeFailure}.`);
+    if (said.missingSecrets) {
+      warnings.push(`${from} has a secret, such as an MCP server's env table, that ${target} lacks. It is never copied; add it to ${target} if this login needs it.`);
+    }
+    if (said.heldBack.length > 0) {
+      warnings.push(`${from} sets ${said.heldBack.join(", ")} differently from ${target}, and a secret stands in the way, so ${target} keeps its own. Secrets are never copied; change ${target} by hand if this login needs the default home's.`);
+    }
+    if (outcome === "changing") warnings.push(changingWarning(target));
+    else if (said.merged !== null) next.config = said.merged;
+  } catch (error) {
+    warnings.push(`Could not refresh ${target} from ${from}: ${errorText2(error)}`);
+  }
+}
+function changingWarning(target) {
+  return `${target} kept changing while kurmis refreshed it, so it was left as it is. The next start refreshes it again.`;
+}
+async function readText(path) {
+  try {
+    return await (0, import_promises4.readFile)(path, "utf8");
+  } catch (error) {
+    if (errorCode2(error) === "ENOENT") return null;
+    throw error;
+  }
+}
+var TEMP_FLAGS2 = import_node_fs9.constants.O_WRONLY | import_node_fs9.constants.O_CREAT | import_node_fs9.constants.O_EXCL;
+async function writeIfUnchanged(target, next, mode) {
+  for (let attempt = 1; attempt <= CODEX_CONFIG_MERGE_ATTEMPTS; attempt++) {
+    const current = await readText(target);
+    const text2 = next(current);
+    if (text2 === null) return "unchanged";
+    const temp = `${target}.${String(process.pid)}.${(0, import_node_crypto5.randomBytes)(4).toString("hex")}.tmp`;
+    const handle = await (0, import_promises4.open)(temp, TEMP_FLAGS2, mode);
+    try {
+      try {
+        await handle.writeFile(text2);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (await readText(target) !== current) {
+        await (0, import_promises4.rm)(temp, { force: true });
+        continue;
+      }
+      await replaceFile(temp, target);
+    } catch (error) {
+      await (0, import_promises4.rm)(temp, { force: true });
+      throw error;
+    }
+    await syncDirectory((0, import_node_path11.dirname)(target));
+    return "written";
+  }
+  return "changing";
+}
+
+// src/cli/daemon-client.ts
+var import_node_os6 = require("node:os");
+var import_node_path15 = require("node:path");
+
+// src/core/proxy-rules.ts
+var ROUTE_PATHS = [
+  { method: "POST", path: "/v1/messages" },
+  { method: "POST", path: "/v1/messages/count_tokens" },
+  { method: "GET", path: "/v1/models" }
+];
+var HELLO_PATH = "/api/hello";
+var CONTROL_PREFIX = "/_kurmis/";
+function requestKind(method, url) {
+  const path = (url ?? "").split("?")[0] ?? "";
+  if (path === HELLO_PATH && (method === "HEAD" || method === "GET")) return { kind: "hello" };
+  if (path.startsWith(CONTROL_PREFIX)) return { kind: "control", path };
+  if (ROUTE_PATHS.some((entry) => entry.method === method && entry.path === path)) return { kind: "route", path };
+  return { kind: "unknown" };
+}
+var ROUTER_REFUSAL_STATUS = 599;
+var HOP_HEADERS = /* @__PURE__ */ new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade"
+]);
+var REPLACED_REQUEST_HEADERS = /* @__PURE__ */ new Set([
+  "authorization",
+  "x-api-key",
+  "host",
+  "content-length",
+  "accept-encoding"
+]);
+function droppedHeaders(connection) {
+  return /* @__PURE__ */ new Set([...HOP_HEADERS, ...(connection ?? "").toLowerCase().split(",").map((name) => name.trim())]);
+}
+function upstreamRequest(incoming, body, authorization, accountUuid) {
+  const connection = incoming["connection"];
+  const drop = droppedHeaders(Array.isArray(connection) ? connection.join(",") : connection);
+  const headers = {};
+  for (const [rawName, value] of Object.entries(incoming)) {
+    const name = rawName.toLowerCase();
+    if (value === void 0 || drop.has(name) || REPLACED_REQUEST_HEADERS.has(name) || KURMIS_HEADERS.includes(name)) continue;
+    headers[name] = Array.isArray(value) ? value.join(", ") : value;
+  }
+  headers["authorization"] = authorization;
+  headers["accept-encoding"] = "identity";
+  const outgoing = body === void 0 ? void 0 : outgoingBody(body, accountUuid);
+  if (outgoing !== void 0) headers["content-length"] = String(outgoing.length);
+  return { headers, body: outgoing };
+}
+function downstreamResponseHeaders(upstream) {
+  const entries = [...upstream].map(([name, value]) => [name.toLowerCase(), value]);
+  const drop = droppedHeaders(entries.find(([name]) => name === "connection")?.[1]);
+  return entries.filter(([name]) => !drop.has(name) && name !== "content-length");
+}
+function rewriteUserId(userId, accountUuid) {
+  let value;
+  try {
+    value = JSON.parse(userId);
+  } catch {
+    return userId;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return userId;
+  if (value["account_uuid"] === accountUuid) return userId;
+  const bytes = Buffer.from(userId, "utf8");
+  const open4 = skipWhitespace(bytes, 0);
+  const found = memberValue(bytes, open4, "account_uuid");
+  const uuid = Buffer.from(JSON.stringify(accountUuid), "utf8");
+  if (found.span !== null) return splice(bytes, found.span.start, found.span.end, uuid).toString("utf8");
+  const close = skipValue(bytes, open4) - 1;
+  const member = Buffer.concat([Buffer.from(`${found.members > 0 ? "," : ""}"account_uuid":`, "utf8"), uuid]);
+  return splice(bytes, close, close, member).toString("utf8");
+}
+function outgoingBody(body, accountUuid) {
+  if (accountUuid === null) return body;
+  const open4 = skipWhitespace(body, 0);
+  if (body[open4] !== BRACE_OPEN) return body;
+  const metadata = memberValue(body, open4, "metadata").span;
+  if (metadata === null || body[metadata.start] !== BRACE_OPEN) return body;
+  const userId = memberValue(body, metadata.start, "user_id").span;
+  if (userId === null || body[userId.start] !== QUOTE) return body;
+  const current = JSON.parse(body.subarray(userId.start, userId.end).toString("utf8"));
+  const rewritten = rewriteUserId(current, accountUuid);
+  if (rewritten === current) return body;
+  return splice(body, userId.start, userId.end, Buffer.from(JSON.stringify(rewritten), "utf8"));
+}
+var QUOTE = 34;
+var BACKSLASH = 92;
+var BRACE_OPEN = 123;
+var BRACE_CLOSE = 125;
+var BRACKET_OPEN = 91;
+var BRACKET_CLOSE = 93;
+var COMMA = 44;
+var COLON = 58;
+function isWhitespace(byte) {
+  return byte === 32 || byte === 9 || byte === 10 || byte === 13;
+}
+function skipWhitespace(bytes, index) {
+  let at2 = index;
+  while (at2 < bytes.length && isWhitespace(bytes[at2])) at2++;
+  return at2;
+}
+function skipString(bytes, index) {
+  let at2 = index + 1;
+  while (at2 < bytes.length) {
+    const byte = bytes[at2];
+    if (byte === BACKSLASH) at2 += 2;
+    else if (byte === QUOTE) return at2 + 1;
+    else at2++;
+  }
+  return at2;
+}
+function skipValue(bytes, index) {
+  const first = bytes[index];
+  if (first === QUOTE) return skipString(bytes, index);
+  if (first === BRACE_OPEN || first === BRACKET_OPEN) {
+    let depth = 0;
+    let at3 = index;
+    while (at3 < bytes.length) {
+      const byte = bytes[at3];
+      if (byte === QUOTE) {
+        at3 = skipString(bytes, at3);
+        continue;
+      }
+      if (byte === BRACE_OPEN || byte === BRACKET_OPEN) depth++;
+      else if (byte === BRACE_CLOSE || byte === BRACKET_CLOSE) {
+        depth--;
+        if (depth === 0) return at3 + 1;
+      }
+      at3++;
+    }
+    return at3;
+  }
+  let at2 = index;
+  while (at2 < bytes.length) {
+    const byte = bytes[at2];
+    if (byte === COMMA || byte === BRACE_CLOSE || byte === BRACKET_CLOSE || isWhitespace(byte)) break;
+    at2++;
+  }
+  return at2;
+}
+function memberValue(bytes, open4, name) {
+  let span = null;
+  let members = 0;
+  let at2 = skipWhitespace(bytes, open4 + 1);
+  while (at2 < bytes.length && bytes[at2] === QUOTE) {
+    const keyEnd = skipString(bytes, at2);
+    const key = JSON.parse(bytes.subarray(at2, keyEnd).toString("utf8"));
+    at2 = skipWhitespace(bytes, keyEnd);
+    if (bytes[at2] !== COLON) break;
+    const start2 = skipWhitespace(bytes, at2 + 1);
+    const end = skipValue(bytes, start2);
+    members++;
+    if (key === name) span = { start: start2, end };
+    at2 = skipWhitespace(bytes, end);
+    if (bytes[at2] !== COMMA) break;
+    at2 = skipWhitespace(bytes, at2 + 1);
+  }
+  return { span, members };
+}
+function splice(bytes, start2, end, insert) {
+  return Buffer.concat([bytes.subarray(0, start2), insert, bytes.subarray(end)]);
+}
+function staleUsageLogins(session, rows, now, refreshed) {
+  const pinned = effectivePin(session, rows);
+  return rows.filter((row) => {
+    const reset = busiestPlanWindow(row.usage)?.resetsAt;
+    return !refreshed.has(row.id) && row.loggedIn && row.credentialsReadable && (pinned === null ? row.autoRoute : row.id === pinned) && reset != null && Date.parse(reset) <= now;
+  }).map((row) => row.id);
+}
+function withoutExpiringTokens(rows, now, session) {
+  const pinned = effectivePin(session, rows);
+  return rows.map((row) => row.tokenExpiresAt !== null && !tokenIsFresh(row.tokenExpiresAt, now) && (pinned === null || poolReadyAt([row], now, pinned, session.homeAccountId) === now) ? { ...row, credentialsReadable: false } : row);
+}
+function refusalAnswer(session, rows, now, cliOnOwnCredentials = false) {
+  const usable = withoutExpiringTokens(rows, now, session);
+  if (accountsInScope(session, usable).length === 0) return { ...noSignerAnswer(cliOnOwnCredentials), kind: "no-signer", resetAt: null };
+  return { ...poolLimitAnswer(session, usable, now), kind: "pool-limit" };
+}
+function noSignerAnswer(cliOnOwnCredentials = false) {
+  const message = cliOnOwnCredentials ? "No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not kurmis' claude:default, and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude with `kurmis claude`, or run `kurmis setup --undo` with that CLAUDE_CONFIG_DIR." : "No Claude login kurmis may use for this session could sign the request. Run `kurmis status` to see which logins are signed in.";
+  return {
+    status: ROUTER_REFUSAL_STATUS,
+    headers: { "content-type": "application/json", "retry-after": "5" },
+    body: JSON.stringify({ type: "error", error: { type: "api_error", message } })
+  };
+}
+function poolLimitAnswer(session, all, now) {
+  const pinned = effectivePin(session, all);
+  const rows = all.filter((row) => pinned === null || row.id === pinned);
+  const reset = poolReadyAt(rows, now, pinned, session.homeAccountId);
+  const next = reset === null ? void 0 : rows.find((row) => poolReadyAt([row], now, pinned, session.homeAccountId) === reset);
+  const blocking = next === void 0 ? void 0 : planUsageWindows(usageAsOf(next.usage, now)).filter((window) => window.utilization >= (pinned === null ? limitForWindow(next, window) : 100)).sort((a, b) => Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? ""))[0];
+  const claim = blocking?.key ?? next?.usage?.limited?.window ?? "five_hour";
+  const message = `Usage limit reached for every login kurmis may use.${reset === null ? "" : ` Resets at ${new Date(reset).toISOString()}.`}`;
+  return {
+    status: 429,
+    headers: {
+      "content-type": "application/json",
+      "anthropic-ratelimit-unified-status": "rejected",
+      "anthropic-ratelimit-unified-representative-claim": claim,
+      ...reset === null ? {} : { "anthropic-ratelimit-unified-reset": String(reset / 1e3) },
+      "retry-after": String(reset === null ? 1 : Math.max(1, Math.ceil((reset - now) / 1e3)))
+    },
+    body: JSON.stringify({ type: "error", error: { type: "rate_limit_error", message } }),
+    resetAt: reset
+  };
+}
+function cooldownAfterProbe(cooldownUntil, snapshot) {
+  if (cooldownUntil !== Infinity || snapshot.source !== "probe" || snapshot.error !== null || !snapshot.rateLimitsAvailable) {
+    return cooldownUntil;
+  }
+  const reset = resetsAtFromUsage(snapshot);
+  if (reset !== null && Number.isFinite(Date.parse(reset))) return Date.parse(reset);
+  return snapshot.status === "rejected" ? cooldownUntil : null;
+}
+function routeBlockText(block, keychain = false, startedOn = false, platform = process.platform) {
+  switch (block.kind) {
+    case "auto-route-off":
+      return "not opted in to routing";
+    case "signed-out":
+      return "signed out";
+    case "no-credentials":
+      if (!keychain) {
+        return platform === "win32" ? "no token, neither Windows Credential Manager nor its .credentials.json gave one" : "no token, its .credentials.json did not read";
+      }
+      return startedOn ? "no token, its Keychain item did not read and the request carried no authorization header of its own" : "no token, its Keychain item did not read and the CLI signs only for the login it was started on";
+    case "token-expiring":
+      return "its token expires within 5 minutes";
+    case "cooldown":
+      return block.until === null ? "cooling down until a usage probe says it is back" : `cooling down until ${new Date(block.until).toISOString()}`;
+    case "over-limit":
+      return `at its limit, the ${block.window} window is at ${String(Math.round(block.utilization))}% of ${String(block.limitPercent)}%`;
+  }
+}
+
+// src/core/control-api.ts
+var CONTROL_API_VERSION = 1;
+var CONTROL_PATHS = {
+  /** `GET`: `StatusAnswer`. */
+  status: `${CONTROL_PREFIX}status`,
+  /** `POST` with a `ProbeRequest`: probes the logins now and answers `StatusAnswer` when done. */
+  probe: `${CONTROL_PREFIX}probe`,
+  /** `POST`: reads `config.json` again. Answers `OkAnswer`. */
+  reload: `${CONTROL_PREFIX}reload`,
+  /**
+   * `POST` with an optional `StopRequest` (no body is the same as `{}`): answers `OkAnswer`,
+   * then stops taking new requests and exits once the open ones have finished.
+   */
+  stop: `${CONTROL_PREFIX}stop`
+};
+var MAX_CONTROL_BODY_BYTES = 64 * 1024;
+
+// src/data/daemon-file.ts
+var import_node_crypto6 = require("node:crypto");
+var import_node_fs10 = require("node:fs");
+var import_node_path12 = require("node:path");
+function generateDaemonSecret() {
+  return (0, import_node_crypto6.randomBytes)(32).toString("hex");
+}
+var SECRET_PATTERN = /^[0-9a-f]{64}$/;
+function readKey(path = keyPath()) {
+  let text2;
+  try {
+    text2 = (0, import_node_fs10.readFileSync)(path, "utf8").trim();
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  return SECRET_PATTERN.test(text2) ? text2 : null;
+}
+function readOrCreateKey(path = keyPath()) {
+  const existing = readKey(path);
+  if (existing !== null) return existing;
+  makePrivateDirSync((0, import_node_path12.dirname)(path));
+  const key = generateDaemonSecret();
+  if (!createKeyFile(path, key)) {
+    const theirs = readKeySettled(path);
+    if (theirs !== null) return theirs;
+    writeFileAtomicSync(path, `${key}
+`, { mode: PRIVATE_FILE_MODE });
+  }
+  return key;
+}
+function createKeyFile(path, key) {
+  const temporary = (0, import_node_path12.join)((0, import_node_path12.dirname)(path), `.key-${process.pid}-${(0, import_node_crypto6.randomBytes)(4).toString("hex")}`);
+  writeFileAtomicSync(temporary, `${key}
+`, { mode: PRIVATE_FILE_MODE });
+  try {
+    (0, import_node_fs10.linkSync)(temporary, path);
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST") return false;
+  } finally {
+    (0, import_node_fs10.rmSync)(temporary, { force: true });
+  }
+  try {
+    (0, import_node_fs10.writeFileSync)(path, `${key}
+`, { flag: "wx", mode: PRIVATE_FILE_MODE });
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST") return false;
+    throw error;
+  }
+}
+function readKeySettled(path) {
+  for (let attempt = 0; ; attempt++) {
+    const key = readKey(path);
+    if (key !== null || attempt >= 10) return key;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+}
+function isPositiveInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+function parseDaemonInfo(value) {
+  if (!isPlainObject(value)) return "is not an object";
+  if (!isPositiveInteger(value.pid)) return "pid must be a positive whole number";
+  if (!isPositiveInteger(value.port) || value.port > 65535) return "port must be a whole number from 1 to 65535";
+  if (typeof value.version !== "string" || value.version === "") return "version must be a string";
+  if (typeof value.startedAt !== "number" || !Number.isFinite(value.startedAt)) return "startedAt must be a number";
+  return { pid: value.pid, port: value.port, version: value.version, startedAt: value.startedAt };
+}
+function readDaemonFile(path = daemonFilePath()) {
+  let read;
+  try {
+    read = readJsonFileSync(path);
+  } catch (error) {
+    return { status: "invalid", reason: `${path} could not be read (${String(error.code)})` };
+  }
+  if (read.status === "missing") return { status: "missing" };
+  if (read.status === "corrupt") return { status: "invalid", reason: `${path} is not valid JSON` };
+  const info = parseDaemonInfo(read.value);
+  return typeof info === "string" ? { status: "invalid", reason: `${path}: ${info}` } : { status: "ok", info };
+}
+function writeDaemonFile(info, path = daemonFilePath()) {
+  writeJsonFileSync(path, info, { mode: PRIVATE_FILE_MODE });
+}
+function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
+  const read = readDaemonFile(path);
+  if (read.status === "missing") return false;
+  if (read.status === "ok" && read.info.pid !== pid) return false;
+  afterCheck?.();
+  const aside = `${path}.${String(process.pid)}-${(0, import_node_crypto6.randomBytes)(4).toString("hex")}.removing`;
+  try {
+    retryWhileLockedSync(() => {
+      (0, import_node_fs10.renameSync)(path, aside);
+    });
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+  let keepAside = false;
+  try {
+    const moved = readDaemonFile(aside);
+    if (moved.status === "ok" && moved.info.pid !== pid) {
+      try {
+        (0, import_node_fs10.linkSync)(aside, path);
+      } catch (error) {
+        if (error.code !== "EEXIST" && !(0, import_node_fs10.existsSync)(path)) {
+          try {
+            retryWhileLockedSync(() => {
+              (0, import_node_fs10.renameSync)(aside, path);
+            });
+          } catch {
+            keepAside = true;
+          }
+        }
+      }
+      return false;
+    }
+    return true;
+  } finally {
+    if (!keepAside) (0, import_node_fs10.rmSync)(aside, { force: true });
+  }
+}
+
+// src/core/keychain-service.ts
+var import_node_crypto7 = require("node:crypto");
+var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
+function keychainService(secureStorageDir) {
+  if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
+  const digest = (0, import_node_crypto7.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
+  return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
+}
+
+// src/core/credentials.ts
+function parseCredentials(text2) {
+  try {
+    const parsed = JSON.parse(text2);
+    const oauth = parsed?.claudeAiOauth;
+    if (typeof oauth?.accessToken !== "string" || oauth.accessToken.trim().length === 0) return null;
+    return {
+      accessToken: oauth.accessToken,
+      expiresAt: typeof oauth.expiresAt === "number" && Number.isFinite(oauth.expiresAt) ? oauth.expiresAt : null,
+      hasRefreshToken: typeof oauth.refreshToken === "string" && oauth.refreshToken.trim().length > 0
+    };
+  } catch {
+    return null;
+  }
+}
+
+// src/daemon/keychain.ts
+var KEYCHAIN_CACHE_MS = 6e4;
+var KEYCHAIN_READ_TIMEOUT_MS = 3e3;
+var MAX_OUTPUT_BYTES = 256 * 1024;
+var MAX_REASON_CHARS = 500;
+function keychainHoldsSecret(platform = process.platform) {
+  return platform === "darwin";
+}
+var KeychainReadError = class extends Error {
+  constructor(reason, code, timedOut = false, outputTooLarge = false) {
+    super(reason);
+    this.reason = reason;
+    this.code = code;
+    this.timedOut = timedOut;
+    this.outputTooLarge = outputTooLarge;
+  }
+  reason;
+  code;
+  timedOut;
+  outputTooLarge;
+};
+var NO_SUCH_ITEM_EXIT_CODE = 44;
+var KEYCHAIN_NOT_ALLOWED_EXIT_CODE = 36;
+async function readKeychainItem(securityProgram, service, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
+  const result = await runProgram(
+    securityProgram,
+    ["find-generic-password", "-w", "-s", service],
+    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
+  );
+  const failure2 = failureOf(result, timeoutMs);
+  if (failure2 !== null) throw new KeychainReadError(failure2, result.code, result.timedOut, result.outputTooLarge);
+  return result.stdout.trim().length === 0 ? null : result.stdout;
+}
+function failureOf(result, timeoutMs) {
+  if (result.timedOut) return `it did not answer within ${seconds(timeoutMs)} seconds`;
+  if (result.outputTooLarge) return `it printed more than ${String(MAX_OUTPUT_BYTES)} bytes, which is not a credentials record`;
+  if (result.error !== null) return result.error;
+  if (result.code === 0) return null;
+  const said = result.stderr.trim();
+  return said.length > 0 ? said.slice(0, MAX_REASON_CHARS) : "it printed nothing on stderr";
+}
+function seconds(ms) {
+  return String(ms / 1e3);
+}
+var KeychainCredentialsReader = class {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  cache = /* @__PURE__ */ new Map();
+  /** The read of each login going on now, with the `invalidations` count it started under. */
+  reading = /* @__PURE__ */ new Map();
+  /** How often each login was invalidated. */
+  invalidations = /* @__PURE__ */ new Map();
+  /** The logins whose failed read has been logged, until a read of one works. */
+  failureLogged = /* @__PURE__ */ new Set();
+  /**
+   * The items whose read was killed at its deadline. A `security` that does not answer is most
+   * likely showing a Keychain dialog that nobody is there to answer, and reading the item again
+   * would show another one, so none of these is read again by this reader. Neither `invalidate`
+   * nor `clear` empties it.
+   */
+  unanswered = /* @__PURE__ */ new Set();
+  read(id) {
+    return this.cache.get(id)?.value ?? null;
+  }
+  async prime(ids) {
+    await Promise.all([...new Set(ids)].map((id) => this.refresh(id)));
+  }
+  invalidate(id) {
+    this.invalidations.set(id, this.invalidatedCount(id) + 1);
+    const cached = this.cache.get(id);
+    if (cached !== void 0) this.cache.set(id, { ...cached, readAt: Number.NEGATIVE_INFINITY });
+  }
+  clear() {
+    this.cache.clear();
+    for (const id of this.reading.keys()) this.invalidations.set(id, this.invalidatedCount(id) + 1);
+  }
+  /**
+   * One read per login at a time; a second caller waits for the one already running. A read
+   * that started before the latest `invalidate` is waited for and then followed by a new one.
+   */
+  refresh(id) {
+    const cached = this.cache.get(id);
+    if (cached && this.now() - cached.readAt < KEYCHAIN_CACHE_MS) return Promise.resolve();
+    const invalidated = this.invalidatedCount(id);
+    const running = this.reading.get(id);
+    if (running !== void 0) {
+      return running.invalidated === invalidated ? running.promise : running.promise.then(() => this.refresh(id));
+    }
+    const promise = this.load(id, invalidated).finally(() => {
+      this.reading.delete(id);
+    });
+    this.reading.set(id, { promise, invalidated });
+    return promise;
+  }
+  invalidatedCount(id) {
+    return this.invalidations.get(id) ?? 0;
+  }
+  async load(id, invalidated) {
+    const timeoutMs = this.options.readTimeoutMs ?? KEYCHAIN_READ_TIMEOUT_MS;
+    const run2 = this.options.run ?? ((service2) => readKeychainItem(this.options.securityProgram, service2, timeoutMs));
+    const service = keychainService(this.options.accounts.secureStorageDir(id));
+    const keep = (value2) => {
+      if (this.invalidatedCount(id) !== invalidated) return false;
+      this.cache.set(id, { readAt: this.now(), value: value2 });
+      return true;
+    };
+    if (this.unanswered.has(service)) {
+      keep(null);
+      return;
+    }
+    let value = null;
+    let failure2 = null;
+    try {
+      const secret = await run2(service);
+      value = secret === null ? null : parseCredentials(secret);
+      if (secret === null) failure2 = { text: "the item is empty", kind: "empty", code: null };
+      else if (value === null) failure2 = { text: "the item holds no OAuth token", kind: "not_credentials", code: null };
+    } catch (error) {
+      if (error instanceof KeychainReadError && error.timedOut) {
+        this.unanswered.add(service);
+        keep(null);
+        this.options.log?.(`reading login ${id} from the Keychain item "${service}" did not answer within ${seconds(timeoutMs)} seconds, so the proxy holds no token for it, and this daemon will not read that item again until it restarts. A read that waits is usually a Keychain dialog: either a program other than the Claude CLI created the item or changed its access list, so /usr/bin/security may read it only after somebody allows it, or the login Keychain is locked. Reading again would put up another dialog.`);
+        this.options.onFailure?.({ id, kind: "timeout", code: null });
+        return;
+      }
+      if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
+        failure2 = error instanceof KeychainReadError ? {
+          text: `${error.code === null ? "no exit code" : `exit ${String(error.code)}`}: ${error.reason}`,
+          kind: failureKindOf(error),
+          code: error.code
+        } : { text: `it threw: ${error instanceof Error ? error.message : String(error)}`, kind: "failed", code: null };
+      }
+    }
+    if (!keep(value)) return;
+    if (failure2 === null) {
+      this.failureLogged.delete(id);
+    } else if (!this.failureLogged.has(id)) {
+      this.failureLogged.add(id);
+      this.options.log?.(`reading login ${id} from the Keychain item "${service}" failed, so the proxy holds no token for it (${failure2.text})`);
+      this.options.onFailure?.({ id, kind: failure2.kind, code: failure2.code });
+    }
+  }
+  now() {
+    return this.options.now?.() ?? Date.now();
+  }
+};
+function failureKindOf(error) {
+  if (error.outputTooLarge) return "too_large";
+  if (error.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE) return "not_allowed";
+  if (error.code === null) return "not_run";
+  return "failed";
+}
+async function probeLoginKeychain(securityProgram, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
+  const result = await runProgram(
+    securityProgram,
+    ["show-keychain-info", "login.keychain"],
+    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
+  );
+  const failure2 = failureOf(result, timeoutMs);
+  return failure2 === null ? { readable: true } : { readable: false, reason: failure2 };
+}
+
+// src/daemon/lifecycle.ts
+var import_node_http = require("node:http");
+var import_node_net = require("node:net");
+var DAEMON_HOST = "127.0.0.1";
+var CONTROL_TIMEOUT_MS = 5e3;
+var MAX_ANSWER_BYTES = 4 * 1024 * 1024;
+function controlRequest(options) {
+  const timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
+  const payload = options.body === void 0 ? void 0 : JSON.stringify(options.body);
+  return new Promise((resolve8) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve8(result);
+    };
+    const headers = { [KEY_HEADER]: options.key, connection: "close" };
+    if (payload !== void 0) {
+      headers["content-type"] = "application/json";
+      headers["content-length"] = String(Buffer.byteLength(payload));
+    }
+    const outgoing = (0, import_node_http.request)(
+      {
+        host: DAEMON_HOST,
+        port: options.port,
+        method: options.method,
+        path: options.path,
+        headers,
+        agent: false,
+        signal: options.signal
+      },
+      (incoming) => {
+        const chunks = [];
+        let size = 0;
+        incoming.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > MAX_ANSWER_BYTES) {
+            finish({ kind: "failed", reason: "the answer was too large" });
+            outgoing.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        incoming.on("error", (error) => finish({ kind: "failed", reason: error.message }));
+        incoming.on("end", () => {
+          const text2 = Buffer.concat(chunks).toString("utf8");
+          let body;
+          try {
+            body = text2 === "" ? null : JSON.parse(text2);
+          } catch {
+            body = null;
+          }
+          finish({ kind: "answered", status: incoming.statusCode ?? 0, body });
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      finish({ kind: "failed", reason: `no answer within ${String(timeoutMs)} ms` });
+      outgoing.destroy();
+    }, timeoutMs);
+    outgoing.on("error", (error) => {
+      finish(error.code === "ECONNREFUSED" ? { kind: "refused" } : { kind: "failed", reason: error.code ?? error.message });
+    });
+    outgoing.end(payload);
+  });
+}
+function isStatusAnswer(value) {
+  return isPlainObject(value) && value.ok === true && typeof value.version === "string" && typeof value.pid === "number" && typeof value.port === "number" && typeof value.startedAt === "number" && Array.isArray(value.logins);
+}
+async function portHolder(port, key, timeoutMs = CONTROL_TIMEOUT_MS) {
+  const result = await controlRequest({ port, key, method: "GET", path: CONTROL_PATHS.status, timeoutMs });
+  if (result.kind === "refused") return { kind: "free" };
+  if (result.kind === "failed") return { kind: "other", reason: result.reason };
+  if (result.status === 200 && isStatusAnswer(result.body)) return { kind: "kurmis", status: result.body };
+  return { kind: "other", reason: `it answered ${String(result.status)} to a kurmis status request`, status: result.status };
+}
+function portAcceptsConnections(port, timeoutMs = 1e3) {
+  return new Promise((resolve8) => {
+    const socket = (0, import_node_net.createConnection)({ host: DAEMON_HOST, port });
+    const done = (accepted) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve8(accepted);
+    };
+    const timer = setTimeout(() => done(true), timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("error", (error) => done(error.code !== "ECONNREFUSED"));
+  });
+}
+function compareVersions(a, b) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (left === null || right === null) return null;
+  const length = Math.max(left.parts.length, right.parts.length);
+  for (let index = 0; index < length; index++) {
+    const x = left.parts[index] ?? 0;
+    const y = right.parts[index] ?? 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  if (left.pre === right.pre) return 0;
+  if (left.pre === null) return 1;
+  if (right.pre === null) return -1;
+  return left.pre < right.pre ? -1 : 1;
+}
+function parseVersion(text2) {
+  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(text2.trim());
+  if (match === null) return null;
+  return { parts: (match[1] ?? "").split(".").map(Number), pre: match[2] ?? null };
+}
+function shouldReplace(daemonVersion, cliVersion) {
+  return compareVersions(daemonVersion, cliVersion) === -1;
+}
+function delay2(ms) {
+  return new Promise((resolve8) => {
+    setTimeout(resolve8, ms);
+  });
+}
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+// src/platform/launchd.ts
+var import_node_crypto8 = require("node:crypto");
+var import_node_fs11 = require("node:fs");
+var import_node_os5 = require("node:os");
+var import_node_path13 = require("node:path");
+var LAUNCHCTL_PROGRAM = realSystemProgram("launchctl");
+var LAUNCHCTL_VARIABLE = SYSTEM_PROGRAM_VARIABLES.launchctl;
+var LAUNCHCTL_TIMEOUT_MS = 3e4;
+var AUTOSTART_LABEL = "kurmis.daemon";
+var ONE_SHOT_LABEL_PREFIX = "kurmis.start";
+var DAEMON_START_ARGS = ["daemon", "start", "--no-launchd"];
+function launchctlProgram(env = process.env, processEnv = process.env) {
+  return systemProgram("launchctl", env, processEnv);
+}
+function launchctlFor(env = process.env) {
+  const program = launchctlProgram(env);
+  return (args) => runProgram(program, args, { timeoutMs: LAUNCHCTL_TIMEOUT_MS, env });
+}
+function currentUid() {
+  return typeof process.getuid === "function" ? process.getuid() : 0;
+}
+function guiDomain(uid = currentUid()) {
+  return `gui/${String(uid)}`;
+}
+function launchAgentsDir() {
+  return (0, import_node_path13.join)((0, import_node_os5.homedir)(), "Library", "LaunchAgents");
+}
+function autostartPlistPath() {
+  return (0, import_node_path13.join)(launchAgentsDir(), `${AUTOSTART_LABEL}.plist`);
+}
+function escapeXml(text2) {
+  return text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function plistXml(root) {
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>"
+  ];
+  const string = (value) => `<string>${escapeXml(value)}</string>`;
+  const scalar2 = (value) => typeof value === "boolean" ? value ? "<true/>" : "<false/>" : string(value);
+  for (const [key, value] of Object.entries(root)) {
+    lines.push(`  <key>${escapeXml(key)}</key>`);
+    if (typeof value === "string" || typeof value === "boolean") lines.push(`  ${scalar2(value)}`);
+    else if (Array.isArray(value)) lines.push("  <array>", ...value.map((item) => `    ${string(item)}`), "  </array>");
+    else {
+      lines.push("  <dict>");
+      for (const [name, item] of Object.entries(value)) {
+        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar2(item)}`);
+      }
+      lines.push("  </dict>");
+    }
+  }
+  lines.push("</dict>", "</plist>", "");
+  return lines.join("\n");
+}
+var DAEMON_JOB_VARIABLES = [
+  "KURMIS_HOME",
+  "KURMIS_CLAUDE_BIN",
+  "KURMIS_CODEX_BIN",
+  "KURMIS_UPSTREAM_URL",
+  "KURMIS_SECURITY_PROGRAM",
+  "KURMIS_ENTRY",
+  ...Object.values(SYSTEM_PROGRAM_VARIABLES).filter((name) => name !== "KURMIS_SECURITY_PROGRAM"),
+  GUARD_VARIABLE,
+  REFUSAL_LOG_VARIABLE
+];
+var FALLBACK_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+function daemonJobEnvironment(env = process.env, processEnv = process.env) {
+  const out = {
+    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os5.homedir)(),
+    PATH: env.PATH !== void 0 && env.PATH !== "" ? env.PATH : FALLBACK_PATH
+  };
+  const hooks = inheritedTestHooks(env, processEnv);
+  for (const name of DAEMON_JOB_VARIABLES) {
+    const value = env[name] || hooks[name];
+    if (value === void 0 || value === "") continue;
+    out[name] = name === "KURMIS_HOME" ? (0, import_node_path13.resolve)(value) : value;
+  }
+  return out;
+}
+function daemonJobPlist(job) {
+  return plistXml({
+    Label: job.label,
+    ProgramArguments: job.programArguments,
+    EnvironmentVariables: job.environment,
+    WorkingDirectory: job.environment.HOME ?? (0, import_node_os5.homedir)(),
+    RunAtLoad: true,
+    AbandonProcessGroup: true,
+    StandardOutPath: "/dev/null",
+    StandardErrorPath: "/dev/null"
+  });
+}
+function parseLaunchctlPrint(result) {
+  if (result.code !== 0) return { loaded: false, path: null, pid: null, lastExitCode: null };
+  const top = /* @__PURE__ */ new Map();
+  for (const match of result.stdout.matchAll(/^\t([^\t=][^=\n]*?) = (.*)$/gm)) {
+    const key = match[1] ?? "";
+    if (!top.has(key)) top.set(key, (match[2] ?? "").trim());
+  }
+  const pid = Number(top.get("pid"));
+  const exit = /^-?\d+/.exec(top.get("last exit code") ?? "");
+  return {
+    loaded: true,
+    path: top.get("path") ?? null,
+    pid: top.get("state") === "running" && Number.isSafeInteger(pid) && pid > 0 ? pid : null,
+    lastExitCode: exit === null ? null : Number(exit[0])
+  };
+}
+async function jobState(label, launchctl = launchctlFor(), uid) {
+  return parseLaunchctlPrint(await launchctl(["print", `${guiDomain(uid)}/${label}`]));
+}
+function launchctlSaid(result) {
+  if (result.error !== null) return result.error;
+  const said = `${result.stderr}
+${result.stdout}`.replace(/\s+/g, " ").trim();
+  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
+}
+function isNotLoaded(result) {
+  if (result.code === 3 || result.code === 113) return true;
+  return /no such process|could not find (specified )?service/i.test(`${result.stderr}
+${result.stdout}`);
+}
+function isMissingGuiDomain(result) {
+  if (result.code === 125 || result.code === 112) return true;
+  return /domain does not support specified action|could not find domain/i.test(`${result.stderr}
+${result.stdout}`);
+}
+function bootstrapFailure(result, domain) {
+  const said = launchctlSaid(result);
+  if (result.error === null && isMissingGuiDomain(result)) {
+    return `launchd could not load the job into ${domain} (${said}). This usually means nobody is logged in at this Mac's screen: the GUI session, the only one that can read the login Keychain, exists only while you are logged in there or through Screen Sharing.`;
+  }
+  return `launchd could not load the job into ${domain} (${said}).`;
+}
+async function bootstrapJob(plistPath, launchctl = launchctlFor(), uid) {
+  const domain = guiDomain(uid);
+  const result = await launchctl(["bootstrap", domain, plistPath]);
+  if (result.code !== 0 || result.error !== null) throw new Error(bootstrapFailure(result, domain));
+}
+async function bootoutJob(label, launchctl = launchctlFor(), uid) {
+  const target = `${guiDomain(uid)}/${label}`;
+  const result = await launchctl(["bootout", target]);
+  if (result.code === 0 && result.error === null) return true;
+  if (result.error === null && isNotLoaded(result)) return false;
+  throw new Error(`launchd could not unload ${target} (${launchctlSaid(result)}).`);
+}
+var STALE_ONE_SHOT_MS = 10 * 6e4;
+async function removeStaleOneShotJobs(folder, launchctl, now, uid) {
+  let names;
+  try {
+    names = (0, import_node_fs11.readdirSync)(folder);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(`${ONE_SHOT_LABEL_PREFIX}.`) || !name.endsWith(".plist")) continue;
+    const file = (0, import_node_path13.join)(folder, name);
+    try {
+      if (now - (0, import_node_fs11.statSync)(file).mtimeMs < STALE_ONE_SHOT_MS) continue;
+    } catch {
+      continue;
+    }
+    await launchctl(["bootout", `${guiDomain(uid)}/${name.slice(0, -".plist".length)}`]);
+    (0, import_node_fs11.rmSync)(file, { force: true });
+  }
+}
+function oneShotLabel() {
+  return `${ONE_SHOT_LABEL_PREFIX}.${(0, import_node_crypto8.randomBytes)(4).toString("hex")}`;
+}
+async function startThroughLaunchd(start2) {
+  const launchctl = start2.launchctl ?? launchctlFor(start2.env);
+  const folder = start2.folder ?? launchdJobFolder();
+  await removeStaleOneShotJobs(folder, launchctl, (start2.now ?? Date.now)(), start2.uid);
+  const label = oneShotLabel();
+  const plistPath = (0, import_node_path13.join)(folder, `${label}.plist`);
+  await writeFileAtomic(plistPath, daemonJobPlist({
+    label,
+    programArguments: start2.programArguments,
+    environment: daemonJobEnvironment(start2.env)
+  }), { mode: PRIVATE_FILE_MODE });
+  try {
+    await bootstrapJob(plistPath, launchctl, start2.uid);
+  } catch (error) {
+    (0, import_node_fs11.rmSync)(plistPath, { force: true });
+    throw error;
+  }
+  let removed = false;
+  return {
+    label,
+    plistPath,
+    state: () => jobState(label, launchctl, start2.uid),
+    async remove() {
+      if (removed) return;
+      removed = true;
+      await launchctl(["bootout", `${guiDomain(start2.uid)}/${label}`]);
+      (0, import_node_fs11.rmSync)(plistPath, { force: true });
+    }
+  };
+}
+
+// src/platform/windows-autostart.ts
+var import_node_fs12 = require("node:fs");
+var import_node_path14 = require("node:path");
+var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+var RUN_VALUE_NAME = "kurmis";
+var REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg;
+var REG_TIMEOUT_MS = 3e4;
+var RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`;
+function regProgram(env = process.env, processEnv = process.env) {
+  return systemProgram("reg", env, processEnv);
+}
+function wscriptPath(env = process.env, processEnv = process.env) {
+  return systemProgram("wscript", env, processEnv);
+}
+function regFor(env = process.env) {
+  const program = regProgram(env);
+  return (args) => runProgram(program, args, { timeoutMs: REG_TIMEOUT_MS, env });
+}
+function runValueData(wscript, scriptPath) {
+  return windowsCommandLine([wscript, "//B", "//Nologo", "//E:JScript", scriptPath]);
+}
+var SCRIPT_HOST_SETTINGS_KEYS = [
+  "HKCU\\Software\\Microsoft\\Windows Script Host\\Settings",
+  "HKLM\\Software\\Microsoft\\Windows Script Host\\Settings"
+];
+function scriptHostDisabled(query) {
+  if (query.code !== 0 || query.error !== null) return false;
+  const value = parseRegQuery(query.stdout, "Enabled");
+  return value !== null && /^(0x0+|0)$/i.test(value.data.trim());
+}
+function sameRunData(read, written) {
+  const pattern = (written.match(/[\u0080-\uffff]+|[^\u0080-\uffff]+/g) ?? []).map((part) => {
+    if (part.charCodeAt(0) < 128) return part.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+    return `[\\s\\S]{1,${String(part.length * 2)}}`;
+  }).join("");
+  return new RegExp(`^${pattern}$`).test(read);
+}
+function regAddArgs(data) {
+  return ["add", RUN_KEY, "/v", RUN_VALUE_NAME, "/t", "REG_SZ", "/d", data, "/f"];
+}
+function regQueryArgs() {
+  return ["query", RUN_KEY, "/v", RUN_VALUE_NAME];
+}
+function regDeleteArgs() {
+  return ["delete", RUN_KEY, "/v", RUN_VALUE_NAME, "/f"];
+}
+function parseRegQuery(stdout, name) {
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^ {4}(.+?) {4}(REG_[A-Z_]+)(?: {4}(.*))?$/.exec(line);
+    if (match !== null && (match[1] ?? "").toLowerCase() === name.toLowerCase()) {
+      return { type: match[2] ?? "", data: match[3] ?? "" };
+    }
+  }
+  return null;
+}
+function jscriptString(text2) {
+  if (/[\r\n\u2028\u2029]/.test(text2)) throw new Error("a value for the logon script has a line break in it");
+  return `"${text2.replace(/[\\"]/g, (char) => `\\${char}`)}"`;
+}
+function windowsAutostartEnvironment(env = process.env, processEnv = process.env) {
+  const out = {};
+  const hooks = inheritedTestHooks(env, processEnv);
+  for (const name of DAEMON_JOB_VARIABLES) {
+    const value = env[name] || hooks[name];
+    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path14.win32.resolve(value) : value;
+  }
+  return out;
+}
+function autostartCommandLine(script) {
+  const assignments = Object.entries(script.environment).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
+  return windowsCommandLine([...script.programArguments, ...assignments]);
+}
+var PERCENT_SIGN_VARIABLE = "KURMIS_PERCENT_SIGN";
+function autostartScript(script) {
+  const command = autostartCommandLine(script);
+  const lines = [
+    "// Written by kurmis setup: starts the kurmis daemon at logon without a console window.",
+    "// kurmis setup --undo removes it.",
+    'var shell = new ActiveXObject("WScript.Shell");',
+    `shell.CurrentDirectory = ${jscriptString(script.cwd)};`
+  ];
+  if (command.includes("%")) {
+    const escaped = command.replaceAll("%", `%${PERCENT_SIGN_VARIABLE}%`);
+    lines.push(
+      `// shell.Run replaces %NAME% with the variable NAME, so each percent sign is written as ${PERCENT_SIGN_VARIABLE}.`,
+      `shell.Environment("Process").Item(${jscriptString(PERCENT_SIGN_VARIABLE)}) = "%";`,
+      `var command = ${jscriptString(escaped)};`,
+      `if (shell.ExpandEnvironmentStrings(command) == ${jscriptString(command)}) shell.Run(command, 0, false);`
+    );
+  } else {
+    lines.push(`shell.Run(${jscriptString(command)}, 0, false);`);
+  }
+  return `${lines.join("\r\n")}\r
+`;
+}
+var UTF16_BOM = Buffer.from([255, 254]);
+function encodeScript(text2) {
+  return Buffer.concat([UTF16_BOM, Buffer.from(text2, "utf16le")]);
+}
+function readScript(path) {
+  let bytes;
+  try {
+    bytes = (0, import_node_fs12.readFileSync)(path);
+  } catch {
+    return null;
+  }
+  if (bytes.length >= 2 && bytes[0] === 255 && bytes[1] === 254) return bytes.subarray(2).toString("utf16le");
+  return bytes.toString("utf8");
+}
+function regSaid(result) {
+  if (result.error !== null) return result.error;
+  const said = `${result.stderr}
+${result.stdout}`.replace(/\s+/g, " ").trim();
+  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
+}
+var ok = (result) => result.code === 0 && result.error === null;
+function userProfile(env) {
+  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path14.dirname)(windowsAutostartScriptPath());
+}
+async function scriptHostProblem(wscript, reg) {
+  if (!(0, import_node_fs12.existsSync)(wscript)) {
+    return `${wscript} does not exist, so Windows Script Host, which starts the daemon at logon without a console window, is not installed or was removed.`;
+  }
+  for (const key of SCRIPT_HOST_SETTINGS_KEYS) {
+    if (scriptHostDisabled(await reg(["query", key, "/v", "Enabled"]))) {
+      return `Windows Script Host, which starts the daemon at logon without a console window, is turned off ("Enabled" is 0 under ${key}). Turn it on, or ask whoever manages this machine, and run kurmis setup again.`;
+    }
+  }
+  return null;
+}
+function removeOldVbsScript(scriptPath) {
+  const old = (0, import_node_path14.join)((0, import_node_path14.dirname)(scriptPath), "autostart.vbs");
+  if (old === scriptPath || !(0, import_node_fs12.existsSync)(old)) return false;
+  (0, import_node_fs12.rmSync)(old, { force: true });
+  return true;
+}
+async function registerWindowsAutostart(options) {
+  const reg = options.reg ?? regFor(options.env);
+  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
+  if (options.programArguments === void 0) throw new Error("registerWindowsAutostart needs programArguments");
+  let text2;
+  try {
+    text2 = autostartScript({
+      programArguments: options.programArguments,
+      environment: windowsAutostartEnvironment(options.env),
+      cwd: userProfile(options.env)
+    });
+  } catch (error) {
+    return { changed: false, where: null, warning: `The logon entry was not written: ${error.message}.` };
+  }
+  const wscript = wscriptPath(options.env);
+  const unusable = await scriptHostProblem(wscript, reg);
+  if (unusable !== null) {
+    return {
+      changed: false,
+      where: null,
+      warning: `The logon entry was not written: ${unusable} The next kurmis command starts the daemon anyway.`,
+      noEntryPossible: true
+    };
+  }
+  let changed = false;
+  if (readScript(scriptPath) !== text2) {
+    makePrivateDirSync((0, import_node_path14.dirname)(scriptPath));
+    (0, import_node_fs12.writeFileSync)(scriptPath, encodeScript(text2));
+    changed = true;
+  }
+  const data = runValueData(wscript, scriptPath);
+  const query = await reg(regQueryArgs());
+  const current = ok(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null;
+  if (current !== null && current.type === "REG_SZ" && sameRunData(current.data, data)) {
+    if (removeOldVbsScript(scriptPath)) changed = true;
+    return { changed, where: RUN_ENTRY_DESCRIPTION };
+  }
+  const added = await reg(regAddArgs(data));
+  if (!ok(added)) {
+    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` };
+  }
+  removeOldVbsScript(scriptPath);
+  return { changed: true, where: RUN_ENTRY_DESCRIPTION };
+}
+async function unregisterWindowsAutostart(options) {
+  const reg = options.reg ?? regFor(options.env);
+  const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
+  let changed = false;
+  let warning;
+  const query = await reg(regQueryArgs());
+  if (ok(query) && parseRegQuery(query.stdout, RUN_VALUE_NAME) !== null) {
+    const deleted = await reg(regDeleteArgs());
+    if (ok(deleted)) changed = true;
+    else warning = `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}).`;
+  }
+  if (readScript(scriptPath) !== null) {
+    (0, import_node_fs12.rmSync)(scriptPath, { force: true });
+    changed = true;
+  }
+  if (removeOldVbsScript(scriptPath)) changed = true;
+  return warning === void 0 ? { changed, where: RUN_ENTRY_DESCRIPTION } : { changed, where: RUN_ENTRY_DESCRIPTION, warning };
+}
+
+// src/cli/daemon-client.ts
+var DaemonError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "DaemonError";
+  }
+};
+var FIND_TIMEOUT_MS = 1e4;
+var DIRECT_START_TIMEOUT_MS = 15e3;
+var OUTSIDE_START_TIMEOUT_MS = 3e4;
+var LAUNCHD_ANSWER_TIMEOUT_MS = 5e3;
+var LAUNCHD_STATE_POLL_MS = 500;
+var PROBE_TIMEOUT_MS = 9e4;
+var STOP_TIMEOUT_MS = 3e4;
+var STOP_GRACE_MS = 1e4;
+var KILL_WAIT_MS = 5e3;
+var PORT_FREE_TIMEOUT_MS = 5e3;
+var POLL_MS = 100;
+function configuredPort() {
+  try {
+    return loadConfig().port;
+  } catch (error) {
+    if (error instanceof ConfigError) throw new DaemonError(error.message);
+    throw error;
+  }
+}
+function connectionOf(status2, key) {
+  return { port: status2.port, key, pid: status2.pid, version: status2.version };
+}
+async function findDaemon(options, timeoutMs) {
+  void options;
+  const until = timeoutMs === void 0 ? null : Date.now() + timeoutMs;
+  const requestTimeout = () => until === null ? FIND_TIMEOUT_MS : Math.min(FIND_TIMEOUT_MS, Math.max(1, until - Date.now()));
+  const key = readKey();
+  if (key === null) return null;
+  const read = readDaemonFile();
+  let triedPort = null;
+  if (read.status === "invalid") {
+    removeDaemonFileIfDamaged();
+  } else if (read.status === "ok") {
+    const { pid, port: port2 } = read.info;
+    if (!processExists(pid)) {
+      try {
+        removeDaemonFile(pid);
+      } catch {
+      }
+    } else {
+      triedPort = port2;
+      const holder2 = await portHolder(port2, key, requestTimeout());
+      if (holder2.kind === "kurmis") return connectionOf(holder2.status, key);
+    }
+  }
+  let port;
+  try {
+    port = loadConfig().port;
+  } catch {
+    return null;
+  }
+  if (port === triedPort) return null;
+  const holder = await portHolder(port, key, requestTimeout());
+  return holder.kind === "kurmis" ? connectionOf(holder.status, key) : null;
+}
+function removeDaemonFileIfDamaged() {
+  const again = readDaemonFile();
+  if (again.status !== "invalid") return;
+  try {
+    removeDaemonFile(-1);
+  } catch {
+  }
+}
+async function chooseStartMethod(input) {
+  if (input.platform === "win32") return inSshSession(input.env) ? "wmi" : "direct";
+  if (input.platform !== "darwin" || input.noLaunchd) return "direct";
+  if (inSshSession(input.env)) return "launchd";
+  return await input.keychainReadable() ? "direct" : "launchd";
+}
+var NOT_FOR_THE_DAEMON = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+];
+function daemonEnvironment(env, processEnv = process.env) {
+  const out = { ...env, ...inheritedTestHooks(env, processEnv) };
+  for (const name of NOT_FOR_THE_DAEMON) delete out[name];
+  if (out.KURMIS_HOME !== void 0 && out.KURMIS_HOME !== "") out.KURMIS_HOME = (0, import_node_path15.resolve)(out.KURMIS_HOME);
+  return out;
+}
+function wmiDaemonArguments(node, entry, env, processEnv = process.env) {
+  const assignments = Object.entries(windowsAutostartEnvironment(env, processEnv)).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
+  return [node, entry, "daemon", "run", ...assignments];
+}
+function portBusyMessage(port, reason) {
+  return `Port ${String(port)} on 127.0.0.1 is in use by another program (${reason}), so the kurmis daemon cannot listen there. Set "port" in ${configPath()} to a free port from 1024 to 65535, then run the command again.`;
+}
+async function startDaemon(options) {
+  const version = options.version ?? kurmisVersion;
+  const port = configuredPort();
+  const found = await findDaemon(options);
+  let replaced = null;
+  if (found !== null) {
+    if (found.port === port && !shouldReplace(found.version, version)) {
+      return { connection: found, started: false, replaced: null, method: null };
+    }
+    replaced = found.version;
+    if (found.port !== port) {
+      const order = compareVersions(found.version, version);
+      if (order === 1 || order === null && found.version !== version) {
+        throw new DaemonError(`The kurmis daemon ${found.version} runs on port ${String(found.port)}, but ${configPath()} names port ${String(port)}. Its version is ${order === 1 ? "newer than" : "not comparable with"} this kurmis (${version}), so this kurmis does not stop it to move it. Update kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`);
+      }
+      const stopped = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop });
+      if (stopped.kind === "failed" || stopped.kind === "answered" && stopped.status !== 200) {
+        throw new DaemonError(`The kurmis daemon ${found.version} on port ${String(found.port)} (pid ${String(found.pid)}) could not be stopped to move it to port ${String(port)}, which ${configPath()} names: ${stopped.kind === "failed" ? stopped.reason : `it answered HTTP ${String(stopped.status)}`}. Stop it with "kurmis daemon stop" after setting the old port back, or end that process, and run the command again.`);
+      }
+    }
+  }
+  const key = readOrCreateKey();
+  if (found === null) {
+    const refusing = await keyRefusingDaemon(key);
+    if (refusing !== null) throw new DaemonError(keyRefusedMessage(refusing, options.platform ?? process.platform));
+    const holder = await portHolder(port, key, FIND_TIMEOUT_MS);
+    if (holder.kind === "other") {
+      const silent = silentDaemon();
+      if (silent !== null && silent.port === port && holder.status === void 0) {
+        throw new DaemonError(notAnsweringMessage(silent, holder.reason, options.platform ?? process.platform));
+      }
+      throw new DaemonError(portBusyMessage(port, holder.reason));
+    }
+    if (holder.kind === "kurmis" && !shouldReplace(holder.status.version, version)) {
+      return { connection: connectionOf(holder.status, key), started: false, replaced: null, method: null };
+    }
+  }
+  const entry = options.entry ?? kurmisEntry({ env: options.env });
+  if (entry === null) {
+    throw new DaemonError('This kurmis runs from its source tree, so there is no bundle to start the daemon from. Run "pnpm bundle" and use dist/kurmis.cjs, or set KURMIS_ENTRY to a built bundle.');
+  }
+  const platform = options.platform ?? process.platform;
+  const method = await chooseStartMethod({
+    platform,
+    env: options.env,
+    noLaunchd: options.noLaunchd === true,
+    keychainReadable: async () => {
+      return (await probeLoginKeychain(systemProgram("security", options.env))).readable;
+    }
+  });
+  const env = daemonEnvironment(options.env);
+  const warn = options.onWarning ?? (() => void 0);
+  let child2 = null;
+  let used = method;
+  if (method === "launchd") {
+    const fallBack = (reason) => {
+      warn(`The daemon could not be started through launchd (${reason}), so it is started from this login, where it cannot read the login Keychain: logins whose token is in the Keychain will not be routed until it is started from a login at the screen.`);
+      used = "direct";
+    };
+    let job = null;
+    try {
+      job = await startThroughLaunchd({
+        programArguments: [nodeForJobs({ env: options.env, platform }), entry, "daemon", "start", "--no-launchd"],
+        env
+      });
+    } catch (error) {
+      fallBack(error instanceof Error ? error.message : String(error));
+    }
+    if (job !== null) {
+      try {
+        const outcome = await waitForLaunchdJob({
+          port,
+          version,
+          job,
+          answerTimeoutMs: options.launchdAnswerTimeoutMs ?? LAUNCHD_ANSWER_TIMEOUT_MS,
+          timeoutMs: options.startTimeoutMs ?? OUTSIDE_START_TIMEOUT_MS
+        });
+        if ("connection" in outcome) return { connection: outcome.connection, started: true, replaced, method: "launchd" };
+        fallBack(outcome.failure);
+      } finally {
+        await job.remove().catch(() => void 0);
+      }
+    }
+  } else if (method === "wmi") {
+    try {
+      await createThroughWmi(wmiDaemonArguments(process.execPath, entry, options.env), (0, import_node_os6.homedir)(), env);
+    } catch (error) {
+      warn(`The daemon could not be started outside this ssh session (${error instanceof Error ? error.message : String(error)}), so it is started inside it and ends when the session closes.`);
+      used = "direct";
+    }
+  }
+  if (used === "direct") {
+    try {
+      child2 = await spawnDetached({ command: process.execPath, args: [entry, "daemon", "run"], env, cwd: (0, import_node_os6.homedir)() });
+    } catch (error) {
+      throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const connection = await waitForDaemon({
+    port,
+    version,
+    child: child2,
+    timeoutMs: options.startTimeoutMs ?? (used === "direct" ? DIRECT_START_TIMEOUT_MS : OUTSIDE_START_TIMEOUT_MS)
+  });
+  return { connection, started: true, replaced, method: used };
+}
+var LAUNCHD_MIN_STEP_MS = 250;
+async function within(work, ms) {
+  let timer;
+  const late = new Promise((resolve8) => {
+    timer = setTimeout(() => resolve8(null), ms);
+  });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function waitForLaunchdJob(wait) {
+  const started = Date.now();
+  let deadline = started + wait.answerTimeoutMs;
+  let nextState = started;
+  const left = () => Math.max(LAUNCHD_MIN_STEP_MS, deadline - Date.now());
+  let pendingState = null;
+  let exitedOk = false;
+  for (; ; ) {
+    const found = await findDaemon({ env: {} }, left());
+    if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return { connection: found };
+    if (Date.now() >= nextState) {
+      if (pendingState === null) {
+        pendingState = wait.job.state();
+        pendingState.catch(() => void 0);
+      }
+      const state = await within(pendingState, left());
+      if (state !== null) pendingState = null;
+      nextState = Date.now() + LAUNCHD_STATE_POLL_MS;
+      const code = state?.lastExitCode ?? null;
+      if (code !== null && code !== 0) {
+        return {
+          failure: `its job exited with code ${String(code)}` + (code === 78 ? ", which launchd answers when it cannot start the program, for example one on an external volume" : "")
+        };
+      }
+      if (code === 0) {
+        exitedOk = true;
+        deadline = Math.max(deadline, started + wait.timeoutMs);
+      }
+    }
+    if (Date.now() >= deadline) {
+      const seconds3 = (deadline - started) / 1e3;
+      return {
+        failure: `no daemon answered within ${String(seconds3)} ${seconds3 === 1 ? "second" : "seconds"} of loading its job` + (exitedOk ? ", although the job exited with code 0" : "")
+      };
+    }
+    await delay2(POLL_MS);
+  }
+}
+async function waitForDaemon(wait) {
+  const deadline = Date.now() + wait.timeoutMs;
+  let exitCode;
+  void wait.child?.exited.then((code) => {
+    exitCode = code;
+  });
+  for (; ; ) {
+    const found = await findDaemon({ env: {} });
+    if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return found;
+    if (exitCode !== void 0 && exitCode !== 0) {
+      throw new DaemonError(`The kurmis daemon exited at start (${exitCode === null ? "ended by a signal" : `exit code ${String(exitCode)}`}). Run "kurmis daemon run" to see why, or look in ${logPath()}.`);
+    }
+    if (Date.now() >= deadline) {
+      throw new DaemonError(`The kurmis daemon did not answer on port ${String(wait.port)} within ${String(Math.round(wait.timeoutMs / 1e3))} seconds of starting. Run "kurmis daemon run" to see why, or look in ${logPath()}.`);
+    }
+    await delay2(POLL_MS);
+  }
+}
+async function ensureDaemon(options) {
+  return (await startDaemon(options)).connection;
+}
+function failureOf2(result, connection, what) {
+  const port = String(connection.port);
+  if (result.kind === "refused") return new DaemonError(`The kurmis daemon is not running (nothing answers on port ${port}).`);
+  if (result.kind === "failed") return new DaemonError(`The kurmis daemon on port ${port} did not answer ${what}: ${result.reason}.`);
+  if (result.status === 403) {
+    return new DaemonError(`The program on port ${port} did not accept the key in ${keyPath()}. If it is a kurmis daemon of another data folder, stop it, or set another "port" in config.json.`);
+  }
+  const said = isPlainObject(result.body) && typeof result.body.error === "string" ? result.body.error : `HTTP ${String(result.status)}`;
+  return new DaemonError(`The kurmis daemon refused ${what}: ${said}`);
+}
+async function readStatus3(connection) {
+  const result = await controlRequest({ port: connection.port, key: connection.key, method: "GET", path: CONTROL_PATHS.status });
+  if (result.kind === "answered" && result.status === 200 && isStatusAnswer(result.body)) return result.body;
+  throw failureOf2(result, connection, "a status request");
+}
+async function requestProbe(connection, logins, signal) {
+  const result = await controlRequest({
+    port: connection.port,
+    key: connection.key,
+    method: "POST",
+    path: CONTROL_PATHS.probe,
+    body: logins === void 0 ? {} : { logins },
+    timeoutMs: PROBE_TIMEOUT_MS,
+    ...signal === void 0 ? {} : { signal }
+  });
+  if (result.kind === "answered" && result.status === 200 && isStatusAnswer(result.body)) return result.body;
+  throw failureOf2(result, connection, "a usage probe");
+}
+async function requestReload(connection) {
+  const result = await controlRequest({ port: connection.port, key: connection.key, method: "POST", path: CONTROL_PATHS.reload });
+  if (result.kind === "answered" && result.status === 200 && isPlainObject(result.body) && result.body.ok === true) return;
+  throw failureOf2(result, connection, "a reload");
+}
+async function waitForExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (processExists(pid)) {
+    if (Date.now() >= deadline) return false;
+    await delay2(POLL_MS);
+  }
+  return true;
+}
+async function waitForPortFree(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (await portAcceptsConnections(port)) {
+    if (Date.now() >= deadline) return false;
+    await delay2(POLL_MS);
+  }
+  return true;
+}
+async function keyRefusingDaemon(key) {
+  const read = readDaemonFile();
+  if (read.status !== "ok" || !processExists(read.info.pid)) return null;
+  const holder = await portHolder(read.info.port, key, FIND_TIMEOUT_MS);
+  return holder.kind === "other" && holder.status === 403 ? read.info : null;
+}
+function notAnsweringMessage(info, reason, platform) {
+  const pid = String(info.pid);
+  const stopIt = platform === "win32" ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
+  return `The kurmis daemon (pid ${pid}, named in daemon.json) holds port ${String(info.port)} but did not answer a status request (${reason}). It may be busy, or finishing its open requests before it stops. Run the command again in a moment. If it keeps happening, look in ${logPath()}, and stop it with "${stopIt}".`;
+}
+function keyRefusedMessage(info, platform) {
+  const pid = String(info.pid);
+  const stopIt = platform === "win32" ? `taskkill /PID ${pid} /F` : `kill ${pid}`;
+  return `The program on port ${String(info.port)} refused the key in ${keyPath()}, and daemon.json names pid ${pid} on that port, which still runs. Most likely that is a kurmis daemon started before the key file was changed or deleted, so its key no longer matches the key file. If pid ${pid} is that daemon, stop it with "${stopIt}" and run the command again. If you ran "kurmis setup", run it again after that, so your Claude Code settings hold the key from the key file.`;
+}
+async function keyRefusedProblem(options) {
+  const refusing = await keyRefusingDaemon(readKey() ?? "");
+  return refusing === null ? null : keyRefusedMessage(refusing, options.platform ?? process.platform);
+}
+async function stopDaemon(options) {
+  const platform = options.platform ?? process.platform;
+  const found = await findDaemon(options);
+  if (found === null) {
+    const problem = await keyRefusedProblem(options);
+    if (problem !== null) throw new DaemonError(problem);
+    return false;
+  }
+  const waitMs = options.stopTimeoutMs ?? STOP_TIMEOUT_MS;
+  const body = { maxWaitMs: waitMs };
+  const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop, body });
+  if (result.kind === "answered" && result.status !== 200) throw failureOf2(result, found, "the stop request");
+  const graceMs = platform === "win32" ? options.stopGraceMs ?? STOP_GRACE_MS : 0;
+  if (await waitForExit(found.pid, waitMs + graceMs)) return true;
+  const kill = options.kill ?? ((pid, signal) => process.kill(pid, signal));
+  try {
+    kill(found.pid, "SIGTERM");
+  } catch (error) {
+    const code = error.code;
+    if (code === "ESRCH") return true;
+    const stopIt = platform === "win32" ? `taskkill /PID ${String(found.pid)} /F` : `kill ${String(found.pid)}`;
+    throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running, and this command may not end it (${code ?? String(error)}). It probably runs as another user or as administrator; end it from there with "${stopIt}".`);
+  }
+  if (await waitForExit(found.pid, KILL_WAIT_MS)) return true;
+  throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running.`);
+}
+async function restartDaemon(options) {
+  const version = options.version ?? kurmisVersion;
+  const found = await findDaemon(options);
+  if (found !== null) {
+    if (compareVersions(found.version, version) === 1) {
+      throw new DaemonError(`The running kurmis daemon is version ${found.version}, newer than this kurmis (${version}), so this kurmis does not replace it. Update kurmis, or run "kurmis daemon stop" first.`);
+    }
+    const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop });
+    if (result.kind === "answered" && result.status !== 200) throw failureOf2(result, found, "the stop request");
+    if (!await waitForPortFree(found.port, PORT_FREE_TIMEOUT_MS)) {
+      throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but still holds port ${String(found.port)}.`);
+    }
+  }
+  const started = await startDaemon(options);
+  return { ...started, replaced: found?.version ?? started.replaced };
+}
+function silentDaemon() {
+  const read = readDaemonFile();
+  if (read.status !== "ok" || !processExists(read.info.pid)) return null;
+  return { pid: read.info.pid, port: read.info.port, version: read.info.version };
+}
+
+// src/cli/wrapper.ts
+var import_node_child_process3 = require("node:child_process");
+var import_node_os7 = require("node:os");
+var WRAPPER_PIDS_VARIABLE = "KURMIS_WRAPPER_PIDS";
+var MAX_WRAPPER_DEPTH = 8;
+function wrapperPids(env) {
+  return (env[WRAPPER_PIDS_VARIABLE] ?? "").split(",").map((text2) => Number(text2)).filter((pid) => Number.isInteger(pid) && pid > 0);
+}
+function wrapperLoop(env, parentPid) {
+  const pids = wrapperPids(env);
+  if (!pids.includes(parentPid) && pids.length < MAX_WRAPPER_DEPTH) return null;
+  return `kurmis was started by the program it started, so that program runs kurmis again instead of being the real one (${pids.includes(parentPid) ? "its parent is a kurmis wrapper" : `${String(pids.length)} kurmis wrappers run inside each other`}). Take that program off PATH, or set KURMIS_CLAUDE_BIN or KURMIS_CODEX_BIN to the real program`;
+}
+function withWrapperPid(env, pid) {
+  return { ...env, [WRAPPER_PIDS_VARIABLE]: [...wrapperPids(env), pid].join(",") };
+}
+function ignoredSignals(platform, stdinIsTerminal = true) {
+  if (platform === "win32") return ["SIGINT", "SIGBREAK", "SIGHUP"];
+  return stdinIsTerminal ? ["SIGINT", "SIGQUIT"] : [];
+}
+function forwardedSignals(platform, stdinIsTerminal = true) {
+  if (platform === "win32") return [];
+  return stdinIsTerminal ? ["SIGTERM", "SIGHUP"] : ["SIGTERM", "SIGHUP", "SIGINT", "SIGQUIT"];
+}
+async function runInteractive(spec, options = {}) {
+  const platform = options.platform ?? process.platform;
+  const proc = options.process ?? process;
+  const spawn4 = options.spawn ?? import_node_child_process3.spawn;
+  const stdinIsTerminal = options.stdinIsTerminal ?? process.stdin.isTTY === true;
+  return await new Promise((resolve8) => {
+    const installed = [];
+    let child2;
+    let started = false;
+    let settled = false;
+    const finish = (end) => {
+      if (settled) return;
+      settled = true;
+      for (const [signal, listener] of installed) proc.removeListener(signal, listener);
+      resolve8(end);
+    };
+    const forward = (signal) => {
+      if (child2?.pid === void 0) return;
+      try {
+        child2.kill(signal);
+      } catch {
+      }
+    };
+    for (const signal of ignoredSignals(platform, stdinIsTerminal)) {
+      const listener = () => {
+      };
+      installed.push([signal, listener]);
+      proc.on(signal, listener);
+    }
+    for (const signal of forwardedSignals(platform, stdinIsTerminal)) {
+      const listener = () => forward(signal);
+      installed.push([signal, listener]);
+      proc.on(signal, listener);
+    }
+    const guarded = refusedByGuard(spec.command, spec.env, spec.args);
+    if (guarded !== null) {
+      finish(notStarted(spec.command, Object.assign(new Error(guarded), { code: "EACCES" })));
+      return;
+    }
+    const loop = wrapperLoop(spec.env, options.parentPid ?? process.ppid);
+    if (loop !== null) {
+      finish(notStarted(spec.command, Object.assign(new Error(loop), { code: "ELOOP" })));
+      return;
+    }
+    try {
+      child2 = spawn4(spec.command, spec.args, {
+        stdio: "inherit",
+        env: withWrapperPid(withGuard(spec.env) ?? spec.env, proc.pid),
+        cwd: spec.cwd,
+        shell: false,
+        // Interactive programs need their console window on Windows, so it is not hidden.
+        windowsHide: false
+      });
+    } catch (error) {
+      finish(notStarted(spec.command, error));
+      return;
+    }
+    child2.once("spawn", () => {
+      started = true;
+    });
+    child2.on("error", (error) => {
+      if (!started) finish(notStarted(spec.command, error));
+    });
+    child2.once("exit", (code, signal) => {
+      if (signal !== null) finish({ kind: "signal", signal });
+      else finish({ kind: "exit", code: code ?? 1 });
+    });
+  });
+}
+function notStarted(command, error) {
+  const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "UNKNOWN";
+  const why = {
+    ENOENT: "there is no such program",
+    EACCES: "it is not executable, or a folder on the way to it cannot be read",
+    EPERM: "the system does not allow starting it",
+    ENOEXEC: "it is not a program this system can run",
+    EISDIR: "it is a folder"
+  };
+  const reason = why[code] ?? (error instanceof Error ? error.message : String(error));
+  return { kind: "not-started", code, message: `could not start ${command}: ${reason} (${code})` };
+}
+function notStartedExitCode(code) {
+  if (code === "ENOENT") return 127;
+  if (code === "EACCES" || code === "EPERM" || code === "ENOEXEC" || code === "EISDIR") return 126;
+  return 1;
+}
+var CORE_SIGNALS = /* @__PURE__ */ new Set([
+  "SIGQUIT",
+  "SIGABRT",
+  "SIGILL",
+  "SIGTRAP",
+  "SIGFPE",
+  "SIGBUS",
+  "SIGSEGV",
+  "SIGSYS",
+  "SIGXCPU",
+  "SIGXFSZ",
+  "SIGIOT"
+]);
+function signalExitCode(signal) {
+  const number = import_node_os7.constants.signals[signal];
+  return 128 + (number ?? 0);
+}
+function finishLikeChild(end, options) {
+  switch (end.kind) {
+    case "exit":
+      return end.code;
+    case "not-started":
+      options.stderr.write(`kurmis: ${options.name}: ${end.message}
+`);
+      return notStartedExitCode(end.code);
+    case "signal": {
+      const platform = options.platform ?? process.platform;
+      if (platform !== "win32" && !CORE_SIGNALS.has(end.signal)) {
+        const proc = options.process ?? process;
+        proc.removeAllListeners(end.signal);
+        try {
+          proc.kill(proc.pid, end.signal);
+        } catch {
+        }
+      }
+      return signalExitCode(end.signal);
+    }
+  }
+}
+
+// src/cli/command-deps.ts
+var realDaemonClient = { findDaemon, ensureDaemon, readStatus: readStatus3, requestProbe, requestReload };
+var realChildRunner = { runInteractive, finishLikeChild };
+var realFindProgram = findProgram;
+var realPrepareCodexHome = prepareCodexHome;
+async function reloadIfRunning(client, env) {
+  try {
+    const connection = await client.findDaemon({ env });
+    if (connection === null) return { kind: "not-running" };
+    await client.requestReload(connection);
+    return { kind: "reloaded" };
+  } catch (error) {
+    return { kind: "failed", message: error instanceof DaemonError || error instanceof Error ? error.message : String(error) };
+  }
+}
+function reloadText(result) {
+  switch (result.kind) {
+    case "reloaded":
+      return "The running daemon has read the change.";
+    case "not-running":
+      return null;
+    case "failed":
+      return `The daemon could not be told about the change (${result.message}); it reads config.json again once it notices the change.`;
+  }
+}
+async function settleWithin(start2, ms) {
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((resolve8) => {
+    timer = setTimeout(() => resolve8({ kind: "timeout" }), ms);
+  });
+  let promise;
+  try {
+    promise = start2(controller.signal);
+  } catch (error) {
+    clearTimeout(timer);
+    return { kind: "failed", error };
+  }
+  const settled = promise.then(
+    (value) => ({ kind: "done", value }),
+    (error) => ({ kind: "failed", error })
+  );
+  try {
+    const result = await Promise.race([settled, timeout]);
+    if (result.kind === "timeout") controller.abort();
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// src/cli/settings-arg.ts
+var import_node_crypto9 = require("node:crypto");
+var import_node_fs13 = require("node:fs");
+var import_node_os8 = require("node:os");
+var import_node_path16 = require("node:path");
+
+// src/cli/json-error.ts
+var NotJson = class extends Error {
+  constructor(at2) {
+    super("not JSON");
+    this.at = at2;
+  }
+  at;
+};
+var WHITESPACE = /* @__PURE__ */ new Set([" ", "	", "\n", "\r"]);
+function jsonErrorPlace(text2) {
+  let pos = 0;
+  const fail4 = () => {
+    throw new NotJson(pos);
+  };
+  const skip = () => {
+    while (pos < text2.length && WHITESPACE.has(text2[pos])) pos++;
+  };
+  const expect = (char) => {
+    if (text2[pos] !== char) fail4();
+    pos++;
+  };
+  const string = () => {
+    expect('"');
+    for (; ; ) {
+      if (pos >= text2.length) fail4();
+      const char = text2[pos];
+      if (char === '"') {
+        pos++;
+        return;
+      }
+      if (char.charCodeAt(0) < 32) fail4();
+      if (char === "\\") {
+        pos++;
+        const escaped = text2[pos];
+        if (escaped === "u") {
+          for (let i = 1; i <= 4; i++) {
+            if (!/[0-9a-fA-F]/.test(text2[pos + i] ?? "")) {
+              pos += i;
+              fail4();
+            }
+          }
+          pos += 5;
+          continue;
+        }
+        if (escaped === void 0 || !'"\\/bfnrt'.includes(escaped)) fail4();
+      }
+      pos++;
+    }
+  };
+  const digits = () => {
+    if (!/[0-9]/.test(text2[pos] ?? "")) fail4();
+    while (/[0-9]/.test(text2[pos] ?? "")) pos++;
+  };
+  const number = () => {
+    if (text2[pos] === "-") pos++;
+    if (text2[pos] === "0") pos++;
+    else digits();
+    if (text2[pos] === ".") {
+      pos++;
+      digits();
+    }
+    if (text2[pos] === "e" || text2[pos] === "E") {
+      pos++;
+      if (text2[pos] === "+" || text2[pos] === "-") pos++;
+      digits();
+    }
+  };
+  const word = (expected) => {
+    for (const char of expected) expect(char);
+  };
+  const value = () => {
+    skip();
+    const char = text2[pos];
+    if (char === "{") {
+      pos++;
+      skip();
+      if (text2[pos] === "}") {
+        pos++;
+        return;
+      }
+      for (; ; ) {
+        skip();
+        string();
+        skip();
+        expect(":");
+        value();
+        skip();
+        if (text2[pos] === "}") {
+          pos++;
+          return;
+        }
+        expect(",");
+      }
+    }
+    if (char === "[") {
+      pos++;
+      skip();
+      if (text2[pos] === "]") {
+        pos++;
+        return;
+      }
+      for (; ; ) {
+        value();
+        skip();
+        if (text2[pos] === "]") {
+          pos++;
+          return;
+        }
+        expect(",");
+      }
+    }
+    if (char === '"') return string();
+    if (char === "t") return word("true");
+    if (char === "f") return word("false");
+    if (char === "n") return word("null");
+    if (char === "-" || /[0-9]/.test(char ?? "")) return number();
+    fail4();
+  };
+  try {
+    value();
+    skip();
+    if (pos < text2.length) fail4();
+    return null;
+  } catch (error) {
+    if (!(error instanceof NotJson)) throw error;
+    return placeOf(text2, Math.min(error.at, text2.length));
+  }
+}
+function placeOf(text2, at2) {
+  let line = 1;
+  let lineStart2 = 0;
+  for (let i = 0; i < at2; i++) {
+    if (text2[i] === "\n") {
+      line++;
+      lineStart2 = i + 1;
+    }
+  }
+  return { line, column: at2 - lineStart2 + 1 };
+}
+function notJsonText(text2) {
+  const place = jsonErrorPlace(text2);
+  return place === null ? "not valid JSON" : `not valid JSON (line ${String(place.line)}, column ${String(place.column)})`;
+}
+
+// src/cli/settings-arg.ts
+var FLAG = "--settings";
+function readUserSettingsArg(args, options) {
+  const rest = [];
+  let value = null;
+  let index = 0;
+  for (; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--") break;
+    if (arg === FLAG) {
+      const next = args[index + 1];
+      if (next === void 0) return { error: `${FLAG} needs a value: a settings file or a JSON object` };
+      value = next;
+      index++;
+      continue;
+    }
+    if (arg.startsWith(`${FLAG}=`)) {
+      value = arg.slice(FLAG.length + 1);
+      continue;
+    }
+    rest.push(arg);
+  }
+  rest.push(...args.slice(index));
+  if (value === null) return { settings: null, source: null, rest };
+  if (value.trim() === "") return { error: `${FLAG} needs a value: a settings file or a JSON object` };
+  const text2 = value.trim();
+  if (text2.startsWith("{") && text2.endsWith("}")) {
+    const settings2 = parseSettings(text2, `the JSON given to ${FLAG}`);
+    return "error" in settings2 ? settings2 : { settings: settings2.value, source: "inline", rest };
+  }
+  const path = (0, import_node_path16.isAbsolute)(value) ? value : (0, import_node_path16.resolve)(options.cwd, value);
+  let fileText;
+  try {
+    fileText = (options.readFile ?? ((file) => (0, import_node_fs13.readFileSync)(file, "utf8")))(path);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    const why = code === "ENOENT" ? "it does not exist" : error instanceof Error ? error.message : String(error);
+    return { error: `${FLAG}: cannot read the settings file ${path}: ${why}` };
+  }
+  const settings = parseSettings(fileText, `the settings file ${path}`);
+  return "error" in settings ? settings : { settings: settings.value, source: path, rest };
+}
+function parseSettings(text2, what) {
+  let value;
+  try {
+    value = JSON.parse(withoutBom2(text2));
+  } catch {
+    return { error: `${FLAG}: ${what} is ${notJsonText(withoutBom2(text2))}` };
+  }
+  if (!isPlainObject2(value)) return { error: `${FLAG}: ${what} is not a JSON object` };
+  if (value.env !== void 0 && !isPlainObject2(value.env)) {
+    return { error: `${FLAG}: the "env" in ${what} is not an object` };
+  }
+  return { value };
+}
+function withoutBom2(text2) {
+  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
+}
+function isPlainObject2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function routingVariables(routed) {
+  const out = {};
+  for (const name of ROUTING_VARIABLES) {
+    const value = routed.set[name];
+    if (value !== void 0) out[name] = value;
+  }
+  return out;
+}
+function settingsEnv(routed) {
+  const out = routingVariables(routed);
+  for (const name of OAUTH_TOKEN_VARIABLES) out[name] = "";
+  return out;
+}
+function mergeRoutingSettings(user, routing) {
+  const userEnv = user !== null && isPlainObject2(user.env) ? user.env : {};
+  return { ...user ?? {}, env: { ...userEnv, ...routing } };
+}
+function claudeArgsWithSettings(user, routing, store = storeSettings) {
+  const stored = store(JSON.stringify(mergeRoutingSettings(user.settings, routing)), user.settings !== null);
+  return { args: [FLAG, stored.path, ...user.rest], remove: () => stored.remove() };
+}
+var SETTINGS_FILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+var SETTINGS_FILE_NAME = /^[0-9a-f]{32}\.json$/;
+var RUN_SETTINGS_FILE_NAME = /^run-(\d+)-[0-9a-f]{16}\.json$/;
+function storeSettings(text2, holdsUserSettings, folder = wrapperSettingsFolder(), now = Date.now(), pid = process.pid) {
+  if (!holdsUserSettings) return { path: storeSettingsFile(text2, folder, now), remove: () => void 0 };
+  pruneSettingsFiles(folder, now, null);
+  const path = (0, import_node_path16.join)(folder, `run-${String(pid)}-${(0, import_node_crypto9.randomBytes)(8).toString("hex")}.json`);
+  writeFileAtomicSync(path, text2, { mode: PRIVATE_FILE_MODE });
+  return {
+    path,
+    remove: () => {
+      try {
+        (0, import_node_fs13.rmSync)(path, { force: true });
+      } catch {
+      }
+    }
+  };
+}
+function storeSettingsFile(text2, folder = wrapperSettingsFolder(), now = Date.now()) {
+  const path = (0, import_node_path16.join)(folder, `${(0, import_node_crypto9.createHash)("sha256").update(text2).digest("hex").slice(0, 32)}.json`);
+  let current = false;
+  try {
+    current = (0, import_node_fs13.readFileSync)(path, "utf8") === text2;
+  } catch {
+  }
+  if (current) {
+    try {
+      (0, import_node_fs13.utimesSync)(path, now / 1e3, now / 1e3);
+    } catch {
+    }
+  } else {
+    writeFileAtomicSync(path, text2, { mode: PRIVATE_FILE_MODE });
+  }
+  pruneSettingsFiles(folder, now, path);
+  return path;
+}
+function pruneSettingsFiles(folder, now, keep) {
+  let names;
+  try {
+    names = (0, import_node_fs13.readdirSync)(folder);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const file = (0, import_node_path16.join)(folder, name);
+    const run2 = RUN_SETTINGS_FILE_NAME.exec(name);
+    if (!SETTINGS_FILE_NAME.test(name) && run2 === null || file === keep) continue;
+    try {
+      const old = now - (0, import_node_fs13.statSync)(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS;
+      if (old || run2 !== null && !isProcessAlive(Number(run2[1]))) (0, import_node_fs13.rmSync)(file, { force: true });
+    } catch {
+    }
+  }
+}
+function claudeUserSettingsPath(env, home = (0, import_node_os8.homedir)()) {
+  const configDir = env.CLAUDE_CONFIG_DIR;
+  return configDir !== void 0 && configDir !== "" ? (0, import_node_path16.join)(configDir, "settings.json") : (0, import_node_path16.join)(home, ".claude", "settings.json");
+}
+function readUserSettingsEnv(path, readFile3 = (file) => (0, import_node_fs13.readFileSync)(file, "utf8")) {
+  let text2;
+  try {
+    text2 = readFile3(path);
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
+    if (code === "ENOENT" || code === "ENOTDIR") return { env: null, warning: null };
+    return { env: null, warning: `could not read ${path} (${error instanceof Error ? error.message : String(error)})` };
+  }
+  let value;
+  try {
+    value = JSON.parse(withoutBom2(text2));
+  } catch {
+    return { env: null, warning: `${path} is ${notJsonText(withoutBom2(text2))}, so custom headers set there are not kept` };
+  }
+  if (!isPlainObject2(value) || !isPlainObject2(value.env)) return { env: null, warning: null };
+  return { env: value.env, warning: null };
+}
+var CUSTOM_HEADERS = "ANTHROPIC_CUSTOM_HEADERS";
+function inheritedVariable(layers, variable) {
+  for (const env of [layers.flagEnv, layers.userSettingsEnv]) {
+    if (env === null || !(variable in env)) continue;
+    const value = env[variable];
+    if (typeof value === "string") return value;
+  }
+  for (const [name, value] of Object.entries(layers.processEnv)) {
+    const same2 = layers.windows === true ? name.toUpperCase() === variable.toUpperCase() : name === variable;
+    if (same2 && value !== void 0) return value;
+  }
+  return null;
+}
+function inheritedCustomHeaders(layers) {
+  return inheritedVariable(layers, CUSTOM_HEADERS);
+}
+function userOwnedRoutingVariables(layers) {
+  return USER_OWNED_ROUTING_VARIABLES.filter((name) => {
+    for (const env of [layers.flagEnv, layers.userSettingsEnv]) {
+      if (env !== null && env[name] !== void 0 && env[name] !== null && env[name] !== "") return true;
+    }
+    const value = inheritedVariable({ flagEnv: null, userSettingsEnv: null, processEnv: layers.processEnv, windows: layers.windows }, name);
+    return value !== null && value !== "";
+  });
+}
+
+// src/cli/wrapper-args.ts
+function parseWrapperArgs(provider, args) {
+  const result = { help: false, login: null, passThrough: [] };
+  let index = 0;
+  while (index < args.length) {
+    const arg = args[index];
+    if (arg === "--") {
+      index++;
+      break;
+    }
+    if (isHelpFlag(arg)) {
+      result.help = true;
+      index++;
+      continue;
+    }
+    let value;
+    if (arg === "--login") {
+      value = args[index + 1];
+      if (value === void 0) return { error: "--login needs a login id, for example --login work" };
+      index += 2;
+    } else if (arg.startsWith("--login=")) {
+      value = arg.slice("--login=".length);
+      index++;
+    } else {
+      break;
+    }
+    if (result.login !== null) return { error: "--login was given twice" };
+    const login = resolveLogin(provider, value);
+    if (typeof login === "object") return login;
+    result.login = login;
+  }
+  result.passThrough = args.slice(index);
+  return result;
+}
+function resolveLogin(provider, value) {
+  const parsed = parseLoginId(value);
+  if (parsed !== null) {
+    if (parsed.provider !== provider) return { error: `${value} is a ${parsed.provider} login, not a ${provider} one` };
+    return parsed.id;
+  }
+  if (value.includes(":")) return { error: `"${value}" is not a login id` };
+  try {
+    return loginId(provider, value);
+  } catch {
+    return { error: `"${value}" is not a login name` };
+  }
+}
+
+// src/cli/commands/claude.ts
+var USAGE = `Usage: kurmis claude [--login <id>] [--] [claude arguments...]
+
+Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
+which signs each one with a login that has room, and the command exits with claude's exit code.
+The daemon is started first when it is not running.
+
+Options (only before the first argument kurmis does not know):
+  --login <id>   Keep the session on one login, whatever its limits say. <id> is claude:<name>
+                 or just <name>. Without it the session is on Auto.
+  -h, --help     Show this help.
+  --             Pass everything after it to claude, even arguments kurmis knows.
+
+Everything from the first argument kurmis does not know is passed to claude unchanged, except
+claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
+give one (your file is not changed).
+"kurmis claude -- --help" shows claude's own help.`;
+function createClaudeCommand(overrides = {}) {
+  const deps = {
+    daemon: realDaemonClient,
+    child: realChildRunner,
+    findProgram: realFindProgram,
+    loadConfig: () => loadConfig(),
+    platform: process.platform,
+    cwd: () => process.cwd(),
+    homeDir: () => (0, import_node_os9.homedir)(),
+    folderExists: (path) => (0, import_node_fs14.existsSync)(path) && (0, import_node_fs14.statSync)(path).isDirectory(),
+    storeSettings: (text2, holdsUserSettings) => storeSettings(text2, holdsUserSettings),
+    ...overrides
+  };
+  return {
+    name: "claude",
+    summary: "Start Claude Code routed through the kurmis daemon",
+    usage: USAGE,
+    passesArguments: true,
+    run: (args, context) => runClaude(args, context, deps)
+  };
+}
+var claudeCommand = createClaudeCommand();
+async function runClaude(args, context, deps) {
+  const parsed = parseWrapperArgs("claude", args);
+  if ("error" in parsed) return usageError("claude", parsed.error, context);
+  if (parsed.help) {
+    writeLine(context.stdout, USAGE);
+    return EXIT_OK;
+  }
+  const fail4 = (message, code = EXIT_FAILURE) => {
+    writeLine(context.stderr, `kurmis claude: ${message}`);
+    return code;
+  };
+  const userSettings = readUserSettingsArg(parsed.passThrough, { cwd: deps.cwd(), readFile: deps.readFile });
+  if ("error" in userSettings) return fail4(userSettings.error);
+  let program;
+  try {
+    program = deps.findProgram("claude", { env: context.env, platform: deps.platform });
+  } catch (error) {
+    if (error instanceof ProgramNotFoundError) return fail4(error.message, notStartedExitCode("ENOENT"));
+    return fail4(messageOf(error));
+  }
+  if (parsed.login !== null && parsed.login !== CLAUDE_DEFAULT_ACCOUNT_ID) {
+    let config;
+    try {
+      config = deps.loadConfig();
+    } catch (error) {
+      if (!(error instanceof ConfigError)) throw error;
+      return fail4(error.message);
+    }
+    if (findLogin(config, parsed.login) === void 0) {
+      return fail4(`there is no login ${parsed.login}. "kurmis list" shows the logins, and "kurmis login claude" adds one.`);
+    }
+  }
+  let connection;
+  try {
+    connection = await deps.daemon.ensureDaemon({ env: context.env });
+  } catch (error) {
+    return fail4(daemonUnreachable(error));
+  }
+  let startedOn;
+  if (parsed.login !== null) {
+    startedOn = parsed.login;
+  } else {
+    let status2;
+    try {
+      status2 = await deps.daemon.readStatus(connection);
+    } catch (error) {
+      return fail4(daemonUnreachable(error));
+    }
+    startedOn = autoStartLogin(startableLogins(status2));
+    if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
+      writeLine(
+        context.stderr,
+        `kurmis claude: ${CLAUDE_DEFAULT_ACCOUNT_ID} is not signed in, so claude starts on ${startedOn}'s credentials; requests are still routed on Auto.`
+      );
+    }
+  }
+  let secureStorageDir = null;
+  if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
+    secureStorageDir = loginFolder(startedOn);
+    if (!deps.folderExists(secureStorageDir)) {
+      return fail4(`the folder of ${startedOn} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${startedOn}".`);
+    }
+  }
+  if (startedOn === CLAUDE_DEFAULT_ACCOUNT_ID && configDirHasOwnCredentials(context.env, deps.platform)) {
+    writeLine(context.stderr, `kurmis claude: ${configDirNote(context.env["CLAUDE_CONFIG_DIR"] ?? "", deps)}`);
+  }
+  const layers = settingsLayers(userSettings, context.env, deps);
+  if (layers.warning !== null) writeLine(context.stderr, `kurmis claude: ${layers.warning}`);
+  const routed = withoutRoutedVariables(routedClaudeEnv({
+    port: connection.port,
+    key: connection.key,
+    login: parsed.login,
+    startedOn,
+    secureStorageDir,
+    inheritedCustomHeaders: inheritedCustomHeaders(layers.layers)
+  }), userOwnedRoutingVariables(layers.layers));
+  for (const note of oauthTokenNotes(context.env, layers.layers, userSettings, claudeUserSettingsPath(context.env, deps.homeDir()))) {
+    writeLine(context.stderr, `kurmis claude: ${note}`);
+  }
+  const env = applyRoutedEnv(context.env, routed, deps.platform === "win32");
+  let claudeArgs;
+  try {
+    claudeArgs = claudeArgsWithSettings(userSettings, settingsEnv(routed), deps.storeSettings);
+  } catch (error) {
+    return fail4(`could not write the settings file for claude: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  let end;
+  try {
+    end = await deps.child.runInteractive(
+      { command: program.command, args: [...program.args, ...claudeArgs.args], env },
+      { platform: deps.platform }
+    );
+  } finally {
+    claudeArgs.remove();
+  }
+  return deps.child.finishLikeChild(end, { stderr: context.stderr, name: "claude", platform: deps.platform });
+}
+function startableLogins(status2) {
+  return status2.logins.filter((login) => login.provider === "claude").map((login) => ({
+    id: login.id,
+    loggedIn: login.signedIn ?? login.id === CLAUDE_DEFAULT_ACCOUNT_ID,
+    autoRoute: login.routing
+  }));
+}
+function settingsLayers(userSettings, env, deps) {
+  const flagEnv = userSettings.settings?.env;
+  const fromFile = readUserSettingsEnv(claudeUserSettingsPath(env, deps.homeDir()), deps.readFile);
+  return {
+    layers: {
+      flagEnv: typeof flagEnv === "object" && flagEnv !== null && !Array.isArray(flagEnv) ? flagEnv : null,
+      userSettingsEnv: fromFile.env,
+      processEnv: env,
+      windows: deps.platform === "win32"
+    },
+    warning: fromFile.warning
+  };
+}
+function configDirNote(value, deps) {
+  if (namesDefaultClaudeFolder(value, deps.platform, deps.homeDir())) {
+    const keeps = deps.platform === "win32" ? "may keep its credentials in a Credential Manager entry" : "keeps its credentials in a Keychain item";
+    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of ${CLAUDE_DEFAULT_ACCOUNT_ID}, but a claude started with it set ${keeps} of its own, which may hold another account. Kurmis starts claude with ${CLAUDE_DEFAULT_ACCOUNT_ID}'s credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.`;
+  }
+  return `CLAUDE_CONFIG_DIR is set, but ${CLAUDE_DEFAULT_ACCOUNT_ID} is the login in ~/.claude, so claude signs in with that login's credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from CLAUDE_CONFIG_DIR.`;
+}
+function oauthTokenNotes(env, layers, userSettings, userSettingsPath) {
+  const windows = layers.windows === true;
+  const listed = (names) => ({
+    names: names.join(" and "),
+    verb: names.length === 1 ? "is" : "are",
+    pronoun: names.length === 1 ? "it" : "them"
+  });
+  const notes = [];
+  const inherited = inheritedOAuthTokenVariables(env, windows);
+  if (inherited.length > 0) {
+    const said = listed(inherited);
+    notes.push(`${said.names} ${said.verb} set, so claude would sign its requests with that token instead of a kurmis login. Kurmis starts claude without ${said.pronoun}; unset ${said.pronoun} to stop this note.`);
+  }
+  const flagWhere = userSettings.source === "inline" || userSettings.source === null ? "your --settings" : userSettings.source;
+  for (const [where, layer] of [[userSettingsPath, layers.userSettingsEnv], [flagWhere, layers.flagEnv]]) {
+    if (layer === null) continue;
+    const names = Object.entries(layer).filter(([name, value]) => typeof value === "string" && value !== "" && OAUTH_TOKEN_VARIABLES.some((other) => windows ? other.toUpperCase() === name.toUpperCase() : other === name)).map(([name]) => name);
+    if (names.length === 0) continue;
+    const said = listed(names);
+    notes.push(`${said.names} ${said.verb} set in the "env" of ${where}, so claude would sign its requests with that token instead of a kurmis login. Kurmis sets ${said.pronoun} to an empty value for this claude, which Claude Code reads as unset; remove ${said.pronoun} there to stop this note.`);
+  }
+  return notes;
+}
+function daemonUnreachable(error) {
+  return `the kurmis daemon could not be reached (${messageOf(error)}). Start it with "kurmis daemon start"; its log is ${logPath()}. Claude is not started unrouted.`;
+}
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 // src/cli/commands/codex.ts
@@ -7605,7 +8977,7 @@ async function chooseLogin(context, deps) {
     status2 = await deps.daemon.readStatus(connection);
     const stale = codexLoginsToProbe(status2, deps.now());
     if (stale.length > 0) {
-      const probed = await settleWithin(deps.daemon.requestProbe(connection, stale), deps.probeWaitMs);
+      const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, stale, signal), deps.probeWaitMs);
       if (probed.kind === "done") {
         status2 = probed.value;
       } else {
@@ -7636,8 +9008,8 @@ function messageOf2(error) {
 var import_node_http3 = require("node:http");
 
 // src/data/log.ts
-var import_node_fs13 = require("node:fs");
-var import_node_path15 = require("node:path");
+var import_node_fs15 = require("node:fs");
+var import_node_path17 = require("node:path");
 var LOG_EVENTS = [
   "daemon_started",
   "daemon_stopping",
@@ -7763,16 +9135,16 @@ function openDaemonLog(options = {}) {
   let size = null;
   const currentSize = () => {
     try {
-      return (0, import_node_fs13.statSync)(path).size;
+      return (0, import_node_fs15.statSync)(path).size;
     } catch {
       return 0;
     }
   };
   const rotate = () => {
     try {
-      retryWhileLockedSync(() => (0, import_node_fs13.renameSync)(path, previous));
+      retryWhileLockedSync(() => (0, import_node_fs15.renameSync)(path, previous));
     } catch {
-      (0, import_node_fs13.rmSync)(path, { force: true });
+      (0, import_node_fs15.rmSync)(path, { force: true });
     }
     size = 0;
   };
@@ -7782,14 +9154,14 @@ function openDaemonLog(options = {}) {
         const line = formatLogLine(event, fields, now());
         const bytes = Buffer.byteLength(line);
         if (size === null) {
-          makePrivateDirSync((0, import_node_path15.dirname)(path));
+          makePrivateDirSync((0, import_node_path17.dirname)(path));
           size = currentSize();
         }
         if (size + bytes > maxBytes) {
           size = currentSize();
           if (size + bytes > maxBytes && size > 0) rotate();
         }
-        (0, import_node_fs13.appendFileSync)(path, line, { mode: PRIVATE_FILE_MODE });
+        (0, import_node_fs15.appendFileSync)(path, line, { mode: PRIVATE_FILE_MODE });
         size += bytes;
       } catch {
       }
@@ -7798,15 +9170,15 @@ function openDaemonLog(options = {}) {
 }
 
 // src/data/identity.ts
-var import_node_fs14 = require("node:fs");
-var import_node_os8 = require("node:os");
-var import_node_path16 = require("node:path");
+var import_node_fs16 = require("node:fs");
+var import_node_os10 = require("node:os");
+var import_node_path18 = require("node:path");
 var CLAUDE_PROFILE_FILE = ".claude.json";
-function claudeIdentityFiles(id, home = (0, import_node_os8.homedir)()) {
+function claudeIdentityFiles(id, home = (0, import_node_os10.homedir)()) {
   if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return [(0, import_node_path16.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE)];
+    return [(0, import_node_path18.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path18.join)(home, CLAUDE_PROFILE_FILE)];
   }
-  return [(0, import_node_path16.join)(loginFolder(id), CLAUDE_PROFILE_FILE)];
+  return [(0, import_node_path18.join)(loginFolder(id), CLAUDE_PROFILE_FILE)];
 }
 function parseClaudeIdentity(text2) {
   try {
@@ -7830,7 +9202,7 @@ function textOf(value) {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 var ClaudeIdentityReader = class {
-  constructor(home = import_node_os8.homedir) {
+  constructor(home = import_node_os10.homedir) {
     this.home = home;
   }
   home;
@@ -7845,15 +9217,15 @@ var ClaudeIdentityReader = class {
   }
   readFile(file) {
     try {
-      const stat = (0, import_node_fs14.statSync)(file);
+      const stat2 = (0, import_node_fs16.statSync)(file);
       const cached = this.cache.get(file);
-      if (cached?.mtime === stat.mtimeMs && cached.size === stat.size) return cached.value;
+      if (cached?.mtime === stat2.mtimeMs && cached.size === stat2.size) return cached.value;
       let value = null;
       try {
-        value = parseClaudeIdentity((0, import_node_fs14.readFileSync)(file, "utf8"));
+        value = parseClaudeIdentity((0, import_node_fs16.readFileSync)(file, "utf8"));
       } catch {
       }
-      this.cache.set(file, { mtime: stat.mtimeMs, size: stat.size, value });
+      this.cache.set(file, { mtime: stat2.mtimeMs, size: stat2.size, value });
       return value;
     } catch {
       this.cache.delete(file);
@@ -7861,29 +9233,19 @@ var ClaudeIdentityReader = class {
     }
   }
 };
-function readClaudeIdentity(id, home = (0, import_node_os8.homedir)()) {
+function readClaudeIdentity(id, home = (0, import_node_os10.homedir)()) {
   return new ClaudeIdentityReader(() => home).read(id);
 }
 
 // src/platform/frame-process.ts
 var import_node_child_process4 = require("node:child_process");
-var import_node_path17 = require("node:path");
 var import_node_timers2 = require("node:timers");
 var DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 var DEFAULT_MAX_OUTPUT_BYTES2 = 8 * 1024 * 1024;
 var PIPE_CLOSE_WAIT_MS = 1e3;
 function treeKillCommand(pid, platform, env) {
   if (platform !== "win32") return null;
-  const root = envValue(env, "SystemRoot", true) ?? "C:\\Windows";
-  return { command: import_node_path17.win32.join(root, "System32", "taskkill.exe"), args: ["/PID", String(pid), "/T", "/F"] };
-}
-function envValue(env, name, windows) {
-  if (!windows) return env[name];
-  const upper = name.toUpperCase();
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
-  }
-  return void 0;
+  return { command: systemProgram("taskkill", env), args: ["/PID", String(pid), "/T", "/F"] };
 }
 function createLineSplitter(maxLineBytes, onLine) {
   let pending = [];
@@ -7894,6 +9256,7 @@ function createLineSplitter(maxLineBytes, onLine) {
       const newline2 = chunk.indexOf(10, start2);
       if (newline2 === -1) break;
       const piece = chunk.subarray(start2, newline2);
+      if (pendingBytes + piece.length > maxLineBytes) return false;
       const line = pendingBytes === 0 ? piece : Buffer.concat([...pending, piece]);
       pending = [];
       pendingBytes = 0;
@@ -7912,12 +9275,13 @@ function startFrameProcess(program, args, options) {
   const platform = options.platform ?? process.platform;
   const invocation = invocationFor(program, args);
   if ("refused" in invocation) return endedBeforeStart("refused", null);
+  if (refusedByGuard(invocation.command, options.env, invocation.args) !== null) return endedBeforeStart("refused", null);
   if (options.signal?.aborted === true) return endedBeforeStart("aborted", null);
   let child2;
   try {
     child2 = (0, import_node_child_process4.spawn)(invocation.command, invocation.args, {
       stdio: ["pipe", "pipe", "ignore"],
-      env: options.env,
+      env: withGuard(options.env),
       cwd: options.cwd,
       shell: false,
       windowsHide: true,
@@ -7944,8 +9308,8 @@ function startFrameProcess(program, args, options) {
   let pipeTimer;
   let graceTimer;
   let resolveExited;
-  const exited = new Promise((resolve7) => {
-    resolveExited = resolve7;
+  const exited = new Promise((resolve8) => {
+    resolveExited = resolve8;
   });
   const finish = (exit) => {
     if (settled) return;
@@ -8057,8 +9421,13 @@ function killTree(child2, platform, env) {
   const fallback = () => {
     if (child2.exitCode === null && child2.signalCode === null) child2.kill("SIGKILL");
   };
+  const invocation = invocationFor(command.command, command.args);
+  if ("refused" in invocation || refusedByGuard(invocation.command, env, invocation.args) !== null) {
+    fallback();
+    return;
+  }
   try {
-    const taskkill = (0, import_node_child_process4.spawn)(command.command, command.args, { stdio: "ignore", shell: false, windowsHide: true, env });
+    const taskkill = (0, import_node_child_process4.spawn)(invocation.command, invocation.args, { stdio: "ignore", shell: false, windowsHide: true, env: withGuard(env) });
     taskkill.on("error", fallback);
     taskkill.on("exit", fallback);
   } catch {
@@ -8072,6 +9441,11 @@ function errorCode3(error) {
 
 // src/daemon/probe-result.ts
 var PROBE_CLOSE_GRACE_MS = 5e3;
+function programMissingText(tool) {
+  const product = tool === "claude" ? "Claude Code" : "Codex";
+  const variable = tool === "claude" ? "KURMIS_CLAUDE_BIN" : "KURMIS_CODEX_BIN";
+  return `The ${tool} program was not found on the PATH the kurmis daemon was started with. Install ${product}, or put ${tool} on PATH, and run "kurmis daemon restart" from a shell that finds it; or set ${variable} to the program.`;
+}
 function probeFailure(signedIn, reason, error) {
   return { ok: false, signedIn, reason, error };
 }
@@ -8115,16 +9489,16 @@ var PendingReplies = class {
   waiting = /* @__PURE__ */ new Map();
   /** A promise for the reply to request `id`. Ask for it before the request is sent. */
   wait(id) {
-    return new Promise((resolve7) => {
-      this.waiting.set(id, resolve7);
+    return new Promise((resolve8) => {
+      this.waiting.set(id, resolve8);
     });
   }
   /** Hands a reply to whoever waits for it. A reply nobody waits for is dropped. */
   settle(id, value) {
-    const resolve7 = this.waiting.get(id);
-    if (resolve7 === void 0) return;
+    const resolve8 = this.waiting.get(id);
+    if (resolve8 === void 0) return;
     this.waiting.delete(id);
-    resolve7(value);
+    resolve8(value);
   }
 };
 
@@ -8155,7 +9529,7 @@ async function probeClaudeUsage(id, options) {
     program = findProgram("claude", { env: options.env });
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, "missing", "The claude program was not found. Install Claude Code, or put claude on PATH.");
+      return probeFailure(null, "missing", programMissingText("claude"));
     }
     return probeFailure(null, "other", "The claude program could not be looked up.");
   }
@@ -8235,16 +9609,16 @@ function parseCodexAccountRead(result) {
   if (account === null || account === void 0) return { signIn: null, requiresOpenaiAuth };
   if (!isObject2(account) || typeof account["type"] !== "string") return null;
   const type = account["type"];
-  let signIn;
-  if (type === "chatgpt") signIn = { type, planType: text(account["planType"]), email: text(account["email"]) };
-  else if (type === "apiKey") signIn = { type };
-  else signIn = { type: "other", name: type };
-  return { signIn, requiresOpenaiAuth };
+  let signIn2;
+  if (type === "chatgpt") signIn2 = { type, planType: text(account["planType"]), email: text(account["email"]) };
+  else if (type === "apiKey") signIn2 = { type };
+  else signIn2 = { type: "other", name: type };
+  return { signIn: signIn2, requiresOpenaiAuth };
 }
 function codexLoginStatus(read) {
-  const signIn = read.signIn;
-  if (signIn?.type === "chatgpt") return { loggedIn: true, subscriptionType: signIn.planType, email: signIn.email };
-  if (signIn?.type === "apiKey") return { loggedIn: false, subscriptionType: "api key", email: null };
+  const signIn2 = read.signIn;
+  if (signIn2?.type === "chatgpt") return { loggedIn: true, subscriptionType: signIn2.planType, email: signIn2.email };
+  if (signIn2?.type === "apiKey") return { loggedIn: false, subscriptionType: "api key", email: null };
   return { loggedIn: false, subscriptionType: null, email: null };
 }
 
@@ -8260,7 +9634,7 @@ async function probeCodexUsage(id, options) {
     program = findProgram("codex", { env: options.env });
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, "missing", "The codex program was not found. Install Codex, or put codex on PATH.");
+      return probeFailure(null, "missing", programMissingText("codex"));
     }
     return probeFailure(null, "other", "The codex program could not be looked up.");
   }
@@ -8469,7 +9843,7 @@ var TOO_LARGE = /* @__PURE__ */ Symbol("too large");
 function readBody(req) {
   const declared = Number(req.headers["content-length"]);
   if (Number.isFinite(declared) && declared > MAX_CONTROL_BODY_BYTES) return Promise.resolve(TOO_LARGE);
-  return new Promise((resolve7, reject) => {
+  return new Promise((resolve8, reject) => {
     const chunks = [];
     let size = 0;
     const stopListening = () => {
@@ -8482,14 +9856,14 @@ function readBody(req) {
       size += bytes.length;
       if (size > MAX_CONTROL_BODY_BYTES) {
         stopListening();
-        resolve7(TOO_LARGE);
+        resolve8(TOO_LARGE);
         return;
       }
       chunks.push(bytes);
     };
     const onEnd = () => {
       stopListening();
-      resolve7(Buffer.concat(chunks).toString("utf8"));
+      resolve8(Buffer.concat(chunks).toString("utf8"));
     };
     const onError = (error) => {
       stopListening();
@@ -8712,15 +10086,25 @@ var LoginTable = class {
    * Sessions held to one login after a 400 on the login they had just moved to
    * (`replayDecision`'s `pin-back`). The proxy lets go of a hold when the held login cannot
    * serve (`releaseSession`). In memory only: `state.json` has no field for it, and a daemon
-   * restart lets such a session be placed again.
+   * restart lets such a session be placed again. Kept within the same bounds as the session
+   * placements (`pruneHolds`).
    */
   held = /* @__PURE__ */ new Map();
   /**
    * Logins whose token Anthropic refused with a 401 on a request of a CLI that was started on
-   * another login, after the one renewal the proxy tries (`markRefused`). Routing treats them
-   * as signed out until a probe of the login succeeds. In memory only.
+   * another login, after the one renewal the proxy tries (`markRefused`), with when that was.
+   * Routing treats them as signed out until a probe of the login that started later succeeds.
+   * In memory only.
    */
-  refused = /* @__PURE__ */ new Set();
+  refused = /* @__PURE__ */ new Map();
+  /**
+   * The rate-limit headers of the last answer of each login (`noteObservation`). A probe that
+   * started before they arrived measured an older state, so they are applied again on top of
+   * its snapshot (`setProbeUsage`). In memory only; they hold no token or body.
+   */
+  observations = /* @__PURE__ */ new Map();
+  /** When each login's current cooldown was set; absent for one read from `state.json`. In memory only. */
+  cooldownSetAt = /* @__PURE__ */ new Map();
   listeners = /* @__PURE__ */ new Set();
   writer;
   /** The files, fixed when the table is made, so a later change of `KURMIS_HOME` cannot move them. */
@@ -8763,7 +10147,9 @@ var LoginTable = class {
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id);
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id);
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id);
-    for (const id of [...this.refused]) if (!ids.has(id)) this.refused.delete(id);
+    for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id);
+    for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id);
+    for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id);
     this.options.log.write("config_loaded", { count: this.config.logins.length });
     this.changed();
     return { ok: true, changed: true };
@@ -8790,8 +10176,11 @@ var LoginTable = class {
    * The routing rows of the Claude logins, for one request.
    *
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
-   * request carries an `authorization` header of its own. The proxy forwards that header for
-   * the started-on login when it holds no token for it (decision 5), so such a login counts as
+   * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
+   * credentials are no kurmis login's (`STARTED_ON_NONE`): no login is signed with its header,
+   * and `claude:default`, whose token belongs to another account than the CLI's, is left out of
+   * the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
+   * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
    *
    * A login whose token Anthropic refused (`markRefused`) counts as signed out, except the
@@ -8801,12 +10190,13 @@ var LoginTable = class {
   routeRows(startedOn, callerSigns, pinned = null) {
     const now = this.options.now();
     return this.claudeLogins().map((login) => {
-      const token = this.options.tokens.read(login.id);
+      const notTheCli = startedOn === null && login.id === CLAUDE_DEFAULT_ACCOUNT_ID;
+      const token = notTheCli ? null : this.options.tokens.read(login.id);
       const passThrough = token === null && callerSigns && login.id === startedOn;
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned;
       return {
         id: login.id,
-        loggedIn: !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
+        loggedIn: !notTheCli && !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
         credentialsReadable: token !== null || passThrough,
         tokenExpiresAt: token?.expiresAt ?? null,
         usage: this.usage(login.id),
@@ -8827,6 +10217,27 @@ var LoginTable = class {
     this.save();
     this.changed();
   }
+  /**
+   * Folds the rate-limit headers of one of the login's answers into its usage, and keeps them
+   * for `setProbeUsage`. Headers that say nothing about usage change nothing.
+   */
+  noteObservation(id, observation) {
+    if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return;
+    if (!isLoginId(id)) return;
+    this.observations.set(id, observation);
+    this.setUsage(id, usageFromUnifiedHeaders(id, this.usage(id), observation));
+  }
+  /**
+   * Stores a successful probe's snapshot. A probe that started at `startedAt` measured the login
+   * at that time or a little later, so when an answer's rate-limit headers arrived after it
+   * started, they count as newer and are
+   * applied again on top of the probe's snapshot: the probe fills in what the headers do not
+   * carry, and does not undo what they said.
+   */
+  setProbeUsage(id, usage, startedAt) {
+    const observation = this.observations.get(id);
+    this.setUsage(id, observation !== void 0 && observation.observedAt > startedAt ? usageFromUnifiedHeaders(id, usage, observation) : usage);
+  }
   /** Until when routing skips the login: ms since epoch, `Infinity` for an unknown end, null for none. */
   cooldown(id, now = this.options.now()) {
     const until = this.state.cooldowns.get(id);
@@ -8834,10 +10245,19 @@ var LoginTable = class {
   }
   setCooldown(id, until) {
     if (!isLoginId(id)) return;
-    if (until === null) this.state.cooldowns.delete(id);
-    else this.state.cooldowns.set(id, until);
+    if (until === null) {
+      this.state.cooldowns.delete(id);
+      this.cooldownSetAt.delete(id);
+    } else {
+      this.state.cooldowns.set(id, until);
+      this.cooldownSetAt.set(id, this.options.now());
+    }
     this.save();
     this.changed();
+  }
+  /** When the login's cooldown was set by this daemon, or null (none, or one read from `state.json`). */
+  cooldownSince(id) {
+    return this.cooldownSetAt.get(id) ?? null;
   }
   /** Whether the last probe found the login signed in; null before its first probe. */
   probedSignedIn(id) {
@@ -8850,17 +10270,23 @@ var LoginTable = class {
   }
   /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
   markRefused(id) {
-    if (this.refused.has(id)) return;
-    this.refused.add(id);
-    this.changed();
+    const known = this.refused.has(id);
+    this.refused.set(id, this.options.now());
+    if (!known) this.changed();
   }
   /** Whether `markRefused` holds for the login. */
   isRefused(id) {
     return this.refused.has(id);
   }
-  /** Ends `markRefused`: a probe of the login succeeded. */
-  clearRefused(id) {
-    if (!this.refused.delete(id)) return;
+  /**
+   * Ends `markRefused`: a probe of the login succeeded. A probe that started at `probeStartedAt`
+   * ends only a refusal from before it or from the same millisecond; a refusal that came while
+   * it ran is newer and stays.
+   */
+  clearRefused(id, probeStartedAt = Infinity) {
+    const at2 = this.refused.get(id);
+    if (at2 === void 0 || at2 > probeStartedAt) return;
+    this.refused.delete(id);
     this.changed();
   }
   /**
@@ -8890,12 +10316,30 @@ var LoginTable = class {
     for (const placement of this.state.sessions.values()) if (placement.login === id) count++;
     return count;
   }
-  /** The login a session is held to after a pin-back, or null. */
+  /**
+   * The login a session is held to after a pin-back, or null. A hold unused for
+   * `SESSION_MAX_AGE_MS` has ended, even when no new hold has pruned it yet.
+   */
   heldLogin(key) {
-    return this.held.get(key) ?? null;
+    const hold = this.held.get(key);
+    if (hold === void 0) return null;
+    const now = this.options.now();
+    if (hold.lastUsed < now - SESSION_MAX_AGE_MS) {
+      this.held.delete(key);
+      return null;
+    }
+    hold.lastUsed = now;
+    return hold.login;
   }
   holdSession(key, id) {
-    if (isLoginId(id)) this.held.set(key, id);
+    if (!isLoginId(id)) return;
+    this.held.delete(key);
+    this.held.set(key, { login: id, lastUsed: this.options.now() });
+    this.pruneHolds();
+  }
+  /** How many sessions are held after a pin-back. */
+  heldCount() {
+    return this.held.size;
   }
   /** Ends a session's hold, so its requests are routed on Auto again. */
   releaseSession(key) {
@@ -8917,6 +10361,17 @@ var LoginTable = class {
   }
   save() {
     this.writer.schedule();
+  }
+  /**
+   * Drops holds unused for `SESSION_MAX_AGE_MS`, and beyond the `MAX_SESSIONS` most recently
+   * used, the same bounds `state.json` keeps session placements in.
+   */
+  pruneHolds() {
+    const oldest = this.options.now() - SESSION_MAX_AGE_MS;
+    for (const [key, hold] of this.held) if (hold.lastUsed < oldest) this.held.delete(key);
+    if (this.held.size <= MAX_SESSIONS) return;
+    const byUse = [...this.held].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    for (const [key] of byUse.slice(0, this.held.size - MAX_SESSIONS)) this.held.delete(key);
   }
 };
 function messageOf3(error) {
@@ -9047,6 +10502,7 @@ var UPSTREAM_IDLE_TIMEOUT_MS = 20 * 6e4;
 var UPSTREAM_CONNECT_TIMEOUT_MS = 3e4;
 var KEEPALIVE_PROBE_DELAY_MS = 3e4;
 var FREE_SOCKET_TIMEOUT_MS = 3e4;
+var RESEND_WINDOW_MS = 2e3;
 var DISCARD_LIMIT_BYTES = 1024 * 1024;
 var DISCARD_TIMEOUT_MS = 5e3;
 var RESET_CODES = /* @__PURE__ */ new Set(["ECONNRESET", "EPIPE"]);
@@ -9085,6 +10541,7 @@ function createUpstream(options) {
   const idleTimeoutMs = options.idleTimeoutMs ?? UPSTREAM_IDLE_TIMEOUT_MS;
   const connectTimeoutMs = options.connectTimeoutMs ?? UPSTREAM_CONNECT_TIMEOUT_MS;
   const keepAliveProbeDelayMs = options.keepAliveProbeDelayMs ?? KEEPALIVE_PROBE_DELAY_MS;
+  const resendWindowMs = options.resendWindowMs ?? RESEND_WINDOW_MS;
   const agentOptions = {
     keepAlive: true,
     keepAliveMsecs: keepAliveProbeDelayMs,
@@ -9096,7 +10553,7 @@ function createUpstream(options) {
   const transport = tls ? import_node_https.default : import_node_http2.default;
   let closed = false;
   function attempt(request2, retried) {
-    return new Promise((resolve7, reject) => {
+    return new Promise((resolve8, reject) => {
       const { signal } = request2;
       if (signal.aborted) {
         reject(abortedError());
@@ -9106,6 +10563,7 @@ function createUpstream(options) {
       let answered = false;
       let over = false;
       let connectTimer;
+      let writtenAt = null;
       const req = transport.request({
         hostname,
         port,
@@ -9138,13 +10596,17 @@ function createUpstream(options) {
         }, connectTimeoutMs);
         socket.once(tls ? "secureConnect" : "connect", () => clearTimeout(connectTimer));
       });
+      req.once("finish", () => {
+        writtenAt = Date.now();
+      });
       req.on("error", (error) => {
         if (answered) return;
         answered = true;
         const reusedSocket = req.reusedSocket;
+        const soonAfterWriting = writtenAt === null || Date.now() - writtenAt <= resendWindowMs;
         end();
-        if (!retried && reusedSocket && !signal.aborted && !closed && !(error instanceof UpstreamError) && RESET_CODES.has(errorCodeOf(error))) {
-          resolve7(attempt(request2, true));
+        if (!retried && reusedSocket && soonAfterWriting && !signal.aborted && !closed && !(error instanceof UpstreamError) && RESET_CODES.has(errorCodeOf(error))) {
+          resolve8(attempt(request2, true));
           return;
         }
         reject(toUpstreamError(error));
@@ -9161,7 +10623,7 @@ function createUpstream(options) {
           failure2 ??= toUpstreamError(error);
         });
         res.once("close", end);
-        resolve7(answerOf(res, () => failure2));
+        resolve8(answerOf(res, () => failure2));
       });
       req.end(request2.body);
     });
@@ -9217,9 +10679,9 @@ function answerOf(res, failure2) {
 }
 function forwardBody(answer2, res, signal) {
   const body = answer2.body;
-  return new Promise((resolve7) => {
+  return new Promise((resolve8) => {
     let settled = false;
-    const settle = (outcome) => {
+    const settle2 = (outcome) => {
       if (settled) return;
       settled = true;
       body.off("data", onData);
@@ -9229,7 +10691,7 @@ function forwardBody(answer2, res, signal) {
       res.off("close", onClose);
       signal.removeEventListener("abort", onAbort);
       stopWatching();
-      resolve7(outcome);
+      resolve8(outcome);
     };
     const onData = (chunk) => {
       if (!res.write(chunk)) body.pause();
@@ -9240,23 +10702,23 @@ function forwardBody(answer2, res, signal) {
     const onEnd = () => {
       res.end();
     };
-    const onFinish = () => settle("done");
+    const onFinish = () => settle2("done");
     const onClose = () => {
       if (res.writableFinished) {
-        settle("done");
+        settle2("done");
         return;
       }
-      settle("aborted");
+      settle2("aborted");
       body.destroy();
     };
     const onAbort = () => {
-      settle("aborted");
+      settle2("aborted");
       body.destroy();
       res.destroy();
     };
     const stopWatching = (0, import_node_stream.finished)(body, (error) => {
       if (error === void 0 || error === null || settled) return;
-      settle("failed");
+      settle2("failed");
       res.destroy();
     });
     if (signal.aborted) {
@@ -9281,6 +10743,7 @@ function forwardBody(answer2, res, signal) {
 var MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
 var TOO_LARGE_LINGER_MS = 5e3;
 var MAX_KEPT_ANSWER_BYTES = 256 * 1024;
+var KEPT_ANSWER_TIMEOUT_MS = 5e3;
 var RENEWAL_WAIT_MS = 5e3;
 var ClientGone = class extends Error {
 };
@@ -9292,6 +10755,7 @@ function createProxy(options) {
   const maxBodyBytes = options.maxBodyBytes ?? MAX_REQUEST_BODY_BYTES;
   const renewalWaitMs = options.renewalWaitMs ?? RENEWAL_WAIT_MS;
   const lingerMs = options.tooLargeLingerMs ?? TOO_LARGE_LINGER_MS;
+  const keptAnswerTimeoutMs = options.keptAnswerTimeoutMs ?? KEPT_ANSWER_TIMEOUT_MS;
   let open4 = 0;
   let drainWaiters = [];
   const finished2 = () => {
@@ -9299,7 +10763,7 @@ function createProxy(options) {
     if (open4 === 0) {
       const waiters = drainWaiters;
       drainWaiters = [];
-      for (const resolve7 of waiters) resolve7();
+      for (const resolve8 of waiters) resolve8();
     }
   };
   async function handle(req, res) {
@@ -9346,10 +10810,8 @@ function createProxy(options) {
       refuseTooLarge2(req, res, maxBodyBytes, lingerMs);
       return;
     }
-    let body;
-    try {
-      body = read.length === 0 ? void 0 : JSON.parse(read.toString("utf8"));
-    } catch {
+    const body = read.length === 0 ? void 0 : read;
+    if (body !== void 0 && !isJson(body)) {
       log.write("proxy_rejected", { reason: "invalid", status: 400 });
       send(res, invalidRequest("The request body is not JSON."));
       return;
@@ -9372,6 +10834,7 @@ function createProxy(options) {
     const excluded = /* @__PURE__ */ new Set();
     const refreshed = /* @__PURE__ */ new Set();
     const renewed = /* @__PURE__ */ new Set();
+    const reread = /* @__PURE__ */ new Set();
     const refusals = [];
     let holdSince = cooling.coolingOf(sessionKey, now()) === null ? null : arrived;
     const renewable = (row) => !renewed.has(row.id) && tokens.read(row.id)?.hasRefreshToken === true;
@@ -9420,6 +10883,12 @@ function createProxy(options) {
         if (chosen === null) return null;
         const row = rows.find((each) => each.id === chosen.id) ?? chosen;
         if (tokenIsFresh(row.tokenExpiresAt, now())) return row;
+        if (!reread.has(row.id)) {
+          reread.add(row.id);
+          tokens.invalidate(row.id);
+          await abortable(tokens.prime([row.id]), signal);
+          continue;
+        }
         if (!renewable(row)) {
           excluded.add(row.id);
           continue;
@@ -9471,7 +10940,7 @@ function createProxy(options) {
           res.writeHead(leftAnswer.status, downstreamResponseHeaders(leftAnswer.headers)).end(leftAnswer.body);
           return;
         }
-        answerRefusal(res, session, rows, refusals, attempted, excluded);
+        answerRefusal(res, session, rows, refusals, attempted, excluded, startedOn === null);
         return;
       }
       const token = tokens.read(row.id);
@@ -9552,13 +11021,13 @@ function createProxy(options) {
       }
       const decision = replayDecision({ status: status2, get, servedBy: row.id, session, attempted });
       if (decision.kind === "replay") {
-        refusals.push({ login: row.id, until: decision.cooldownUntil, status: status2, headers: answer2.headers, body: await keepBody(answer2, signal) });
+        refusals.push({ login: row.id, until: decision.cooldownUntil, status: status2, headers: answer2.headers, body: await keepBody(answer2, signal, keptAnswerTimeoutMs) });
         excluded.add(row.id);
         log.write("retry_other_login", { login: asLogin(row.id), reason: "usage_limit", status: status2 });
         continue;
       }
       if (decision.kind === "pin-back") {
-        leftAnswer = { login: row.id, until: Infinity, status: status2, headers: answer2.headers, body: await keepBody(answer2, signal) };
+        leftAnswer = { login: row.id, until: Infinity, status: status2, headers: answer2.headers, body: await keepBody(answer2, signal, keptAnswerTimeoutMs) };
         excluded.add(row.id);
         session.pinnedAccountId = decision.to;
         session.homeAccountId = decision.to;
@@ -9584,11 +11053,9 @@ function createProxy(options) {
     }
   }
   function noteUsage(id, get) {
-    const observation = parseUnifiedHeaders(get, now());
-    if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return;
-    table.setUsage(id, usageFromUnifiedHeaders(id, table.usage(id), observation));
+    table.noteObservation(id, parseUnifiedHeaders(get, now()));
   }
-  function answerRefusal(res, session, rows, refusals, attempted, excluded) {
+  function answerRefusal(res, session, rows, refusals, attempted, excluded, cliOnOwnCredentials) {
     const fields = { count: attempted.size };
     if (refusals.length > 0) {
       const first = [...refusals].sort((a, b) => a.until - b.until)[0];
@@ -9609,7 +11076,7 @@ function createProxy(options) {
       res.writeHead(first.status, downstreamResponseHeaders(first.headers)).end(first.body);
       return;
     }
-    const answer2 = refusalAnswer(session, rows, now());
+    const answer2 = refusalAnswer(session, rows, now(), cliOnOwnCredentials);
     log.write("pool_exhausted", {
       ...fields,
       reason: answer2.kind === "no-signer" ? "no_credentials" : "usage_limit",
@@ -9623,8 +11090,8 @@ function createProxy(options) {
       if (!res.writableFinished) res.destroy();
     }),
     openRequests: () => open4,
-    drained: () => open4 === 0 ? Promise.resolve() : new Promise((resolve7) => {
-      drainWaiters.push(resolve7);
+    drained: () => open4 === 0 ? Promise.resolve() : new Promise((resolve8) => {
+      drainWaiters.push(resolve8);
     })
   };
 }
@@ -9632,6 +11099,14 @@ function headerValue(req, name) {
   const value = req.headers[name.toLowerCase()];
   const text2 = Array.isArray(value) ? value[0] : value;
   return text2 === void 0 || text2.length === 0 ? void 0 : text2;
+}
+function isJson(bytes) {
+  try {
+    JSON.parse(bytes.toString("utf8"));
+    return true;
+  } catch {
+    return false;
+  }
 }
 function asLogin(id) {
   return isLoginId(id) ? id : void 0;
@@ -9655,10 +11130,10 @@ function apiError(status2, message) {
   };
 }
 function readBody2(req, max, signal) {
-  return new Promise((resolve7, reject) => {
+  return new Promise((resolve8, reject) => {
     const chunks = [];
     let size = 0;
-    const settle = () => {
+    const settle2 = () => {
       req.off("data", onData);
       req.off("end", onEnd);
       req.off("error", onError);
@@ -9669,27 +11144,27 @@ function readBody2(req, max, signal) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += bytes.length;
       if (size > max) {
-        settle();
+        settle2();
         chunks.length = 0;
-        resolve7("too-large");
+        resolve8("too-large");
         return;
       }
       chunks.push(bytes);
     };
     const onEnd = () => {
-      settle();
-      resolve7(Buffer.concat(chunks));
+      settle2();
+      resolve8(Buffer.concat(chunks));
     };
     const onError = (error) => {
-      settle();
+      settle2();
       reject(error);
     };
     const onClose = () => {
-      settle();
+      settle2();
       reject(new Error("the request ended before its body was complete"));
     };
     const onAbort = () => {
-      settle();
+      settle2();
       reject(signal.reason);
     };
     if (signal.aborted) {
@@ -9722,11 +11197,19 @@ function refuseTooLarge2(req, res, max, lingerMs) {
     error: { type: "request_too_large", message: `The request body is larger than the ${String(Math.round(max / 1024 / 1024))} MB the kurmis proxy takes.` }
   }));
 }
-async function keepBody(answer2, signal) {
+async function keepBody(answer2, signal, timeoutMs) {
   const chunks = [];
   let size = 0;
+  const body = answer2.body;
+  const timer = setTimeout(() => {
+    body.destroy();
+  }, timeoutMs);
+  const onAbort = () => {
+    body.destroy();
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
   try {
-    for await (const chunk of answer2.body) {
+    for await (const chunk of body) {
       signal.throwIfAborted();
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (size + bytes.length > MAX_KEPT_ANSWER_BYTES) {
@@ -9738,12 +11221,16 @@ async function keepBody(answer2, signal) {
     }
   } catch {
     signal.throwIfAborted();
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
   }
+  signal.throwIfAborted();
   return Buffer.concat(chunks);
 }
 function abortable(promise, signal) {
   if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve7, reject) => {
+  return new Promise((resolve8, reject) => {
     const aborted = () => {
       reject(signal.reason);
     };
@@ -9751,7 +11238,7 @@ function abortable(promise, signal) {
     promise.then(
       (value) => {
         signal.removeEventListener("abort", aborted);
-        resolve7(value);
+        resolve8(value);
       },
       (error) => {
         signal.removeEventListener("abort", aborted);
@@ -9761,29 +11248,29 @@ function abortable(promise, signal) {
   });
 }
 function withTimeout(promise, ms) {
-  return new Promise((resolve7) => {
+  return new Promise((resolve8) => {
     const timer = setTimeout(() => {
-      resolve7(false);
+      resolve8(false);
     }, ms);
     void promise.finally(() => {
       clearTimeout(timer);
-      resolve7(true);
+      resolve8(true);
     });
   });
 }
 function waitForPool(table, until, now, signal) {
-  return new Promise((resolve7, reject) => {
-    const settle = () => {
+  return new Promise((resolve8, reject) => {
+    const settle2 = () => {
       clearTimeout(timer);
       unsubscribe();
       signal.removeEventListener("abort", aborted);
     };
     const woken = () => {
-      settle();
-      resolve7();
+      settle2();
+      resolve8();
     };
     const aborted = () => {
-      settle();
+      settle2();
       reject(signal.reason);
     };
     const timer = setTimeout(woken, Math.max(0, until - now()));
@@ -9794,12 +11281,13 @@ function waitForPool(table, until, now, signal) {
 }
 
 // src/daemon/tokens.ts
-var import_node_os9 = require("node:os");
-var import_node_path19 = require("node:path");
+var import_node_fs18 = require("node:fs");
+var import_node_os12 = require("node:os");
+var import_node_path20 = require("node:path");
 
 // src/daemon/credentials.ts
-var import_node_fs15 = require("node:fs");
-var import_node_path18 = require("node:path");
+var import_node_fs17 = require("node:fs");
+var import_node_path19 = require("node:path");
 var CREDENTIALS_FILE_NAME = ".credentials.json";
 var CredentialsFileReader = class {
   constructor(options) {
@@ -9810,15 +11298,15 @@ var CredentialsFileReader = class {
   read(id) {
     const path = this.pathOf(id);
     try {
-      const stat = (0, import_node_fs15.statSync)(path);
+      const stat2 = (0, import_node_fs17.statSync)(path);
       const cached = this.cache.get(path);
-      if (cached?.mtime === stat.mtimeMs && cached.size === stat.size) return cached.value;
+      if (cached?.mtime === stat2.mtimeMs && cached.size === stat2.size) return cached.value;
       let value = null;
       try {
-        value = parseCredentials((0, import_node_fs15.readFileSync)(path, "utf8"));
+        value = parseCredentials((0, import_node_fs17.readFileSync)(path, "utf8"));
       } catch {
       }
-      this.cache.set(path, { mtime: stat.mtimeMs, size: stat.size, value });
+      this.cache.set(path, { mtime: stat2.mtimeMs, size: stat2.size, value });
       return value;
     } catch {
       this.cache.delete(path);
@@ -9836,24 +11324,355 @@ var CredentialsFileReader = class {
     this.cache.clear();
   }
   pathOf(id) {
-    return (0, import_node_path18.join)(this.options.credentialsDir(id), CREDENTIALS_FILE_NAME);
+    return (0, import_node_path19.join)(this.options.credentialsDir(id), CREDENTIALS_FILE_NAME);
+  }
+};
+
+// src/platform/windows-credentials.ts
+var import_node_os11 = require("node:os");
+var CREDENTIAL_USER_NAME = "claude-code-user";
+var CHUNK_CHARS = 2400;
+var MAX_CHUNKS = 256;
+var CREDENTIAL_READ_TIMEOUT_MS = 2e4;
+var MAX_ENCODED_COMMAND_CHARS = 3e4;
+function credentialFilter(secureStorageDir) {
+  return `${keychainService(secureStorageDir)}/*`;
+}
+function credEnumScript(filters) {
+  return [
+    "$ErrorActionPreference='Stop'",
+    "$ProgressPreference='SilentlyContinue'",
+    "Add-Type -TypeDefinition @'",
+    "using System;",
+    "using System.Text;",
+    "using System.Runtime.InteropServices;",
+    "public static class KurmisCredEnum {",
+    "  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]",
+    "  private struct CREDENTIAL {",
+    "    public int Flags; public int Type; public IntPtr TargetName; public IntPtr Comment;",
+    "    public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;",
+    "    public int CredentialBlobSize; public IntPtr CredentialBlob; public int Persist;",
+    "    public int AttributeCount; public IntPtr Attributes; public IntPtr TargetAlias; public IntPtr UserName;",
+    "  }",
+    '  [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]',
+    "  private static extern bool CredEnumerateW(string filter, int flags, out int count, out IntPtr credentials);",
+    '  [DllImport("advapi32.dll")]',
+    "  private static extern void CredFree(IntPtr buffer);",
+    "  public static string[] List(string filter) {",
+    "    int count; IntPtr p;",
+    "    if (!CredEnumerateW(filter, 0, out count, out p)) {",
+    "      int e = Marshal.GetLastWin32Error();",
+    '      return new string[] { e == 1168 ? ". 0" : "! " + e };',
+    "    }",
+    "    try {",
+    "      string[] lines = new string[count + 1];",
+    "      int found = 0;",
+    "      for (int i = 0; i < count; i++) {",
+    "        CREDENTIAL c = (CREDENTIAL)Marshal.PtrToStructure(Marshal.ReadIntPtr(p, i * IntPtr.Size), typeof(CREDENTIAL));",
+    "        if (c.Type != 1) continue;",
+    "        byte[] b = new byte[c.CredentialBlobSize];",
+    "        if (c.CredentialBlobSize > 0) Marshal.Copy(c.CredentialBlob, b, 0, c.CredentialBlobSize);",
+    "        string name = Marshal.PtrToStringUni(c.TargetName);",
+    '        lines[found++] = "+ " + Convert.ToBase64String(Encoding.UTF8.GetBytes(name)) + " " + Convert.ToBase64String(b);',
+    "      }",
+    '      lines[found] = ". " + found;',
+    "      string[] output = new string[found + 1];",
+    "      Array.Copy(lines, output, found + 1);",
+    "      return output;",
+    "    } finally { CredFree(p); }",
+    "  }",
+    "}",
+    "'@",
+    `$filters=@(${filters.map(powerShellQuote).join(",")})`,
+    'for($i=0;$i -lt $filters.Count;$i++){foreach($line in [KurmisCredEnum]::List($filters[$i])){Write-Output ("$i "+$line)}}'
+  ].join("\n");
+}
+function parseCredEnumOutput(stdout, count) {
+  const items = Array.from({ length: count }, () => /* @__PURE__ */ new Map());
+  const answers = new Array(count);
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^(\d+) (?:\+ ([A-Za-z0-9+/=]+)(?: ([A-Za-z0-9+/=]*))?|\. (\d+)|! (\d+))$/.exec(line.trim());
+    if (match === null) continue;
+    const index = Number(match[1]);
+    const mine = items[index];
+    if (mine === void 0 || answers[index] !== void 0) continue;
+    if (match[2] !== void 0) mine.set(Buffer.from(match[2], "base64").toString("utf8"), Buffer.from(match[3] ?? "", "base64"));
+    else if (match[4] !== void 0) answers[index] = Number(match[4]) === mine.size ? { kind: "items", items: mine } : void 0;
+    else answers[index] = { kind: "error", code: Number(match[5]) };
+  }
+  const all = [];
+  for (const answer2 of answers) {
+    if (answer2 === void 0) return null;
+    all.push(answer2);
+  }
+  return all.length === count ? all : null;
+}
+function encodedLength(filters) {
+  return Math.ceil(Buffer.byteLength(credEnumScript(filters), "utf16le") / 3) * 4;
+}
+function credentialBatches(filters, maxChars = MAX_ENCODED_COMMAND_CHARS) {
+  const batches = [];
+  let batch = [];
+  for (const filter of filters) {
+    if (batch.length > 0 && encodedLength([...batch, filter]) > maxChars) {
+      batches.push(batch);
+      batch = [];
+    }
+    batch.push(filter);
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+function failureOf3(result) {
+  if (result.error !== null) return result.error;
+  const said = result.stderr.replace(/\s+/g, " ").trim();
+  return `PowerShell exited with code ${String(result.code)}${said === "" ? "" : `: ${said.slice(0, 300)}`}`;
+}
+function powerShellCredentialRead(env, run2 = runProgram) {
+  return async (filters) => {
+    const all = [];
+    for (const batch of credentialBatches(filters)) {
+      const { program, args } = powerShellInvocation(credEnumScript(batch), env);
+      const result = await run2(program, args, { timeoutMs: CREDENTIAL_READ_TIMEOUT_MS, env, maxOutputBytes: 16 * 1024 * 1024 });
+      if (result.code !== 0 || result.error !== null) throw new Error(failureOf3(result));
+      const answers = parseCredEnumOutput(result.stdout, batch.length);
+      if (answers === null) throw new Error("PowerShell did not answer for every login");
+      all.push(...answers);
+    }
+    return all;
+  };
+}
+function preferredAccounts(env = process.env, userName = () => (0, import_node_os11.userInfo)().username) {
+  let name;
+  try {
+    name = env.USER || userName();
+  } catch {
+    name = CREDENTIAL_USER_NAME;
+  }
+  if (!/^[a-zA-Z0-9._-]+$/.test(name)) name = CREDENTIAL_USER_NAME;
+  return [.../* @__PURE__ */ new Set([name, CREDENTIAL_USER_NAME])];
+}
+function byAccount(service, items) {
+  const prefix = `${service}/`.toLowerCase();
+  const accounts = /* @__PURE__ */ new Map();
+  for (const [name, blob] of items) {
+    if (!name.toLowerCase().startsWith(prefix)) continue;
+    const match = /^(.*?)(#m|#\d+)?$/.exec(name.slice(prefix.length));
+    const account = (match?.[1] ?? "").toLowerCase();
+    const suffix = match?.[2] ?? "";
+    let entries = accounts.get(account);
+    if (entries === void 0) accounts.set(account, entries = /* @__PURE__ */ new Map());
+    entries.set(suffix, blob);
+  }
+  return accounts;
+}
+function chooseAccount2(accounts, preferred) {
+  const lower = accounts.map((account) => account.toLowerCase());
+  for (const name of preferred) if (lower.includes(name.toLowerCase())) return name.toLowerCase();
+  return lower.length === 1 ? lower[0] ?? null : null;
+}
+function chunkCount(blob) {
+  if (blob === void 0) return null;
+  let value;
+  try {
+    value = JSON.parse(blob.toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const { n, l } = value;
+  if (typeof n !== "number" || typeof l !== "number" || !Number.isInteger(n) || !Number.isInteger(l)) return null;
+  return n > 0 && n <= MAX_CHUNKS && l > 0 && l <= n * CHUNK_CHARS ? { n, l } : null;
+}
+function recordFromItems(service, items, preferred) {
+  const accounts = byAccount(service, items);
+  if (accounts.size === 0) return { kind: "missing" };
+  const account = chooseAccount2([...accounts.keys()], preferred);
+  if (account === null) return { kind: "failed", reason: "Credential Manager has records under several account names, and none is the expected one" };
+  const entries = accounts.get(account) ?? /* @__PURE__ */ new Map();
+  const count = chunkCount(entries.get("#m"));
+  if (count === null) {
+    const plain = entries.get("");
+    return plain === void 0 ? { kind: "missing" } : { kind: "found", text: plain.toString("utf8") };
+  }
+  const slices = [];
+  for (let i = 0; i < count.n; i++) {
+    const slice = entries.get(`#${String(i)}`);
+    if (slice === void 0) return { kind: "failed", reason: "a slice of the chunked record is missing" };
+    slices.push(slice.toString("utf8"));
+  }
+  const joined = slices.join("");
+  return joined.length === count.l ? { kind: "found", text: Buffer.from(joined, "base64").toString("utf8") } : { kind: "failed", reason: "the slices of the chunked record do not add up to its length" };
+}
+async function readStoredRecords(secureStorageDirs, read, preferred = preferredAccounts()) {
+  const filters = [...new Set(secureStorageDirs.map(credentialFilter))];
+  const answers = await read(filters);
+  return secureStorageDirs.map((dir) => {
+    const answer2 = answers[filters.indexOf(credentialFilter(dir))];
+    if (answer2 === void 0) return { kind: "failed", reason: "PowerShell did not answer for this login" };
+    if (answer2.kind === "error") return { kind: "failed", reason: `CredEnumerateW failed with Win32 error ${String(answer2.code)}` };
+    return recordFromItems(keychainService(dir), answer2.items, preferred);
+  });
+}
+async function holdsStoredRecord(secureStorageDir, env, platform = process.platform, read = powerShellCredentialRead(env)) {
+  if (platform !== "win32") return false;
+  try {
+    const [record2] = await readStoredRecords([secureStorageDir], read);
+    return record2?.kind === "found";
+  } catch {
+    return false;
+  }
+}
+
+// src/daemon/credential-manager.ts
+var FILE_LOGIN_RECHECK_MS = 15 * 6e4;
+function retryDelayMs(failures) {
+  return Math.min(KEYCHAIN_CACHE_MS * 2 ** Math.max(0, failures - 1), FILE_LOGIN_RECHECK_MS);
+}
+var CredentialManagerReader = class {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  entries = /* @__PURE__ */ new Map();
+  /** The logins whose last read that worked found their record here. */
+  found = /* @__PURE__ */ new Set();
+  /** The logins invalidated since their last read settled. */
+  pending = /* @__PURE__ */ new Set();
+  /** How often each login was invalidated; a read started before the latest one is not used. */
+  invalidations = /* @__PURE__ */ new Map();
+  /** How often `clear` ran; a read started before it is not used either. */
+  clears = 0;
+  failureLogged = /* @__PURE__ */ new Set();
+  running = null;
+  read(id) {
+    return this.entries.get(id)?.value ?? null;
+  }
+  /** Whether the last read of the login that worked found its record in Credential Manager. */
+  holds(id) {
+    return this.found.has(id);
+  }
+  async prime(ids) {
+    const wanted = [...new Set(ids)];
+    const waitFor = wanted.filter((id) => this.found.has(id) || !this.options.fileExists(id));
+    const unread = () => waitFor.some((id) => !this.entries.has(id) || this.pending.has(id));
+    for (; ; ) {
+      if (this.running !== null) {
+        if (!unread()) return;
+        await this.running;
+        continue;
+      }
+      const due = wanted.filter((id) => this.isDue(id));
+      if (due.length === 0) return;
+      const run2 = this.load(due).finally(() => {
+        if (this.running === run2) this.running = null;
+      });
+      this.running = run2;
+      if (!unread()) return;
+      await run2;
+    }
+  }
+  /**
+   * Has the next `prime` read the login again and wait for it where it waits for the login at
+   * all. `read` goes on answering the old token until then.
+   */
+  invalidate(id) {
+    this.invalidations.set(id, (this.invalidations.get(id) ?? 0) + 1);
+    this.pending.add(id);
+  }
+  /**
+   * Has the next `prime` read the login again in the background. A login whose last read
+   * failed, or whose file exists and whose last read found no record here, keeps its longer wait.
+   */
+  markStale(id) {
+    const entry = this.entries.get(id);
+    if (entry !== void 0) entry.stale = true;
+  }
+  clear() {
+    this.clears++;
+    this.entries.clear();
+    this.found.clear();
+    this.pending.clear();
+  }
+  isDue(id) {
+    const entry = this.entries.get(id);
+    if (entry === void 0 || this.pending.has(id)) return true;
+    const age = this.now() - entry.readAt;
+    if (entry.failures > 0) return age >= retryDelayMs(entry.failures);
+    if (!this.found.has(id) && this.options.fileExists(id)) return age >= FILE_LOGIN_RECHECK_MS;
+    return entry.stale || age >= KEYCHAIN_CACHE_MS;
+  }
+  async load(ids) {
+    const clears = this.clears;
+    const started = new Map(ids.map((id) => [id, this.invalidations.get(id) ?? 0]));
+    const settle2 = (id, outcome) => {
+      if (this.clears === clears && (this.invalidations.get(id) ?? 0) === started.get(id)) this.settle(id, outcome);
+    };
+    let records;
+    try {
+      records = await readStoredRecords(ids.map((id) => this.options.secureStorageDir(id)), this.options.read, this.options.accounts);
+    } catch {
+      for (const id of ids) settle2(id, { kind: "failed", failure: "not_run" });
+      return;
+    }
+    ids.forEach((id, index) => {
+      const record2 = records[index];
+      if (record2 === void 0 || record2.kind === "missing") settle2(id, { kind: "missing" });
+      else if (record2.kind === "failed") settle2(id, { kind: "failed", failure: "failed" });
+      else {
+        const value = parseCredentials(record2.text);
+        settle2(id, value === null ? { kind: "failed", failure: "not_credentials" } : { kind: "found", value });
+      }
+    });
+  }
+  settle(id, outcome) {
+    this.pending.delete(id);
+    const before = this.entries.get(id);
+    const readAt = this.now();
+    if (outcome.kind !== "failed") {
+      this.entries.set(id, { value: outcome.kind === "found" ? outcome.value : null, readAt, failures: 0, stale: false });
+      if (outcome.kind === "found") this.found.add(id);
+      else this.found.delete(id);
+      this.failureLogged.delete(id);
+      return;
+    }
+    this.entries.set(id, { value: before?.value ?? null, readAt, failures: (before?.failures ?? 0) + 1, stale: false });
+    if (!this.failureLogged.has(id) && (this.found.has(id) || !this.options.fileExists(id))) {
+      this.failureLogged.add(id);
+      this.options.onFailure?.({ id, kind: outcome.failure });
+    }
+  }
+  now() {
+    return this.options.now?.() ?? Date.now();
   }
 };
 
 // src/daemon/tokens.ts
-function securityProgramOf(env) {
-  const override = env.KURMIS_SECURITY_PROGRAM;
-  return override !== void 0 && override !== "" ? override : SECURITY_PROGRAM;
+function probeEnvironment(tokens, id, env) {
+  return tokens.inCredentialManager(id) ? { ...env, [FORCE_CREDENTIAL_MANAGER_VARIABLE]: "1" } : env;
+}
+function securityProgramOf(env, processEnv = process.env) {
+  return systemProgram("security", env, processEnv);
 }
 function claudeSecureStorageDir(id) {
   return isDefaultLoginId(checkedClaudeId(id)) ? null : loginFolder(id);
 }
 function claudeCredentialsDir(id, home) {
-  return isDefaultLoginId(checkedClaudeId(id)) ? (0, import_node_path19.join)(home, ".claude") : loginFolder(id);
+  return isDefaultLoginId(checkedClaudeId(id)) ? (0, import_node_path20.join)(home, ".claude") : loginFolder(id);
 }
 function createTokenSource(options) {
-  const home = options.home ?? import_node_os9.homedir;
+  const home = options.home ?? import_node_os12.homedir;
   const file = new CredentialsFileReader({ credentialsDir: (id) => claudeCredentialsDir(id, home()) });
+  const credentialManager = (options.platform ?? process.platform) === "win32" ? new CredentialManagerReader({
+    secureStorageDir: claudeSecureStorageDir,
+    fileExists: (id) => (0, import_node_fs18.existsSync)((0, import_node_path20.join)(claudeCredentialsDir(id, home()), CREDENTIALS_FILE_NAME)),
+    read: options.credentialRead ?? powerShellCredentialRead(options.env),
+    now: options.now,
+    onFailure: (failure2) => {
+      const login = parseLoginId(failure2.id);
+      if (login !== null) options.log?.write("token_read_failed", { login: login.id, reason: credentialManagerReasonOf(failure2.kind) });
+    }
+  }) : null;
   const keychain = keychainHoldsSecret(options.platform ?? process.platform) ? new KeychainCredentialsReader({
     accounts: { secureStorageDir: claudeSecureStorageDir },
     securityProgram: securityProgramOf(options.env),
@@ -9868,18 +11687,30 @@ function createTokenSource(options) {
     keychain: keychain !== null,
     read(id) {
       if (!isClaudeLoginId(id)) return null;
-      return keychain?.read(id) ?? file.read(id);
+      return credentialManager?.read(id) ?? keychain?.read(id) ?? file.read(id);
     },
-    prime(ids) {
-      return keychain === null ? Promise.resolve() : keychain.prime(ids.filter(isClaudeLoginId));
+    async prime(ids) {
+      const claude = ids.filter(isClaudeLoginId);
+      await Promise.all([keychain?.prime(claude), credentialManager?.prime(claude)]);
     },
     invalidate(id) {
       if (!isClaudeLoginId(id)) return;
       keychain?.invalidate(id);
+      credentialManager?.invalidate(id);
       file.invalidate(id);
+    },
+    markStale(id) {
+      if (!isClaudeLoginId(id)) return;
+      keychain?.invalidate(id);
+      credentialManager?.markStale(id);
+      file.invalidate(id);
+    },
+    inCredentialManager(id) {
+      return isClaudeLoginId(id) && credentialManager !== null && credentialManager.holds(id);
     },
     clear() {
       keychain?.clear();
+      credentialManager?.clear();
       file.clear();
     }
   };
@@ -9898,6 +11729,9 @@ function logReasonOf(kind) {
     case "failed":
       return "other";
   }
+}
+function credentialManagerReasonOf(kind) {
+  return kind === "not_credentials" ? "invalid" : "other";
 }
 function isClaudeLoginId(id) {
   return parseLoginId(id)?.provider === "claude";
@@ -9921,21 +11755,37 @@ var UsagePoller = class {
   controller = new AbortController();
   timer = null;
   closed = false;
+  pollStopped = false;
   /** Probes every login once, then every signed-in login each `intervalMs`. */
   start() {
-    if (this.closed || this.timer !== null) return;
+    if (this.closed || this.pollStopped || this.timer !== null) return;
     void this.probeMany(this.options.table.logins().map((login) => login.id), "start");
     this.timer = setInterval(() => {
       void this.probeMany(this.pollable(), "poll");
     }, this.options.intervalMs ?? POLL_INTERVAL_MS);
     this.timer.unref?.();
   }
-  /** Stops the timer and kills the probes that are running. */
-  close() {
+  /**
+   * Stops the timer of the poll, for a daemon that is stopping. Running probes and probes asked
+   * for later still run.
+   */
+  stopPolling() {
+    this.pollStopped = true;
+    if (this.timer !== null) clearInterval(this.timer);
+    this.timer = null;
+  }
+  /**
+   * Stops the timer, kills the probes that are running and resolves once they have ended. A
+   * probe ends only after its process has exited, so after this no probe's process holds the
+   * data folder open: on Windows a running process's working folder or open file cannot be
+   * deleted.
+   */
+  async close() {
     this.closed = true;
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
     this.controller.abort();
+    await Promise.all(this.running.values());
   }
   /** Whether a probe of this login is running now. */
   isRunning(id) {
@@ -10001,14 +11851,18 @@ var UsagePoller = class {
       answer2 = { ok: false, signedIn: null, reason: "other", error: "The usage probe failed unexpectedly." };
     }
     if (this.closed) return;
-    if (login.provider === "claude") this.options.tokens.invalidate(id);
+    if (login.provider === "claude") {
+      if (cause === "renewal") this.options.tokens.invalidate(id);
+      else this.options.tokens.markStale(id);
+    }
     const ms = now() - startedAt;
     if (answer2.ok) {
-      table.setUsage(id, answer2.usage);
+      table.setProbeUsage(id, answer2.usage, startedAt);
       table.setSignedIn(id, answer2.signedIn);
-      if (answer2.signedIn) table.clearRefused(id);
+      if (answer2.signedIn) table.clearRefused(id, startedAt);
       const before = table.cooldown(id);
-      const after = cooldownAfterProbe(before, answer2.usage);
+      const setAt2 = table.cooldownSince(id);
+      const after = setAt2 !== null && setAt2 > startedAt ? before : cooldownAfterProbe(before, answer2.usage);
       if (after !== before) {
         table.setCooldown(id, after);
         if (after === null) log.write("cooldown_ended", { login: logged });
@@ -10044,7 +11898,7 @@ function createDaemonApp(options) {
     env,
     log,
     now,
-    probeClaude: tuning.probeClaude ?? probeClaudeUsage,
+    probeClaude: tuning.probeClaude ?? ((id, probe) => probeClaudeUsage(id, { ...probe, env: probeEnvironment(tokens, id, probe.env) })),
     probeCodex: tuning.probeCodex ?? probeCodexUsage,
     ...tuning.pollIntervalMs === void 0 ? {} : { intervalMs: tuning.pollIntervalMs }
   });
@@ -10067,7 +11921,8 @@ function createDaemonApp(options) {
       ...tuning.holdBaseMs === void 0 ? {} : { baseMs: tuning.holdBaseMs },
       ...tuning.holdMaxMs === void 0 ? {} : { maxMs: tuning.holdMaxMs }
     },
-    ...tuning.renewalWaitMs === void 0 ? {} : { renewalWaitMs: tuning.renewalWaitMs }
+    ...tuning.renewalWaitMs === void 0 ? {} : { renewalWaitMs: tuning.renewalWaitMs },
+    ...tuning.keptAnswerTimeoutMs === void 0 ? {} : { keptAnswerTimeoutMs: tuning.keptAnswerTimeoutMs }
   });
   const control = createControl({
     key,
@@ -10111,12 +11966,15 @@ function createDaemonApp(options) {
     },
     openRequests: () => proxy.openRequests(),
     drained: () => proxy.drained(),
+    stopPolling() {
+      poller.stopPolling();
+    },
     close() {
       closed ??= (async () => {
-        poller.close();
+        const probesEnded = poller.close();
         upstream.close();
         tokens.clear();
-        await table.flush();
+        await Promise.all([table.flush(), probesEnded]);
       })();
       return closed;
     }
@@ -10252,6 +12110,11 @@ async function serve(options) {
   }
   await stop2.firstRequest;
   log.write("daemon_stopping", { reason: stop2.reason ?? "other" });
+  try {
+    app.stopPolling();
+  } catch (error) {
+    log.write("internal_error", { code: errorCodeOf(error) });
+  }
   server.close();
   server.closeIdleConnections();
   const idleTimer = setInterval(() => server.closeIdleConnections(), IDLE_CLOSE_INTERVAL_MS);
@@ -10292,17 +12155,20 @@ async function bindPort(server, options) {
   const { version, key, port, log, stop: stop2, say, complain } = options;
   let deadline = Date.now() + options.bindDeadlineMs;
   let askedToStop = null;
+  let lastHolder;
   for (; ; ) {
     if (stop2.requested) return stop2.exitCode;
     const error = await listenOnce(server, port);
     if (error === null) return null;
     if (error.code !== "EADDRINUSE") {
-      log.write("internal_error", { code: errorCodeOf(error), port });
-      complain(`could not listen on ${DAEMON_HOST}:${String(port)} (${error.code ?? error.message})`);
+      const refused = error.code !== void 0 && UNUSABLE_PORT_CODES.has(error.code);
+      log.write(refused ? "port_in_use" : "internal_error", { code: errorCodeOf(error), port });
+      complain(refused ? unusablePortText(port, error.code ?? "", configPath()) : `could not listen on ${DAEMON_HOST}:${String(port)} (${error.code ?? error.message})`);
       return 1;
     }
     const holder = await portHolder(port, key);
-    if (holder.kind === "other") {
+    lastHolder = holder;
+    if (holder.kind === "other" && askedToStop === null) {
       log.write("port_in_use", { port });
       complain(`port ${String(port)} on ${DAEMON_HOST} is used by another program. To use another port, set "port" in ${configPath()} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)}.`);
       return 1;
@@ -10313,8 +12179,8 @@ async function bindPort(server, options) {
         say(`kurmis daemon ${other.version} already runs on port ${String(port)} (pid ${String(other.pid)})`);
         return 0;
       }
-      if (askedToStop !== other.pid) {
-        askedToStop = other.pid;
+      if (askedToStop?.pid !== other.pid) {
+        askedToStop = other;
         deadline = Date.now() + options.bindDeadlineMs;
         log.write("daemon_replacing_older", { pid: other.pid, port });
         say(`Replacing kurmis daemon ${other.version} (pid ${String(other.pid)}) on port ${String(port)}`);
@@ -10324,21 +12190,35 @@ async function bindPort(server, options) {
     if (Date.now() >= deadline) {
       log.write("port_in_use", { port, reason: "timeout" });
       const seconds3 = String(Math.round(options.bindDeadlineMs / 1e3));
-      complain(holder.kind === "kurmis" ? `the kurmis daemon ${holder.status.version} (pid ${String(holder.status.pid)}) did not give up port ${String(port)} within ${seconds3} s` : `port ${String(port)} on ${DAEMON_HOST} stayed busy for ${seconds3} s with nothing answering on it`);
+      complain(bindTimeoutText(port, seconds3, askedToStop, lastHolder ?? null));
       return 1;
     }
-    await delay(BIND_RETRY_MS);
+    await delay2(BIND_RETRY_MS);
   }
 }
+function bindTimeoutText(port, seconds3, askedToStop, lastHolder) {
+  const where = `port ${String(port)} on ${DAEMON_HOST}`;
+  if (askedToStop === null) return `${where} stayed busy for ${seconds3} s with nothing answering on it`;
+  const old = `the kurmis daemon ${askedToStop.version} (pid ${String(askedToStop.pid)})`;
+  if (lastHolder?.kind === "kurmis" && lastHolder.status.pid === askedToStop.pid) {
+    return `${old} did not give up port ${String(port)} within ${seconds3} s`;
+  }
+  const answer2 = lastHolder?.kind === "other" ? ` (${lastHolder.reason})` : "";
+  return `${old} was asked to stop, but ${where} stayed busy for ${seconds3} s, and what holds it now does not answer as that daemon${answer2}. Another program may have taken the port. To use another port, set "port" in ${configPath()} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)}.`;
+}
+var UNUSABLE_PORT_CODES = /* @__PURE__ */ new Set(["EACCES", "EADDRNOTAVAIL"]);
+function unusablePortText(port, code, configFile) {
+  return `could not listen on ${DAEMON_HOST}:${String(port)} (${code}): the system does not let this program use the port. On Windows a port inside a range the system reserves is refused this way; "netsh int ipv4 show excludedportrange protocol=tcp" lists those ranges. To use another port, set "port" in ${configFile} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)} outside them.`;
+}
 function listenOnce(server, port) {
-  return new Promise((resolve7) => {
+  return new Promise((resolve8) => {
     const onError = (error) => {
       server.off("listening", onListening);
-      resolve7(error);
+      resolve8(error);
     };
     const onListening = () => {
       server.off("error", onError);
-      resolve7(null);
+      resolve8(null);
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -10355,11 +12235,11 @@ var StopControl = class {
   resolveFirst;
   resolveSkip;
   constructor() {
-    this.firstRequest = new Promise((resolve7) => {
-      this.resolveFirst = resolve7;
+    this.firstRequest = new Promise((resolve8) => {
+      this.resolveFirst = resolve8;
     });
-    this.drainSkipped = new Promise((resolve7) => {
-      this.resolveSkip = resolve7;
+    this.drainSkipped = new Promise((resolve8) => {
+      this.resolveSkip = resolve8;
     });
   }
   request(reason, maxWaitMs) {
@@ -10382,11 +12262,11 @@ var StopControl = class {
   }
 };
 function waitAtMost(promise, ms, skip) {
-  return new Promise((resolve7) => {
-    const timer = setTimeout(() => resolve7({ kind: "timeout" }), ms);
+  return new Promise((resolve8) => {
+    const timer = setTimeout(() => resolve8({ kind: "timeout" }), ms);
     const finish = (outcome) => {
       clearTimeout(timer);
-      resolve7(outcome);
+      resolve8(outcome);
     };
     promise.then((value) => finish({ kind: "done", value }), (error) => finish({ kind: "failed", error }));
     void skip?.then(() => finish({ kind: "skipped" }));
@@ -10421,10 +12301,17 @@ function describeStart(result) {
   return `Started the kurmis daemon ${connection.version}${through} ${where}${replaced}.`;
 }
 var start = async (args, context) => {
-  const parsed = parseCommandArgs("daemon start", args, { "no-launchd": { type: "boolean" } }, context);
+  const parsed = parseCommandArgs("daemon start", args, {
+    "no-launchd": { type: "boolean" },
+    env: { type: "string", multiple: true }
+  }, context);
   if (typeof parsed === "number") return parsed;
+  const assignments = daemonRunAssignments(parsed.values.env ?? []);
+  if (typeof assignments === "string") return usageError("daemon start", assignments, context);
+  for (const [name, value] of Object.entries(assignments)) process.env[name] = value;
+  const startContext = { ...context, env: { ...context.env, ...assignments } };
   try {
-    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(context, parsed.values["no-launchd"] === true))));
+    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(startContext, parsed.values["no-launchd"] === true))));
     return EXIT_OK;
   } catch (error) {
     return failed(error, context);
@@ -10451,6 +12338,10 @@ var stop = async (args, context) => {
     }
     if (found === null || !await stopDaemon(clientOptions(context))) {
       writeLine(context.stdout, "The kurmis daemon is not running.");
+      const silent = found === null ? silentDaemon() : null;
+      if (silent !== null) {
+        writeLine(context.stdout, `Process ${String(silent.pid)}, named in daemon.json, does not answer on ${address(silent.port)}, so it was not asked to stop. It may be finishing its open requests before it stops.`);
+      }
     } else {
       writeLine(context.stdout, `Stopped the kurmis daemon (pid ${String(found.pid)}).`);
     }
@@ -10541,6 +12432,8 @@ The daemon is the background process that routes Claude requests. "kurmis claude
 when it is not running, so it seldom needs starting by hand.
 
   start [--no-launchd]    Start it in the background, replacing one of an older version.
+                          --env NAME=VALUE sets a kurmis variable, as for "run"; the
+                          Windows logon entry uses it.
   stop                    Stop it after it finishes the requests it has open, waiting at most
                           30 seconds for them.
   restart [--no-launchd]  Start a new one now; the old one finishes its open requests first.
@@ -10565,27 +12458,63 @@ Options:
 };
 
 // src/cli/commands/list.ts
-var import_node_fs16 = require("node:fs");
-var import_node_os10 = require("node:os");
-var import_node_path20 = require("node:path");
+var import_node_fs19 = require("node:fs");
+var import_node_os13 = require("node:os");
+var import_node_path21 = require("node:path");
+var CODEX_LOGIN_STATUS_TIMEOUT_MS = 1e4;
 function namesAccount(file) {
   try {
-    return parseClaudeIdentity((0, import_node_fs16.readFileSync)(file, "utf8")) !== null;
+    return parseClaudeIdentity((0, import_node_fs19.readFileSync)(file, "utf8")) !== null;
   } catch {
     return false;
   }
 }
 function hasLocalCredentials(id, env, home) {
   if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return (0, import_node_fs16.existsSync)((0, import_node_path20.join)(home, ".claude", ".credentials.json")) || namesAccount((0, import_node_path20.join)(home, CLAUDE_PROFILE_FILE));
+    return (0, import_node_fs19.existsSync)((0, import_node_path21.join)(home, ".claude", ".credentials.json")) || namesAccount((0, import_node_path21.join)(home, CLAUDE_PROFILE_FILE));
   }
-  if (id === CODEX_DEFAULT_ACCOUNT_ID) {
-    const codexHome = env.CODEX_HOME !== void 0 && env.CODEX_HOME !== "" ? env.CODEX_HOME : (0, import_node_path20.join)(home, ".codex");
-    return (0, import_node_fs16.existsSync)((0, import_node_path20.join)(codexHome, "auth.json"));
-  }
+  if (id.startsWith("codex:")) return (0, import_node_fs19.existsSync)((0, import_node_path21.join)(codexHomeOf(id, env, home), "auth.json"));
   const folder = loginFolder(id);
-  if (id.startsWith("codex:")) return (0, import_node_fs16.existsSync)((0, import_node_path20.join)(folder, "auth.json"));
-  return (0, import_node_fs16.existsSync)((0, import_node_path20.join)(folder, ".credentials.json")) || namesAccount((0, import_node_path20.join)(folder, CLAUDE_PROFILE_FILE));
+  return (0, import_node_fs19.existsSync)((0, import_node_path21.join)(folder, ".credentials.json")) || namesAccount((0, import_node_path21.join)(folder, CLAUDE_PROFILE_FILE));
+}
+function codexHomeOf(id, env, home, platform = process.platform) {
+  const patched = applyEnvPatch(env, codexLoginEnv(id, env, platform), platform === "win32");
+  const named = platform === "win32" ? windowsEnv(patched, "CODEX_HOME") : patched["CODEX_HOME"];
+  return named !== void 0 && named !== "" ? named : (0, import_node_path21.join)(home, ".codex");
+}
+function codexKeepsSignInElsewhere(codexHome) {
+  let text2;
+  try {
+    text2 = (0, import_node_fs19.readFileSync)((0, import_node_path21.join)(codexHome, "config.toml"), "utf8");
+  } catch {
+    return false;
+  }
+  try {
+    const store = tomlValue(text2)["cli_auth_credentials_store"];
+    return store !== void 0 && store !== "file";
+  } catch {
+    return true;
+  }
+}
+async function codexSignedIn2(id, env, deps) {
+  let program;
+  try {
+    program = deps.findProgram("codex", { env });
+  } catch (error) {
+    if (error instanceof ProgramNotFoundError) return false;
+    throw error;
+  }
+  const result = await deps.runProgram(
+    program.command,
+    [...program.args, "login", "status"],
+    { timeoutMs: CODEX_LOGIN_STATUS_TIMEOUT_MS, env: applyEnvPatch(env, codexLoginEnv(id, env)), maxOutputBytes: 64 * 1024 }
+  );
+  return result.code === 0;
+}
+async function hasCredentials(id, env, home, deps) {
+  if (hasLocalCredentials(id, env, home)) return true;
+  if (!id.startsWith("codex:") || !codexKeepsSignInElsewhere(codexHomeOf(id, env, home))) return false;
+  return await codexSignedIn2(id, env, deps);
 }
 var HEADER = ["ID", "LABEL", "AUTO", "FIVE-HOUR", "WEEKLY", "USE-FIRST", "CREDENTIALS"];
 function formatLoginTable(logins) {
@@ -10605,7 +12534,8 @@ function formatLoginTable(logins) {
   return rows.map((row) => row.map((cell, column) => cell.padEnd(widths[column])).join("  ").trimEnd()).join("\n");
 }
 function createListCommand(deps = {}) {
-  const home = deps.home ?? import_node_os10.homedir;
+  const home = deps.home ?? import_node_os13.homedir;
+  const codex = { findProgram: deps.findProgram ?? realFindProgram, runProgram: deps.runProgram ?? runProgram };
   return {
     name: "list",
     summary: "List the logins and their routing settings",
@@ -10621,13 +12551,15 @@ its settings and whether it has credentials on this machine. Change the settings
   WEEKLY        The same for the weekly window (set --weekly).
   USE-FIRST     Whether Auto routing takes this login before the others that have room
                 (set --use-first).
-  CREDENTIALS   Whether the login's credentials are on this machine. This only looks at files;
-                "kurmis status" asks the daemon whether they still work.
+  CREDENTIALS   Whether the login's credentials are on this machine. This looks at files, and
+                asks "codex login status" for a Codex login that keeps its sign-in in the
+                system's keyring (cli_auth_credentials_store); "kurmis status" asks the daemon
+                whether they still work.
 
 Options:
   --json       Print the logins as JSON, with a "credentials" field for the last column.
   -h, --help   Show this help.`,
-    run(args, context) {
+    async run(args, context) {
       const parsed = parseCommandArgs("list", args, { json: { type: "boolean" } }, context);
       if (typeof parsed === "number") return parsed;
       let logins;
@@ -10638,7 +12570,7 @@ Options:
         writeLine(context.stderr, `kurmis list: ${error.message}`);
         return EXIT_FAILURE;
       }
-      const listed = logins.map((login) => ({ ...login, credentials: hasLocalCredentials(login.id, context.env, home()) }));
+      const listed = await Promise.all(logins.map(async (login) => ({ ...login, credentials: await hasCredentials(login.id, context.env, home(), codex) })));
       writeLine(context.stdout, parsed.values.json === true ? JSON.stringify(listed, null, 2) : formatLoginTable(listed));
       return EXIT_OK;
     }
@@ -10647,37 +12579,58 @@ Options:
 var listCommand = createListCommand();
 
 // src/cli/commands/login.ts
-var import_node_fs18 = require("node:fs");
-var import_node_os11 = require("node:os");
-var import_node_path22 = require("node:path");
+var import_node_fs21 = require("node:fs");
+var import_node_os14 = require("node:os");
+var import_node_path23 = require("node:path");
 
 // src/platform/remove-tree.ts
-var import_node_fs17 = require("node:fs");
-var import_node_path21 = require("node:path");
+var import_node_fs20 = require("node:fs");
+var import_node_path22 = require("node:path");
 var nodeFs = {
-  lstatSync: (path) => (0, import_node_fs17.lstatSync)(path),
-  readdirSync: (path) => (0, import_node_fs17.readdirSync)(path),
-  unlinkSync: (path) => (0, import_node_fs17.unlinkSync)(path),
-  rmdirSync: (path) => (0, import_node_fs17.rmdirSync)(path),
-  chmodSync: (path, mode) => (0, import_node_fs17.chmodSync)(path, mode)
+  lstatSync: (path) => (0, import_node_fs20.lstatSync)(path),
+  readdirSync: (path) => (0, import_node_fs20.readdirSync)(path),
+  unlinkSync: (path) => (0, import_node_fs20.unlinkSync)(path),
+  rmdirSync: (path) => (0, import_node_fs20.rmdirSync)(path),
+  chmodSync: (path, mode) => (0, import_node_fs20.chmodSync)(path, mode),
+  realpathSync: (path) => import_node_fs20.realpathSync.native(path)
 };
 function codeOf2(error) {
   return error?.code;
 }
 function removeTreeSync(path, options = {}) {
-  const fs = options.fs ?? nodeFs;
-  const platform = options.platform ?? process.platform;
-  let stat;
+  removeEntry2(path, options.fs ?? nodeFs, options.platform ?? process.platform, null);
+}
+function insideWindowsFolder(path, root) {
+  const a = import_node_path22.win32.normalize(path).replace(/^\\\\\?\\/, "").toLowerCase();
+  const b = import_node_path22.win32.normalize(root).replace(/^\\\\\?\\/, "").replace(/\\+$/, "").toLowerCase();
+  return a === b || a.startsWith(`${b}\\`);
+}
+function removeEntry2(path, fs, platform, root) {
+  let stat2;
   try {
-    stat = fs.lstatSync(path);
+    stat2 = fs.lstatSync(path);
   } catch (error) {
     if (codeOf2(error) === "ENOENT") return;
     throw error;
   }
-  if (stat.isSymbolicLink()) {
+  if (stat2.isSymbolicLink()) {
     removeLink(path, fs, platform);
-  } else if (stat.isDirectory()) {
-    for (const name of fs.readdirSync(path)) removeTreeSync((0, import_node_path21.join)(path, name), { fs, platform });
+  } else if (stat2.isDirectory()) {
+    let inside = root;
+    if (platform === "win32") {
+      let real;
+      try {
+        real = fs.realpathSync(path);
+      } catch {
+        real = null;
+      }
+      if (real === null || root !== null && !insideWindowsFolder(real, root)) {
+        retryWhileLockedSync(() => fs.rmdirSync(path), platform);
+        return;
+      }
+      inside = root ?? real;
+    }
+    for (const name of fs.readdirSync(path)) removeEntry2((0, import_node_path22.join)(path, name), fs, platform, inside);
     retryWhileLockedSync(() => fs.rmdirSync(path), platform);
   } else {
     removeFile2(path, fs, platform);
@@ -10711,16 +12664,40 @@ function removeFile2(path, fs, platform) {
   }
 }
 
-// src/cli/commands/login.ts
-function freeLoginName(provider, config) {
-  for (let number = 2; ; number++) {
-    const id = `${provider}:${String(number)}`;
-    if (findLogin(config, id) === void 0 && !(0, import_node_fs18.existsSync)(loginFolder(id))) return String(number);
+// src/cli/login-lock.ts
+var LOGIN_LOCK_STALE_MS = 24 * 60 * 60 * 1e3;
+var LOGIN_LOCK_WAIT_MS = 500;
+var LoginBusyError = class extends Error {
+  constructor(id, path, pid) {
+    super(`another "kurmis login" or "kurmis logout" of ${id} is running now${pid === null ? "" : ` (pid ${String(pid)})`}. Wait for it to end and try again. If none is running, delete ${path}.`);
+    this.id = id;
+    this.path = path;
+    this.name = "LoginBusyError";
+  }
+  id;
+  path;
+};
+function lockLogin(id) {
+  const path = loginLockPath(id);
+  try {
+    return acquireFileLockSync(path, { timeoutMs: LOGIN_LOCK_WAIT_MS, staleMs: LOGIN_LOCK_STALE_MS });
+  } catch (error) {
+    if (error instanceof LockTimeoutError) throw new LoginBusyError(id, path, error.holder?.pid ?? null);
+    throw error;
   }
 }
-function loginTarget(argument, name, config) {
+
+// src/cli/commands/login.ts
+var LOGIN_PROBE_WAIT_MS = 15e3;
+function freeLoginName(provider, config, skip = /* @__PURE__ */ new Set()) {
+  for (let number = 2; ; number++) {
+    const id = `${provider}:${String(number)}`;
+    if (!skip.has(String(number)) && findLogin(config, id) === void 0 && !(0, import_node_fs21.existsSync)(loginFolder(id))) return String(number);
+  }
+}
+function loginTarget(argument, name, config, skip = /* @__PURE__ */ new Set()) {
   if (isLoginProvider(argument)) {
-    const chosen = name ?? freeLoginName(argument, config);
+    const chosen = name ?? freeLoginName(argument, config, skip);
     if (!isValidLoginName(chosen)) {
       return { error: `"${chosen}" is not a login name; a name is 1 to 32 lowercase letters, digits, "-" or "_"` };
     }
@@ -10742,7 +12719,7 @@ function loginTarget(argument, name, config) {
 }
 function homeIdentity(home) {
   try {
-    return parseClaudeIdentity((0, import_node_fs18.readFileSync)((0, import_node_path22.join)(home, CLAUDE_PROFILE_FILE), "utf8"));
+    return parseClaudeIdentity((0, import_node_fs21.readFileSync)((0, import_node_path23.join)(home, CLAUDE_PROFILE_FILE), "utf8"));
   } catch {
     return null;
   }
@@ -10751,12 +12728,137 @@ function fail2(context, message) {
   writeLine(context.stderr, `kurmis login: ${message}`);
   return EXIT_FAILURE;
 }
+function reserveLogin(argument, name) {
+  const skip = /* @__PURE__ */ new Set();
+  for (; ; ) {
+    const target = loginTarget(argument, name, loadConfig(), skip);
+    if ("error" in target) return { error: target.error, usage: true };
+    const numbered = isLoginProvider(argument) && name === void 0;
+    let lock;
+    try {
+      lock = lockLogin(target.id);
+    } catch (error) {
+      if (!(error instanceof LoginBusyError)) throw error;
+      if (!numbered) return { error: error.message, usage: false };
+      skip.add(target.id.slice(target.id.indexOf(":") + 1));
+      continue;
+    }
+    try {
+      const config = loadConfig();
+      const listed = findLogin(config, target.id) !== void 0;
+      if (numbered && (listed || (0, import_node_fs21.existsSync)(loginFolder(target.id)))) {
+        lock.release();
+        skip.add(target.id.slice(target.id.indexOf(":") + 1));
+        continue;
+      }
+      if (target.isNew && listed && isLoginProvider(argument)) {
+        lock.release();
+        return { error: `there is already a login ${target.id}; "kurmis login ${target.id}" signs it in again`, usage: true };
+      }
+      return { id: target.id, isNew: !listed, lock };
+    } catch (error) {
+      lock.release();
+      throw error;
+    }
+  }
+}
+async function tellDaemon(daemon, id, env, probeWaitMs) {
+  let connection;
+  try {
+    connection = await daemon.findDaemon({ env });
+    if (connection === null) return [];
+    await daemon.requestReload(connection);
+  } catch (error) {
+    const said = reloadText({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
+    return said === null ? [] : [said];
+  }
+  const lines = [reloadText({ kind: "reloaded" }) ?? ""];
+  const found = connection;
+  const probed = await settleWithin((signal) => daemon.requestProbe(found, [id], signal), probeWaitMs);
+  if (probed.kind === "done") {
+    const row = probed.value.logins.find((login) => login.id === id);
+    if (row?.signedIn === false) lines.push(`The daemon still finds ${id} signed out; "kurmis status" shows what it knows.`);
+  } else {
+    const why = probed.kind === "timeout" ? `did not finish within ${String(probeWaitMs / 1e3)} s` : `failed (${probed.error instanceof Error ? probed.error.message : String(probed.error)})`;
+    lines.push(`The daemon's check of ${id} ${why}; it checks the login again within 15 minutes.`);
+  }
+  return lines;
+}
+async function signIn(run2) {
+  const { id, isNew, lock, provider, program, label, context } = run2;
+  const isDefault = isDefaultLoginId(id);
+  const folder = isDefault ? null : loginFolder(id);
+  let created = false;
+  if (folder !== null && !(0, import_node_fs21.existsSync)(folder)) {
+    makePrivateDirSync(folder);
+    created = true;
+  }
+  const cleanUp = () => {
+    if (!created || folder === null) return;
+    removeTreeSync(folder);
+    if (provider === "codex") (0, import_node_fs21.rmSync)(codexMergedRecordPath(id), { force: true });
+  };
+  const notAdded = isNew ? ` ${id} was not added.` : "";
+  if (provider === "codex" && !isDefault) {
+    try {
+      const prepared = await run2.deps.prepareCodexHome(id, { env: context.env });
+      for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`);
+    } catch (error) {
+      cleanUp();
+      return fail2(context, `could not prepare the Codex home of ${id}: ${error instanceof Error ? error.message : String(error)}.${notAdded}`);
+    }
+  }
+  const cliName = provider === "claude" ? "claude auth login" : "codex login";
+  writeLine(context.stdout, `Signing in ${id}${isNew ? " (a new login)" : ""} with "${cliName}". Follow its steps.`);
+  const credentialManager = provider === "claude" && await run2.deps.inCredentialManager(folder, context.env);
+  const env = applyEnvPatch(context.env, provider === "claude" ? claudeLoginEnv(id, credentialManager) : codexLoginEnv(id, context.env));
+  const cliArgs = provider === "claude" ? ["auth", "login", "--claudeai"] : ["login"];
+  const end = await run2.deps.runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env });
+  if (end.kind !== "exit") {
+    cleanUp();
+    lock.release();
+    if (isNew) writeLine(context.stderr, `kurmis login:${notAdded}`);
+    return run2.deps.runner.finishLikeChild(end, { stderr: context.stderr, name: provider });
+  }
+  if (end.code !== 0) {
+    cleanUp();
+    return fail2(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`);
+  }
+  if (provider === "claude" && isDefault) {
+    (0, import_node_fs21.rmSync)((0, import_node_path23.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
+  }
+  const identity = provider === "claude" ? isDefault ? homeIdentity(run2.deps.home()) : readClaudeIdentity(id, run2.deps.home()) : null;
+  if (identity === null && !await hasCredentials(id, context.env, run2.deps.home(), run2.deps)) {
+    cleanUp();
+    return fail2(context, `"${cliName}" ended, but ${id} has no credentials.${notAdded}`);
+  }
+  try {
+    const patch = label === void 0 ? {} : { label };
+    if (isNew) changeConfig((config) => addLogin(config, id, patch));
+    else if (label !== void 0) changeConfig((config) => updateLogin(config, id, patch));
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    return fail2(context, `${id} is signed in but could not be saved: ${error.message} Run "kurmis login ${id}" again, or "kurmis logout ${id}" to remove its credentials.`);
+  }
+  const who = identity?.email ?? null;
+  writeLine(context.stdout, who === null ? `Signed in ${id}.` : `Signed in ${id} as ${who}.`);
+  if (isNew) {
+    writeLine(context.stdout, `Added ${id} with the label "${label ?? id.slice(id.indexOf(":") + 1)}", Auto routing on and both limits at 100%. "kurmis set ${id}" changes that.`);
+  }
+  for (const line of await tellDaemon(run2.deps.daemon, id, context.env, run2.deps.probeWaitMs)) writeLine(context.stdout, line);
+  return EXIT_OK;
+}
 function createLoginCommand(deps = {}) {
-  const daemon = deps.daemon ?? realDaemonClient;
-  const runner = deps.runner ?? realChildRunner;
-  const find = deps.findProgram ?? realFindProgram;
-  const home = deps.home ?? import_node_os11.homedir;
-  const prepareCodexHome2 = deps.prepareCodexHome ?? realPrepareCodexHome;
+  const full = {
+    daemon: deps.daemon ?? realDaemonClient,
+    runner: deps.runner ?? realChildRunner,
+    findProgram: deps.findProgram ?? realFindProgram,
+    runProgram: deps.runProgram ?? runProgram,
+    home: deps.home ?? import_node_os14.homedir,
+    prepareCodexHome: deps.prepareCodexHome ?? realPrepareCodexHome,
+    probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
+    inCredentialManager: deps.inCredentialManager ?? ((folder, env) => holdsStoredRecord(folder, env))
+  };
   return {
     name: "login",
     summary: "Sign in a new login, or sign an existing one in again",
@@ -10786,92 +12888,48 @@ Options:
       if (parsed.positionals.length !== 1) return usageError("login", "takes claude, codex or one login id", context);
       const label = parsed.values.label?.trim();
       if (label !== void 0 && (label === "" || label.length > 64)) return usageError("login", "--label takes 1 to 64 characters", context);
+      const argument = parsed.positionals[0];
       let target;
       try {
-        target = loginTarget(parsed.positionals[0], parsed.values.name, loadConfig());
+        target = loginTarget(argument, parsed.values.name, loadConfig());
       } catch (error) {
         if (error instanceof ConfigError) return fail2(context, error.message);
         throw error;
       }
       if ("error" in target) return usageError("login", target.error, context);
-      const { id, isNew } = target;
-      const provider = id.startsWith("codex:") ? "codex" : "claude";
-      const isDefault = isDefaultLoginId(id);
+      const provider = target.id.startsWith("codex:") ? "codex" : "claude";
       let program;
       try {
-        program = find(provider, { env: context.env });
+        program = full.findProgram(provider, { env: context.env });
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail2(context, error.message);
         throw error;
       }
-      const folder = isDefault ? null : loginFolder(id);
-      let created = false;
-      if (folder !== null && !(0, import_node_fs18.existsSync)(folder)) {
-        makePrivateDirSync(folder);
-        created = true;
-      }
-      const cleanUp = () => {
-        if (created && folder !== null) removeTreeSync(folder);
-      };
-      const notAdded = isNew ? ` ${id} was not added.` : "";
-      if (provider === "codex" && !isDefault) {
-        try {
-          const prepared = await prepareCodexHome2(id, { env: context.env });
-          for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`);
-        } catch (error) {
-          cleanUp();
-          return fail2(context, `could not prepare the Codex home of ${id}: ${error instanceof Error ? error.message : String(error)}.${notAdded}`);
-        }
-      }
-      const cliName = provider === "claude" ? "claude auth login" : "codex login";
-      writeLine(context.stdout, `Signing in ${id}${isNew ? " (a new login)" : ""} with "${cliName}". Follow its steps.`);
-      const env = applyEnvPatch(context.env, provider === "claude" ? claudeLoginEnv(id) : codexLoginEnv(id, context.env));
-      const cliArgs = provider === "claude" ? ["auth", "login", "--claudeai"] : ["login"];
-      const end = await runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env });
-      if (end.kind !== "exit") {
-        cleanUp();
-        if (isNew) writeLine(context.stderr, `kurmis login:${notAdded}`);
-        return runner.finishLikeChild(end, { stderr: context.stderr, name: provider });
-      }
-      if (end.code !== 0) {
-        cleanUp();
-        return fail2(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`);
-      }
-      if (provider === "claude" && isDefault) {
-        (0, import_node_fs18.rmSync)((0, import_node_path22.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
-      }
-      const identity = provider === "claude" ? isDefault ? homeIdentity(home()) : readClaudeIdentity(id, home()) : null;
-      if (identity === null && !hasLocalCredentials(id, context.env, home())) {
-        cleanUp();
-        return fail2(context, `"${cliName}" ended, but ${id} has no credentials.${notAdded}`);
-      }
+      let reserved;
       try {
-        const patch = label === void 0 ? {} : { label };
-        if (isNew) changeConfig((config) => addLogin(config, id, patch));
-        else if (label !== void 0) changeConfig((config) => updateLogin(config, id, patch));
+        reserved = reserveLogin(argument, parsed.values.name);
       } catch (error) {
-        if (!(error instanceof ConfigError)) throw error;
-        return fail2(context, `${id} is signed in but could not be saved: ${error.message} Run "kurmis login ${id}" again, or "kurmis logout ${id}" to remove its credentials.`);
+        if (error instanceof ConfigError) return fail2(context, error.message);
+        throw error;
       }
-      const who = identity?.email ?? null;
-      writeLine(context.stdout, who === null ? `Signed in ${id}.` : `Signed in ${id} as ${who}.`);
-      if (isNew) {
-        writeLine(context.stdout, `Added ${id} with the label "${label ?? id.slice(id.indexOf(":") + 1)}", Auto routing on and both limits at 100%. "kurmis set ${id}" changes that.`);
+      if ("error" in reserved) return reserved.usage ? usageError("login", reserved.error, context) : fail2(context, reserved.error);
+      const { id, isNew, lock } = reserved;
+      try {
+        return await signIn({ id, isNew, lock, provider, program, label, context, deps: full });
+      } finally {
+        lock.release();
       }
-      const reload = reloadText(await reloadIfRunning(daemon, context.env));
-      if (reload !== null) writeLine(context.stdout, reload);
-      return EXIT_OK;
     }
   };
 }
 var loginCommand = createLoginCommand();
 
 // src/cli/commands/logout.ts
-var import_node_fs19 = require("node:fs");
+var import_node_fs22 = require("node:fs");
 var LOGOUT_TIMEOUT_MS = 3e4;
 function exists(path) {
   try {
-    (0, import_node_fs19.lstatSync)(path);
+    (0, import_node_fs22.lstatSync)(path);
     return true;
   } catch {
     return false;
@@ -10891,7 +12949,7 @@ function createLogoutCommand(deps = {}) {
     let problem;
     try {
       const program = find(provider, { env });
-      const patch = provider === "claude" ? claudeLoginEnv(id) : codexLoginEnv(id, env);
+      const patch = provider === "claude" ? claudeLoginEnv(id, platform === "win32") : codexLoginEnv(id, env);
       const cliArgs = provider === "claude" ? ["auth", "logout"] : ["logout"];
       const result = await run2(program.command, [...program.args, ...cliArgs], { timeoutMs: LOGOUT_TIMEOUT_MS, env: applyEnvPatch(env, patch) });
       if (result.code === 0) return null;
@@ -10900,7 +12958,7 @@ function createLogoutCommand(deps = {}) {
       if (!(error instanceof ProgramNotFoundError)) throw error;
       problem = error.message;
     }
-    const left = provider === "claude" && platform === "darwin" ? ` Its Keychain item "${keychainService(folder)}" may be left; Keychain Access can delete it.` : "";
+    const left = provider !== "claude" ? "" : platform === "darwin" ? ` Its Keychain item "${keychainService(folder)}" may be left; Keychain Access can delete it.` : platform === "win32" ? ` Its Windows credentials "${keychainService(folder)}/\u2026" may be left; Credential Manager can delete them.` : "";
     return `"${cliName}" did not finish (${problem}); the login is removed anyway.${left}`;
   }
   return {
@@ -10927,32 +12985,53 @@ Options:
         const cli = provider === "claude" ? "claude auth logout" : "codex logout";
         return usageError("logout", `${id} is the machine's own login and cannot be removed. To sign it out, run "${cli}" yourself.`, context);
       }
-      const folder = loginFolder(id);
-      let listed;
+      let lock;
       try {
-        listed = findLogin(loadConfig(), id) !== void 0;
-        if (listed) changeConfig((config) => removeLogin(config, id));
+        lock = lockLogin(id);
       } catch (error) {
-        if (error instanceof ConfigError) return fail3(context, error.message);
+        if (error instanceof LoginBusyError) return fail3(context, error.message);
         throw error;
       }
-      const hasFolder = exists(folder);
-      if (!listed && !hasFolder) return fail3(context, `there is no login ${id}; "kurmis list" shows them`);
-      const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null;
-      if (hasFolder || provider === "claude") {
-        const problem = await signOut(id, provider, folder, context.env);
-        if (problem !== null) writeLine(context.stderr, `kurmis logout: ${problem}`);
-      }
       try {
-        removeTreeSync(folder);
-      } catch (error) {
-        return fail3(context, `${listed ? `${id} is removed from kurmis, but ` : ""}its folder ${folder} could not be deleted (${error instanceof Error ? error.message : String(error)}). Close what uses it and run "kurmis logout ${id}" again.`);
+        return await removeLoginNow(id, provider, context);
+      } finally {
+        lock.release();
       }
-      writeLine(context.stdout, listed ? `Removed ${id}.` : `Deleted the folder that ${id} left behind.`);
-      if (reload !== null) writeLine(context.stdout, reload);
-      return EXIT_OK;
     }
   };
+  async function removeLoginNow(id, provider, context) {
+    const folder = loginFolder(id);
+    let listed;
+    try {
+      listed = findLogin(loadConfig(), id) !== void 0;
+      if (listed) changeConfig((config) => removeLogin(config, id));
+    } catch (error) {
+      if (error instanceof ConfigError) return fail3(context, error.message);
+      throw error;
+    }
+    const hasFolder = exists(folder);
+    if (!listed && !hasFolder) {
+      const record2 = provider === "codex" ? codexMergedRecordPath(id) : null;
+      if (record2 === null || !exists(record2)) return fail3(context, `there is no login ${id}; "kurmis list" shows them`);
+      (0, import_node_fs22.rmSync)(record2, { force: true });
+      writeLine(context.stdout, `Deleted the record of what was merged into ${id}'s home, which ${id} left behind.`);
+      return EXIT_OK;
+    }
+    const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null;
+    if (hasFolder || provider === "claude") {
+      const problem = await signOut(id, provider, folder, context.env);
+      if (problem !== null) writeLine(context.stderr, `kurmis logout: ${problem}`);
+    }
+    try {
+      removeTreeSync(folder);
+      if (provider === "codex") (0, import_node_fs22.rmSync)(codexMergedRecordPath(id), { force: true });
+    } catch (error) {
+      return fail3(context, `${listed ? `${id} is removed from kurmis, but ` : ""}its folder ${folder} could not be deleted (${error instanceof Error ? error.message : String(error)}). Close what uses it and run "kurmis logout ${id}" again.`);
+    }
+    writeLine(context.stdout, listed ? `Removed ${id}.` : `Deleted the folder that ${id} left behind.`);
+    if (reload !== null) writeLine(context.stdout, reload);
+    return EXIT_OK;
+  }
 }
 var logoutCommand = createLogoutCommand();
 
@@ -11069,8 +13148,12 @@ Options:
 }
 var setCommand = createSetCommand();
 
+// src/cli/commands/setup.ts
+var import_node_os15 = require("node:os");
+var import_node_path25 = require("node:path");
+
 // src/platform/autostart.ts
-var import_node_fs20 = require("node:fs");
+var import_node_fs23 = require("node:fs");
 var UNSUPPORTED = "Starting the daemon at login is not supported on this platform; the next kurmis command starts it.";
 var NO_ENTRY = "kurmis is not running from its bundle, so there is no program to start at login; run kurmis setup from the installed kurmis.";
 function loginProgram(options, platform) {
@@ -11081,7 +13164,7 @@ function loginProgram(options, platform) {
 }
 function readText2(path) {
   try {
-    return (0, import_node_fs20.readFileSync)(path, "utf8");
+    return (0, import_node_fs23.readFileSync)(path, "utf8");
   } catch {
     return null;
   }
@@ -11091,15 +13174,17 @@ async function registerAutostart(options) {
   if (platform !== "darwin" && platform !== "win32") return { changed: false, where: null, warning: UNSUPPORTED };
   const programArguments = loginProgram(options, platform);
   if (programArguments === null) return { changed: false, where: null, warning: NO_ENTRY };
-  if (platform === "win32") {
-    return await registerWindowsAutostart({
-      env: options.env,
-      programArguments,
-      ...options.windowsScriptPath === void 0 ? {} : { scriptPath: options.windowsScriptPath },
-      ...options.reg === void 0 ? {} : { reg: options.reg }
-    });
-  }
-  return await registerLaunchAgent(options, programArguments);
+  const node = programArguments[0] ?? "";
+  const temporary = isTemporaryPath(node, temporaryFolders(options.env, platform), platform) ? `The login item starts Node from ${node}, which is in a temporary folder and may be gone at your next login. Run kurmis setup again from a shell whose node is installed in a lasting place (for example, not one of fnm's per-shell folders).` : null;
+  const result = platform === "win32" ? await registerWindowsAutostart({
+    env: options.env,
+    programArguments,
+    ...options.windowsScriptPath === void 0 ? {} : { scriptPath: options.windowsScriptPath },
+    ...options.reg === void 0 ? {} : { reg: options.reg }
+  }) : await registerLaunchAgent(options, programArguments);
+  if (temporary === null) return result;
+  if (result.warning !== void 0) return { ...result, warning: `${result.warning} ${temporary}` };
+  return { ...result, warning: temporary, warningOnly: true };
 }
 async function unregisterAutostart(options) {
   const platform = options.platform ?? process.platform;
@@ -11128,7 +13213,8 @@ async function registerLaunchAgent(options, programArguments) {
     return {
       changed: true,
       where: path,
-      warning: `The login item is written and starts the daemon at your next login, but it could not be loaded now: ${error.message}`
+      warning: `The login item is written and starts the daemon at your next login, but it could not be loaded now: ${error.message}`,
+      loadsAtNextLogin: true
     };
   }
   return { changed: true, where: path };
@@ -11144,18 +13230,18 @@ async function unregisterLaunchAgent(options) {
     warning = `${error.message} The login item's file is removed, so it does not start the daemon at the next login.`;
   }
   if (readText2(path) !== null) {
-    (0, import_node_fs20.rmSync)(path, { force: true });
+    (0, import_node_fs23.rmSync)(path, { force: true });
     changed = true;
   }
   return warning === void 0 ? { changed, where: path } : { changed, where: path, warning };
 }
 
 // src/cli/global-settings.ts
-var import_node_fs21 = require("node:fs");
-var import_node_path23 = require("node:path");
+var import_node_fs24 = require("node:fs");
+var import_node_path24 = require("node:path");
 var BASE_URL = "ANTHROPIC_BASE_URL";
 var CUSTOM_HEADERS2 = "ANTHROPIC_CUSTOM_HEADERS";
-var KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+var KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", ...OAUTH_TOKEN_VARIABLES];
 var BOM = "\uFEFF";
 var LOOPBACK_URL = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/?$/;
 var SettingsFileError = class extends Error {
@@ -11164,7 +13250,7 @@ var SettingsFileError = class extends Error {
     this.name = "SettingsFileError";
   }
 };
-function isWhitespace(char) {
+function isWhitespace2(char) {
   return char === " " || char === "	" || char === "\n" || char === "\r";
 }
 var Scanner = class {
@@ -11173,7 +13259,7 @@ var Scanner = class {
   }
   text;
   skipWhitespace(pos) {
-    while (isWhitespace(this.text[pos])) pos++;
+    while (isWhitespace2(this.text[pos])) pos++;
     return pos;
   }
   /** The end of the string whose opening quote is at `pos`. */
@@ -11193,7 +13279,7 @@ var Scanner = class {
     if (char === '"') return this.stringEnd(pos);
     if (char === "{" || char === "[") return this.containerEnd(pos);
     let i = pos;
-    while (i < this.text.length && !isWhitespace(this.text[i]) && !",]}".includes(this.text[i])) i++;
+    while (i < this.text.length && !isWhitespace2(this.text[i]) && !",]}".includes(this.text[i])) i++;
     return i;
   }
   containerEnd(pos) {
@@ -11240,8 +13326,8 @@ function parseSettings2(text2) {
   let value;
   try {
     value = JSON.parse(text2);
-  } catch (error) {
-    throw new SettingsFileError(`it is not valid JSON (${error instanceof Error ? error.message : String(error)})`);
+  } catch {
+    throw new SettingsFileError(`it is ${notJsonText(text2)}`);
   }
   if (!isPlainObject3(value)) throw new SettingsFileError("its top level is not a JSON object");
   const scanner = new Scanner(text2);
@@ -11250,15 +13336,15 @@ function parseSettings2(text2) {
   if (envMembers.length > 1) throw new SettingsFileError('it has more than one "env" key');
   const envMember = envMembers[0];
   if (envMember === void 0) return { text: text2, top, env: null };
-  const envValue2 = value.env;
-  if (!isPlainObject3(envValue2)) throw new SettingsFileError('its "env" is not a JSON object');
+  const envValue = value.env;
+  if (!isPlainObject3(envValue)) throw new SettingsFileError('its "env" is not a JSON object');
   const node = scanner.object(envMember.valueStart);
   for (const name of ROUTING_VARIABLES) {
     if (node.members.filter((member) => member.name === name).length > 1) {
       throw new SettingsFileError(`its "env" has more than one "${name}" key`);
     }
   }
-  return { text: text2, top, env: { member: envMember, node, value: envValue2 } };
+  return { text: text2, top, env: { member: envMember, node, value: envValue } };
 }
 function layoutOf(parsed) {
   const eol = parsed.text.includes("\r\n") ? "\r\n" : "\n";
@@ -11327,13 +13413,16 @@ function kurmisEnvValues(values, existingHeaders) {
     login: null,
     startedOn: null,
     secureStorageDir: null,
-    inheritedCustomHeaders: existingHeaders
+    inheritedCustomHeaders: null
   });
   const out = {};
   for (const name of ROUTING_VARIABLES) {
     const value = routed.set[name];
     if (value !== void 0) out[name] = value;
   }
+  if (values.credentialsOfItsOwn === true) out[CUSTOM_HEADERS2] = withRouteHeaders(null, values.key, null, STARTED_ON_NONE);
+  const theirs = othersHeaderLines(existingHeaders ?? "");
+  if (theirs.length > 0) out[CUSTOM_HEADERS2] = [...theirs, out[CUSTOM_HEADERS2]].join("\n");
   return out;
 }
 function hasKurmisHeader(headers) {
@@ -11357,23 +13446,28 @@ function displayValue(value) {
 }
 function keyVariableWarnings(env) {
   if (env === void 0) return [];
-  return KEY_VARIABLES.filter((name) => env[name] !== void 0).map((name) => `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`);
+  return KEY_VARIABLES.filter((name) => env[name] !== void 0 && env[name] !== "").map((name) => OAUTH_TOKEN_VARIABLES.includes(name) ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of claude:default's credentials, and a request kurmis sends on claude:default may be billed to the token's account. Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.` : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`);
 }
-function backupEnv(backupText) {
+function backupBefore(backupText) {
   if (backupText === null || backupText === void 0) return null;
   let value;
   try {
-    value = JSON.parse(backupText);
+    value = JSON.parse(withoutBom3(backupText));
   } catch {
     return null;
   }
-  if (!isPlainObject3(value) || !isPlainObject3(value.env)) return null;
+  if (!isPlainObject3(value)) return null;
+  if (value.env === void 0) return { env: null };
+  if (!isPlainObject3(value.env)) return null;
   const env = value.env;
   if (hasKurmisHeader(env[CUSTOM_HEADERS2])) return null;
-  return env;
+  return { env };
+}
+function withoutBom3(text2) {
+  return text2.startsWith(BOM) ? text2.slice(BOM.length) : text2;
 }
 function emptyEdit(text2) {
-  return { text: text2, changed: false, changes: [], envCreated: false, envRemoved: false, warnings: [] };
+  return { text: text2, changed: false, changes: [], envCreated: false, envRemoved: false, hadKurmis: false, warnings: [] };
 }
 function applySetupToText(text2, values) {
   if (text2 === null || text2.trim().length === 0) {
@@ -11387,6 +13481,7 @@ function applySetupToText(text2, values) {
       changes: Object.keys(env2).map((name) => ({ name, action: "added" })),
       envCreated: true,
       envRemoved: false,
+      hadKurmis: false,
       warnings: []
     };
   }
@@ -11408,6 +13503,7 @@ function applySetupToText(text2, values) {
     throw new SettingsFileError(`its "env" sets ${CUSTOM_HEADERS2} to something other than a string`);
   }
   const wanted = kurmisEnvValues(values, headers ?? null);
+  result.hadKurmis = baseUrl !== void 0 && isKurmisBaseUrl(baseUrl, env, values.port) || hasKurmisHeader(headers);
   if (parsed.env === null) {
     const outer = parsed.top.members.length > 0 ? lineIndent(body, parsed.top.members[0].keyStart) : `${lineIndent(body, parsed.top.open)}${layout.unit}`;
     const json = newEnvJson(wanted, outer, layout, !body.includes("\n"));
@@ -11453,7 +13549,8 @@ function undoSetupInText(text2, values) {
   const result = emptyEdit(text2);
   if (parsed.env === null) return result;
   const env = parsed.env.value;
-  const before = backupEnv(values.backupText);
+  const backup = backupBefore(values.backupText);
+  const before = backup?.env ?? null;
   const plain = kurmisEnvValues({ port: values.port ?? 1, key: "unused" }, null);
   const baseUrlIsKurmis = isKurmisBaseUrl(env[BASE_URL], env, values.port);
   for (const name of ROUTING_VARIABLES) {
@@ -11477,7 +13574,9 @@ function undoSetupInText(text2, values) {
         body = removeMember(body, parsed.env.node, index);
         result.changes.push({ name, action: "removed" });
       } else {
-        body = replaceValue(body, member, JSON.stringify(theirs.join("\n")));
+        const original = before?.[name];
+        const restored = typeof original === "string" && sameLines(othersHeaderLines(original), theirs) ? original : theirs.join("\n");
+        body = replaceValue(body, member, JSON.stringify(restored));
         result.changes.push({ name, action: "updated", note: "kurmis' header lines were removed and yours were kept" });
       }
     } else if (current !== plain[name]) {
@@ -11492,7 +13591,8 @@ function undoSetupInText(text2, values) {
     }
     parsed = parseSettings2(body);
   }
-  if (parsed.env !== null && parsed.env.node.members.length === 0 && result.changes.some((change) => change.action === "removed")) {
+  const envWasThere = backup !== null && backup.env !== null;
+  if (parsed.env !== null && parsed.env.node.members.length === 0 && !envWasThere && result.changes.some((change) => change.action === "removed")) {
     const index = parsed.top.members.findIndex((member) => member.name === "env");
     body = removeMember(body, parsed.top, index);
     result.envRemoved = true;
@@ -11501,24 +13601,27 @@ function undoSetupInText(text2, values) {
   result.changed = result.text !== text2;
   return result;
 }
+function sameLines(a, b) {
+  return a.length === b.length && a.every((line, index) => line === b[index]);
+}
 function claudeSettingsPath(env) {
   const configDir = env.CLAUDE_CONFIG_DIR;
   if (configDir === void 0 || configDir === "") return claudeUserSettingsPath(env);
-  const dir = (0, import_node_path23.resolve)(configDir);
-  const inside = (0, import_node_path23.relative)(kurmisHome(), dir);
-  if (inside === "" || !inside.startsWith("..") && !(0, import_node_path23.isAbsolute)(inside)) {
+  const dir = (0, import_node_path24.resolve)(configDir);
+  const inside = (0, import_node_path24.relative)(kurmisHome(), dir);
+  if (inside === "" || !inside.startsWith("..") && !(0, import_node_path24.isAbsolute)(inside)) {
     throw new SettingsFileError(
       `CLAUDE_CONFIG_DIR is ${dir}, which is inside kurmis' data folder. Run kurmis setup from a shell without it.`
     );
   }
-  return (0, import_node_path23.join)(dir, "settings.json");
+  return (0, import_node_path24.join)(dir, "settings.json");
 }
 function backupPathFor(settingsPath) {
   return `${settingsPath}.kurmis-backup`;
 }
 function readText3(path) {
   try {
-    return (0, import_node_fs21.readFileSync)(path, "utf8");
+    return (0, import_node_fs24.readFileSync)(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -11526,15 +13629,27 @@ function readText3(path) {
 }
 function writeTarget(path) {
   try {
-    return (0, import_node_fs21.realpathSync)(path);
+    return (0, import_node_fs24.realpathSync)(path);
   } catch (error) {
-    if (error.code === "ENOENT") return path;
-    throw error;
+    if (error.code !== "ENOENT") throw error;
   }
+  let current = path;
+  for (let hop = 0; hop < 40; hop++) {
+    let stats;
+    try {
+      stats = (0, import_node_fs24.lstatSync)(current);
+    } catch (error) {
+      if (error.code === "ENOENT") return current;
+      throw error;
+    }
+    if (!stats.isSymbolicLink()) return current;
+    current = (0, import_node_path24.resolve)((0, import_node_path24.dirname)(current), (0, import_node_fs24.readlinkSync)(current));
+  }
+  throw new SettingsFileError(`${path} is a chain of more than 40 symbolic links`);
 }
 function linkTargetOf(path) {
   try {
-    if (!(0, import_node_fs21.lstatSync)(path).isSymbolicLink()) return null;
+    if (!(0, import_node_fs24.lstatSync)(path).isSymbolicLink()) return null;
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -11549,26 +13664,55 @@ function restrictIfPresent(path) {
     throw error;
   }
 }
-function backUpOnce(path) {
+function backUp(path, replace, platform) {
   const backup = backupPathFor(path);
+  if (!replace) {
+    try {
+      (0, import_node_fs24.copyFileSync)(path, backup, import_node_fs24.constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (error.code === "EEXIST") return null;
+      throw error;
+    }
+    if (platform !== "win32") (0, import_node_fs24.chmodSync)(backup, PRIVATE_FILE_MODE);
+    return backup;
+  }
+  const temp = `${backup}.${String(process.pid)}.tmp`;
   try {
-    (0, import_node_fs21.copyFileSync)(path, backup, import_node_fs21.constants.COPYFILE_EXCL);
+    (0, import_node_fs24.copyFileSync)(path, temp);
+    if (platform !== "win32") (0, import_node_fs24.chmodSync)(temp, PRIVATE_FILE_MODE);
+    replaceFileSync(temp, backup);
   } catch (error) {
-    if (error.code === "EEXIST") return null;
+    (0, import_node_fs24.rmSync)(temp, { force: true });
     throw error;
   }
-  if (process.platform !== "win32") (0, import_node_fs21.chmodSync)(backup, PRIVATE_FILE_MODE);
   return backup;
 }
-function writeEdit(path, edit, existed, userOnly) {
+function isReadOnly(mode) {
+  return (mode & 128) === 0;
+}
+function readOnlyError(target) {
+  return new SettingsFileError(`it is read-only. Clear that with attrib -R "${target}" and run the command again`);
+}
+function writeEdit(path, edit, existed, userOnly, platform) {
   const target = writeTarget(path);
-  if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target) : null };
-  const backup = existed ? backUpOnce(path) : null;
-  const before = existed ? (0, import_node_fs21.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
+  if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target, platform) : null };
+  const before = existed ? (0, import_node_fs24.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
+  if (platform === "win32" && existed && isReadOnly(before)) {
+    throw readOnlyError(target);
+  }
+  const backup = existed ? backUp(path, userOnly && !edit.hadKurmis, platform) : null;
   const mode = userOnly ? userOnlyMode(before) : before;
-  writeFileAtomicSync(target, edit.text, { mode });
-  if (process.platform === "win32") return { backup, modeBefore: null };
-  (0, import_node_fs21.chmodSync)(target, mode);
+  try {
+    writeFileAtomicSync(target, edit.text, { mode });
+  } catch (error) {
+    const code = error.code;
+    if (code === "EPERM" || code === "EACCES" || code === "EBUSY") {
+      throw new SettingsFileError(`it could not be written (${code}): another program may hold it open, or the file or its folder may not be writable by you`);
+    }
+    throw error;
+  }
+  if (platform === "win32") return { backup, modeBefore: null };
+  (0, import_node_fs24.chmodSync)(target, mode);
   return { backup, modeBefore: existed && mode !== before ? before : null };
 }
 function failWith2(path, error) {
@@ -11577,15 +13721,16 @@ function failWith2(path, error) {
   }
   throw error;
 }
-function setupSettingsFile(path, values) {
+function setupSettingsFile(path, values, platform = process.platform) {
   const text2 = readText3(path);
   let edit;
+  let written;
   try {
     edit = applySetupToText(text2, values);
+    written = writeEdit(path, edit, text2 !== null, true, platform);
   } catch (error) {
     failWith2(path, error);
   }
-  const written = writeEdit(path, edit, text2 !== null, true);
   const backupModeBefore = written.backup === null ? restrictIfPresent(backupPathFor(path)) : null;
   return {
     ...edit,
@@ -11597,18 +13742,31 @@ function setupSettingsFile(path, values) {
     backupModeBefore
   };
 }
-function undoSettingsFile(path, values) {
+function checkSetupSettingsFile(path, values, platform = process.platform) {
+  try {
+    const text2 = readText3(path);
+    const edit = applySetupToText(text2, values);
+    if (platform === "win32" && text2 !== null && isReadOnly((0, import_node_fs24.statSync)(writeTarget(path)).mode)) {
+      throw readOnlyError(writeTarget(path));
+    }
+    return edit.hadKurmis;
+  } catch (error) {
+    failWith2(path, error);
+  }
+}
+function undoSettingsFile(path, values, platform = process.platform) {
   const text2 = readText3(path);
   if (text2 === null) {
     return { ...emptyEdit(""), path, existed: false, backupWritten: null, linkTarget: null, modeBefore: null, backupModeBefore: null };
   }
   let edit;
+  let written;
   try {
     edit = undoSetupInText(text2, { ...values, backupText: readText3(backupPathFor(path)) });
+    written = writeEdit(path, edit, true, false, platform);
   } catch (error) {
     failWith2(path, error);
   }
-  const written = writeEdit(path, edit, true, false);
   return { ...edit, path, existed: true, backupWritten: written.backup, linkTarget: linkTargetOf(path), modeBefore: null, backupModeBefore: null };
 }
 
@@ -11618,14 +13776,14 @@ var USAGE3 = `Usage: kurmis setup [--undo]
 Routes every Claude Code on this machine through kurmis, not only the ones started with
 "kurmis claude":
 
+- starts the daemon now, and goes no further when it cannot;
 - puts kurmis' address and key in the "env" block of your Claude Code settings file,
   ~/.claude/settings.json (or settings.json in CLAUDE_CONFIG_DIR when that is set), so a plain
   "claude" and the IDE extensions use your kurmis logins too. Nothing else in the file changes,
-  and the file is copied to settings.json.kurmis-backup before kurmis first changes it.
+  and the file is copied to settings.json.kurmis-backup before kurmis adds its settings.
   Because the file then holds kurmis' key, on macOS and Linux setup makes it and the copy
   readable only by you;
-- makes the kurmis daemon start when you log in;
-- starts the daemon now.
+- makes the kurmis daemon start when you log in.
 
 Claude Code sessions that are already open keep their settings; start them again.
 
@@ -11687,6 +13845,12 @@ async function autostartStep(undo, deps, context) {
   } catch (error) {
     result = { changed: false, where: null, warning: errorText3(error) };
   }
+  const supported = deps.platform === "darwin" || deps.platform === "win32";
+  const warnsOnly = result.warningOnly === true || result.loadsAtNextLogin === true || result.noEntryPossible === true || !supported;
+  if (!undo && result.warning !== void 0 && warnsOnly) {
+    writeLine(context.stderr, `Warning: ${result.warning}`);
+    return true;
+  }
   if (result.warning !== void 0) {
     writeLine(context.stderr, undo ? `Could not remove the daemon's start at login: ${result.warning}` : `Could not make the daemon start at login: ${result.warning}`);
     return false;
@@ -11699,22 +13863,24 @@ async function autostartStep(undo, deps, context) {
   }
   return true;
 }
-async function daemonStep(port, deps, context) {
+async function daemonStep(port, path, hadKurmis, deps, context) {
+  const unchanged = hadKurmis ? `${path} was not changed. It still holds kurmis' settings from an earlier setup, so Claude Code that reads it reaches kurmis only while a daemon runs on the port they name. Run "kurmis setup" again once the daemon runs, or "kurmis setup --undo" to take them out.` : `${path} was not changed, so Claude Code does not use kurmis yet. Run "kurmis setup" again once the daemon runs.`;
   try {
     const connection = await deps.daemon.ensureDaemon({ env: context.env });
-    writeLine(context.stdout, `The daemon is running on port ${String(connection.port)}.`);
     if (connection.port !== port) {
       writeLine(
         context.stderr,
-        `The daemon runs on port ${String(connection.port)}, but config.json and the settings file name port ${String(port)}. Stop it with "kurmis daemon stop" and run "kurmis setup" again, so it starts on that port.`
+        `The daemon runs on port ${String(connection.port)}, but config.json names port ${String(port)}. Stop it with "kurmis daemon stop" and run "kurmis setup" again, so it starts on that port.`
       );
-      return false;
+      writeLine(context.stderr, unchanged);
+      return null;
     }
-    return true;
+    writeLine(context.stdout, `The daemon is running on port ${String(connection.port)}.`);
+    return connection.key;
   } catch (error) {
     writeLine(context.stderr, `The daemon could not be started: ${errorText3(error)}`);
-    writeLine(context.stderr, 'Claude Code cannot reach kurmis until it runs; try "kurmis daemon start".');
-    return false;
+    writeLine(context.stderr, `${unchanged} "kurmis daemon start" starts it and says what is wrong.`);
+    return null;
   }
 }
 async function daemonRuns(deps, context) {
@@ -11724,9 +13890,28 @@ async function daemonRuns(deps, context) {
     return false;
   }
 }
+function defaultFolderRefusal(env, platform) {
+  const value = env["CLAUDE_CONFIG_DIR"];
+  const home = (0, import_node_os15.homedir)();
+  if (value === void 0 || !configDirHasOwnCredentials(env, platform)) return null;
+  const folder = (0, import_node_path25.join)(home, ".claude");
+  const defaultFile = (0, import_node_path25.join)(folder, "settings.json");
+  if (namesDefaultClaudeFolder(value, platform, home)) {
+    return `CLAUDE_CONFIG_DIR is set to ${value}, which is the default Claude Code folder ${folder}. A claude started with CLAUDE_CONFIG_DIR set keeps its credentials apart from one started without it, even when the variable names that folder, and both read ${defaultFile}, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again.`;
+  }
+  if (sharesDefaultSettingsFile(value, platform, home)) {
+    return `CLAUDE_CONFIG_DIR is set to ${value}, and ${(0, import_node_path25.join)(value, "settings.json")} is a link to the default Claude Code settings file ${defaultFile}. A claude started with CLAUDE_CONFIG_DIR set signs in with the credentials in ${value}, a plain claude with those in ${folder}, and both read that one file, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again, or give that folder a settings.json of its own.`;
+  }
+  return null;
+}
 async function runSetup(undo, deps, context) {
   let path;
   let port;
+  const refusal = undo ? null : defaultFolderRefusal(context.env, deps.platform);
+  if (refusal !== null) {
+    writeLine(context.stderr, `kurmis setup: ${refusal}`);
+    return EXIT_FAILURE;
+  }
   try {
     path = claudeSettingsPath(context.env);
   } catch (error) {
@@ -11744,23 +13929,38 @@ async function runSetup(undo, deps, context) {
     }
     port = null;
   }
+  let key = null;
+  if (!undo) {
+    let hadKurmis;
+    try {
+      hadKurmis = checkSetupSettingsFile(path, { port, key: readOrCreateKey() });
+    } catch (error) {
+      if (!(error instanceof SettingsFileError)) throw error;
+      writeLine(context.stderr, `kurmis setup: ${error.message}`);
+      return EXIT_FAILURE;
+    }
+    key = await daemonStep(port, path, hadKurmis, deps, context);
+    if (key === null) return EXIT_FAILURE;
+  }
   let result;
   try {
-    result = undo ? undoSettingsFile(path, { port }) : setupSettingsFile(path, { port, key: readOrCreateKey() });
+    result = undo ? undoSettingsFile(path, { port }) : setupSettingsFile(path, { port, key, credentialsOfItsOwn: configDirHasOwnCredentials(context.env, deps.platform) });
   } catch (error) {
     if (!(error instanceof SettingsFileError)) throw error;
     writeLine(context.stderr, `kurmis setup: ${error.message}`);
     return EXIT_FAILURE;
   }
   reportFile(result, undo, context);
-  let ok3 = await autostartStep(undo, deps, context);
+  if (!undo && configDirHasOwnCredentials(context.env, deps.platform)) {
+    writeLine(context.stdout, `CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder, which is not kurmis' claude:default. Kurmis sends its requests only to the extra logins and never signs them as claude:default. "kurmis claude" still starts on claude:default.`);
+  }
+  const ok3 = await autostartStep(undo, deps, context);
   if (undo) {
     if (await daemonRuns(deps, context)) {
       writeLine(context.stdout, 'The daemon keeps running for "kurmis claude" and for sessions already open; "kurmis daemon stop" stops it.');
     }
-  } else {
-    ok3 = await daemonStep(port, deps, context) && ok3;
-    if (result.changed) writeLine(context.stdout, "Claude Code sessions that are already open keep their old settings; start them again.");
+  } else if (result.changed) {
+    writeLine(context.stdout, "Claude Code sessions that are already open keep their old settings; start them again.");
   }
   if (!ok3) {
     writeLine(context.stderr, undo ? 'The settings file change above was made; run "kurmis setup --undo" again to finish.' : 'The settings file change above was made; run "kurmis setup" again to finish.');
@@ -11995,7 +14195,7 @@ async function runStatus(args, context, deps) {
     const connection = await deps.daemon.ensureDaemon({ env: context.env });
     status2 = await deps.daemon.readStatus(connection);
     if (nothingProbedYet(status2)) {
-      const probed = await settleWithin(deps.daemon.requestProbe(connection), deps.probeWaitMs);
+      const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, void 0, signal), deps.probeWaitMs);
       if (probed.kind === "done") {
         status2 = probed.value;
       } else {
