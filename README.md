@@ -103,6 +103,10 @@ kurmis' own options goes to `claude` unchanged, so `kurmis claude --resume` or
 
 If you pass your own `--settings`, kurmis adds its settings to yours; your file is not changed.
 
+A `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) in your shell would make claude sign its
+requests with that token instead of a kurmis login, so `kurmis claude` starts claude without it
+and says so.
+
 ### `kurmis codex`
 
 ```sh

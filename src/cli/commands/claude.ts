@@ -14,7 +14,7 @@ import { homedir } from 'node:os'
 import { autoStartLogin, type StartableLogin } from '../../core/account-router.ts'
 import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../../core/accounts.ts'
 import type { StatusAnswer } from '../../core/control-api.ts'
-import { applyRoutedEnv, routedClaudeEnv } from '../../core/routed-env.ts'
+import { applyRoutedEnv, inheritedOAuthTokenVariables, routedClaudeEnv } from '../../core/routed-env.ts'
 import { ConfigError, findLogin, loadConfig, type KurmisConfig } from '../../data/config.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
@@ -172,6 +172,12 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     secureStorageDir,
     inheritedCustomHeaders: headers.value
   })
+  const tokenVariables = inheritedOAuthTokenVariables(context.env, deps.platform === 'win32')
+  if (tokenVariables.length > 0) {
+    writeLine(context.stderr, `kurmis claude: ${tokenVariables.join(' and ')} ${tokenVariables.length === 1 ? 'is' : 'are'} set, ` +
+      'so claude would sign its requests with that token instead of a kurmis login. Kurmis starts claude without ' +
+      `${tokenVariables.length === 1 ? 'it' : 'them'}; unset ${tokenVariables.length === 1 ? 'it' : 'them'} to stop this note.`)
+  }
   const env = applyRoutedEnv(context.env, routed, deps.platform === 'win32')
   let claudeArgs: string[]
   try {

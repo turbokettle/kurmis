@@ -1,6 +1,6 @@
 // The environment a routed Claude CLI is started with.
 import { describe, expect, test } from 'vitest'
-import { applyRoutedEnv, ROUTED_CLI_MAX_RETRIES, routedClaudeEnv } from '../../src/core/routed-env.ts'
+import { applyRoutedEnv, inheritedOAuthTokenVariables, ROUTED_CLI_MAX_RETRIES, routedClaudeEnv } from '../../src/core/routed-env.ts'
 
 const FOLDER = '/Users/example/.kurmis/claude/work'
 
@@ -15,7 +15,8 @@ describe('the routed environment', () => {
         ENABLE_TOOL_SEARCH: 'true',
         CLAUDE_CODE_MAX_RETRIES: '15'
       },
-      unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']
+      unset: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR',
+        'CLAUDE_SECURESTORAGE_CONFIG_DIR']
     })
     expect(ROUTED_CLI_MAX_RETRIES).toBe(15)
   })
@@ -24,7 +25,7 @@ describe('the routed environment', () => {
     const env = routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', secureStorageDir: `${FOLDER}/` })
     expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: claude:work')
     expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe(`${FOLDER}/`)
-    expect(env.unset).toEqual(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'])
+    expect(env.unset).toEqual(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
   })
 
   test('on the machine\'s own login: pinned, with no folder variable', () => {
@@ -70,5 +71,17 @@ describe('applying it', () => {
     const env = { Path: 'C:\\bin', Anthropic_Api_Key: 'sk-example' }
     expect(applyRoutedEnv(env, routed, true)).toEqual({ Path: 'C:\\bin', ...routed.set })
     expect(applyRoutedEnv(env, routed, false)).toEqual({ ...env, ...routed.set })
+  })
+})
+
+describe('the subscription token variables', () => {
+  test('are removed from a routed CLI, and named as they are spelled', () => {
+    const routed = routedClaudeEnv({ port: 2, key: 'k', login: null, secureStorageDir: null })
+    const env = { PATH: '/bin', CLAUDE_CODE_OAUTH_TOKEN: 'fake-token', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '3' }
+    expect(applyRoutedEnv(env, routed)).toEqual({ PATH: '/bin', ...routed.set })
+    expect(inheritedOAuthTokenVariables(env)).toEqual(['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
+    expect(inheritedOAuthTokenVariables({ PATH: '/bin' })).toEqual([])
+    expect(inheritedOAuthTokenVariables({ Claude_Code_OAuth_Token: 'x' }, true)).toEqual(['Claude_Code_OAuth_Token'])
+    expect(inheritedOAuthTokenVariables({ Claude_Code_OAuth_Token: 'x' }, false)).toEqual([])
   })
 })

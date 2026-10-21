@@ -115,6 +115,19 @@ describe('kurmis claude on Auto', () => {
     expect(h.finished).toEqual([{ end: { kind: 'exit', code: 3 }, options: { stderr: out.context.stderr, name: 'claude', platform: 'darwin' } }])
   })
 
+  test('starts claude without a subscription token from the shell, and says so once', async () => {
+    const h = harness()
+    const out = collect({ PATH: '/usr/bin', CLAUDE_CODE_OAUTH_TOKEN: 'fake-token', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '3' })
+    await createClaudeCommand(h.deps).run([], out.context)
+    expect(h.specs[0]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    expect(h.specs[0]?.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR).toBeUndefined()
+    expect(out.stderr().trim().split('\n')).toEqual([
+      'kurmis claude: CLAUDE_CODE_OAUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR are set, so claude would sign its ' +
+        'requests with that token instead of a kurmis login. Kurmis starts claude without them; unset them to stop this note.'
+    ])
+    expect(out.stderr()).not.toContain('fake-token')
+  })
+
   test('the default login\'s unknown sign-in state counts as signed in', async () => {
     const h = harness({ status: statusAnswer([loginStatus('claude:default', { signedIn: null }), loginStatus('claude:work')]) })
     await createClaudeCommand(h.deps).run([], collect().context)

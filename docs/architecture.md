@@ -416,7 +416,12 @@ since `process.execPath` names a versioned folder that a Homebrew upgrade remove
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the login's folder when a login other than the
   default was named;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
-  itself and no subscription would be billed.
+  itself and no subscription would be billed;
+- `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` removed, because a CLI
+  with a token of its own sends that token instead of the credentials of the login it was
+  started on, and the proxy forwards the started-on login's header when it has read no token
+  for that login, so the request would be billed to whatever account the token belongs to. The
+  wrapper prints one line on stderr when either was set.
 
 **Kurmis' own options come first.** `kurmis claude` and `kurmis codex` read their options
 (`--login <id>`, `--help`) from the front of the argument list and stop at the first argument

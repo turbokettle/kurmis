@@ -16,6 +16,15 @@ export const ROUTED_CLI_MAX_RETRIES = 15
 export const UNROUTED_KEY_VARIABLES: readonly string[] = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
 
 /**
+ * The variables that hand the CLI a subscription token directly (`claude setup-token` makes
+ * one). A CLI with one signs its requests with that token instead of the credentials of the
+ * login it was started on, and the proxy forwards a started-on login's own header when it has
+ * read no token for that login, so a request could be billed to whatever account the token
+ * belongs to. A routed CLI does not inherit them, and the wrapper says so once when one was set.
+ */
+export const OAUTH_TOKEN_VARIABLES: readonly string[] = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR']
+
+/**
  * The variables that point a CLI at the daemon. `kurmis setup` writes these into the `env` of
  * `~/.claude/settings.json`, and the wrapper passes them in its `--settings` argument too,
  * because a variable in `settings.json` beats the process environment (docs/architecture.md).
@@ -70,6 +79,8 @@ export interface RoutedEnv {
  *   on another login does not keep that login's folder.
  * - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed: a key would sign the requests
  *   itself and no subscription would be billed.
+ * - `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` are removed, see
+ *   `OAUTH_TOKEN_VARIABLES`.
  */
 export function routedClaudeEnv(input: RoutedEnvInput): RoutedEnv {
   const startedOn = input.startedOn ?? null
@@ -82,7 +93,7 @@ export function routedClaudeEnv(input: RoutedEnvInput): RoutedEnv {
     ENABLE_TOOL_SEARCH: 'true',
     CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES)
   }
-  const unset = [...UNROUTED_KEY_VARIABLES]
+  const unset = [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES]
   const credentialsOf = startedOn ?? input.login ?? CLAUDE_DEFAULT_ACCOUNT_ID
   if (credentialsOf === CLAUDE_DEFAULT_ACCOUNT_ID) {
     unset.push('CLAUDE_SECURESTORAGE_CONFIG_DIR')
@@ -110,4 +121,15 @@ export function applyRoutedEnv(env: Readonly<Record<string, string | undefined>>
     out[name] = value
   }
   return { ...out, ...routed.set }
+}
+
+/**
+ * The `OAUTH_TOKEN_VARIABLES` set in `env` (to any value, even an empty one), by the name as it
+ * is spelled there. On Windows names are matched without regard to case.
+ */
+export function inheritedOAuthTokenVariables(env: Readonly<Record<string, string | undefined>>, windows = false): string[] {
+  return Object.entries(env)
+    .filter(([name, value]) => value !== undefined &&
+      OAUTH_TOKEN_VARIABLES.some((other) => (windows ? other.toUpperCase() === name.toUpperCase() : other === name)))
+    .map(([name]) => name)
 }
