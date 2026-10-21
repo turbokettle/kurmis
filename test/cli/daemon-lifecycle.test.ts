@@ -2,7 +2,7 @@
 // a test bundle (`test/daemon/bundle.ts`), and the daemons it starts run `daemon run` around the
 // fake request handling. Every daemon a test started is killed after it, once it is shown to be
 // one (`test/daemon/own-daemons.ts`).
-import { execFile, spawn, spawnSync } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, realpathSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
@@ -11,7 +11,7 @@ import { CONTROL_API_VERSION } from '../../src/core/control-api.ts'
 import { readDaemonFile, readOrCreateKey } from '../../src/data/daemon-file.ts'
 import { controlRequest, processExists } from '../../src/daemon/lifecycle.ts'
 import { buildTestBundle } from '../daemon/bundle.ts'
-import { OwnDaemons } from '../daemon/own-daemons.ts'
+import { commandLines, OwnDaemons } from '../daemon/own-daemons.ts'
 import { HOLD_PATH } from '../daemon/fake-app.ts'
 import { dataFolderWithPort, freePort, waitUntil } from '../daemon/helpers.ts'
 
@@ -45,6 +45,12 @@ afterEach(async () => {
   await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
   servers = []
 })
+
+/**
+ * How long the older daemon is kept busy while the newer one starts. Starting a daemon takes far
+ * longer on Windows, and longer still while every test file runs at once.
+ */
+const OPEN_REQUEST_MS = process.platform === 'win32' ? 8_000 : 2_500
 
 /** The daemons of each data folder the tests used. */
 const daemonsOf = new Map<string, OwnDaemons>()
@@ -93,15 +99,12 @@ function daemonInfo(home: string): { pid: number; port: number; version: string 
 /**
  * The pids of the `daemon run` processes of `bundle`. Each test file builds its bundles into a
  * folder of its own, and its tests run one after another, so these are the current test's.
- * Empty on Windows, which has no `ps`.
  */
 function daemonRunPids(bundle: string): number[] {
-  if (process.platform === 'win32') return []
-  const listed = spawnSync('ps', ['-ax', '-ww', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout
   const names = [bundle, realpathSync(bundle)]
-  return listed.split('\n')
-    .filter((line) => names.some((name) => line.includes(`${name} daemon run`)))
-    .map((line) => Number(line.trim().split(/\s+/)[0]))
+  return [...commandLines()]
+    .filter(([, command]) => names.some((name) => command.includes(`${name} daemon run`)))
+    .map(([pid]) => pid)
 }
 
 describe('kurmis daemon', () => {
@@ -178,7 +181,7 @@ describe('kurmis daemon', () => {
     const old = daemonInfo(home)
     expect(old?.version).toBe('0.4.0')
     const key = readOrCreateKey(join(home, 'key'))
-    const open = controlRequest({ port, key, method: 'GET', path: `${HOLD_PATH}?ms=2500`, timeoutMs: 15_000 })
+    const open = controlRequest({ port, key, method: 'GET', path: `${HOLD_PATH}?ms=${String(OPEN_REQUEST_MS)}`, timeoutMs: 15_000 + OPEN_REQUEST_MS })
     await new Promise((resolve) => setTimeout(resolve, 200))
 
     const started = await kurmis(bundles.newer, home, ['daemon', 'start'])

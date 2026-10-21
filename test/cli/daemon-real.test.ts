@@ -30,6 +30,12 @@ beforeAll(async () => {
   api = await startFakeAnthropic()
 })
 
+/**
+ * How long the older daemon is kept busy while the newer one starts. Starting a daemon takes far
+ * longer on Windows, and longer still while every test file runs at once.
+ */
+const OPEN_REQUEST_MS = process.platform === 'win32' ? 8_000 : 2_500
+
 /** The daemons of each data folder the tests used; one shown to be the test's is killed after them. */
 const daemons: OwnDaemons[] = []
 afterAll(async () => {
@@ -107,7 +113,7 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     const key = readOrCreateKey(join(home, 'key'))
 
     // No token can be read for the login plain claude uses here, so the proxy forwards the CLI's own header.
-    api.script(reply.ok({ text: 'Hello from the older daemon', delayMs: 2_500 }))
+    api.script(reply.ok({ text: 'Hello from the older daemon', delayMs: OPEN_REQUEST_MS }))
     const open = call({ port }, '/v1/messages', {
       headers: { 'x-kurmis-key': key, authorization: 'Bearer example-token', 'x-claude-code-session-id': 'session-1' },
       body: messagesBody(false)

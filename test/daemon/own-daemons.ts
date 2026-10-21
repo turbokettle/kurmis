@@ -8,17 +8,19 @@
 //
 // - a keyed status request to a port the test's daemons used, with a key the data folder held,
 //   answers with that pid. The key is random per data folder, so no other daemon has it;
-// - on macOS and Linux, `ps` shows that the process runs `<bundle> daemon run` (or another
-//   command) of a bundle the test built. Each test bundle is in a temporary folder of its own.
+// - the process list shows that the process runs `<bundle> daemon run` (or another command) of a
+//   bundle the test built. Each test bundle is in a temporary folder of its own. The list comes
+//   from `ps` on macOS and Linux and from PowerShell's `Win32_Process` on Windows.
 //
-// On Windows, without `ps`, a daemon that no longer listens cannot be shown to be the test's.
-// `stop` then waits for it to exit by itself (it is stopping, or lost the bind), so the test's
-// folders are not in use when the test removes them.
+// A daemon that no longer listens and is not in the list cannot be shown to be the test's.
+// `stop` then waits on Windows for it to exit by itself (it is stopping, or lost the bind), so
+// the test's folders are not in use when the test removes them.
 import { spawnSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { readDaemonFile, readKey } from '../../src/data/daemon-file.ts'
 import { portHolder, processExists } from '../../src/daemon/lifecycle.ts'
+import { realSystemProgram } from '../../src/platform/system-programs.ts'
 
 /** The pids in the `daemon_started` lines of `daemon.log` and `daemon.log.1` in `dataFolder`. */
 export function loggedDaemonPids(dataFolder: string): number[] {
@@ -35,12 +37,18 @@ export function loggedDaemonPids(dataFolder: string): number[] {
   return pids
 }
 
-/** The full command lines of every process, by pid; empty on Windows, which has no `ps`. */
-function commandLines(): Map<number, string> {
+/**
+ * The full command lines of every process, by pid. On Windows only Node processes are listed,
+ * which every daemon is, and a process whose command line cannot be read is left out.
+ */
+export function commandLines(): Map<number, string> {
   const lines = new Map<number, string>()
-  if (process.platform === 'win32') return lines
-  const listed = spawnSync('ps', ['-ax', '-ww', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout
-  for (const line of listed.split('\n')) {
+  const listed = process.platform === 'win32'
+    ? spawnSync(realSystemProgram('powershell'), ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-CimInstance Win32_Process -Filter "Name=\'node.exe\'" | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }'],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true }).stdout
+    : spawnSync('ps', ['-ax', '-ww', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout
+  for (const line of listed.split(/\r?\n/)) {
     const match = /^\s*(\d+)\s+(.*)$/.exec(line)
     if (match !== null) lines.set(Number(match[1]), match[2] ?? '')
   }
