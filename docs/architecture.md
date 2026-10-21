@@ -42,7 +42,9 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 - `codex/<name>/` is the `CODEX_HOME` of the extra Codex login `codex:<name>`.
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
-  names its own pid, so a replaced daemon never removes its successor's file. The CLI removes a
+  names its own pid, so a replaced daemon never removes its successor's file. The file is renamed
+  aside and checked again there before it is deleted, and one that names another pid by then is
+  linked back, so a file written between the check and the removal is kept. The CLI removes a
   `daemon.json` whose pid no longer exists, and one that is damaged.
 - `launchd/` holds the plists of the short-lived launchd jobs that start the daemon from an ssh
   login on macOS. Each is removed once its job has run.

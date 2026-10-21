@@ -12,7 +12,7 @@
 // they inherit from `%USERPROFILE%`, which grants the user, SYSTEM and Administrators only. A
 // `KURMIS_HOME` outside the profile gets that folder's access list instead.
 import { randomBytes } from 'node:crypto'
-import { linkSync, readFileSync, rmSync } from 'node:fs'
+import { linkSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { makePrivateDirSync, PRIVATE_FILE_MODE } from '../platform/files.ts'
 import { readJsonFileSync, writeFileAtomicSync, writeJsonFileSync } from './json-file.ts'
@@ -114,13 +114,39 @@ export function writeDaemonFile(info: DaemonInfo, path = daemonFilePath()): void
 }
 
 /**
- * Removes `daemon.json` if it still names `pid`, so a stopping daemon does not remove the
- * file of the daemon that replaced it. Returns whether it removed the file.
+ * Removes `daemon.json` if it still names `pid`, or is damaged, so a stopping daemon does not
+ * remove the file of the daemon that replaced it. Returns whether it removed the file.
+ *
+ * Another daemon may write its own file between the check and the removal. So the file is first
+ * renamed aside, which is atomic, and checked again there; a file that turns out to name another
+ * pid is linked back, unless a newer one has been written in the meantime. `afterCheck` runs
+ * between the first check and the rename; tests use it to write a file there.
  */
-export function removeDaemonFile(pid: number, path = daemonFilePath()): boolean {
+export function removeDaemonFile(pid: number, path = daemonFilePath(), afterCheck?: () => void): boolean {
   const read = readDaemonFile(path)
-  if (read.status === 'ok' && read.info.pid !== pid) return false
   if (read.status === 'missing') return false
-  rmSync(path, { force: true })
-  return true
+  if (read.status === 'ok' && read.info.pid !== pid) return false
+  afterCheck?.()
+  const aside = `${path}.${String(process.pid)}-${randomBytes(4).toString('hex')}.removing`
+  try {
+    renameSync(path, aside)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+  try {
+    const moved = readDaemonFile(aside)
+    if (moved.status === 'ok' && moved.info.pid !== pid) {
+      try {
+        linkSync(aside, path)
+      } catch (error) {
+        // EEXIST: a newer daemon has written its file since, which stays.
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      }
+      return false
+    }
+    return true
+  } finally {
+    rmSync(aside, { force: true })
+  }
 }
