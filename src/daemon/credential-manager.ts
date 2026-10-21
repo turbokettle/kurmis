@@ -8,8 +8,8 @@
 // run reads every such login, at most once per `KEYCHAIN_CACHE_MS`. Starting PowerShell and
 // compiling its `CredReadW` declaration takes a second or two, so `prime` waits only for a login
 // read for the first time (or since `invalidate`); an answer that is merely old is read again in
-// the background while `read` goes on answering it. A failed read is reported once per login through `onFailure` until a read of
-// it works; the record itself is kept in memory only.
+// the background while `read` goes on answering it. A failed read is reported once per login
+// through `onFailure` until a read of it works; the record itself is kept in memory only.
 import { parseCredentials, type ClaudeCredentials } from '../core/credentials.ts'
 import { readStoredRecords, type CredentialRead } from '../platform/windows-credentials.ts'
 import type { CredentialsSource } from './credentials.ts'

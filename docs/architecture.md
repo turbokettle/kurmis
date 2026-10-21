@@ -152,8 +152,10 @@ older version, after that daemon finishes the requests it has open.
   403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
   login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on, or
   `x-kurmis-started-on: none`, which says the CLI's credentials are no kurmis login's (below,
-  "`claude:default` and `CLAUDE_CONFIG_DIR`"). Either one naming no Claude login, `none` aside,
-  is a 400. None of them is forwarded upstream. The body is read whole
+  "`claude:default` and `CLAUDE_CONFIG_DIR`"). `none` is accepted only in
+  `x-kurmis-started-on`; an `x-kurmis-login` that names no Claude login, `none` included, is a
+  400, and so is an `x-kurmis-started-on` that is neither `none` nor a Claude login. None of
+  them is forwarded upstream. The body is read whole
   (at most 64 MB), because a request may have to be sent more than once. A body that is not JSON
   is a 400. Otherwise it goes upstream as the bytes that came, except for the account uuid in
   `metadata.user_id`, which is set to the chosen login's (`outgoingBody` in
