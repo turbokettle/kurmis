@@ -32,6 +32,15 @@ interface Harness {
   daemon: ReturnType<typeof fakeDaemonClient>
 }
 
+/** The settings files kurmis would have written, by the path it passed to claude. */
+const storedSettings = new Map<string, string>()
+const storeSettings = (text: string): string => {
+  const path = `/kurmis-settings/${String(storedSettings.size)}.json`
+  storedSettings.set(path, text)
+  return path
+}
+beforeEach(() => storedSettings.clear())
+
 function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<ClaudeDeps> = {}): Harness {
   const specs: ChildSpec[] = []
   const runOptions: unknown[] = []
@@ -62,6 +71,7 @@ function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<Claud
       cwd: () => cwd,
       homeDir: () => home,
       folderExists: () => true,
+      storeSettings,
       ...overrides
     }
   }
@@ -72,7 +82,7 @@ function passedSettings(spec: ChildSpec | undefined): Record<string, unknown> {
   expect(spec?.args[0]).toBe('--from-find')
   expect(spec?.args[1]).toBe('--settings')
   expect(spec?.args.filter((arg) => arg === '--settings' || arg.startsWith('--settings='))).toHaveLength(1)
-  return JSON.parse(spec?.args[2] ?? 'null') as Record<string, unknown>
+  return JSON.parse(storedSettings.get(spec?.args[2] ?? '') ?? 'null') as Record<string, unknown>
 }
 
 const routedHeaders = (...lines: string[]): string => [...lines].join('\n')
@@ -95,9 +105,12 @@ describe('kurmis claude on Auto', () => {
     const routing = { ANTHROPIC_BASE_URL: BASE_URL, ANTHROPIC_CUSTOM_HEADERS: headers, ENABLE_TOOL_SEARCH: 'true', CLAUDE_CODE_MAX_RETRIES: '15' }
     expect(h.specs).toEqual([{
       command: '/fake/claude',
-      args: ['--from-find', '--settings', JSON.stringify({ env: routing }), '-p', 'hi', '--login', 'x'],
+      args: ['--from-find', '--settings', '/kurmis-settings/0.json', '-p', 'hi', '--login', 'x'],
       env: { PATH: '/usr/bin', ...routing }
     }])
+    expect(storedSettings.get('/kurmis-settings/0.json')).toBe(JSON.stringify({ env: routing }))
+    // The key is in the settings file, never on claude's command line.
+    expect(h.specs[0]?.args.some((arg) => arg.includes(KEY))).toBe(false)
     expect(h.runOptions).toEqual([{ platform: 'darwin' }])
     expect(h.finished).toEqual([{ end: { kind: 'exit', code: 3 }, options: { stderr: out.context.stderr, name: 'claude', platform: 'darwin' } }])
   })
@@ -247,7 +260,7 @@ describe('kurmis claude with the person\'s own settings', () => {
     expect(h.specs[0]?.args.slice(3)).toEqual(['-p', 'hi'])
   })
 
-  test('a settings file is read relative to the folder, merged and passed inline; the file is not changed', async () => {
+  test('a settings file is read relative to the folder, merged and passed in the settings file kurmis writes; theirs is not changed', async () => {
     const h = harness()
     const text = '{\n  "env": { "MINE": "yes", "ANTHROPIC_CUSTOM_HEADERS": "x-team: blue" }\n}\n'
     writeFileSync(join(cwd, 'mine.json'), text)

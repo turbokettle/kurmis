@@ -28,6 +28,7 @@ import {
   readUserSettingsArg,
   readUserSettingsEnv,
   routingVariables,
+  storeSettingsFile,
   type UserSettingsArg
 } from '../settings-arg.ts'
 import { notStartedExitCode } from '../wrapper.ts'
@@ -47,6 +48,8 @@ export interface ClaudeDeps {
   readFile?: (path: string) => string
   /** Whether a login's folder is there. */
   folderExists: (path: string) => boolean
+  /** Writes the merged `--settings` and answers the file's path (`storeSettingsFile`). */
+  storeSettings: (text: string) => string
 }
 
 const USAGE = `Usage: kurmis claude [--login <id>] [--] [claude arguments...]
@@ -76,6 +79,7 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
     cwd: () => process.cwd(),
     homeDir: () => homedir(),
     folderExists: (path) => existsSync(path) && statSync(path).isDirectory(),
+    storeSettings: (text) => storeSettingsFile(text),
     ...overrides
   }
   return {
@@ -169,7 +173,12 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     inheritedCustomHeaders: headers.value
   })
   const env = applyRoutedEnv(context.env, routed, deps.platform === 'win32')
-  const claudeArgs = claudeArgsWithSettings(userSettings, routingVariables(routed))
+  let claudeArgs: string[]
+  try {
+    claudeArgs = claudeArgsWithSettings(userSettings, routingVariables(routed), deps.storeSettings)
+  } catch (error) {
+    return fail(`could not write the settings file for claude: ${error instanceof Error ? error.message : String(error)}`)
+  }
 
   const end = await deps.child.runInteractive(
     { command: program.command, args: [...program.args, ...claudeArgs], env },

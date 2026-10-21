@@ -5,7 +5,7 @@
 // environment, the `env` block of the user's `settings.json`, and the `env` block of
 // `--settings`. In global mode `settings.json` names the daemon too, so a routing variable the
 // wrapper put only in the process environment would be ignored. The wrapper therefore passes the
-// routing variables (`ROUTING_VARIABLES`) as `--settings '{"env":{...}}'` as well.
+// routing variables (`ROUTING_VARIABLES`) in the `env` of a `--settings` file as well.
 //
 // How Claude Code 2.1.301 reads `--settings`, from its bundled source:
 //
@@ -21,14 +21,23 @@
 // So kurmis passes exactly one `--settings`, first, ahead of every argument of the person's.
 // When the person's arguments carry their own `--settings`, the last one (the one claude would
 // have used) is read, kurmis' variables are merged into its `env`, and the merged settings are
-// passed inline in kurmis' place; every `--settings` of theirs is taken out. Their file is never
-// changed. Inline rather than a temporary file, because claude passes its `--settings` value on
-// to processes it starts itself (such as sessions it runs in the background), which may run
-// longer than the wrapper and would then find a temporary file gone.
-import { readFileSync } from 'node:fs'
+// passed in kurmis' place; every `--settings` of theirs is taken out. Their file is never changed.
+//
+// The merged settings go to claude as a file path, not as inline JSON, because they hold the
+// daemon's key and a command line is visible to every user of the machine in the process list.
+// The file is in the data folder (`wrapperSettingsFolder`), mode 0600, and named after a hash of
+// its contents, so every start with the same settings uses the same file. It is not deleted when
+// claude exits: claude passes its `--settings` value on to processes it starts itself (such as
+// sessions it runs in the background), which may run longer than the wrapper. Files that no start
+// has used for `SETTINGS_FILE_MAX_AGE_MS` are removed.
+import { createHash } from 'node:crypto'
+import { readdirSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { ROUTING_VARIABLES, type RoutedEnv } from '../core/routed-env.ts'
+import { writeFileAtomicSync } from '../data/json-file.ts'
+import { wrapperSettingsFolder } from '../data/paths.ts'
+import { PRIVATE_FILE_MODE } from '../platform/files.ts'
 
 const FLAG = '--settings'
 
@@ -141,12 +150,62 @@ export function mergeRoutingSettings(user: Record<string, unknown> | null, routi
 }
 
 /**
- * The arguments to start claude with: one `--settings` with the merged settings, first, then the
- * person's arguments without their own `--settings`. `user` is what `readUserSettingsArg`
- * answered.
+ * The arguments to start claude with: one `--settings` naming the file with the merged settings,
+ * first, then the person's arguments without their own `--settings`. `user` is what
+ * `readUserSettingsArg` answered; `store` writes the settings and answers the file's path.
  */
-export function claudeArgsWithSettings(user: UserSettingsArg, routing: Record<string, string>): string[] {
-  return [FLAG, JSON.stringify(mergeRoutingSettings(user.settings, routing)), ...user.rest]
+export function claudeArgsWithSettings(user: UserSettingsArg, routing: Record<string, string>,
+  store: (text: string) => string = storeSettingsFile): string[] {
+  return [FLAG, store(JSON.stringify(mergeRoutingSettings(user.settings, routing))), ...user.rest]
+}
+
+/** How long a settings file that no start has used is kept: longer than any session runs. */
+export const SETTINGS_FILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+
+const SETTINGS_FILE_NAME = /^[0-9a-f]{32}\.json$/
+
+/**
+ * Writes `text` to a file in `folder` named after its SHA-256, readable by the user only, and
+ * answers the file's path. A file of that name that already holds the text is only marked as
+ * used now. Files in the folder unused for `SETTINGS_FILE_MAX_AGE_MS` are removed.
+ */
+export function storeSettingsFile(text: string, folder: string = wrapperSettingsFolder(), now: number = Date.now()): string {
+  const path = join(folder, `${createHash('sha256').update(text).digest('hex').slice(0, 32)}.json`)
+  let current = false
+  try {
+    current = readFileSync(path, 'utf8') === text
+  } catch {
+    // Not written yet.
+  }
+  if (current) {
+    try {
+      utimesSync(path, now / 1000, now / 1000)
+    } catch {
+      // Only the pruning reads the time.
+    }
+  } else {
+    writeFileAtomicSync(path, text, { mode: PRIVATE_FILE_MODE })
+  }
+  pruneSettingsFiles(folder, now, path)
+  return path
+}
+
+function pruneSettingsFiles(folder: string, now: number, keep: string): void {
+  let names: string[]
+  try {
+    names = readdirSync(folder)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    const file = join(folder, name)
+    if (!SETTINGS_FILE_NAME.test(name) || file === keep) continue
+    try {
+      if (now - statSync(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS) rmSync(file, { force: true })
+    } catch {
+      // Removed by another start at the same moment.
+    }
+  }
 }
 
 /**

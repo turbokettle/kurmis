@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { routedClaudeEnv } from '../../src/core/routed-env.ts'
 import {
@@ -11,6 +11,8 @@ import {
   readUserSettingsArg,
   readUserSettingsEnv,
   routingVariables,
+  SETTINGS_FILE_MAX_AGE_MS,
+  storeSettingsFile,
   type UserSettingsArg
 } from '../../src/cli/settings-arg.ts'
 
@@ -112,11 +114,38 @@ describe('merging', () => {
     expect(mergeRoutingSettings({ model: 'opus' }, ROUTING)).toEqual({ model: 'opus', env: ROUTING })
   })
 
-  test('the arguments start with the one --settings, inline, ahead of the person\'s arguments', () => {
-    const args = claudeArgsWithSettings(ok(['mcp', '--settings', '{"model":"opus"}', 'list']), ROUTING)
-    expect(args).toEqual(['--settings', JSON.stringify({ model: 'opus', env: ROUTING }), 'mcp', 'list'])
-    expect(args[1]?.startsWith('{')).toBe(true)
-    expect(claudeArgsWithSettings(ok([]), ROUTING)).toEqual(['--settings', JSON.stringify({ env: ROUTING })])
+  test('the arguments start with the one --settings, naming the stored file, ahead of the person\'s arguments', () => {
+    const stored: string[] = []
+    const store = (text: string): string => {
+      stored.push(text)
+      return '/data/settings/x.json'
+    }
+    expect(claudeArgsWithSettings(ok(['mcp', '--settings', '{"model":"opus"}', 'list']), ROUTING, store))
+      .toEqual(['--settings', '/data/settings/x.json', 'mcp', 'list'])
+    expect(claudeArgsWithSettings(ok([]), ROUTING, store)).toEqual(['--settings', '/data/settings/x.json'])
+    expect(stored).toEqual([JSON.stringify({ model: 'opus', env: ROUTING }), JSON.stringify({ env: ROUTING })])
+  })
+
+  test('storeSettingsFile writes one private file per content and removes files unused for 30 days', () => {
+    const folder = mkdtempSync(join(tmpdir(), 'kurmis-settings-store-'))
+    try {
+      const now = Date.now()
+      const first = storeSettingsFile('{"env":{"A":"1"}}', folder, now)
+      expect(readFileSync(first, 'utf8')).toBe('{"env":{"A":"1"}}')
+      if (process.platform !== 'win32') expect(statSync(first).mode & 0o777).toBe(0o600)
+      expect(storeSettingsFile('{"env":{"A":"1"}}', folder, now)).toBe(first)
+      const old = join(folder, `${'0'.repeat(32)}.json`)
+      writeFileSync(old, '{}')
+      const longAgo = (now - SETTINGS_FILE_MAX_AGE_MS - 60_000) / 1000
+      utimesSync(old, longAgo, longAgo)
+      writeFileSync(join(folder, 'other.txt'), 'kept')
+      utimesSync(join(folder, 'other.txt'), longAgo, longAgo)
+      const second = storeSettingsFile('{"env":{"A":"2"}}', folder, now)
+      expect(second).not.toBe(first)
+      expect(readdirSync(folder).sort()).toEqual([basename(first), basename(second), 'other.txt'].sort())
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
   })
 
   test('routingVariables keeps the four routing variables and leaves out the credentials folder', () => {
