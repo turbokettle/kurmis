@@ -71,7 +71,7 @@ function refusedUntil(usage: AccountUsage | null): number | null {
 
 /** The login of a status answer that plain codex uses. Every answer has one. */
 export function ownCodexLogin(status: Pick<StatusAnswer, 'logins'>): LoginStatus {
-  const own = status.logins.find((login) => login.provider === 'codex' && login.machineOwn)
+  const own = status.logins.find((login) => login.provider === 'codex' && login.usedByPlainCli)
   if (own === undefined) throw new Error('The daemon\'s status has no login that plain codex uses.')
   return own
 }
@@ -86,7 +86,7 @@ export type CodexChoiceKind =
   /** The login that ranks first. */
   | 'ranked'
   /** No Codex login is opted in to routing, so plain codex's login is used. */
-  | 'machine-own'
+  | 'used-by-plain-cli'
   /** Every login routing may use is at a limit; this one gets its usage back first. */
   | 'all-out'
   /**
@@ -113,7 +113,7 @@ export function chooseCodexLogin(status: Pick<StatusAnswer, 'logins'>, now: numb
   const rows = codexRouteAccounts(status)
   const chosen = chooseAccount(session, rows, now, new Set())
   const pinned = effectivePin(session, rows)
-  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? 'ranked' : 'machine-own', note: null }
+  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? 'ranked' : 'used-by-plain-cli', note: null }
   if (pinned !== null) {
     return {
       login: pinned,

@@ -17,7 +17,7 @@ import { routeBlockText } from '../core/proxy-rules.ts'
 import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '../core/usage-rules.ts'
 import { shouldReplace } from '../daemon/lifecycle.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
-import { loginArgument, machineOwnText, PROVIDER_NAMES } from './login-names.ts'
+import { loginArgument, plainCliLoginText, PROVIDER_NAMES } from './login-names.ts'
 
 /**
  * Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added.
@@ -75,7 +75,7 @@ export interface StatusJsonLogin {
   alias: string | null
   provider: AccountProvider
   /** Whether this is the login a plain `claude` or a plain `codex` uses. */
-  machineOwn: boolean
+  usedByPlainCli: boolean
   /** The login's email as its own CLI cached it; null when unknown. Shown, never stored. */
   email: string | null
   /** Whether the daemon found the login signed in; null when no daemon reported it or it has not looked yet. */
@@ -203,7 +203,7 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
       id: login.noIdYet === true ? null : login.id,
       alias: login.noIdYet === true ? null : login.alias,
       provider: login.provider,
-      machineOwn: login.machineOwn,
+      usedByPlainCli: login.usedByPlainCli,
       email: login.email ?? null,
       signedIn: fromDaemon ? login.signedIn : null,
       credentials: fromDaemon ? null : report.credentials.get(login.id) ?? false,
@@ -240,12 +240,12 @@ export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }):
   }
   const named = answer.logins.filter((login) => login.noIdYet !== true)
   for (const group of groups.values()) {
-    const kept = group.find((login) => login.machineOwn) ?? group[0]!
+    const kept = group.find((login) => login.usedByPlainCli) ?? group[0]!
     for (const other of group) {
       if (other === kept) continue
-      const keptName = !kept.machineOwn ? kept.alias
-        : kept.noIdYet === true ? machineOwnText(kept.provider)
-          : `${kept.alias}, ${machineOwnText(kept.provider)},`
+      const keptName = !kept.usedByPlainCli ? kept.alias
+        : kept.noIdYet === true ? plainCliLoginText(kept.provider)
+          : `${kept.alias}, ${plainCliLoginText(kept.provider)},`
       warnings.push(`${other.alias} and ${keptName} are the same ${PROVIDER_NAMES[other.provider]} account (${kept.email!}), ` +
         `so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, other)}" removes ${other.alias}.`)
     }
@@ -319,7 +319,7 @@ const MAX_LABEL_WIDTH = 24
  */
 function loginTitle(login: StatusJsonLogin): string {
   const product = PROVIDER_NAMES[login.provider]
-  if (login.id === null || login.alias === null) return `${machineOwnText(login.provider)} (${product}, no id yet)`
+  if (login.id === null || login.alias === null) return `${plainCliLoginText(login.provider)} (${product}, no id yet)`
   return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`
 }
 
@@ -331,8 +331,8 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   if (login.id === null) {
     lines.push(...wrap('config.json has no entry for it yet. The first kurmis command other than "kurmis status" that ' +
       'reads config.json adds one, with an id.', '  ', '  '))
-  } else if (login.machineOwn) {
-    lines.push(`  ${machineOwnText(login.provider)}`)
+  } else if (login.usedByPlainCli) {
+    lines.push(`  ${plainCliLoginText(login.provider)}`)
   }
   const facts = [
     login.credentials !== null

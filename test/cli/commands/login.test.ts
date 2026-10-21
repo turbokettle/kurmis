@@ -92,7 +92,7 @@ function fakeRun(result: Partial<RunResult> = {}): { runs: Run[]; runProgram: Lo
 
 /** A `readCodexEmail` that reads the email the fake's `auth.json` holds, as `codex app-server` would answer it. */
 const codexEmailFromAuth: LoginDeps['readCodexEmail'] = async (login, env) => {
-  const codexHome = login.machineOwn ? env.CODEX_HOME ?? join(home, '.codex') : loginFolder(login)
+  const codexHome = login.usedByPlainCli ? env.CODEX_HOME ?? join(home, '.codex') : loginFolder(login)
   try {
     const auth = JSON.parse(readFileSync(join(codexHome, 'auth.json'), 'utf8')) as { tokens: { id_token: string } }
     const claims = JSON.parse(Buffer.from(auth.tokens.id_token.split('.')[1]!, 'base64url').toString('utf8')) as { email?: string }
@@ -148,7 +148,7 @@ describe('choosing the login', () => {
     expect(loginTarget('codex', config)).toEqual({ kind: 'new', provider: 'codex' })
     expect(loginTarget('workclaude', config)).toMatchObject({ kind: 'existing', login: { id: 'workclaude' } })
     expect(loginTarget('codex:work-example', config)).toMatchObject({ kind: 'existing', login: { id: 'workcodex1' } })
-    expect(loginTarget(OWN_CLAUDE, config)).toMatchObject({ kind: 'existing', login: { id: OWN_CLAUDE, machineOwn: true } })
+    expect(loginTarget(OWN_CLAUDE, config)).toMatchObject({ kind: 'existing', login: { id: OWN_CLAUDE, usedByPlainCli: true } })
     expect(loginTarget('work-example', config)).toEqual({ error: expect.stringContaining('give claude:work-example or codex:work-example') as unknown })
     expect(loginTarget('none-example', config)).toEqual({ error: expect.stringContaining('there is no login called "none-example"') as unknown })
   })

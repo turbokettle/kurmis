@@ -82,9 +82,10 @@ without an id. It exits 0 whether or not the daemon runs.
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and
                "source" says whether the logins come from the daemon or from the files. Each
-               login has "alias", "id", "provider", "machineOwn", "signedIn" (from the daemon)
-               and "credentials" (from the files); "id" and "alias" are null for a login
-               without an id yet. "warnings" holds the warnings.
+               login has "alias", "id", "provider", "usedByPlainCli" (whether plain claude
+               or plain codex uses it), "signedIn" (from the daemon) and "credentials"
+               (from the files); "id" and "alias" are null for a login without an id yet.
+               "warnings" holds the warnings.
   -h, --help   Show this help.`
 
 export function createStatusCommand(overrides: Partial<StatusDeps> = {}): Command {
@@ -194,7 +195,7 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
   const now = deps.now()
   const state = loadState(now).state
   const home = deps.home()
-  const shown = withMachineOwnLogins(config)
+  const shown = withPlainCliLogins(config)
   const logins: ReportLogin[] = shown.map(({ login, noIdYet }) => {
     const cooldown = noIdYet ? undefined : state.cooldowns.get(login.id)
     let sessions = 0
@@ -203,7 +204,7 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
       id: login.id,
       provider: login.provider,
       alias: login.alias,
-      machineOwn: login.machineOwn,
+      usedByPlainCli: login.usedByPlainCli,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
       weeklyLimit: login.weeklyLimit,
@@ -237,13 +238,13 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
  * that the file has no entry for as a login with default settings and a stand-in id
  * (`noIdYet`), then the extra logins.
  */
-function withMachineOwnLogins(config: KurmisConfig): { login: LoginSettings; noIdYet: boolean }[] {
+function withPlainCliLogins(config: KurmisConfig): { login: LoginSettings; noIdYet: boolean }[] {
   const own = LOGIN_PROVIDERS.map((provider: LoginProvider) => {
-    const found = config.logins.find((login) => login.machineOwn && login.provider === provider)
+    const found = config.logins.find((login) => login.usedByPlainCli && login.provider === provider)
     if (found !== undefined) return { login: found, noIdYet: false }
-    return { login: newLoginSettings({ id: noIdYetStandIn(provider) as LoginId, provider, machineOwn: true }), noIdYet: true }
+    return { login: newLoginSettings({ id: noIdYetStandIn(provider) as LoginId, provider, usedByPlainCli: true }), noIdYet: true }
   })
-  return [...own, ...config.logins.filter((login) => !login.machineOwn).map((login) => ({ login, noIdYet: false }))]
+  return [...own, ...config.logins.filter((login) => !login.usedByPlainCli).map((login) => ({ login, noIdYet: false }))]
 }
 
 function messageOf(error: unknown): string {

@@ -68,7 +68,7 @@ test('reads a login token through security and asks for that login item', async 
   expect(keychain.calls()).toEqual([['find-generic-password', '-w', '-s', workService]])
 })
 
-test('the machine own login is read from the plain item', async () => {
+test('the login plain claude uses is read from the plain item', async () => {
   keychain.setItem(PLAIN, SECRET)
   const credentials = reader()
   await credentials.prime([DEFAULT])

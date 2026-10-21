@@ -77,6 +77,6 @@ describe('file paths', () => {
     expect(codexMergedRecordPath(codexRef('sidecodex1'))).toBe(join(kurmisHome(), 'codex-merged', 'sidecodex1.json'))
     expect(() => codexMergedRecordPath(OWN_CODEX_REF)).toThrow(/not an extra Codex login/)
     expect(() => codexMergedRecordPath(claudeRef('workclaude'))).toThrow(/not an extra Codex login/)
-    expect(() => codexMergedRecordPath({ id: '../x' as LoginId, provider: 'codex', machineOwn: false })).toThrow(/not a login id/)
+    expect(() => codexMergedRecordPath({ id: '../x' as LoginId, provider: 'codex', usedByPlainCli: false })).toThrow(/not a login id/)
   })
 })

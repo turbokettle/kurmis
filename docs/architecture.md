@@ -18,7 +18,7 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 `src/data/`.
 
 - `config.json` holds the daemon's port and the logins with their settings: id, provider, whether it
-  is the login plain claude or plain codex uses (`machineOwn`), alias, whether the person set the
+  is the login plain claude or plain codex uses (`usedByPlainCli`), alias, whether the person set the
   alias, opt-in, the two limits and use-first. The CLI writes it. The daemon writes it only to give
   a login its automatic alias (see "Aliases" below), and reloads it when its contents change
   (`configStamp`, a hash of the file).
@@ -83,7 +83,7 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   request body, an alias or an email. At 5 MB it is renamed to `daemon.log.1`, replacing the
   previous one.
 
-**The logins plain claude and plain codex use.** There is one per provider, marked `machineOwn`
+**The logins plain claude and plain codex use.** There is one per provider, marked `usedByPlainCli`
 in `config.json`: the account a plain `claude` and a plain `codex` are signed in to. Plain
 `claude` and plain `codex` mean the CLIs run without kurmis. They follow whatever those
 CLIs are signed in to. They are always in the config, cannot be removed, and have no folder
@@ -92,7 +92,7 @@ and the Keychain item with the plain name, whatever `CLAUDE_CONFIG_DIR` says (se
 claude's login and `CLAUDE_CONFIG_DIR`" below). A CLI on one of these two logins runs with the
 environment left as it was inherited, apart from the routing variables and, for Claude,
 `CLAUDE_SECURESTORAGE_CONFIG_DIR`. Code tells these two logins apart from the others by their
-`machineOwn` setting (`isMachineOwn`, `machineOwnLogin` and `extraLogins` in
+`usedByPlainCli` setting (`isUsedByPlainCli`, `plainCliLogin` and `extraLogins` in
 `src/data/config.ts`), never by their id.
 
 **Login ids.** Every login, those of plain claude and plain codex included, has an id that never
@@ -152,7 +152,7 @@ commands that must change nothing: `kurmis status`, `findDaemon` (which `status`
 part of `setup --pause` and `--uninstall-and-logout` that reads before anything is removed. A `config.json` that is not JSON or has a wrong field is an
 error that names the file and the field. So is one whose `version` is not 2: a version-1 file is
 refused with a message that says to delete it and add the extra logins again with `kurmis login
-claude` and `kurmis login codex`. Two logins with the same id, a second `machineOwn` login of a
+claude` and `kurmis login codex`. Two logins with the same id, a second `usedByPlainCli` login of a
 provider, two logins of one provider with the same alias, and an alias that is another login's id
 are errors too. A damaged `state.json` never stops the daemon: an entry that does not check out is
 dropped and the rest is kept, and a file that is not JSON reads as empty.
@@ -163,16 +163,16 @@ dropped and the rest is kept, and a file that is not JSON reads as empty.
   "version": 2,
   "port": 28411,
   "logins": [
-    { "id": "p8d2w5n1qe", "provider": "claude", "machineOwn": true, "alias": "me-example",
+    { "id": "p8d2w5n1qe", "provider": "claude", "usedByPlainCli": true, "alias": "me-example",
       "aliasSetByUser": false, "routing": true, "fiveHourLimit": 100, "weeklyLimit": 100,
       "useFirst": false },
-    { "id": "h4t7c0r6zb", "provider": "codex", "machineOwn": true, "alias": "h4t7c0r6zb",
+    { "id": "h4t7c0r6zb", "provider": "codex", "usedByPlainCli": true, "alias": "h4t7c0r6zb",
       "aliasSetByUser": false, "routing": true, "fiveHourLimit": 100, "weeklyLimit": 100,
       "useFirst": false },
-    { "id": "k3v9q2m7xa", "provider": "claude", "machineOwn": false, "alias": "work-example",
+    { "id": "k3v9q2m7xa", "provider": "claude", "usedByPlainCli": false, "alias": "work-example",
       "aliasSetByUser": false, "routing": true, "fiveHourLimit": 90, "weeklyLimit": 100,
       "useFirst": true },
-    { "id": "s5j1f8y3ud", "provider": "codex", "machineOwn": false, "alias": "side",
+    { "id": "s5j1f8y3ud", "provider": "codex", "usedByPlainCli": false, "alias": "side",
       "aliasSetByUser": true, "routing": true, "fiveHourLimit": 100, "weeklyLimit": 100,
       "useFirst": false }
   ]
@@ -218,7 +218,8 @@ daemon finishes the requests it has open.
   status, ask for a usage probe, reload config and stop the daemon. The paths and their answers are
   in `src/core/control-api.ts`. Every request needs the secret from `key`, in the header
   `x-kurmis-key`; without it the answer is 403 with no body. `status` gives each login's id, alias,
-  provider and whether plain claude or plain codex uses it (`LoginStatus`, control API version 2).
+  provider and whether plain claude or plain codex uses it (`usedByPlainCli` in `LoginStatus`,
+  control API version 3).
   It also gives each login's email, for `kurmis status` on the person's own terminal: a Claude
   login's from its profile file (`src/data/identity.ts`), a Codex login's from its last usage probe,
   which the daemon keeps in memory only. The email is never logged. A request body may be at most 64
@@ -1541,7 +1542,7 @@ These are known and left as they are.
     "source": "daemon",
     "globalRouting": "on",
     "logins": [ {
-      "id": "k3v9q2m7xa", "alias": "work-example", "provider": "claude", "machineOwn": false,
+      "id": "k3v9q2m7xa", "alias": "work-example", "provider": "claude", "usedByPlainCli": false,
       "email": "<email or null>", "signedIn": true, "credentials": null, "probing": false,
       "routing": true, "fiveHourLimit": 90, "weeklyLimit": 100, "useFirst": false,
       "usage": { "fetchedAt": "<ISO>", "source": "probe", "plan": "max", "error": null,

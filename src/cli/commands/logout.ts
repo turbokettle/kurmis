@@ -36,7 +36,7 @@ import { runProgram } from '../../platform/run.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, realFindProgram, reloadIfRunning, reloadText, type DaemonClient } from '../command-deps.ts'
 import { LoginBusyError, lockLogin } from '../login-lock.ts'
-import { machineOwnText } from '../login-names.ts'
+import { plainCliLoginText } from '../login-names.ts'
 import { leftBehindText, signOutLogin } from '../sign-out.ts'
 
 export { LOGOUT_TIMEOUT_MS } from '../sign-out.ts'
@@ -106,7 +106,7 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
     try {
       // Read again under the login's lock: another run may have removed it in the meantime.
       const found = findLogin(loadConfig(), id)
-      if (found?.machineOwn === true) return fail(context, `${found.alias} is ${machineOwnText(found.provider)} and cannot be removed.`, prefix)
+      if (found?.usedByPlainCli === true) return fail(context, `${found.alias} is ${plainCliLoginText(found.provider)} and cannot be removed.`, prefix)
       if (found !== undefined && found.provider === login.provider) {
         listed = true
         name = found.alias
@@ -183,7 +183,7 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
 
   return async (login, context, options = {}) => {
     const prefix = options.prefix ?? 'kurmis logout'
-    if (login.machineOwn) return fail(context, `${login.id} is ${machineOwnText(login.provider)} and cannot be removed.`, prefix)
+    if (login.usedByPlainCli) return fail(context, `${login.id} is ${plainCliLoginText(login.provider)} and cannot be removed.`, prefix)
     let name: string
     try {
       name = findLogin(loadConfig(), login.id)?.alias ?? login.id
@@ -220,15 +220,15 @@ function logoutTarget(config: KurmisConfig, text: string): LogoutTarget {
   const resolved = resolveLogin(config, text)
   if ('login' in resolved) {
     const login = resolved.login
-    if (login.machineOwn) {
+    if (login.usedByPlainCli) {
       const cli = login.provider === 'claude' ? 'claude auth logout' : 'codex logout'
       return {
         kind: 'error',
         usage: true,
-        message: `${login.alias} is ${machineOwnText(login.provider)} and cannot be removed. To sign it out, run "${cli}" yourself.`
+        message: `${login.alias} is ${plainCliLoginText(login.provider)} and cannot be removed. To sign it out, run "${cli}" yourself.`
       }
     }
-    return { kind: 'logins', logins: [{ id: login.id, provider: login.provider, machineOwn: false }] }
+    return { kind: 'logins', logins: [{ id: login.id, provider: login.provider, usedByPlainCli: false }] }
   }
   // Read as `resolveLogin` reads it.
   const typed = text.trim().toLowerCase()
@@ -237,7 +237,7 @@ function logoutTarget(config: KurmisConfig, text: string): LogoutTarget {
   const id = colon < 0 ? typed : typed.slice(colon + 1)
   const providers = prefix === null ? LOGIN_PROVIDERS : isLoginProvider(prefix) ? [prefix] : []
   if (isLoginId(id) && findLogin(config, id) === undefined) {
-    const refs = providers.map((provider): LoginRef => ({ id, provider, machineOwn: false }))
+    const refs = providers.map((provider): LoginRef => ({ id, provider, usedByPlainCli: false }))
     const withFolder = refs.filter((login) => exists(loginFolder(login)))
     if (withFolder.length > 0) return { kind: 'logins', logins: withFolder }
     const recordOnly = refs.filter((login) => login.provider === 'codex' && exists(codexMergedRecordPath(login)))

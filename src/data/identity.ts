@@ -35,7 +35,7 @@ export interface ClaudeIdentity {
  * `~/.claude.json`.
  */
 export function claudeIdentityFiles(login: LoginRef, home: string = homedir()): string[] {
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return [join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), join(home, CLAUDE_PROFILE_FILE)]
   }
   return [join(loginFolder(login), CLAUDE_PROFILE_FILE)]

@@ -12,10 +12,10 @@ import {
   extraLogins,
   findLogin,
   followEmail,
-  isMachineOwn,
+  isUsedByPlainCli,
   loadConfig,
   loginIds,
-  machineOwnLogin,
+  plainCliLogin,
   newLoginIdFor,
   parseConfig,
   readConfig,
@@ -44,7 +44,7 @@ function stored(id: string, provider: 'claude' | 'codex', more: Record<string, u
 }
 
 /** The logins of plain claude and plain codex as a version 2 file stores them. */
-const OWN_ROWS = [stored(OWN_CLAUDE, 'claude', { machineOwn: true }), stored(OWN_CODEX, 'codex', { machineOwn: true })]
+const OWN_ROWS = [stored(OWN_CLAUDE, 'claude', { usedByPlainCli: true }), stored(OWN_CODEX, 'codex', { usedByPlainCli: true })]
 
 function idsOf(config: KurmisConfig): string[] {
   return config.logins.map((login) => login.id)
@@ -87,7 +87,7 @@ describe('loading', () => {
     const config = loadConfig()
     expect(config.version).toBe(CONFIG_VERSION)
     expect(config.port).toBe(DEFAULT_PORT)
-    expect(config.logins.map((login) => [login.provider, login.machineOwn])).toEqual([['claude', true], ['codex', true]])
+    expect(config.logins.map((login) => [login.provider, login.usedByPlainCli])).toEqual([['claude', true], ['codex', true]])
     const [claude, codex] = config.logins
     expect(claude!.id).toMatch(/^[a-z0-9]{10}$/)
     expect(codex!.id).toMatch(/^[a-z0-9]{10}$/)
@@ -95,7 +95,7 @@ describe('loading', () => {
     expect(claude).toEqual({
       id: claude!.id,
       provider: 'claude',
-      machineOwn: true,
+      usedByPlainCli: true,
       alias: claude!.id,
       aliasSetByUser: false,
       routing: true,
@@ -112,12 +112,12 @@ describe('loading', () => {
   it("adds the login of plain claude or plain codex that a file leaves out, keeping the other's id", () => {
     writeRaw({ version: 2, logins: [OWN_ROWS[1], stored('workclaude', 'claude')] })
     const config = loadConfig()
-    expect(config.logins.map((login) => [login.provider, login.machineOwn])).toEqual([['claude', true], ['codex', true], ['claude', false]])
-    expect(machineOwnLogin(config, 'codex').id).toBe(OWN_CODEX)
-    const added = machineOwnLogin(config, 'claude').id
+    expect(config.logins.map((login) => [login.provider, login.usedByPlainCli])).toEqual([['claude', true], ['codex', true], ['claude', false]])
+    expect(plainCliLogin(config, 'codex').id).toBe(OWN_CODEX)
+    const added = plainCliLogin(config, 'claude').id
     expect(isLoginId(added)).toBe(true)
     expect([OWN_CODEX, 'workclaude']).not.toContain(added)
-    expect(machineOwnLogin(loadConfig(), 'claude').id).toBe(added)
+    expect(plainCliLogin(loadConfig(), 'claude').id).toBe(added)
   })
 
   it("leaves a file that has both of the logins of plain claude and plain codex as it is", () => {
@@ -141,7 +141,7 @@ describe('loading', () => {
     const config = loadConfig()
     expect(idsOf(config)).toEqual([OWN_CLAUDE, OWN_CODEX, 'sidecodex1', 'workclaude', 'lastclaude'])
     expect(findLogin(config, 'workclaude')).toMatchObject({ alias: 'work', aliasSetByUser: true, routing: true, fiveHourLimit: 100 })
-    expect(findLogin(config, 'lastclaude')).toMatchObject({ alias: 'lastclaude', aliasSetByUser: false, machineOwn: false })
+    expect(findLogin(config, 'lastclaude')).toMatchObject({ alias: 'lastclaude', aliasSetByUser: false, usedByPlainCli: false })
   })
 
   it('round-trips through save', () => {
@@ -186,13 +186,13 @@ describe('loading', () => {
     [{ version: 2, logins: [{ id: 'none', provider: 'claude' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
     [{ version: 2, logins: [{ id: 'alogin' }] }, 'logins[0].provider must be a string'],
     [{ version: 2, logins: [{ id: 'alogin', provider: 'gemini' }] }, 'logins[0].provider must be "claude" or "codex"'],
-    [{ version: 2, logins: [{ id: 'alogin', provider: 'claude', machineOwn: 'yes' }] }, 'logins[0].machineOwn must be true or false'],
+    [{ version: 2, logins: [{ id: 'alogin', provider: 'claude', usedByPlainCli: 'yes' }] }, 'logins[0].usedByPlainCli must be true or false'],
     [{ version: 2, logins: [{ id: 'alogin', provider: 'claude', routing: 'yes' }] }, 'logins[0].routing must be true or false, not a string'],
     [{ version: 2, logins: [{ id: 'alogin', provider: 'claude', aliasSetByUser: 1 }] }, 'logins[0].aliasSetByUser must be true or false'],
     [{ version: 2, logins: [stored('alogin', 'claude'), stored('alogin', 'codex')] }, 'logins[1].id repeats "alogin"'],
     [
-      { version: 2, logins: [stored('alogin', 'claude', { machineOwn: true }), stored('blogin', 'claude', { machineOwn: true })] },
-      'logins[1].machineOwn is true for a second claude login'
+      { version: 2, logins: [stored('alogin', 'claude', { usedByPlainCli: true }), stored('blogin', 'claude', { usedByPlainCli: true })] },
+      'logins[1].usedByPlainCli is true for a second claude login'
     ],
     [
       { version: 2, logins: [stored('alogin', 'codex', { alias: 'same' }), stored('blogin', 'codex', { alias: 'same' })] },
@@ -241,10 +241,10 @@ describe('loading', () => {
 describe("the logins of plain claude and plain codex", () => {
   it('are found by provider, and are not extra logins', () => {
     const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude' }, { id: 'sidecodex1', provider: 'codex' }] })
-    expect(machineOwnLogin(config, 'claude').id).toBe(OWN_CLAUDE)
-    expect(machineOwnLogin(config, 'codex').id).toBe(OWN_CODEX)
-    expect(isMachineOwn(loginOf(config, OWN_CLAUDE))).toBe(true)
-    expect(isMachineOwn(loginOf(config, 'workclaude'))).toBe(false)
+    expect(plainCliLogin(config, 'claude').id).toBe(OWN_CLAUDE)
+    expect(plainCliLogin(config, 'codex').id).toBe(OWN_CODEX)
+    expect(isUsedByPlainCli(loginOf(config, OWN_CLAUDE))).toBe(true)
+    expect(isUsedByPlainCli(loginOf(config, 'workclaude'))).toBe(false)
     expect(extraLogins(config).map((login) => login.id)).toEqual(['workclaude', 'sidecodex1'])
     expect(extraLogins(config, 'claude').map((login) => login.id)).toEqual(['workclaude'])
     expect(extraLogins(config, 'codex').map((login) => login.id)).toEqual(['sidecodex1'])
@@ -253,13 +253,13 @@ describe("the logins of plain claude and plain codex", () => {
 
   it('a config without one is an error when it is asked for', () => {
     const config: KurmisConfig = { ...testConfig(), logins: [] }
-    expect(() => machineOwnLogin(config, 'claude')).toThrow(ConfigError)
+    expect(() => plainCliLogin(config, 'claude')).toThrow(ConfigError)
   })
 
   it('defaultConfig makes both with ids that differ each time', () => {
     const one = defaultConfig()
     const two = defaultConfig()
-    expect(one.logins.map((login) => login.machineOwn)).toEqual([true, true])
+    expect(one.logins.map((login) => login.usedByPlainCli)).toEqual([true, true])
     expect(idsOf(one)).not.toEqual(idsOf(two))
   })
 })
@@ -358,7 +358,7 @@ describe('changing logins', () => {
     expect(findLogin(config, 'sidecodex1')).toEqual({
       id: 'sidecodex1',
       provider: 'codex',
-      machineOwn: false,
+      usedByPlainCli: false,
       alias: 'sidecodex1',
       aliasSetByUser: false,
       routing: true,
@@ -426,7 +426,7 @@ describe('changing logins', () => {
     changeConfig((config) => updateLogin(config, 'workclaude', { useFirst: true }))
     const config = loadConfig()
     expect(findLogin(config, 'workclaude')?.useFirst).toBe(true)
-    expect(config.logins.filter((login) => login.machineOwn)).toHaveLength(2)
+    expect(config.logins.filter((login) => login.usedByPlainCli)).toHaveLength(2)
   })
 
   it('changeConfig holds the config lock while it changes the file and releases it after', () => {

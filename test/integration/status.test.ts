@@ -131,7 +131,7 @@ describe('kurmis status, end to end', () => {
       version: PACKAGE_VERSION, pid: daemon?.pid, port: world.port, startedAt: new Date(daemon?.startedAt ?? 0).toISOString(), older: false
     })
     expect(Math.abs(Date.parse(status.daemon?.startedAt ?? '') - startedAround)).toBeLessThan(MINUTE_MS)
-    expect(status.logins.map((login) => [login.id, login.machineOwn])).toEqual([[OWN_CLAUDE, true], [OWN_CODEX, true], [work.id, false], [spare.id, false]])
+    expect(status.logins.map((login) => [login.id, login.usedByPlainCli])).toEqual([[OWN_CLAUDE, true], [OWN_CODEX, true], [work.id, false], [spare.id, false]])
     expect(status.warnings).toEqual([])
     for (const login of status.logins) {
       expect(login, login.id).toMatchObject({ signedIn: true, probing: false, routing: true, useFirst: false })
@@ -141,8 +141,8 @@ describe('kurmis status, end to end', () => {
 
     // The probes told the daemon the emails of the logins of plain claude and plain codex, and it gave them their
     // automatic aliases in config.json.
-    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ machineOwn: true, alias: 'default-example', aliasSetByUser: false })
-    expect(world.configLogin(OWN_CODEX)).toMatchObject({ machineOwn: true, alias: 'codex-default-example', aliasSetByUser: false })
+    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ usedByPlainCli: true, alias: 'default-example', aliasSetByUser: false })
+    expect(world.configLogin(OWN_CODEX)).toMatchObject({ usedByPlainCli: true, alias: 'codex-default-example', aliasSetByUser: false })
 
     const claudeDefault = loginOf(status, OWN_CLAUDE)
     expect(claudeDefault).toMatchObject({
@@ -220,9 +220,9 @@ describe('kurmis status, end to end', () => {
     expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
     const first = await probedStatus(world)
     expect(loginOf(first, OWN_CLAUDE)).toMatchObject({
-      alias: OWN_CLAUDE, machineOwn: true, signedIn: false, email: null, blocked: { kind: 'signed-out', until: null }, usage: { windows: [], error: null }
+      alias: OWN_CLAUDE, usedByPlainCli: true, signedIn: false, email: null, blocked: { kind: 'signed-out', until: null }, usage: { windows: [], error: null }
     })
-    expect(loginOf(first, OWN_CODEX)).toMatchObject({ alias: OWN_CODEX, machineOwn: true, signedIn: false, blocked: { kind: 'signed-out' } })
+    expect(loginOf(first, OWN_CODEX)).toMatchObject({ alias: OWN_CODEX, usedByPlainCli: true, signedIn: false, blocked: { kind: 'signed-out' } })
     expect(loginOf(first, spare.id)).toMatchObject({ alias: 'spare-example', signedIn: true, blocked: null, usage: { source: 'probe', windows: [] } })
     expect(loginOf(first, spare.id).usage?.error).toEqual(expect.any(String))
     expect(loginOf(first, work.id)).toMatchObject({ alias: 'work-example', signedIn: true, blocked: null, sessions: 0, usage: { source: 'probe', error: null } })

@@ -238,9 +238,9 @@ describe("the logins of plain claude and plain codex", () => {
   test('are found by provider, whatever their ids', () => {
     writeLogins({ claude: { [WORK]: {} }, codex: { [WORK_CODEX]: {} } })
     const logins = table()
-    expect(logins.ownLogin('claude')).toMatchObject({ id: OWN_CLAUDE, provider: 'claude', machineOwn: true })
-    expect(logins.ownLogin('codex')).toMatchObject({ id: OWN_CODEX, provider: 'codex', machineOwn: true })
-    expect(logins.find(WORK)?.machineOwn).toBe(false)
+    expect(logins.ownLogin('claude')).toMatchObject({ id: OWN_CLAUDE, provider: 'claude', usedByPlainCli: true })
+    expect(logins.ownLogin('codex')).toMatchObject({ id: OWN_CODEX, provider: 'codex', usedByPlainCli: true })
+    expect(logins.find(WORK)?.usedByPlainCli).toBe(false)
   })
 
   test('are added with new ids to a config that has none, and the file keeps them', () => {
@@ -248,7 +248,7 @@ describe("the logins of plain claude and plain codex", () => {
     writeFileSync(configPath(), '{"version": 2, "logins": []}')
     const logins = table()
     const own = logins.ownLogin('claude')
-    expect(own.machineOwn).toBe(true)
+    expect(own.usedByPlainCli).toBe(true)
     expect(loadConfig().logins.map((login) => login.id)).toEqual([own.id, logins.ownLogin('codex').id])
   })
 

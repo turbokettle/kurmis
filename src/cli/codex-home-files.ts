@@ -97,7 +97,7 @@ function emptyRecord(config: string | null): CodexMergedRecord {
 export async function prepareCodexHome(login: LoginRef & { alias?: string }, options: PrepareCodexHomeOptions): Promise<PreparedCodexHome> {
   const name = login.alias ?? login.id
   if (login.provider !== 'codex') throw new Error(`${name} is not a Codex login.`)
-  if (login.machineOwn) return { codexHome: null, warnings: [] }
+  if (login.usedByPlainCli) return { codexHome: null, warnings: [] }
 
   const platform = options.platform ?? process.platform
   const home = loginFolder(login)

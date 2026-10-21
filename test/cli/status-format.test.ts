@@ -168,7 +168,7 @@ describe('kurmis status as JSON', () => {
       id: 'workclaude',
       alias: 'work-example',
       provider: 'claude',
-      machineOwn: false,
+      usedByPlainCli: false,
       email: 'work@example.com',
       signedIn: true,
       credentials: null,
@@ -209,8 +209,8 @@ describe('kurmis status as JSON', () => {
       usage: { windows: [{ key: 'codex:primary', label: 'Codex 5h', plan: true }, { key: 'codex:secondary', label: 'Codex 7d', plan: true }] }
     })
     expect(json.logins[5]?.blocked).toMatchObject({ kind: 'signed-out', until: null })
-    expect(json.logins[0]).toMatchObject({ id: 'ownclaude1', alias: 'own-example', machineOwn: true })
-    expect(json.logins[4]).toMatchObject({ id: 'owncodex01', alias: 'own-example', provider: 'codex', machineOwn: true })
+    expect(json.logins[0]).toMatchObject({ id: 'ownclaude1', alias: 'own-example', usedByPlainCli: true })
+    expect(json.logins[4]).toMatchObject({ id: 'owncodex01', alias: 'own-example', provider: 'codex', usedByPlainCli: true })
     expect(json.codexStart).toEqual({
       login: 'owncodex01',
       alias: 'own-example',
@@ -270,7 +270,7 @@ describe('the warning about an extra login that is the account of the login plai
         '"kurmis logout spare-example-2" removes spare-example-2.'
     ])
     const json = reportJson(report, NOW, { keychain: false })
-    expect(json.logins[0]).toMatchObject({ id: null, alias: null, machineOwn: true, email: 'own@example.com' })
+    expect(json.logins[0]).toMatchObject({ id: null, alias: null, usedByPlainCli: true, email: 'own@example.com' })
     const text = formatReport(report, NOW, { keychain: false })
     expect(text).toContain('\nthe login plain claude uses (Claude, no id yet)  own@example.com\n  config.json has no entry')
     expect(text).not.toContain('-claude')

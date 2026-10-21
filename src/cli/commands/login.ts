@@ -63,7 +63,7 @@ import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type Cl
 import { realChildRunner, realDaemonClient, realFindProgram, realPrepareCodexHome, reloadText, settleWithin, type ChildRunner, type DaemonClient } from '../command-deps.ts'
 import type { FileLock } from '../../data/lock.ts'
 import { LoginBusyError, lockLogin } from '../login-lock.ts'
-import { loginArgument, machineOwnText, PROVIDER_NAMES } from '../login-names.ts'
+import { loginArgument, plainCliLoginText, PROVIDER_NAMES } from '../login-names.ts'
 import { leftBehindText, signOutLogin } from '../sign-out.ts'
 import { hasCredentials } from '../local-credentials.ts'
 
@@ -132,7 +132,7 @@ export function loginTarget(argument: string, config: KurmisConfig): LoginTarget
 export function freshLoginId(config: KurmisConfig): LoginId {
   for (;;) {
     const id = newLoginIdFor(config)
-    if (LOGIN_PROVIDERS.every((provider) => !existsSync(loginFolder({ id, provider, machineOwn: false })))) return id
+    if (LOGIN_PROVIDERS.every((provider) => !existsSync(loginFolder({ id, provider, usedByPlainCli: false })))) return id
   }
 }
 
@@ -243,7 +243,7 @@ async function signIn(run: SignInRun): Promise<number> {
   const { ref, isNew, name, lock, program, alias, context, deps } = run
   const provider = ref.provider
 
-  const folder = ref.machineOwn ? null : loginFolder(ref)
+  const folder = ref.usedByPlainCli ? null : loginFolder(ref)
   let created = false
   if (folder !== null && !existsSync(folder)) {
     makePrivateDirSync(folder)
@@ -257,7 +257,7 @@ async function signIn(run: SignInRun): Promise<number> {
   }
   const notAdded = isNew ? ' No login was added.' : ''
 
-  if (provider === 'codex' && !ref.machineOwn) {
+  if (provider === 'codex' && !ref.usedByPlainCli) {
     try {
       const prepared = await deps.prepareCodexHome({ ...ref, alias: name }, { env: context.env })
       for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`)
@@ -287,13 +287,13 @@ async function signIn(run: SignInRun): Promise<number> {
     return fail(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`)
   }
 
-  if (provider === 'claude' && ref.machineOwn) {
+  if (provider === 'claude' && ref.usedByPlainCli) {
     // The probe folder's profile names the account plain claude's login had before; without
     // it the daemon reads ~/.claude.json, which this sign-in just wrote, until the next probe
     // writes the probe folder's file again.
     rmSync(join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true })
   }
-  const identity = provider === 'claude' ? (ref.machineOwn ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home())) : null
+  const identity = provider === 'claude' ? (ref.usedByPlainCli ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home())) : null
   if (identity === null && !(await hasCredentials(ref, context.env, deps.home(), deps))) {
     cleanUp()
     return fail(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`)
@@ -348,7 +348,7 @@ async function signIn(run: SignInRun): Promise<number> {
     // Nothing is signed out: the person may have meant either login, and both still work.
     const other = await sameAccount(saved, ref, email, context.env, deps)
     if (other !== null) {
-      const which = other.machineOwn ? `${other.alias}, ${machineOwnText(other.provider)},` : other.alias
+      const which = other.usedByPlainCli ? `${other.alias}, ${plainCliLoginText(other.provider)},` : other.alias
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ` +
         `${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. ` +
         `"kurmis login ${argument}" signs ${login.alias} in to another account.`)
@@ -375,7 +375,7 @@ async function dropDuplicate(run: SignInRun, config: KurmisConfig, existing: Log
     return fail(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted ` +
       `(${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`)
   }
-  const which = existing.machineOwn ? `${existing.alias}, ${machineOwnText(existing.provider)}` : existing.alias
+  const which = existing.usedByPlainCli ? `${existing.alias}, ${plainCliLoginText(existing.provider)}` : existing.alias
   writeLine(context.stdout, `${email} is already a kurmis ${PROVIDER_NAMES[ref.provider]} login: ${which} (id ${existing.id}). ` +
     'No login was added, and the new sign-in was signed out again.')
   writeLine(context.stdout, `"kurmis login ${loginArgument(config, existing)}" signs ${existing.alias} in again.`)
@@ -455,8 +455,8 @@ Options:
       if ('error' in target) return usageError('login', target.error, context)
       const isNew = target.kind === 'new'
       const ref: LoginRef = isNew
-        ? { id: freshLoginId(config), provider: target.provider, machineOwn: false }
-        : { id: target.login.id, provider: target.login.provider, machineOwn: target.login.machineOwn }
+        ? { id: freshLoginId(config), provider: target.provider, usedByPlainCli: false }
+        : { id: target.login.id, provider: target.login.provider, usedByPlainCli: target.login.usedByPlainCli }
       const name = isNew ? ref.id : target.login.alias
       if (alias !== undefined) {
         const problem = aliasProblem(config, ref, alias)

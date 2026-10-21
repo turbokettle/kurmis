@@ -45,7 +45,7 @@ function namesAccount(file: string): boolean {
  */
 export function hasLocalCredentials(login: LoginRef, env: NodeJS.ProcessEnv, home: string): boolean {
   if (login.provider === 'codex') return existsSync(join(codexHomeOf(login, env, home), 'auth.json'))
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return existsSync(join(home, '.claude', '.credentials.json')) || namesAccount(join(home, CLAUDE_PROFILE_FILE))
   }
   const folder = loginFolder(login)

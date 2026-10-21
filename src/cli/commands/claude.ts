@@ -21,7 +21,7 @@ import {
   routedClaudeEnv,
   withoutRoutedVariables
 } from '../../core/routed-env.ts'
-import { ConfigError, loadConfig, machineOwnLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
+import { ConfigError, loadConfig, plainCliLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
 import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data/login-env.ts'
 import type { LoginId } from '../../data/login-id.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
@@ -42,7 +42,7 @@ import {
   type SettingsStore,
   type UserSettingsArg
 } from '../settings-arg.ts'
-import { loginArgument, machineOwnText } from '../login-names.ts'
+import { loginArgument, plainCliLoginText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
 import { parseWrapperArgs } from '../wrapper-args.ts'
 
@@ -116,7 +116,7 @@ export const claudeCommand: Command = createClaudeCommand()
 interface StartedOn {
   id: string | null
   alias: string
-  machineOwn: boolean
+  usedByPlainCli: boolean
 }
 
 async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps): Promise<number> {
@@ -151,7 +151,7 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     if (!(error instanceof ConfigError)) throw error
     // A pinned login cannot be looked up without the config.
     if (parsed.login !== null) return fail(error.message)
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${machineOwnText('claude')}.`)
+    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainCliLoginText('claude')}.`)
     config = null
   }
   let pinned: StartedOn | null = null
@@ -184,25 +184,25 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     } catch (error) {
       return fail(daemonUnreachable(error))
     }
-    const ownRow = status.logins.find((login) => login.provider === 'claude' && login.machineOwn)
+    const ownRow = status.logins.find((login) => login.provider === 'claude' && login.usedByPlainCli)
     if (config === null) {
       // The daemon's id for the login plain claude uses. Without one, no started-on header is
       // sent, which the daemon reads as that login too.
-      startedOn = ownRow ?? { id: null, alias: machineOwnText('claude'), machineOwn: true }
+      startedOn = ownRow ?? { id: null, alias: plainCliLoginText('claude'), usedByPlainCli: true }
     } else {
       const startId = autoStartLogin(startableLogins(status))
-      startedOn = status.logins.find((login) => login.id === startId) ?? machineOwnLogin(config, 'claude')
-      if (!startedOn.machineOwn) {
-        const own = ownRow ?? machineOwnLogin(config, 'claude')
-        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${machineOwnText('claude')}, is not signed in, so claude starts on ` +
+      startedOn = status.logins.find((login) => login.id === startId) ?? plainCliLogin(config, 'claude')
+      if (!startedOn.usedByPlainCli) {
+        const own = ownRow ?? plainCliLogin(config, 'claude')
+        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${plainCliLoginText('claude')}, is not signed in, so claude starts on ` +
           `${startedOn.alias}'s credentials; requests are still routed on Auto.`)
       }
     }
   }
 
   let secureStorageDir: string | null = null
-  if (!startedOn.machineOwn && startedOn.id !== null) {
-    secureStorageDir = loginFolder({ id: startedOn.id as LoginId, provider: 'claude', machineOwn: false })
+  if (!startedOn.usedByPlainCli && startedOn.id !== null) {
+    secureStorageDir = loginFolder({ id: startedOn.id as LoginId, provider: 'claude', usedByPlainCli: false })
     if (!deps.folderExists(secureStorageDir)) {
       const argument = config === null ? startedOn.alias
         : loginArgument(config, { id: startedOn.id, provider: 'claude', alias: startedOn.alias })
@@ -211,7 +211,7 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     }
   }
 
-  if (startedOn.machineOwn && configDirHasOwnCredentials(context.env, deps.platform)) {
+  if (startedOn.usedByPlainCli && configDirHasOwnCredentials(context.env, deps.platform)) {
     writeLine(context.stderr, `kurmis claude: ${configDirNote(context.env['CLAUDE_CONFIG_DIR'] ?? '', deps)}`)
   }
 
@@ -261,8 +261,8 @@ export function startableLogins(status: StatusAnswer): StartableLogin[] {
     .filter((login) => login.provider === 'claude')
     .map((login) => ({
       id: login.id,
-      machineOwn: login.machineOwn,
-      loggedIn: login.signedIn ?? login.machineOwn,
+      usedByPlainCli: login.usedByPlainCli,
+      loggedIn: login.signedIn ?? login.usedByPlainCli,
       autoRoute: login.routing
     }))
 }

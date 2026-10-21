@@ -12,7 +12,7 @@ import type { AccountUsage } from './claude-usage.ts'
 import { CONTROL_PREFIX } from './proxy-rules.ts'
 
 /** Raised when an answer changes in a way an older CLI would misread. */
-export const CONTROL_API_VERSION = 2
+export const CONTROL_API_VERSION = 3
 
 export const CONTROL_PATHS = {
   /** `GET`: `StatusAnswer`. */
@@ -70,7 +70,7 @@ export interface LoginStatus {
   /** The name the person sees and types for the login (`alias` in `config.json`). */
   alias: string
   /** The login plain claude or plain codex uses, which follows what that CLI is signed in to. */
-  machineOwn: boolean
+  usedByPlainCli: boolean
   /** Opted in to routing. */
   routing: boolean
   fiveHourLimit: number

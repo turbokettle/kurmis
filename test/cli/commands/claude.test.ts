@@ -233,8 +233,8 @@ describe('kurmis claude on Auto', () => {
       loginStatus(WORK, { signedIn: null, routing: false }),
       loginStatus(OWN_CODEX_REF)
     ]))).toEqual([
-      { id: OWN_CLAUDE, machineOwn: true, loggedIn: true, autoRoute: true },
-      { id: 'workclaude', machineOwn: false, loggedIn: false, autoRoute: false }
+      { id: OWN_CLAUDE, usedByPlainCli: true, loggedIn: true, autoRoute: true },
+      { id: 'workclaude', usedByPlainCli: false, loggedIn: false, autoRoute: false }
     ])
   })
 

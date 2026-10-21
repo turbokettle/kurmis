@@ -3681,7 +3681,7 @@ function effectivePin(session, accounts) {
   return session.homeAccountId;
 }
 function autoStartLogin(accounts, preferred) {
-  const own2 = accounts.find((account) => account.machineOwn);
+  const own2 = accounts.find((account) => account.usedByPlainCli);
   if (own2 === void 0) throw new Error("autoStartLogin: the list has no login that plain claude uses");
   if (own2.loggedIn) return own2.id;
   const pool = accounts.filter((account) => account.autoRoute);
@@ -4324,7 +4324,7 @@ function providerFolder(provider) {
 }
 function loginFolder(login) {
   const id = toLoginId(login.id);
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     throw new Error(`${id} is the login plain ${login.provider} uses and has no folder in the kurmis data folder.`);
   }
   return (0, import_node_path3.join)(providerFolder(login.provider), id);
@@ -4334,7 +4334,7 @@ function loginLockPath(id) {
 }
 function codexMergedRecordPath(login) {
   const id = toLoginId(login.id);
-  if (login.machineOwn || login.provider !== "codex") throw new Error(`${id} is not an extra Codex login.`);
+  if (login.usedByPlainCli || login.provider !== "codex") throw new Error(`${id} is not an extra Codex login.`);
   return (0, import_node_path3.join)(kurmisHome(), "codex-merged", `${id}.json`);
 }
 
@@ -4403,19 +4403,19 @@ var ConfigError = class extends Error {
     this.name = "ConfigError";
   }
 };
-function machineOwnLogin(config, provider) {
-  const own2 = config.logins.find((login) => login.machineOwn && login.provider === provider);
+function plainCliLogin(config, provider) {
+  const own2 = config.logins.find((login) => login.usedByPlainCli && login.provider === provider);
   if (own2 === void 0) throw new ConfigError(`The config has no login that plain ${provider} uses.`);
   return own2;
 }
 function extraLogins(config, provider) {
-  return config.logins.filter((login) => !login.machineOwn && (provider === void 0 || login.provider === provider));
+  return config.logins.filter((login) => !login.usedByPlainCli && (provider === void 0 || login.provider === provider));
 }
 function newLoginSettings(ref, patch = {}) {
   const login = {
     id: ref.id,
     provider: ref.provider,
-    machineOwn: ref.machineOwn,
+    usedByPlainCli: ref.usedByPlainCli,
     alias: ref.id,
     aliasSetByUser: false,
     routing: DEFAULT_AUTO_ROUTE,
@@ -4437,22 +4437,22 @@ function emptyConfig() {
   return { version: CONFIG_VERSION, port: DEFAULT_PORT, logins: [] };
 }
 function defaultConfig() {
-  return ensureMachineOwnLogins(emptyConfig());
+  return ensurePlainCliLogins(emptyConfig());
 }
-function ensureMachineOwnLogins(config) {
-  const missing = LOGIN_PROVIDERS.filter((provider) => !config.logins.some((login) => login.machineOwn && login.provider === provider));
+function ensurePlainCliLogins(config) {
+  const missing = LOGIN_PROVIDERS.filter((provider) => !config.logins.some((login) => login.usedByPlainCli && login.provider === provider));
   if (missing.length === 0) return config;
   const ids = [...loginIds(config), ...config.logins.map((login) => login.alias)];
   const added = missing.map((provider) => {
     const id = newLoginId(ids);
     ids.push(id);
-    return newLoginSettings({ id, provider, machineOwn: true });
+    return newLoginSettings({ id, provider, usedByPlainCli: true });
   });
   return { ...config, logins: ordered([...config.logins, ...added]) };
 }
 function ordered(logins) {
-  const own2 = LOGIN_PROVIDERS.flatMap((provider) => logins.filter((login) => login.machineOwn && login.provider === provider));
-  return [...own2, ...logins.filter((login) => !login.machineOwn)];
+  const own2 = LOGIN_PROVIDERS.flatMap((provider) => logins.filter((login) => login.usedByPlainCli && login.provider === provider));
+  return [...own2, ...logins.filter((login) => !login.usedByPlainCli)];
 }
 function checkLimit(value, where) {
   return expectInteger(value, where, 1, 100);
@@ -4480,12 +4480,12 @@ function parseLogin(value, where) {
   if (!isLoginId(id)) fail(child(where, "id"), "must be 1 to 32 lowercase letters and digits");
   const provider = expectString(raw.provider, child(where, "provider"));
   if (!isLoginProvider(provider)) fail(child(where, "provider"), 'must be "claude" or "codex"');
-  const machineOwn = raw.machineOwn === void 0 ? false : expectBoolean(raw.machineOwn, child(where, "machineOwn"));
+  const usedByPlainCli = raw.usedByPlainCli === void 0 ? false : expectBoolean(raw.usedByPlainCli, child(where, "usedByPlainCli"));
   const patch = {};
   for (const key of ["routing", "fiveHourLimit", "weeklyLimit", "useFirst"]) {
     if (raw[key] !== void 0) patch[key] = raw[key];
   }
-  const login = applyPatch(newLoginSettings({ id, provider, machineOwn }), patch, where);
+  const login = applyPatch(newLoginSettings({ id, provider, usedByPlainCli }), patch, where);
   if (raw.alias !== void 0) login.alias = checkAlias(raw.alias, child(where, "alias"));
   if (raw.aliasSetByUser !== void 0) login.aliasSetByUser = expectBoolean(raw.aliasSetByUser, child(where, "aliasSetByUser"));
   return login;
@@ -4520,9 +4520,9 @@ function parseConfig(value, file) {
     const at2 = child(child(where, "logins"), index);
     const login = parseLogin(entry, at2);
     if (logins.some((other) => other.id === login.id)) fail(child(at2, "id"), `repeats "${login.id}"`);
-    if (login.machineOwn && logins.some((other) => other.machineOwn && other.provider === login.provider)) {
+    if (login.usedByPlainCli && logins.some((other) => other.usedByPlainCli && other.provider === login.provider)) {
       fail(
-        child(at2, "machineOwn"),
+        child(at2, "usedByPlainCli"),
         `is true for a second ${login.provider} login; only one ${login.provider} login can be the one plain ${login.provider} uses`
       );
     }
@@ -4545,7 +4545,7 @@ function readConfig(path = configPath()) {
 }
 function loadConfig(path = configPath(), lockOptions = {}) {
   const config = readConfigFile(path);
-  if (ensureMachineOwnLogins(config) === config) return config;
+  if (ensurePlainCliLogins(config) === config) return config;
   return changeConfig((current) => current, path, lockOptions);
 }
 function saveConfig(config, path = configPath()) {
@@ -4605,7 +4605,7 @@ function addLogin(config, ref, patch = {}) {
   if (!isLoginId(ref.id)) throw new ConfigError(`"${ref.id}" is not a login id.`);
   if (findLogin(config, ref.id) !== void 0) throw new ConfigError(`There is already a login ${ref.id}.`);
   if (config.logins.some((other) => other.alias === ref.id)) throw new ConfigError(`"${ref.id}" is the alias of another login.`);
-  const login = newLoginSettings({ id: ref.id, provider: ref.provider, machineOwn: false }, patch);
+  const login = newLoginSettings({ id: ref.id, provider: ref.provider, usedByPlainCli: false }, patch);
   const problem = aliasProblem(config, login, login.alias);
   if (problem !== null) throw new ConfigError(`${capitalized(problem)}.`);
   return { ...config, logins: [...config.logins, login] };
@@ -4613,7 +4613,7 @@ function addLogin(config, ref, patch = {}) {
 function removeLogin(config, id) {
   const login = findLogin(config, id);
   if (login === void 0) throw new ConfigError(`There is no login ${id}.`);
-  if (login.machineOwn) throw new ConfigError(`${login.alias} is the login plain ${login.provider} uses and cannot be removed.`);
+  if (login.usedByPlainCli) throw new ConfigError(`${login.alias} is the login plain ${login.provider} uses and cannot be removed.`);
   return { ...config, logins: config.logins.filter((other) => other.id !== id) };
 }
 function updateLogin(config, id, patch) {
@@ -4644,7 +4644,7 @@ function changeConfig(change, path = configPath(), lockOptions = {}) {
   const lockPath = path === configPath() ? configLockPath() : `${path}.lock`;
   try {
     return withFileLockSync(lockPath, () => {
-      const next = change(ensureMachineOwnLogins(readConfigFile(path)));
+      const next = change(ensurePlainCliLogins(readConfigFile(path)));
       saveConfig(next, path);
       return next;
     }, lockOptions);
@@ -4697,7 +4697,7 @@ function refusedUntil(usage) {
   return Number.isFinite(at2) ? at2 : Infinity;
 }
 function ownCodexLogin(status2) {
-  const own2 = status2.logins.find((login) => login.provider === "codex" && login.machineOwn);
+  const own2 = status2.logins.find((login) => login.provider === "codex" && login.usedByPlainCli);
   if (own2 === void 0) throw new Error("The daemon's status has no login that plain codex uses.");
   return own2;
 }
@@ -4710,7 +4710,7 @@ function chooseCodexLogin(status2, now) {
   const rows = codexRouteAccounts(status2);
   const chosen = chooseAccount(session, rows, now, /* @__PURE__ */ new Set());
   const pinned = effectivePin(session, rows);
-  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? "ranked" : "machine-own", note: null };
+  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? "ranked" : "used-by-plain-cli", note: null };
   if (pinned !== null) {
     return {
       login: pinned,
@@ -4782,19 +4782,19 @@ var NOT_INHERITED = {
 var FORCE_CREDENTIAL_MANAGER_VARIABLE = "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN";
 function claudeLoginEnv(login, forceCredentialManager = false) {
   const force = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: "1" } : {};
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return { CLAUDE_CONFIG_DIR: void 0, CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
   }
   return { CLAUDE_CONFIG_DIR: loginFolder(login), CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
 }
 function claudeProbeEnv(login) {
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return { CLAUDE_CONFIG_DIR: ownClaudeProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: "", ...NOT_INHERITED };
   }
   return claudeLoginEnv(login);
 }
 function codexLoginEnv(login, inherited = {}, platform = process.platform) {
-  if (!login.machineOwn) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED };
+  if (!login.usedByPlainCli) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED };
   const windows = platform === "win32";
   const home = windows ? Object.entries(inherited).find(([name]) => name.toUpperCase() === "CODEX_HOME")?.[1] : inherited["CODEX_HOME"];
   return isKurmisCodexHome(home, providerFolder("codex"), windows) ? { CODEX_HOME: void 0, ...NOT_INHERITED } : { ...NOT_INHERITED };
@@ -6341,7 +6341,7 @@ function emptyRecord(config) {
 async function prepareCodexHome(login, options) {
   const name = login.alias ?? login.id;
   if (login.provider !== "codex") throw new Error(`${name} is not a Codex login.`);
-  if (login.machineOwn) return { codexHome: null, warnings: [] };
+  if (login.usedByPlainCli) return { codexHome: null, warnings: [] };
   const platform = options.platform ?? process.platform;
   const home = loginFolder(login);
   try {
@@ -6892,7 +6892,7 @@ function routeBlockText(block, keychain = false, startedOn = false, platform = p
 }
 
 // src/core/control-api.ts
-var CONTROL_API_VERSION = 2;
+var CONTROL_API_VERSION = 3;
 var CONTROL_PATHS = {
   /** `GET`: `StatusAnswer`. */
   status: `${CONTROL_PREFIX}status`,
@@ -8034,7 +8034,7 @@ function userOwnedRoutingVariables(layers) {
 
 // src/cli/login-names.ts
 var PROVIDER_NAMES2 = { claude: "Claude", codex: "Codex" };
-function machineOwnText(provider) {
+function plainCliLoginText(provider) {
   return `the login plain ${provider} uses`;
 }
 function loginArgument(config, login) {
@@ -8144,7 +8144,7 @@ async function runClaude(args, context, deps) {
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
     if (parsed.login !== null) return fail4(error.message);
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${machineOwnText("claude")}.`);
+    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainCliLoginText("claude")}.`);
     config = null;
   }
   let pinned = null;
@@ -8171,27 +8171,27 @@ async function runClaude(args, context, deps) {
     } catch (error) {
       return fail4(daemonUnreachable(error));
     }
-    const ownRow = status2.logins.find((login) => login.provider === "claude" && login.machineOwn);
+    const ownRow = status2.logins.find((login) => login.provider === "claude" && login.usedByPlainCli);
     if (config === null) {
-      startedOn = ownRow ?? { id: null, alias: machineOwnText("claude"), machineOwn: true };
+      startedOn = ownRow ?? { id: null, alias: plainCliLoginText("claude"), usedByPlainCli: true };
     } else {
       const startId = autoStartLogin(startableLogins(status2));
-      startedOn = status2.logins.find((login) => login.id === startId) ?? machineOwnLogin(config, "claude");
-      if (!startedOn.machineOwn) {
-        const own2 = ownRow ?? machineOwnLogin(config, "claude");
-        writeLine(context.stderr, `kurmis claude: ${own2.alias}, ${machineOwnText("claude")}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
+      startedOn = status2.logins.find((login) => login.id === startId) ?? plainCliLogin(config, "claude");
+      if (!startedOn.usedByPlainCli) {
+        const own2 = ownRow ?? plainCliLogin(config, "claude");
+        writeLine(context.stderr, `kurmis claude: ${own2.alias}, ${plainCliLoginText("claude")}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
       }
     }
   }
   let secureStorageDir = null;
-  if (!startedOn.machineOwn && startedOn.id !== null) {
-    secureStorageDir = loginFolder({ id: startedOn.id, provider: "claude", machineOwn: false });
+  if (!startedOn.usedByPlainCli && startedOn.id !== null) {
+    secureStorageDir = loginFolder({ id: startedOn.id, provider: "claude", usedByPlainCli: false });
     if (!deps.folderExists(secureStorageDir)) {
       const argument = config === null ? startedOn.alias : loginArgument(config, { id: startedOn.id, provider: "claude", alias: startedOn.alias });
       return fail4(`the folder of ${startedOn.alias} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${argument}".`);
     }
   }
-  if (startedOn.machineOwn && configDirHasOwnCredentials(context.env, deps.platform)) {
+  if (startedOn.usedByPlainCli && configDirHasOwnCredentials(context.env, deps.platform)) {
     writeLine(context.stderr, `kurmis claude: ${configDirNote(context.env["CLAUDE_CONFIG_DIR"] ?? "", deps)}`);
   }
   const layers = settingsLayers(userSettings, context.env, deps);
@@ -8228,8 +8228,8 @@ async function runClaude(args, context, deps) {
 function startableLogins(status2) {
   return status2.logins.filter((login) => login.provider === "claude").map((login) => ({
     id: login.id,
-    machineOwn: login.machineOwn,
-    loggedIn: login.signedIn ?? login.machineOwn,
+    usedByPlainCli: login.usedByPlainCli,
+    loggedIn: login.signedIn ?? login.usedByPlainCli,
     autoRoute: login.routing
   }));
 }
@@ -8355,7 +8355,7 @@ async function preparedHome(named, context, deps) {
       writeLine(context.stderr, `kurmis codex: ${error.message}`);
       return null;
     }
-    writeLine(context.stderr, `kurmis codex: ${error.message} Starting on ${machineOwnText("codex")}.`);
+    writeLine(context.stderr, `kurmis codex: ${error.message} Starting on ${plainCliLoginText("codex")}.`);
     return { codexHome: null, warnings: [] };
   }
   let login;
@@ -8383,7 +8383,7 @@ function codexHomePatch(prepared, env, platform) {
   return isKurmisCodexHome(inherited, providerFolder("codex"), windows) ? { CODEX_HOME: void 0 } : {};
 }
 async function chooseLogin(context, config, deps) {
-  const own2 = machineOwnLogin(config, "codex");
+  const own2 = plainCliLogin(config, "codex");
   let status2;
   try {
     const connection = await deps.daemon.ensureDaemon({ env: context.env });
@@ -8401,7 +8401,7 @@ async function chooseLogin(context, config, deps) {
   } catch (error) {
     writeLine(
       context.stderr,
-      `kurmis codex: the kurmis daemon could not be reached (${messageOf2(error)}); starting on ${own2.alias}, ${machineOwnText("codex")}.`
+      `kurmis codex: the kurmis daemon could not be reached (${messageOf2(error)}); starting on ${own2.alias}, ${plainCliLoginText("codex")}.`
     );
     return own2;
   }
@@ -8592,7 +8592,7 @@ var import_node_os9 = require("node:os");
 var import_node_path16 = require("node:path");
 var CLAUDE_PROFILE_FILE = ".claude.json";
 function claudeIdentityFiles(login, home = (0, import_node_os9.homedir)()) {
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return [(0, import_node_path16.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE)];
   }
   return [(0, import_node_path16.join)(loginFolder(login), CLAUDE_PROFILE_FILE)];
@@ -8954,7 +8954,7 @@ async function probeClaudeUsage(login, options) {
   const cwd = probeWorkFolder();
   try {
     makePrivateDirSync(cwd);
-    if (login.machineOwn) makePrivateDirSync(ownClaudeProbeFolder());
+    if (login.usedByPlainCli) makePrivateDirSync(ownClaudeProbeFolder());
   } catch {
     return probeFailure(null, "other", "The usage probe could not create its folder in the kurmis data folder.");
   }
@@ -9149,7 +9149,7 @@ function createControl(options) {
         id: login.id,
         provider: login.provider,
         alias: login.alias,
-        machineOwn: login.machineOwn,
+        usedByPlainCli: login.usedByPlainCli,
         routing: login.routing,
         fiveHourLimit: login.fiveHourLimit,
         weeklyLimit: login.weeklyLimit,
@@ -9618,7 +9618,7 @@ var LoginTable = class {
    * to. The config always has one for each provider.
    */
   ownLogin(provider) {
-    return machineOwnLogin(this.config, provider);
+    return plainCliLogin(this.config, provider);
   }
   port() {
     return this.config.port;
@@ -9641,7 +9641,7 @@ var LoginTable = class {
   routeRows(startedOn, callerSigns, pinned = null) {
     const now = this.options.now();
     return this.claudeLogins().map((login) => {
-      const notTheCli = startedOn === null && login.machineOwn;
+      const notTheCli = startedOn === null && login.usedByPlainCli;
       const token = notTheCli ? null : this.options.tokens.read(login.id);
       const passThrough = token === null && callerSigns && login.id === startedOn;
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned;
@@ -11344,10 +11344,10 @@ function securityProgramOf(env, processEnv = process.env) {
   return systemProgram("security", env, processEnv);
 }
 function claudeSecureStorageDir(login) {
-  return checkedClaude(login).machineOwn ? null : loginFolder(login);
+  return checkedClaude(login).usedByPlainCli ? null : loginFolder(login);
 }
 function claudeCredentialsDir(login, home) {
-  return checkedClaude(login).machineOwn ? (0, import_node_path18.join)(home, ".claude") : loginFolder(login);
+  return checkedClaude(login).usedByPlainCli ? (0, import_node_path18.join)(home, ".claude") : loginFolder(login);
 }
 function createTokenSource(options) {
   const home = options.home ?? import_node_os11.homedir;
@@ -11357,7 +11357,7 @@ function createTokenSource(options) {
     if (seen !== void 0) return seen;
     const found = isLoginId(id) ? options.login(id) : void 0;
     if (found?.provider !== "claude" || found.id !== id) return null;
-    const login = { id: found.id, provider: "claude", machineOwn: found.machineOwn };
+    const login = { id: found.id, provider: "claude", usedByPlainCli: found.usedByPlainCli };
     known.set(id, login);
     return login;
   };
@@ -11545,7 +11545,7 @@ var UsagePoller = class {
     const startedAt = now();
     log.write(cause === "renewal" ? "token_renewal_started" : "usage_probe_started", { login: id, provider: login.provider });
     const probe = login.provider === "claude" ? this.options.probeClaude : this.options.probeCodex;
-    const ref = { id, provider: login.provider, machineOwn: login.machineOwn };
+    const ref = { id, provider: login.provider, usedByPlainCli: login.usedByPlainCli };
     let answer2;
     try {
       answer2 = await probe(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) });
@@ -12471,7 +12471,7 @@ function namesAccount(file) {
 }
 function hasLocalCredentials(login, env, home) {
   if (login.provider === "codex") return (0, import_node_fs18.existsSync)((0, import_node_path21.join)(codexHomeOf(login, env, home), "auth.json"));
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return (0, import_node_fs18.existsSync)((0, import_node_path21.join)(home, ".claude", ".credentials.json")) || namesAccount((0, import_node_path21.join)(home, CLAUDE_PROFILE_FILE));
   }
   const folder = loginFolder(login);
@@ -12535,7 +12535,7 @@ function loginTarget(argument, config) {
 function freshLoginId(config) {
   for (; ; ) {
     const id = newLoginIdFor(config);
-    if (LOGIN_PROVIDERS.every((provider) => !(0, import_node_fs19.existsSync)(loginFolder({ id, provider, machineOwn: false })))) return id;
+    if (LOGIN_PROVIDERS.every((provider) => !(0, import_node_fs19.existsSync)(loginFolder({ id, provider, usedByPlainCli: false })))) return id;
   }
 }
 function homeIdentity(home) {
@@ -12604,7 +12604,7 @@ async function tellDaemon(daemon, login, env, probeWaitMs) {
 async function signIn(run2) {
   const { ref, isNew, name, lock, program, alias, context, deps } = run2;
   const provider = ref.provider;
-  const folder = ref.machineOwn ? null : loginFolder(ref);
+  const folder = ref.usedByPlainCli ? null : loginFolder(ref);
   let created = false;
   if (folder !== null && !(0, import_node_fs19.existsSync)(folder)) {
     makePrivateDirSync(folder);
@@ -12616,7 +12616,7 @@ async function signIn(run2) {
     if (provider === "codex") (0, import_node_fs19.rmSync)(codexMergedRecordPath(ref), { force: true });
   };
   const notAdded = isNew ? " No login was added." : "";
-  if (provider === "codex" && !ref.machineOwn) {
+  if (provider === "codex" && !ref.usedByPlainCli) {
     try {
       const prepared = await deps.prepareCodexHome({ ...ref, alias: name }, { env: context.env });
       for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`);
@@ -12642,10 +12642,10 @@ async function signIn(run2) {
     cleanUp();
     return fail2(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`);
   }
-  if (provider === "claude" && ref.machineOwn) {
+  if (provider === "claude" && ref.usedByPlainCli) {
     (0, import_node_fs19.rmSync)((0, import_node_path22.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
   }
-  const identity = provider === "claude" ? ref.machineOwn ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home()) : null;
+  const identity = provider === "claude" ? ref.usedByPlainCli ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home()) : null;
   if (identity === null && !await hasCredentials(ref, context.env, deps.home(), deps)) {
     cleanUp();
     return fail2(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`);
@@ -12687,7 +12687,7 @@ async function signIn(run2) {
   if (!isNew && email !== null) {
     const other = await sameAccount(saved, ref, email, context.env, deps);
     if (other !== null) {
-      const which = other.machineOwn ? `${other.alias}, ${machineOwnText(other.provider)},` : other.alias;
+      const which = other.usedByPlainCli ? `${other.alias}, ${plainCliLoginText(other.provider)},` : other.alias;
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. "kurmis login ${argument}" signs ${login.alias} in to another account.`);
     }
   }
@@ -12706,7 +12706,7 @@ async function dropDuplicate(run2, config, existing, email) {
   } catch (error) {
     return fail2(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted (${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`);
   }
-  const which = existing.machineOwn ? `${existing.alias}, ${machineOwnText(existing.provider)}` : existing.alias;
+  const which = existing.usedByPlainCli ? `${existing.alias}, ${plainCliLoginText(existing.provider)}` : existing.alias;
   writeLine(context.stdout, `${email} is already a kurmis ${PROVIDER_NAMES2[ref.provider]} login: ${which} (id ${existing.id}). No login was added, and the new sign-in was signed out again.`);
   writeLine(context.stdout, `"kurmis login ${loginArgument(config, existing)}" signs ${existing.alias} in again.`);
   if (run2.alias !== void 0) {
@@ -12781,7 +12781,7 @@ Options:
       const target = loginTarget(parsed.positionals[0], config);
       if ("error" in target) return usageError("login", target.error, context);
       const isNew = target.kind === "new";
-      const ref = isNew ? { id: freshLoginId(config), provider: target.provider, machineOwn: false } : { id: target.login.id, provider: target.login.provider, machineOwn: target.login.machineOwn };
+      const ref = isNew ? { id: freshLoginId(config), provider: target.provider, usedByPlainCli: false } : { id: target.login.id, provider: target.login.provider, usedByPlainCli: target.login.usedByPlainCli };
       const name = isNew ? ref.id : target.login.alias;
       if (alias !== void 0) {
         const problem = aliasProblem(config, ref, alias);
@@ -12855,7 +12855,7 @@ function createLoginLogout(deps = {}) {
     let listed = false;
     try {
       const found = findLogin(loadConfig(), id);
-      if (found?.machineOwn === true) return fail3(context, `${found.alias} is ${machineOwnText(found.provider)} and cannot be removed.`, prefix);
+      if (found?.usedByPlainCli === true) return fail3(context, `${found.alias} is ${plainCliLoginText(found.provider)} and cannot be removed.`, prefix);
       if (found !== void 0 && found.provider === login.provider) {
         listed = true;
         name = found.alias;
@@ -12918,7 +12918,7 @@ function createLoginLogout(deps = {}) {
   }
   return async (login, context, options = {}) => {
     const prefix = options.prefix ?? "kurmis logout";
-    if (login.machineOwn) return fail3(context, `${login.id} is ${machineOwnText(login.provider)} and cannot be removed.`, prefix);
+    if (login.usedByPlainCli) return fail3(context, `${login.id} is ${plainCliLoginText(login.provider)} and cannot be removed.`, prefix);
     let name;
     try {
       name = findLogin(loadConfig(), login.id)?.alias ?? login.id;
@@ -12944,15 +12944,15 @@ function logoutTarget(config, text2) {
   const resolved = resolveLogin(config, text2);
   if ("login" in resolved) {
     const login = resolved.login;
-    if (login.machineOwn) {
+    if (login.usedByPlainCli) {
       const cli = login.provider === "claude" ? "claude auth logout" : "codex logout";
       return {
         kind: "error",
         usage: true,
-        message: `${login.alias} is ${machineOwnText(login.provider)} and cannot be removed. To sign it out, run "${cli}" yourself.`
+        message: `${login.alias} is ${plainCliLoginText(login.provider)} and cannot be removed. To sign it out, run "${cli}" yourself.`
       };
     }
-    return { kind: "logins", logins: [{ id: login.id, provider: login.provider, machineOwn: false }] };
+    return { kind: "logins", logins: [{ id: login.id, provider: login.provider, usedByPlainCli: false }] };
   }
   const typed = text2.trim().toLowerCase();
   const colon = typed.indexOf(":");
@@ -12960,7 +12960,7 @@ function logoutTarget(config, text2) {
   const id = colon < 0 ? typed : typed.slice(colon + 1);
   const providers = prefix === null ? LOGIN_PROVIDERS : isLoginProvider(prefix) ? [prefix] : [];
   if (isLoginId(id) && findLogin(config, id) === void 0) {
-    const refs = providers.map((provider) => ({ id, provider, machineOwn: false }));
+    const refs = providers.map((provider) => ({ id, provider, usedByPlainCli: false }));
     const withFolder = refs.filter((login) => exists(loginFolder(login)));
     if (withFolder.length > 0) return { kind: "logins", logins: withFolder };
     const recordOnly = refs.filter((login) => login.provider === "codex" && exists(codexMergedRecordPath(login)));
@@ -13053,7 +13053,7 @@ function aliasSource(login) {
 }
 function formatLoginSettings(login) {
   const lines = [`${login.alias} (${PROVIDER_NAMES2[login.provider]}, id ${login.id})`];
-  if (login.machineOwn) lines.push(`  ${machineOwnText(login.provider)}`);
+  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`);
   lines.push(
     `  alias       ${login.alias} (${aliasSource(login)})`,
     `  auto        ${login.routing ? "on" : "off"}`,
@@ -14428,7 +14428,7 @@ async function runPause(deps, context) {
 }
 function loginsKurmisAdded(config) {
   const added = extraLogins(config).map((login) => ({
-    login: { id: login.id, provider: login.provider, machineOwn: false },
+    login: { id: login.id, provider: login.provider, usedByPlainCli: false },
     name: login.alias
   }));
   const others = [];
@@ -14441,11 +14441,11 @@ function loginsKurmisAdded(config) {
     }
     for (const name of names) {
       if (added.some(({ login }) => login.id === name && login.provider === provider)) continue;
-      if (!isLoginId(name) || findLogin(config, name)?.machineOwn === true) {
+      if (!isLoginId(name) || findLogin(config, name)?.usedByPlainCli === true) {
         others.push((0, import_node_path27.join)(provider, name));
         continue;
       }
-      added.push({ login: { id: name, provider, machineOwn: false }, name });
+      added.push({ login: { id: name, provider, usedByPlainCli: false }, name });
     }
   }
   return { added, others };
@@ -14694,7 +14694,7 @@ function statusJson(report, now, options) {
       id: login.noIdYet === true ? null : login.id,
       alias: login.noIdYet === true ? null : login.alias,
       provider: login.provider,
-      machineOwn: login.machineOwn,
+      usedByPlainCli: login.usedByPlainCli,
       email: login.email ?? null,
       signedIn: fromDaemon ? login.signedIn : null,
       credentials: fromDaemon ? null : report.credentials.get(login.id) ?? false,
@@ -14722,10 +14722,10 @@ function sameAccountWarnings(answer2) {
   }
   const named = answer2.logins.filter((login) => login.noIdYet !== true);
   for (const group of groups.values()) {
-    const kept = group.find((login) => login.machineOwn) ?? group[0];
+    const kept = group.find((login) => login.usedByPlainCli) ?? group[0];
     for (const other of group) {
       if (other === kept) continue;
-      const keptName = !kept.machineOwn ? kept.alias : kept.noIdYet === true ? machineOwnText(kept.provider) : `${kept.alias}, ${machineOwnText(kept.provider)},`;
+      const keptName = !kept.usedByPlainCli ? kept.alias : kept.noIdYet === true ? plainCliLoginText(kept.provider) : `${kept.alias}, ${plainCliLoginText(kept.provider)},`;
       warnings.push(`${other.alias} and ${keptName} are the same ${PROVIDER_NAMES2[other.provider]} account (${kept.email}), so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, other)}" removes ${other.alias}.`);
     }
   }
@@ -14774,7 +14774,7 @@ var WIDTH = 80;
 var MAX_LABEL_WIDTH = 24;
 function loginTitle(login) {
   const product = PROVIDER_NAMES2[login.provider];
-  if (login.id === null || login.alias === null) return `${machineOwnText(login.provider)} (${product}, no id yet)`;
+  if (login.id === null || login.alias === null) return `${plainCliLoginText(login.provider)} (${product}, no id yet)`;
   return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`;
 }
 function loginLines(login, now, labelWidth) {
@@ -14782,8 +14782,8 @@ function loginLines(login, now, labelWidth) {
   const lines = login.email === null ? [title] : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`] : [title, `  ${login.email}`];
   if (login.id === null) {
     lines.push(...wrap('config.json has no entry for it yet. The first kurmis command other than "kurmis status" that reads config.json adds one, with an id.', "  ", "  "));
-  } else if (login.machineOwn) {
-    lines.push(`  ${machineOwnText(login.provider)}`);
+  } else if (login.usedByPlainCli) {
+    lines.push(`  ${plainCliLoginText(login.provider)}`);
   }
   const facts = [
     login.credentials !== null ? login.credentials ? "credentials on this machine" : "no credentials on this machine" : login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
@@ -14959,9 +14959,10 @@ without an id. It exits 0 whether or not the daemon runs.
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and
                "source" says whether the logins come from the daemon or from the files. Each
-               login has "alias", "id", "provider", "machineOwn", "signedIn" (from the daemon)
-               and "credentials" (from the files); "id" and "alias" are null for a login
-               without an id yet. "warnings" holds the warnings.
+               login has "alias", "id", "provider", "usedByPlainCli" (whether plain claude
+               or plain codex uses it), "signedIn" (from the daemon) and "credentials"
+               (from the files); "id" and "alias" are null for a login without an id yet.
+               "warnings" holds the warnings.
   -h, --help   Show this help.`;
 function createStatusCommand(overrides = {}) {
   const deps = {
@@ -15053,7 +15054,7 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
   const now = deps.now();
   const state = loadState(now).state;
   const home = deps.home();
-  const shown = withMachineOwnLogins(config);
+  const shown = withPlainCliLogins(config);
   const logins = shown.map(({ login, noIdYet }) => {
     const cooldown = noIdYet ? void 0 : state.cooldowns.get(login.id);
     let sessions = 0;
@@ -15064,7 +15065,7 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
       id: login.id,
       provider: login.provider,
       alias: login.alias,
-      machineOwn: login.machineOwn,
+      usedByPlainCli: login.usedByPlainCli,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
       weeklyLimit: login.weeklyLimit,
@@ -15090,13 +15091,13 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
     version: deps.version
   };
 }
-function withMachineOwnLogins(config) {
+function withPlainCliLogins(config) {
   const own2 = LOGIN_PROVIDERS.map((provider) => {
-    const found = config.logins.find((login) => login.machineOwn && login.provider === provider);
+    const found = config.logins.find((login) => login.usedByPlainCli && login.provider === provider);
     if (found !== void 0) return { login: found, noIdYet: false };
-    return { login: newLoginSettings({ id: noIdYetStandIn(provider), provider, machineOwn: true }), noIdYet: true };
+    return { login: newLoginSettings({ id: noIdYetStandIn(provider), provider, usedByPlainCli: true }), noIdYet: true };
   });
-  return [...own2, ...config.logins.filter((login) => !login.machineOwn).map((login) => ({ login, noIdYet: false }))];
+  return [...own2, ...config.logins.filter((login) => !login.usedByPlainCli).map((login) => ({ login, noIdYet: false }))];
 }
 function messageOf5(error) {
   return error instanceof Error ? error.message : String(error);

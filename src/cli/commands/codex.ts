@@ -4,7 +4,7 @@
 // Codex runs with the terminal attached.
 import { chooseCodexLogin, codexLoginsToProbe, isKurmisCodexHome } from '../../core/codex-choice.ts'
 import type { StatusAnswer } from '../../core/control-api.ts'
-import { ConfigError, findLogin, loadConfig, machineOwnLogin, resolveLogin, type KurmisConfig, type LoginSettings } from '../../data/config.ts'
+import { ConfigError, findLogin, loadConfig, plainCliLogin, resolveLogin, type KurmisConfig, type LoginSettings } from '../../data/config.ts'
 import { applyEnvPatch, type EnvPatch } from '../../data/login-env.ts'
 import { providerFolder } from '../../data/paths.ts'
 import { EXIT_FAILURE, EXIT_OK, usageError, writeLine, type CliContext, type Command } from '../command.ts'
@@ -19,7 +19,7 @@ import {
 } from '../command-deps.ts'
 import type { PreparedCodexHome } from '../codex-home-files.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
-import { machineOwnText } from '../login-names.ts'
+import { plainCliLoginText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
 import { parseWrapperArgs } from '../wrapper-args.ts'
 
@@ -125,7 +125,7 @@ async function preparedHome(named: string | null, context: CliContext, deps: Cod
       writeLine(context.stderr, `kurmis codex: ${error.message}`)
       return null
     }
-    writeLine(context.stderr, `kurmis codex: ${error.message} Starting on ${machineOwnText('codex')}.`)
+    writeLine(context.stderr, `kurmis codex: ${error.message} Starting on ${plainCliLoginText('codex')}.`)
     return { codexHome: null, warnings: [] }
   }
   let login: LoginSettings
@@ -168,7 +168,7 @@ export function codexHomePatch(prepared: PreparedCodexHome, env: NodeJS.ProcessE
  * login plain codex uses. Prints a note on stderr when the choice is not the plain ranked one.
  */
 async function chooseLogin(context: CliContext, config: KurmisConfig, deps: CodexDeps): Promise<LoginSettings> {
-  const own = machineOwnLogin(config, 'codex')
+  const own = plainCliLogin(config, 'codex')
   let status: StatusAnswer
   try {
     const connection = await deps.daemon.ensureDaemon({ env: context.env })
@@ -187,7 +187,7 @@ async function chooseLogin(context: CliContext, config: KurmisConfig, deps: Code
     }
   } catch (error) {
     writeLine(context.stderr,
-      `kurmis codex: the kurmis daemon could not be reached (${messageOf(error)}); starting on ${own.alias}, ${machineOwnText('codex')}.`)
+      `kurmis codex: the kurmis daemon could not be reached (${messageOf(error)}); starting on ${own.alias}, ${plainCliLoginText('codex')}.`)
     return own
   }
   const choice = chooseCodexLogin(status, deps.now())

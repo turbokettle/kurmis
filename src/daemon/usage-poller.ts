@@ -166,7 +166,7 @@ export class UsagePoller {
     const startedAt = now()
     log.write(cause === 'renewal' ? 'token_renewal_started' : 'usage_probe_started', { login: id, provider: login.provider })
     const probe = login.provider === 'claude' ? this.options.probeClaude : this.options.probeCodex
-    const ref: LoginRef = { id, provider: login.provider, machineOwn: login.machineOwn }
+    const ref: LoginRef = { id, provider: login.provider, usedByPlainCli: login.usedByPlainCli }
     let answer: ProbeAnswer
     try {
       answer = await probe(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) })

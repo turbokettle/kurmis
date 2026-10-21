@@ -304,9 +304,9 @@ describe("a probe and the login's email", () => {
     })
     await poller.probeMany([OWN_CLAUDE, WORK, OWN_CODEX], 'request')
     expect(seen).toEqual(expect.arrayContaining([
-      { id: OWN_CLAUDE, provider: 'claude', machineOwn: true },
-      { id: WORK, provider: 'claude', machineOwn: false },
-      { id: OWN_CODEX, provider: 'codex', machineOwn: true }
+      { id: OWN_CLAUDE, provider: 'claude', usedByPlainCli: true },
+      { id: WORK, provider: 'claude', usedByPlainCli: false },
+      { id: OWN_CODEX, provider: 'codex', usedByPlainCli: true }
     ]))
   })
 

@@ -52,7 +52,7 @@ describe('kurmis login, set, status and logout', () => {
     expect(existsSync(join(world.home, '.claude', '.credentials.json'))).toBe(false)
 
     expect(world.configLogin(id!)).toEqual({
-      id, provider: 'claude', machineOwn: false, alias: 'work-example', aliasSetByUser: false,
+      id, provider: 'claude', usedByPlainCli: false, alias: 'work-example', aliasSetByUser: false,
       routing: true, fiveHourLimit: 100, weeklyLimit: 100, useFirst: false
     })
     expect(configText(world)).not.toContain('example.com')
@@ -69,7 +69,7 @@ describe('kurmis login, set, status and logout', () => {
     expect(listed.code, listed.stderr).toBe(0)
     const status = JSON.parse(listed.stdout) as StatusJson
     expect(status).toMatchObject({ daemon: null, source: 'files' })
-    expect(status.logins.map((login) => [login.alias, login.id, login.machineOwn, login.credentials, login.email])).toEqual([
+    expect(status.logins.map((login) => [login.alias, login.id, login.usedByPlainCli, login.credentials, login.email])).toEqual([
       [OWN_CLAUDE, OWN_CLAUDE, true, false, null],
       [OWN_CODEX, OWN_CODEX, true, false, null],
       ['work-example', id, false, true, 'work@example.com'],
@@ -193,7 +193,7 @@ describe('kurmis login, set, status and logout', () => {
     expect(claudeLoginDirs(world)).toEqual([join(world.home, '.claude')])
     expect(readFileSync(join(world.home, '.claude.json'), 'utf8')).toContain('own@example.com')
     expect(loginFolders(world, 'claude')).toEqual([])
-    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ machineOwn: true, alias: 'own-example', aliasSetByUser: false })
+    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ usedByPlainCli: true, alias: 'own-example', aliasSetByUser: false })
     expect(loginIds(world)).toEqual([OWN_CLAUDE, OWN_CODEX])
     expect(configText(world)).not.toContain('example.com')
     const listed = await world.status()
@@ -205,14 +205,14 @@ describe('kurmis login, set, status and logout', () => {
     const before = configText(world)
     // Status writes nothing, so it shows them without an id.
     const unsaved = (await world.status()).logins
-    expect(unsaved.map((login) => [login.provider, login.machineOwn, login.id, login.alias])).toEqual([
+    expect(unsaved.map((login) => [login.provider, login.usedByPlainCli, login.id, login.alias])).toEqual([
       ['claude', true, null, null], ['codex', true, null, null]
     ])
     expect(configText(world)).toBe(before)
     // Any other command that reads config.json gives them ids; this one then fails on the unknown login.
     expect((await world.kurmis(['set', 'nobody-example', '--auto', 'on'])).code).toBe(2)
     const logins = (await world.status()).logins
-    expect(logins.map((login) => [login.provider, login.machineOwn])).toEqual([['claude', true], ['codex', true]])
+    expect(logins.map((login) => [login.provider, login.usedByPlainCli])).toEqual([['claude', true], ['codex', true]])
     for (const login of logins) {
       expect(login.id).toMatch(NEW_ID)
       expect(login.alias).toBe(login.id)
@@ -242,14 +242,14 @@ describe('kurmis login, set, status and logout', () => {
       `work (Claude, id ${work.id})`, 'alias work (set by you)', 'auto off', 'five-hour 80%', 'weekly 90%', 'use-first on'
     ]))
     expect(world.configLogin(work.id)).toEqual({
-      id: work.id, provider: 'claude', machineOwn: false, alias: 'work', aliasSetByUser: true,
+      id: work.id, provider: 'claude', usedByPlainCli: false, alias: 'work', aliasSetByUser: true,
       routing: false, fiveHourLimit: 80, weeklyLimit: 90, useFirst: true
     })
     // The logins of plain claude and plain codex can be set too, by their id.
     const own = await world.kurmis(['set', OWN_CLAUDE, '--weekly', '50'])
     expect(own.code, own.stderr).toBe(0)
     expect(own.stdout).toContain("the login plain claude uses")
-    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ weeklyLimit: 50, machineOwn: true })
+    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ weeklyLimit: 50, usedByPlainCli: true })
 
     const before = configText(world)
     const refusals: Array<[string[], string]> = [

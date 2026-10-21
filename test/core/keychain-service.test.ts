@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { expect, test } from 'vitest'
 import { KEYCHAIN_SERVICE_BASE, keychainService } from '../../src/core/keychain-service.ts'
 
-test('the machine own login keeps the plain item name', () => {
+test('the login plain claude uses keeps the plain item name', () => {
   expect(KEYCHAIN_SERVICE_BASE).toBe('Claude Code-credentials')
   expect(keychainService(null)).toBe('Claude Code-credentials')
   // The CLI treats an empty CLAUDE_SECURESTORAGE_CONFIG_DIR like an unset one.

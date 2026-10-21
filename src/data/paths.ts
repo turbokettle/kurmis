@@ -107,7 +107,7 @@ export function providerFolder(provider: LoginProvider): string {
  */
 export function loginFolder(login: LoginRef): string {
   const id = toLoginId(login.id)
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     throw new Error(`${id} is the login plain ${login.provider} uses and has no folder in the kurmis data folder.`)
   }
   return join(providerFolder(login.provider), id)
@@ -130,6 +130,6 @@ export function loginLockPath(id: string): string {
  */
 export function codexMergedRecordPath(login: LoginRef): string {
   const id = toLoginId(login.id)
-  if (login.machineOwn || login.provider !== 'codex') throw new Error(`${id} is not an extra Codex login.`)
+  if (login.usedByPlainCli || login.provider !== 'codex') throw new Error(`${id} is not an extra Codex login.`)
   return join(kurmisHome(), 'codex-merged', `${id}.json`)
 }

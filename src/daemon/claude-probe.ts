@@ -117,7 +117,7 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
   const cwd = probeWorkFolder()
   try {
     makePrivateDirSync(cwd)
-    if (login.machineOwn) makePrivateDirSync(ownClaudeProbeFolder())
+    if (login.usedByPlainCli) makePrivateDirSync(ownClaudeProbeFolder())
   } catch {
     return probeFailure(null, 'other', 'The usage probe could not create its folder in the kurmis data folder.')
   }

@@ -393,11 +393,11 @@ describe('the control API', () => {
     expect(answer).toMatchObject({ ok: true, apiVersion: CONTROL_API_VERSION, pid: process.pid })
     expect(answer.logins.map((login) => login.id)).toEqual([OWN_CLAUDE, OWN_CODEX, WORK_ID])
     const work = answer.logins.find((login) => login.id === WORK_ID)!
-    expect(work).toEqual({ id: WORK_ID, provider: 'claude', alias: WORK_ID, machineOwn: false, routing: true, fiveHourLimit: 100,
+    expect(work).toEqual({ id: WORK_ID, provider: 'claude', alias: WORK_ID, usedByPlainCli: false, routing: true, fiveHourLimit: 100,
       weeklyLimit: 100, useFirst: false, signedIn: true, usage: null, cooldownUntil: null, block: null, sessions: 0,
       email: 'work@example.com', probing: false })
-    expect(answer.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ provider: 'claude', machineOwn: true, email: null })
-    expect(answer.logins.find((login) => login.id === OWN_CODEX)).toMatchObject({ provider: 'codex', machineOwn: true, email: null,
+    expect(answer.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ provider: 'claude', usedByPlainCli: true, email: null })
+    expect(answer.logins.find((login) => login.id === OWN_CODEX)).toMatchObject({ provider: 'codex', usedByPlainCli: true, email: null,
       block: null })
     expect(h.log.every((line) => !JSON.stringify(line).includes('example.com'))).toBe(true)
   })

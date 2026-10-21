@@ -67,7 +67,7 @@ export function createControl(options: ControlOptions): Control {
         id: login.id,
         provider: login.provider,
         alias: login.alias,
-        machineOwn: login.machineOwn,
+        usedByPlainCli: login.usedByPlainCli,
         routing: login.routing,
         fiveHourLimit: login.fiveHourLimit,
         weeklyLimit: login.weeklyLimit,

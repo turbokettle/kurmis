@@ -53,7 +53,7 @@ export { OWN_CLAUDE, OWN_CODEX, waitUntil }
 export interface ConfigLogin {
   id: string
   provider: 'claude' | 'codex'
-  machineOwn: boolean
+  usedByPlainCli: boolean
   alias: string
   aliasSetByUser: boolean
   routing: boolean
@@ -183,7 +183,7 @@ export interface StatusJson {
     id: string
     alias: string
     provider: string
-    machineOwn: boolean
+    usedByPlainCli: boolean
     email: string | null
     signedIn: boolean | null
     credentials: boolean | null

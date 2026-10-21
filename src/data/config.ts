@@ -80,7 +80,7 @@ export interface KurmisConfig {
 }
 
 /**
- * The changes `updateLogin` may make. The id, provider and `machineOwn` never change. An alias
+ * The changes `updateLogin` may make. The id, provider and `usedByPlainCli` never change. An alias
  * given here is the person's choice (`aliasSetByUser`).
  */
 export type LoginSettingsPatch = Partial<Pick<LoginSettings, 'alias' | 'routing' | 'fiveHourLimit' | 'weeklyLimit' | 'useFirst'>>
@@ -93,20 +93,20 @@ export class ConfigError extends Error {
 }
 
 /** Whether a login is the one plain claude or plain codex uses, which kurmis never signs out. */
-export function isMachineOwn(login: LoginRef): boolean {
-  return login.machineOwn
+export function isUsedByPlainCli(login: LoginRef): boolean {
+  return login.usedByPlainCli
 }
 
 /** The login plain claude or plain codex uses. Every loaded config has one for each provider. */
-export function machineOwnLogin(config: KurmisConfig, provider: LoginProvider): LoginSettings {
-  const own = config.logins.find((login) => login.machineOwn && login.provider === provider)
+export function plainCliLogin(config: KurmisConfig, provider: LoginProvider): LoginSettings {
+  const own = config.logins.find((login) => login.usedByPlainCli && login.provider === provider)
   if (own === undefined) throw new ConfigError(`The config has no login that plain ${provider} uses.`)
   return own
 }
 
 /** The logins kurmis added with `kurmis login`, of one provider or of both. */
 export function extraLogins(config: KurmisConfig, provider?: LoginProvider): LoginSettings[] {
-  return config.logins.filter((login) => !login.machineOwn && (provider === undefined || login.provider === provider))
+  return config.logins.filter((login) => !login.usedByPlainCli && (provider === undefined || login.provider === provider))
 }
 
 /** A login with every setting at its default, and its id as its alias. */
@@ -114,7 +114,7 @@ export function newLoginSettings(ref: LoginRef, patch: LoginSettingsPatch = {}):
   const login: LoginSettings = {
     id: ref.id,
     provider: ref.provider,
-    machineOwn: ref.machineOwn,
+    usedByPlainCli: ref.usedByPlainCli,
     alias: ref.id,
     aliasSetByUser: false,
     routing: DEFAULT_AUTO_ROUTE,
@@ -135,37 +135,37 @@ function withConfigErrors<T>(check: () => T): T {
   }
 }
 
-/** A config with no logins at all, which `ensureMachineOwnLogins` completes. */
+/** A config with no logins at all, which `ensurePlainCliLogins` completes. */
 function emptyConfig(): KurmisConfig {
   return { version: CONFIG_VERSION, port: DEFAULT_PORT, logins: [] }
 }
 
 /** The config of a machine with no `config.json`: the logins of plain claude and plain codex, with new ids. */
 export function defaultConfig(): KurmisConfig {
-  return ensureMachineOwnLogins(emptyConfig())
+  return ensurePlainCliLogins(emptyConfig())
 }
 
 /**
  * The config with a login for plain claude and one for plain codex, each added with a new id
  * where the config has none. The same object when it has both.
  */
-export function ensureMachineOwnLogins(config: KurmisConfig): KurmisConfig {
-  const missing = LOGIN_PROVIDERS.filter((provider) => !config.logins.some((login) => login.machineOwn && login.provider === provider))
+export function ensurePlainCliLogins(config: KurmisConfig): KurmisConfig {
+  const missing = LOGIN_PROVIDERS.filter((provider) => !config.logins.some((login) => login.usedByPlainCli && login.provider === provider))
   if (missing.length === 0) return config
   // A new id must not be another login's alias either, or the file would be refused on the next load.
   const ids: string[] = [...loginIds(config), ...config.logins.map((login) => login.alias)]
   const added = missing.map((provider) => {
     const id = newLoginId(ids)
     ids.push(id)
-    return newLoginSettings({ id, provider, machineOwn: true })
+    return newLoginSettings({ id, provider, usedByPlainCli: true })
   })
   return { ...config, logins: ordered([...config.logins, ...added]) }
 }
 
 /** The logins of plain claude and plain codex first, in provider order, then the others in the order given. */
 function ordered(logins: readonly LoginSettings[]): LoginSettings[] {
-  const own = LOGIN_PROVIDERS.flatMap((provider) => logins.filter((login) => login.machineOwn && login.provider === provider))
-  return [...own, ...logins.filter((login) => !login.machineOwn)]
+  const own = LOGIN_PROVIDERS.flatMap((provider) => logins.filter((login) => login.usedByPlainCli && login.provider === provider))
+  return [...own, ...logins.filter((login) => !login.usedByPlainCli)]
 }
 
 function checkLimit(value: unknown, where: Where): number {
@@ -198,12 +198,12 @@ function parseLogin(value: unknown, where: Where): LoginSettings {
   if (!isLoginId(id)) fail(child(where, 'id'), 'must be 1 to 32 lowercase letters and digits')
   const provider = expectString(raw.provider, child(where, 'provider'))
   if (!isLoginProvider(provider)) fail(child(where, 'provider'), 'must be "claude" or "codex"')
-  const machineOwn = raw.machineOwn === undefined ? false : expectBoolean(raw.machineOwn, child(where, 'machineOwn'))
+  const usedByPlainCli = raw.usedByPlainCli === undefined ? false : expectBoolean(raw.usedByPlainCli, child(where, 'usedByPlainCli'))
   const patch: LoginSettingsPatch = {}
   for (const key of ['routing', 'fiveHourLimit', 'weeklyLimit', 'useFirst'] as const) {
     if (raw[key] !== undefined) (patch as Record<string, unknown>)[key] = raw[key]
   }
-  const login = applyPatch(newLoginSettings({ id, provider, machineOwn }), patch, where)
+  const login = applyPatch(newLoginSettings({ id, provider, usedByPlainCli }), patch, where)
   if (raw.alias !== undefined) login.alias = checkAlias(raw.alias, child(where, 'alias'))
   if (raw.aliasSetByUser !== undefined) login.aliasSetByUser = expectBoolean(raw.aliasSetByUser, child(where, 'aliasSetByUser'))
   return login
@@ -235,7 +235,7 @@ function checkVersion(raw: Record<string, unknown>, file: string): void {
 
 /**
  * Checks a parsed `config.json` and fills in what it leaves out, apart from the logins of plain
- * claude and plain codex (`ensureMachineOwnLogins`). Throws a `DataFileError` naming the file
+ * claude and plain codex (`ensurePlainCliLogins`). Throws a `DataFileError` naming the file
  * and the field for anything wrong. Unknown fields are ignored.
  */
 export function parseConfig(value: unknown, file: string): KurmisConfig {
@@ -249,8 +249,8 @@ export function parseConfig(value: unknown, file: string): KurmisConfig {
     const at = child(child(where, 'logins'), index)
     const login = parseLogin(entry, at)
     if (logins.some((other) => other.id === login.id)) fail(child(at, 'id'), `repeats "${login.id}"`)
-    if (login.machineOwn && logins.some((other) => other.machineOwn && other.provider === login.provider)) {
-      fail(child(at, 'machineOwn'),
+    if (login.usedByPlainCli && logins.some((other) => other.usedByPlainCli && other.provider === login.provider)) {
+      fail(child(at, 'usedByPlainCli'),
         `is true for a second ${login.provider} login; only one ${login.provider} login can be the one plain ${login.provider} uses`)
     }
     const clash = logins.find((other) => other.id === login.alias || other.alias === login.id ||
@@ -292,7 +292,7 @@ export function readConfig(path = configPath()): KurmisConfig {
  */
 export function loadConfig(path = configPath(), lockOptions: FileLockOptions = {}): KurmisConfig {
   const config = readConfigFile(path)
-  if (ensureMachineOwnLogins(config) === config) return config
+  if (ensurePlainCliLogins(config) === config) return config
   return changeConfig((current) => current, path, lockOptions)
 }
 
@@ -391,7 +391,7 @@ export function addLogin(config: KurmisConfig, ref: Pick<LoginRef, 'id' | 'provi
   if (!isLoginId(ref.id)) throw new ConfigError(`"${ref.id}" is not a login id.`)
   if (findLogin(config, ref.id) !== undefined) throw new ConfigError(`There is already a login ${ref.id}.`)
   if (config.logins.some((other) => other.alias === ref.id)) throw new ConfigError(`"${ref.id}" is the alias of another login.`)
-  const login = newLoginSettings({ id: ref.id, provider: ref.provider, machineOwn: false }, patch)
+  const login = newLoginSettings({ id: ref.id, provider: ref.provider, usedByPlainCli: false }, patch)
   const problem = aliasProblem(config, login, login.alias)
   if (problem !== null) throw new ConfigError(`${capitalized(problem)}.`)
   return { ...config, logins: [...config.logins, login] }
@@ -401,7 +401,7 @@ export function addLogin(config: KurmisConfig, ref: Pick<LoginRef, 'id' | 'provi
 export function removeLogin(config: KurmisConfig, id: string): KurmisConfig {
   const login = findLogin(config, id)
   if (login === undefined) throw new ConfigError(`There is no login ${id}.`)
-  if (login.machineOwn) throw new ConfigError(`${login.alias} is the login plain ${login.provider} uses and cannot be removed.`)
+  if (login.usedByPlainCli) throw new ConfigError(`${login.alias} is the login plain ${login.provider} uses and cannot be removed.`)
   return { ...config, logins: config.logins.filter((other) => other.id !== id) }
 }
 
@@ -454,7 +454,7 @@ export function changeConfig(
   const lockPath = path === configPath() ? configLockPath() : `${path}.lock`
   try {
     return withFileLockSync(lockPath, () => {
-      const next = change(ensureMachineOwnLogins(readConfigFile(path)))
+      const next = change(ensurePlainCliLogins(readConfigFile(path)))
       saveConfig(next, path)
       return next
     }, lockOptions)

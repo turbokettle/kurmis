@@ -15,7 +15,7 @@
 //   there, the probe would not see the record, and would report the login signed out.
 // - Linux: in `.credentials.json` only.
 //
-// The two kinds of login, told apart by `machineOwn` in the login's settings:
+// The two kinds of login, told apart by `usedByPlainCli` in the login's settings:
 //
 // - an extra login: its folder in the kurmis data folder (`loginFolder`) is both the string its
 //   Keychain item name is made from and the folder that holds its file;
@@ -106,7 +106,7 @@ export function securityProgramOf(env: NodeJS.ProcessEnv, processEnv: NodeJS.Pro
  * that is not a Claude login.
  */
 export function claudeSecureStorageDir(login: LoginRef): string | null {
-  return checkedClaude(login).machineOwn ? null : loginFolder(login)
+  return checkedClaude(login).usedByPlainCli ? null : loginFolder(login)
 }
 
 /**
@@ -114,7 +114,7 @@ export function claudeSecureStorageDir(login: LoginRef): string | null {
  * `<home>/.claude` for plain claude's login. Throws for a login that is not a Claude login.
  */
 export function claudeCredentialsDir(login: LoginRef, home: string): string {
-  return checkedClaude(login).machineOwn ? join(home, '.claude') : loginFolder(login)
+  return checkedClaude(login).usedByPlainCli ? join(home, '.claude') : loginFolder(login)
 }
 
 /**
@@ -130,7 +130,7 @@ export function createTokenSource(options: TokenSourceOptions): TokenSource {
     if (seen !== undefined) return seen
     const found = isLoginId(id) ? options.login(id) : undefined
     if (found?.provider !== 'claude' || found.id !== id) return null
-    const login: LoginRef = { id: found.id, provider: 'claude', machineOwn: found.machineOwn }
+    const login: LoginRef = { id: found.id, provider: 'claude', usedByPlainCli: found.usedByPlainCli }
     known.set(id, login)
     return login
   }

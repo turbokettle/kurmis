@@ -479,7 +479,7 @@ interface AddedLogin {
  */
 function loginsKurmisAdded(config: KurmisConfig): { added: AddedLogin[]; others: string[] } {
   const added = extraLogins(config).map((login): AddedLogin => ({
-    login: { id: login.id, provider: login.provider, machineOwn: false },
+    login: { id: login.id, provider: login.provider, usedByPlainCli: false },
     name: login.alias
   }))
   const others: string[] = []
@@ -492,11 +492,11 @@ function loginsKurmisAdded(config: KurmisConfig): { added: AddedLogin[]; others:
     }
     for (const name of names) {
       if (added.some(({ login }) => login.id === name && login.provider === provider)) continue
-      if (!isLoginId(name) || findLogin(config, name)?.machineOwn === true) {
+      if (!isLoginId(name) || findLogin(config, name)?.usedByPlainCli === true) {
         others.push(join(provider, name))
         continue
       }
-      added.push({ login: { id: name, provider, machineOwn: false }, name })
+      added.push({ login: { id: name, provider, usedByPlainCli: false }, name })
     }
   }
   return { added, others }

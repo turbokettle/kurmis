@@ -20,19 +20,19 @@ export const OWN_CLAUDE = 'ownclaude1' as LoginId
 export const OWN_CODEX = 'owncodex01' as LoginId
 
 /** The login plain claude uses as a `LoginRef`. */
-export const OWN_CLAUDE_REF: LoginRef = { id: OWN_CLAUDE, provider: 'claude', machineOwn: true }
+export const OWN_CLAUDE_REF: LoginRef = { id: OWN_CLAUDE, provider: 'claude', usedByPlainCli: true }
 
 /** The login plain codex uses as a `LoginRef`. */
-export const OWN_CODEX_REF: LoginRef = { id: OWN_CODEX, provider: 'codex', machineOwn: true }
+export const OWN_CODEX_REF: LoginRef = { id: OWN_CODEX, provider: 'codex', usedByPlainCli: true }
 
 /** An extra Claude login with this id, as a `LoginRef`. */
 export function claudeRef(id: string): LoginRef {
-  return { id: id as LoginId, provider: 'claude', machineOwn: false }
+  return { id: id as LoginId, provider: 'claude', usedByPlainCli: false }
 }
 
 /** An extra Codex login with this id, as a `LoginRef`. */
 export function codexRef(id: string): LoginRef {
-  return { id: id as LoginId, provider: 'codex', machineOwn: false }
+  return { id: id as LoginId, provider: 'codex', usedByPlainCli: false }
 }
 
 /** An extra login for `testConfig`: its id and provider, and settings to change. */

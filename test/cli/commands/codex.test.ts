@@ -55,7 +55,7 @@ function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<Codex
       async prepareCodexHome(login: LoginRef, options: PrepareCodexHomeOptions): Promise<PreparedCodexHome> {
         void options
         prepared.push(login.id)
-        return login.machineOwn
+        return login.usedByPlainCli
           ? { codexHome: null, warnings: [] }
           : { codexHome: `${FAKE_HOMES}/${login.id}`, warnings: ['the hooks file could not be linked'] }
       },

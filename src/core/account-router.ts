@@ -292,7 +292,7 @@ export function effectivePin(session: RouteSession, accounts: readonly RouteAcco
 export interface StartableLogin {
   id: string
   /** The login plain claude uses. The list has exactly one such login. */
-  machineOwn: boolean
+  usedByPlainCli: boolean
   loggedIn: boolean
   autoRoute: boolean
 }
@@ -310,7 +310,7 @@ export interface StartableLogin {
  * because `effectivePin` holds such a session to it.
  */
 export function autoStartLogin(accounts: readonly StartableLogin[], preferred?: string | null): string {
-  const own = accounts.find((account) => account.machineOwn)
+  const own = accounts.find((account) => account.usedByPlainCli)
   if (own === undefined) throw new Error('autoStartLogin: the list has no login that plain claude uses')
   if (own.loggedIn) return own.id
   const pool = accounts.filter((account) => account.autoRoute)

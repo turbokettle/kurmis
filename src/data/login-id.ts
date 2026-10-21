@@ -29,7 +29,7 @@ export interface LoginRef {
    * or a plain `codex` (`~/.codex`). It has no folder in the data folder, and kurmis never signs
    * it out.
    */
-  machineOwn: boolean
+  usedByPlainCli: boolean
 }
 
 /** The number of characters in an id `newLoginId` makes. */

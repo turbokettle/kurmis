@@ -694,7 +694,7 @@ describe('a five-login pool', () => {
 
 describe('the login an Auto CLI is started on', () => {
   const login = (id: string, loggedIn: boolean, autoRoute: boolean): StartableLogin =>
-    ({ id, machineOwn: id === OWN_CLAUDE, loggedIn, autoRoute })
+    ({ id, usedByPlainCli: id === OWN_CLAUDE, loggedIn, autoRoute })
 
   test('the login of the machine itself while it is signed in', () => {
     expect(autoStartLogin([login('poolclaude', true, true), login(OWN_CLAUDE, true, false)])).toBe(OWN_CLAUDE)

@@ -4,7 +4,7 @@
 import { aliasProblem, changeConfig, ConfigError, findLogin, loadConfig, resolveLogin, updateLogin, type KurmisConfig, type LoginSettings, type LoginSettingsPatch } from '../../data/config.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, reloadIfRunning, reloadText, type DaemonClient } from '../command-deps.ts'
-import { machineOwnText, PROVIDER_NAMES } from '../login-names.ts'
+import { plainCliLoginText, PROVIDER_NAMES } from '../login-names.ts'
 
 export interface SetDeps {
   daemon: DaemonClient
@@ -62,7 +62,7 @@ function aliasSource(login: LoginSettings): string {
 /** A login's settings, one per line, under the option names `set` takes. */
 export function formatLoginSettings(login: LoginSettings): string {
   const lines = [`${login.alias} (${PROVIDER_NAMES[login.provider]}, id ${login.id})`]
-  if (login.machineOwn) lines.push(`  ${machineOwnText(login.provider)}`)
+  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`)
   lines.push(
     `  alias       ${login.alias} (${aliasSource(login)})`,
     `  auto        ${login.routing ? 'on' : 'off'}`,

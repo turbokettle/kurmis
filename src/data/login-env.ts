@@ -55,7 +55,7 @@ export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CRED
  */
 export function claudeLoginEnv(login: LoginRef, forceCredentialManager = false): EnvPatch {
   const force: EnvPatch = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: '1' } : {}
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return { CLAUDE_CONFIG_DIR: undefined, CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
   }
   return { CLAUDE_CONFIG_DIR: loginFolder(login), CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
@@ -73,7 +73,7 @@ export function claudeLoginEnv(login: LoginRef, forceCredentialManager = false):
  * name a hashed Keychain item no login ever wrote (`keychain-service.ts`).
  */
 export function claudeProbeEnv(login: LoginRef): EnvPatch {
-  if (login.machineOwn) {
+  if (login.usedByPlainCli) {
     return { CLAUDE_CONFIG_DIR: ownClaudeProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: '', ...NOT_INHERITED }
   }
   return claudeLoginEnv(login)
@@ -89,7 +89,7 @@ export function claudeProbeEnv(login: LoginRef): EnvPatch {
  */
 export function codexLoginEnv(login: LoginRef, inherited: Readonly<Record<string, string | undefined>> = {},
   platform: NodeJS.Platform = process.platform): EnvPatch {
-  if (!login.machineOwn) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED }
+  if (!login.usedByPlainCli) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED }
   const windows = platform === 'win32'
   const home = windows
     ? Object.entries(inherited).find(([name]) => name.toUpperCase() === 'CODEX_HOME')?.[1]

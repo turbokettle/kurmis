@@ -7,7 +7,7 @@ import type { LoginProvider } from '../data/login-id.ts'
 export const PROVIDER_NAMES: Record<LoginProvider, string> = { claude: 'Claude', codex: 'Codex' }
 
 /** The words that mark the login a plain CLI uses: `the login plain claude uses`. */
-export function machineOwnText(provider: LoginProvider): string {
+export function plainCliLoginText(provider: LoginProvider): string {
   return `the login plain ${provider} uses`
 }
 

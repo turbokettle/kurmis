@@ -41,7 +41,7 @@ export function loginStatus(login: LoginRef & { alias?: string }, patch: Partial
     id: login.id,
     provider: login.provider,
     alias: login.alias ?? login.id,
-    machineOwn: login.machineOwn,
+    usedByPlainCli: login.usedByPlainCli,
     routing: true,
     fiveHourLimit: 100,
     weeklyLimit: 100,

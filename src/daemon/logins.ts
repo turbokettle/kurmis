@@ -16,7 +16,7 @@
 import { usageFromUnifiedHeaders, type RouteAccount, type UnifiedObservation } from '../core/account-router.ts'
 import type { AccountUsage } from '../core/claude-usage.ts'
 import {
-  changeConfig, configStamp, defaultConfig, findLogin, followEmail, loadConfig, machineOwnLogin, type KurmisConfig, type LoginSettings
+  changeConfig, configStamp, defaultConfig, findLogin, followEmail, loadConfig, plainCliLogin, type KurmisConfig, type LoginSettings
 } from '../data/config.ts'
 import { isLoginId, type LoginId, type LoginProvider } from '../data/login-id.ts'
 import { LockTimeoutError } from '../data/lock.ts'
@@ -198,7 +198,7 @@ export class LoginTable {
    * to. The config always has one for each provider.
    */
   ownLogin(provider: LoginProvider): LoginSettings {
-    return machineOwnLogin(this.config, provider)
+    return plainCliLogin(this.config, provider)
   }
 
   port(): number {
@@ -223,7 +223,7 @@ export class LoginTable {
   routeRows(startedOn: string | null, callerSigns: boolean, pinned: string | null = null): RouteAccount[] {
     const now = this.options.now()
     return this.claudeLogins().map((login) => {
-      const notTheCli = startedOn === null && login.machineOwn
+      const notTheCli = startedOn === null && login.usedByPlainCli
       const token = notTheCli ? null : this.options.tokens.read(login.id)
       const passThrough = token === null && callerSigns && login.id === startedOn
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned

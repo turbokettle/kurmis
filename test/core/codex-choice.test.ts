@@ -24,7 +24,7 @@ const at = (ms: number): string => new Date(NOW + ms).toISOString()
  */
 function loginStatus(id: string, patch: Partial<LoginStatus> = {}): LoginStatus {
   return {
-    id, provider: id === OWN_CLAUDE ? 'claude' : 'codex', alias: id, machineOwn: id === OWN_CLAUDE || id === OWN_CODEX,
+    id, provider: id === OWN_CLAUDE ? 'claude' : 'codex', alias: id, usedByPlainCli: id === OWN_CLAUDE || id === OWN_CODEX,
     routing: true, fiveHourLimit: 100, weeklyLimit: 100, useFirst: false, signedIn: true, usage: null, cooldownUntil: null,
     block: null, sessions: 0, email: null, probing: false, ...patch
   }
@@ -127,7 +127,7 @@ describe('the Codex login to start on', () => {
       loginStatus(OWN_CODEX, { routing: false, usage: codexUsage(OWN_CODEX, { fiveHour: 100, fetchedAt: NOW }) }),
       loginStatus('workcodex1', { routing: false })
     ]), NOW)
-    expect(choice).toEqual({ login: OWN_CODEX, kind: 'machine-own', note: null })
+    expect(choice).toEqual({ login: OWN_CODEX, kind: 'used-by-plain-cli', note: null })
   })
 
   test("with no login opted in and the login plain codex uses signed out, is still that login, with a note naming its alias", () => {
