@@ -378,6 +378,27 @@ describe('registering through reg.exe', () => {
     expect(result.warning).toMatch(/reg\.exe could not write the logon entry .*Access is denied/)
   })
 
+  it('writes the entry and warns when the path of the script has a percent sign, which the Run value cannot escape', async () => {
+    const percent = join(process.env.HOME ?? '', 'win', '100% Example', '.kurmis', 'autostart.js')
+    const result = await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: percent })
+    expect(result).toMatchObject({ changed: true, where: RUN_ENTRY_DESCRIPTION, warningOnly: true })
+    expect(result.warning).toContain(`The logon entry names ${percent}, and a "%" in a path there may be read as the start of a variable name`)
+    expect(result.warning).toContain('so the daemon may not start at login')
+    expect(result.warning).toContain('set KURMIS_HOME to that folder')
+    expect(existsSync(percent)).toBe(true)
+    const query = await regFor()(regQueryArgs())
+    expect(parseRegQuery(query.stdout, 'kurmis')).toEqual({ type: 'REG_SZ', data: runValueData(wscriptPath(), percent) })
+    // Unchanged, it still warns, since the entry still has the path.
+    expect(await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: percent }))
+      .toMatchObject({ changed: false, warningOnly: true, warning: result.warning })
+  })
+
+  it('does not warn about a percent sign that only the script\'s own command line has, which the script handles', async () => {
+    const program = ['C:\\Program Files\\100% node\\node.exe', 'C:\\kurmis\\dist\\kurmis.cjs', 'daemon', 'start']
+    expect(await registerWindowsAutostart({ env: env(), programArguments: program, scriptPath: scriptPath() }))
+      .toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
+  })
+
   it('refuses a variable with a line break as a warning', async () => {
     const result = await registerWindowsAutostart({ env: { ...env(), KURMIS_HOME: 'C:\\a\nb' }, programArguments: PROGRAM, scriptPath: scriptPath() })
     expect(result).toEqual({ changed: false, where: null, warning: 'The logon entry was not written: a value for the logon script has a line break in it.' })

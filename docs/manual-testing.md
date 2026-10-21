@@ -214,9 +214,15 @@ Run this last, since it removes the logins added above.
   reconnect. The daemon should be gone, and the next `kurmis claude` or `kurmis codex` starts it
   again.
 - **Autostart.** After `kurmis setup`, sign out and in. The daemon starts with no window
-  showing. Also check: a user folder with non-ASCII letters or a `%` in its path, and Windows
-  Script Host turned off (`HKCU\Software\Microsoft\Windows Script Host\Settings`, value
-  `Enabled` = 0): setup should warn and say what to do.
+  showing. Also check a user folder with non-ASCII letters in its path, and Windows Script Host
+  turned off (`HKCU\Software\Microsoft\Windows Script Host\Settings`, value `Enabled` = 0):
+  setup should warn and say what to do.
+- **A `%` in the data folder's path.** Set `KURMIS_HOME` to a folder whose path has a `%` (for
+  example `C:\kurmis-test\100%x`) and run `kurmis setup`. It should write the entry and warn
+  that the start at login may not work with that path, and say to use a data folder without `%`.
+  Then sign out and in, and note whether the daemon started: that tells whether Explorer
+  replaces `%NAME%` in a REG_SZ Run value. Do the same with a `%` in the path of Node or of the
+  installed kurmis instead: setup gives no warning there, and the daemon should start.
 - **Read-only settings.** Make `%USERPROFILE%\.claude\settings.json` read-only and run
   `kurmis setup`. It should refuse with an `attrib -R` command to run.
 - **Junctions.** An extra Codex login's folders (`sessions`, `skills`, ...) are directory

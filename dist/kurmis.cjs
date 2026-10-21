@@ -13510,6 +13510,16 @@ function removeOldVbsScript(scriptPath) {
   (0, import_node_fs22.rmSync)(old, { force: true });
   return true;
 }
+function percentWarning(wscript, scriptPath) {
+  const named = [wscript, scriptPath].filter((path) => path.includes("%"));
+  if (named.length === 0) return null;
+  const advice = scriptPath.includes("%") ? `To be sure, use a kurmis data folder whose path has no "%" instead of ${import_node_path24.win32.dirname(scriptPath)}: set KURMIS_HOME to that folder for your Windows user and run kurmis setup again. The extra logins then have to be added again there with "kurmis login".` : 'The Windows folder (SystemRoot) has the "%" in its path, which kurmis cannot change.';
+  return `The logon entry names ${named.join(" and ")}, and a "%" in a path there may be read as the start of a variable name (%NAME%) at login, so the daemon may not start at login. ${advice} The entry was written anyway, and the next "kurmis claude" or "kurmis codex" starts the daemon when it is not running.`;
+}
+function withPercentWarning(result, wscript, scriptPath) {
+  const warning = percentWarning(wscript, scriptPath);
+  return warning === null ? result : { ...result, warning, warningOnly: true };
+}
 async function registerWindowsAutostart(options) {
   const reg = options.reg ?? regFor(options.env);
   const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
@@ -13545,14 +13555,14 @@ async function registerWindowsAutostart(options) {
   const current = ok2(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null;
   if (current !== null && current.type === "REG_SZ" && sameRunData(current.data, data)) {
     if (removeOldVbsScript(scriptPath)) changed = true;
-    return { changed, where: RUN_ENTRY_DESCRIPTION };
+    return withPercentWarning({ changed, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath);
   }
   const added = await reg(regAddArgs(data));
   if (!ok2(added)) {
     return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` };
   }
   removeOldVbsScript(scriptPath);
-  return { changed: true, where: RUN_ENTRY_DESCRIPTION };
+  return withPercentWarning({ changed: true, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath);
 }
 async function unregisterWindowsAutostart(options) {
   const reg = options.reg ?? regFor(options.env);

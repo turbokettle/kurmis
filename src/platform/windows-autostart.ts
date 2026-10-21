@@ -49,6 +49,11 @@
 //   command line as it was. The script checks this with `ExpandEnvironmentStrings` and starts
 //   nothing when it does not match; the next `kurmis claude` or `kurmis codex` starts the daemon
 //   anyway. A command line without `%` is passed as it is.
+// - **A `%` in the Run value:** the Run value names `wscript.exe` and the script by their full
+//   paths, and nothing there can escape a `%`. Whether Explorer replaces `%NAME%` in a REG_SZ Run
+//   value is not verified. So when the value has a `%` (the data folder's path has one), setup
+//   still writes it and warns that the start at login may not work with that path
+//   (`percentWarning`).
 //
 // `KURMIS_REG_PROGRAM` and `KURMIS_WSCRIPT_PROGRAM` (test hooks) name stand-ins for reg.exe and
 // wscript.exe; tests use `test/platform/fake-reg/reg.mjs` and `test/platform/fake-windows/`.
@@ -300,9 +305,33 @@ function removeOldVbsScript(scriptPath: string): boolean {
 }
 
 /**
+ * The advice setup gives when the Run value `data` has a `%`: Explorer may replace `%NAME%` in
+ * it with the variable NAME, and then wscript gets another path. Null when it has none.
+ */
+export function percentWarning(wscript: string, scriptPath: string): string | null {
+  const named = [wscript, scriptPath].filter((path) => path.includes('%'))
+  if (named.length === 0) return null
+  const advice = scriptPath.includes('%')
+    ? `To be sure, use a kurmis data folder whose path has no "%" instead of ${win32.dirname(scriptPath)}: set KURMIS_HOME ` +
+      'to that folder for your Windows user and run kurmis setup again. The extra logins then have to be added again ' +
+      'there with "kurmis login".'
+    : 'The Windows folder (SystemRoot) has the "%" in its path, which kurmis cannot change.'
+  return `The logon entry names ${named.join(' and ')}, and a "%" in a path there may be read as the start of a ` +
+    `variable name (%NAME%) at login, so the daemon may not start at login. ${advice} The entry was written anyway, ` +
+    'and the next "kurmis claude" or "kurmis codex" starts the daemon when it is not running.'
+}
+
+/** `result` with `percentWarning` added when the Run value has a `%`; the entry is written, so the warning is advice only. */
+function withPercentWarning(result: AutostartResult, wscript: string, scriptPath: string): AutostartResult {
+  const warning = percentWarning(wscript, scriptPath)
+  return warning === null ? result : { ...result, warning, warningOnly: true }
+}
+
+/**
  * Writes the logon script and the Run value, each only when it differs from what is there.
  * The VBScript an older kurmis wrote is removed only once the Run value names the new script
- * (it already did, or `reg add` succeeded). A reg.exe failure is answered as a warning.
+ * (it already did, or `reg add` succeeded). A reg.exe failure is answered as a warning, and so is
+ * a written value with a `%` in it (`percentWarning`).
  */
 export async function registerWindowsAutostart(options: WindowsAutostartOptions): Promise<AutostartResult> {
   const reg = options.reg ?? regFor(options.env)
@@ -340,7 +369,7 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   if (current !== null && current.type === 'REG_SZ' && sameRunData(current.data, data)) {
     // The Run value names the new script, so the old VBScript is no longer needed.
     if (removeOldVbsScript(scriptPath)) changed = true
-    return { changed, where: RUN_ENTRY_DESCRIPTION }
+    return withPercentWarning({ changed, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath)
   }
   const added = await reg(regAddArgs(data))
   if (!ok(added)) {
@@ -349,7 +378,7 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
     return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` }
   }
   removeOldVbsScript(scriptPath)
-  return { changed: true, where: RUN_ENTRY_DESCRIPTION }
+  return withPercentWarning({ changed: true, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath)
 }
 
 /**

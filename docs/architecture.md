@@ -612,6 +612,13 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
     gives back the command line as it was; otherwise it starts nothing and the next
     `kurmis claude` or `kurmis codex` starts the daemon. A command line without `%` is run as it is. The daemon inherits
     `KURMIS_PERCENT_SIGN`, which nothing reads.
+  - *A `%` in the Run value.* The Run value names `wscript.exe` and `autostart.js` by their full
+    paths, and a REG_SZ value has no escape for `%`. Whether Explorer replaces `%NAME%` in a
+    REG_SZ Run value is not verified. So when the value has a `%` (the data folder's path has
+    one), setup still writes it, warns that the start at login may not work with that path, and
+    says to use a data folder whose path has no `%` (set with `KURMIS_HOME`), and exits 0
+    (`percentWarning`). A `%` only in the script's own command line (Node, the bundle,
+    `KURMIS_HOME`) is handled by the script, so it gets no warning.
   - *Replacing the VBScript.* An `autostart.vbs` an older kurmis wrote is removed only once the
     Run value names `autostart.js` (it already did, or `reg add` succeeded), so a failed write
     leaves the old entry working.
