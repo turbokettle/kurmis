@@ -93,6 +93,15 @@ describe('links on this machine', () => {
     expect(await readFolderLink(join(dir, 'dangling'))).toEqual({ kind: 'link', target: join(dir, 'gone') })
   })
 
+  // A junction (or directory symlink) whose folder was deleted afterwards: this needs no
+  // Developer Mode on Windows, so it runs everywhere.
+  test('reads a folder link whose target was deleted back as a link to that target', async () => {
+    mkdirSync(join(dir, 'gone'))
+    await linkFolder(join(dir, 'gone'), join(dir, 'place'))
+    rmSync(join(dir, 'gone'), { recursive: true })
+    expect(await readFolderLink(join(dir, 'place'))).toEqual({ kind: 'link', target: join(dir, 'gone') })
+  })
+
   test('never replaces what is at the place', async () => {
     mkdirSync(join(dir, 'source'))
     mkdirSync(join(dir, 'place'))

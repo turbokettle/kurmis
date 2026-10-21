@@ -24,7 +24,11 @@ delete process.env.ANTHROPIC_BASE_URL
 delete process.env.ANTHROPIC_API_KEY
 delete process.env.ANTHROPIC_AUTH_TOKEN
 delete process.env.ANTHROPIC_CUSTOM_HEADERS
-delete process.env.KURMIS_UPSTREAM_URL
+delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+delete process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR
+// A daemon a test starts without naming the fake API sends its requests to a loopback port
+// nothing listens on (port 1 needs root to bind), never to Anthropic.
+process.env.KURMIS_UPSTREAM_URL = 'http://127.0.0.1:1'
 delete process.env.SSH_CONNECTION
 delete process.env.SSH_CLIENT
 delete process.env.SSH_TTY

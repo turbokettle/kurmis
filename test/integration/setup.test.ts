@@ -297,7 +297,9 @@ describe.runIf(process.platform === 'win32')('kurmis setup on Windows', () => {
     expect(value).toContain('//E:JScript')
     expect(value).toContain(script)
     const text = readFileSync(script).subarray(2).toString('utf16le')
-    expect(text).toContain('daemon start --no-launchd --env KURMIS_HOME=')
+    // A folder with a space in it is quoted on the command line, and the quote is escaped in
+    // the script's string.
+    expect(text).toMatch(/daemon start --no-launchd --env (\\")?KURMIS_HOME=/)
     expect(text).not.toContain(key)
 
     const routed = await plainClaude(world, ['-p', 'hi'])

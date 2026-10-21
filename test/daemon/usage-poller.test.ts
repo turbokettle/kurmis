@@ -30,7 +30,7 @@ function setup(probe: ProbeFunction, codex: ProbeFunction = probe): { table: Log
   table.load()
   const poller = new UsagePoller({ table, tokens: source, env: {}, log: { write: (event, fields) => { events.push({ event, fields }) } },
     now: Date.now, probeClaude: probe, probeCodex: codex, intervalMs: 50 })
-  return { table, poller }
+  return tracked({ table, poller })
 }
 
 beforeEach(() => {
@@ -40,7 +40,21 @@ beforeEach(() => {
   events.length = 0
 })
 
-afterEach(() => {
+/**
+ * The tables and pollers a test made. They are closed and flushed before the test's home is
+ * removed: a state write still waiting would otherwise create the folder again.
+ */
+const made: Array<{ table: LoginTable; poller: UsagePoller }> = []
+function tracked<T extends { table: LoginTable; poller: UsagePoller }>(pair: T): T {
+  made.push(pair)
+  return pair
+}
+
+afterEach(async () => {
+  for (const { table, poller } of made.splice(0)) {
+    await poller.close()
+    await table.flush()
+  }
   rmSync(home, { recursive: true, force: true, maxRetries: 10 })
 })
 
@@ -127,7 +141,7 @@ describe('a probe', () => {
     table.load()
     const poller = new UsagePoller({ table, tokens: source, env: {}, log: { write: () => undefined }, now: () => clock.now,
       probeClaude: probe, probeCodex: probe })
-    return { table, poller, clock }
+    return tracked({ table, poller, clock })
   }
 
   const refusal = (observedAt: number): Parameters<LoginTable['noteObservation']>[1] => ({
@@ -181,6 +195,7 @@ describe('a probe', () => {
     table.load()
     const poller = new UsagePoller({ table, tokens: source, env: {}, log: { write: () => undefined }, now: () => clock,
       probeClaude: () => Promise.resolve({ ok: false, signedIn: null, reason: 'other', error: 'No.' }), probeCodex: () => Promise.reject(new Error('no')) })
+    tracked({ table, poller })
     await poller.probe('claude:default', 'request')
     expect(poller.recentStaleProbes()).toEqual(new Set())
     await poller.probe('claude:default', 'stale')

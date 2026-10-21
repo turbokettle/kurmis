@@ -26,8 +26,15 @@ function table(): LoginTable {
   const created = new LoginTable({ tokens: source, log: { write: (event) => { events.push(event) } }, now: () => clock,
     configCheckMs: 2_000, stateWriteMs: 0 })
   created.load()
+  tables.push(created)
   return created
 }
+
+/**
+ * The tables a test made. They are flushed before the test's home is removed: a state write
+ * still waiting would otherwise create the folder again.
+ */
+const tables: LoginTable[] = []
 
 beforeEach(() => {
   home = freshHome()
@@ -36,7 +43,8 @@ beforeEach(() => {
   clock = 1_000_000
 })
 
-afterEach(() => {
+afterEach(async () => {
+  for (const created of tables.splice(0)) await created.flush()
   rmSync(home, { recursive: true, force: true, maxRetries: 10 })
 })
 

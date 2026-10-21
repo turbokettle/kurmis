@@ -259,6 +259,19 @@ describe('kurmis daemon', () => {
     expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
   }, 60_000)
 
+  it.runIf(process.platform === 'linux')('starts the daemon directly from an ssh login on Linux, with no launchd or WMI', async () => {
+    const { home } = await newHome()
+    const launchctlDir = join(home, 'fake-launchctl')
+    const powershellDir = join(home, 'fake-powershell')
+    const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_LAUNCHCTL_DIR: launchctlDir, FAKE_POWERSHELL_DIR: powershellDir }
+    const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
+    expect(started).toMatchObject({ code: 0, stderr: '' })
+    expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 on')
+    expect(existsSync(join(launchctlDir, 'calls.jsonl'))).toBe(false)
+    expect(existsSync(join(powershellDir, 'calls.jsonl'))).toBe(false)
+    expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
+  }, 60_000)
+
   it.runIf(process.platform === 'darwin')('starts the daemon through launchd from an ssh login on macOS', async () => {
     const { home } = await newHome()
     const launchctlDir = join(home, 'fake-launchctl')
