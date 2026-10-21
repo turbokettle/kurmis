@@ -33,7 +33,9 @@
 //
 // Node cannot call `CredEnumerateW`, so a short PowerShell script does: it declares it with
 // `Add-Type` and prints, for each filter, one line `<index> + <base64 of the name> <base64 of the
-// blob>` per credential and then `<index> . <count>`, or `<index> ! <Win32 error>`. PowerShell is
+// blob>` per credential and then `<index> . <count>`, or `<index> ! <Win32 error>`. The script
+// that only asks whether a record exists (`storedRecordsExist`, for `kurmis status`) prints the
+// names without the blobs, so no secret leaves PowerShell. PowerShell is
 // started through `runProgram`, with no shell and the script passed as `-EncodedCommand`; a
 // command line on Windows is at most 32,767 characters, so many logins are read in several
 // runs (`credentialBatches`). What PowerShell prints holds the records, so it is kept in memory
@@ -87,8 +89,11 @@ export function credentialFilter(secureStorageDir: string | null): string {
   return `${keychainService(secureStorageDir)}/*`
 }
 
-/** The PowerShell script that lists the credentials of each filter with `CredEnumerateW`; see the file's header for what it prints. */
-export function credEnumScript(filters: readonly string[]): string {
+/**
+ * The PowerShell script that lists the credentials of each filter with `CredEnumerateW`; see the
+ * file's header for what it prints. With `blobs` false it prints each name without its blob.
+ */
+export function credEnumScript(filters: readonly string[], blobs = true): string {
   return [
     "$ErrorActionPreference='Stop'",
     "$ProgressPreference='SilentlyContinue'",
@@ -108,7 +113,7 @@ export function credEnumScript(filters: readonly string[]): string {
     '  private static extern bool CredEnumerateW(string filter, int flags, out int count, out IntPtr credentials);',
     '  [DllImport("advapi32.dll")]',
     '  private static extern void CredFree(IntPtr buffer);',
-    '  public static string[] List(string filter) {',
+    '  public static string[] List(string filter, bool blobs) {',
     '    int count; IntPtr p;',
     '    if (!CredEnumerateW(filter, 0, out count, out p)) {',
     '      int e = Marshal.GetLastWin32Error();',
@@ -120,10 +125,11 @@ export function credEnumScript(filters: readonly string[]): string {
     '      for (int i = 0; i < count; i++) {',
     '        CREDENTIAL c = (CREDENTIAL)Marshal.PtrToStructure(Marshal.ReadIntPtr(p, i * IntPtr.Size), typeof(CREDENTIAL));',
     '        if (c.Type != 1) continue;',
+    '        string line = "+ " + Convert.ToBase64String(Encoding.UTF8.GetBytes(Marshal.PtrToStringUni(c.TargetName)));',
+    '        if (!blobs) { lines[found++] = line; continue; }',
     '        byte[] b = new byte[c.CredentialBlobSize];',
     '        if (c.CredentialBlobSize > 0) Marshal.Copy(c.CredentialBlob, b, 0, c.CredentialBlobSize);',
-    '        string name = Marshal.PtrToStringUni(c.TargetName);',
-    '        lines[found++] = "+ " + Convert.ToBase64String(Encoding.UTF8.GetBytes(name)) + " " + Convert.ToBase64String(b);',
+    '        lines[found++] = line + " " + Convert.ToBase64String(b);',
     '      }',
     '      lines[found] = ". " + found;',
     '      string[] output = new string[found + 1];',
@@ -134,7 +140,7 @@ export function credEnumScript(filters: readonly string[]): string {
     '}',
     "'@",
     `$filters=@(${filters.map(powerShellQuote).join(',')})`,
-    'for($i=0;$i -lt $filters.Count;$i++){foreach($line in [KurmisCredEnum]::List($filters[$i])){Write-Output ("$i "+$line)}}'
+    `for($i=0;$i -lt $filters.Count;$i++){foreach($line in [KurmisCredEnum]::List($filters[$i],${blobs ? '$true' : '$false'})){Write-Output ("$i "+$line)}}`
   ].join('\n')
 }
 
@@ -167,6 +173,7 @@ export function parseCredEnumOutput(stdout: string, count: number): FilterAnswer
 export type CredentialRead = (filters: readonly string[]) => Promise<FilterAnswer[]>
 
 function encodedLength(filters: readonly string[]): number {
+  // The script with blobs is one character longer than the one without, so its length bounds both.
   return Math.ceil((Buffer.byteLength(credEnumScript(filters), 'utf16le')) / 3) * 4
 }
 
@@ -191,12 +198,15 @@ function failureOf(result: RunResult): string {
   return `PowerShell exited with code ${String(result.code)}${said === '' ? '' : `: ${said.slice(0, 300)}`}`
 }
 
-/** A `CredentialRead` that runs `credEnumScript` in the PowerShell `powerShellInvocation` names for `env`, one run per batch. */
-export function powerShellCredentialRead(env: NodeJS.ProcessEnv, run: typeof runProgram = runProgram): CredentialRead {
+/**
+ * A `CredentialRead` that runs `credEnumScript` in the PowerShell `powerShellInvocation` names for
+ * `env`, one run per batch. With `blobs` false each credential is listed with an empty blob.
+ */
+export function powerShellCredentialRead(env: NodeJS.ProcessEnv, run: typeof runProgram = runProgram, blobs = true): CredentialRead {
   return async (filters) => {
     const all: FilterAnswer[] = []
     for (const batch of credentialBatches(filters)) {
-      const { program, args } = powerShellInvocation(credEnumScript(batch), env)
+      const { program, args } = powerShellInvocation(credEnumScript(batch, blobs), env)
       const result = await run(program, args, { timeoutMs: CREDENTIAL_READ_TIMEOUT_MS, env, maxOutputBytes: 16 * 1024 * 1024 })
       // The output holds the records, so it never goes into an error message; stderr does not.
       if (result.code !== 0 || result.error !== null) throw new Error(failureOf(result))
@@ -322,4 +332,30 @@ export async function holdsStoredRecord(secureStorageDir: string | null, env: No
   } catch {
     return false
   }
+}
+
+/**
+ * Whether Credential Manager holds a Claude record for each login (`secureStorageDirs`, as
+ * `keychainService` takes them), from the names of its credentials alone: `read` should list
+ * them without their blobs (`powerShellCredentialRead` with `blobs` false). A login has a record
+ * when a credential is listed under the account name Claude Code reads (`chooseAccount`).
+ * `unknown` when Credential Manager could not be listed, or when it has records under several
+ * account names and none is the expected one.
+ */
+export async function storedRecordsExist(secureStorageDirs: ReadonlyArray<string | null>, read: CredentialRead,
+  preferred: readonly string[] = preferredAccounts()): Promise<Array<boolean | 'unknown'>> {
+  const filters = [...new Set(secureStorageDirs.map(credentialFilter))]
+  let answers: FilterAnswer[]
+  try {
+    answers = await read(filters)
+  } catch {
+    return secureStorageDirs.map(() => 'unknown')
+  }
+  return secureStorageDirs.map((dir) => {
+    const answer = answers[filters.indexOf(credentialFilter(dir))]
+    if (answer === undefined || answer.kind === 'error') return 'unknown'
+    const accounts = [...byAccount(keychainService(dir), answer.items).keys()]
+    if (accounts.length === 0) return false
+    return chooseAccount(accounts, preferred) === null ? 'unknown' : true
+  })
 }

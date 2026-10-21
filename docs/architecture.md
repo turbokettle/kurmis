@@ -1261,7 +1261,9 @@ needs them.
   - `test/platform/fake-reg/reg.mjs`, which keeps values in `$FAKE_REG_DIR`; `FAKE_REG_FAIL=1`
     makes every call fail;
   - `test/platform/fake-windows/powershell.mjs`, which records each call and its decoded script
-    in `$FAKE_POWERSHELL_DIR` and fails; `taskkill.mjs`, which records its calls in `$FAKE_TASKKILL_DIR` and ends
+    in `$FAKE_POWERSHELL_DIR`, answers the Credential Manager listing from the files in its
+    `credentials/` folder (none by default) and fails for every other script, or for every
+    script when a `mode` file there says `fail`; `taskkill.mjs`, which records its calls in `$FAKE_TASKKILL_DIR` and ends
     only the one pid it is given (not its children, as `/T` would); and `wscript.mjs`, which
     only has to exist.
 - `KURMIS_ENTRY` names the bundle a daemon is started from, for tests that run the CLI from the
@@ -1456,16 +1458,26 @@ These are known and left as they are.
     with its age, the sessions counted from the placements, and a Claude login's email from its
     profile files (`readClaudeIdentity`). A Codex login's email is then unknown, because only a
     daemon keeps it. The sign-in is not known then either; instead each login shows whether its
-    credentials are on this machine (`hasCredentials` in `src/cli/local-credentials.ts`): an
-    extra Claude login's `.credentials.json` or a `.claude.json` naming an account in its folder,
-    `~/.claude/.credentials.json` or `~/.claude.json` for plain claude's login, and the existence
-    of `auth.json` in the Codex home for Codex (its fields are never read). A Codex login without
-    `auth.json` whose `config.toml` sets `cli_auth_credentials_store` to anything but `"file"`
-    keeps its sign-in in the Keychain or Credential Manager, so for it `codex login status` runs
-    in its home, with a 10-second deadline, and its exit code decides. These runs happen at the
-    same time, and only for such logins, so logins that keep `auth.json` start no program. Routing
-    blocks and the Codex start are left out then, because they depend on the sign-in and on
-    usage the daemon reads again when it starts.
+    credentials are on this machine (`checkCredentials` in `src/cli/local-credentials.ts`). A
+    Claude login counts when its token is there: its `.credentials.json` (the login's folder, or
+    `~/.claude` for plain claude's login) holds a `claudeAiOauth` record with an access token, or
+    the system's store has its record, named after the login's
+    `CLAUDE_SECURESTORAGE_CONFIG_DIR` (`keychainService`). On macOS that is
+    `security find-generic-password -s <service>` without `-w`, which prints the item's
+    attributes and not its secret (exit 0 yes, 44 no), one run per login without the file, side
+    by side, with a 3-second deadline. On Windows it is one PowerShell run for all of them that
+    lists Credential Manager's names without the blobs (`storedRecordsExist` in
+    `src/platform/windows-credentials.ts`). A `.claude.json` that names an account does not
+    count, because the CLI keeps it after the token is gone. For Codex it is the existence of
+    `auth.json` in the Codex home (its fields are never read). A Codex login without `auth.json`
+    whose `config.toml` sets `cli_auth_credentials_store` to anything but `"file"` keeps its
+    sign-in in the Keychain or Credential Manager, so for it `codex login status` runs in its
+    home, with a 10-second deadline, and its exit code decides. Only such logins start Codex.
+    When a check cannot run (`security`, PowerShell or Codex missing, failing or past its
+    deadline, a credentials file that cannot be read), the login shows
+    `credentials on this machine: unknown`, never yes. Status never starts `claude` for this.
+    Routing blocks and the Codex start are left out then, because they depend on the sign-in and
+    on usage the daemon reads again when it starts.
 
     `status` reads `config.json` with `loadConfig`, before it looks for the daemon, as the other
     commands do. So when the file has no entry for the login plain claude or plain codex uses
@@ -1510,8 +1522,10 @@ These are known and left as they are.
     Credential Manager (one PowerShell read, `holdsStoredRecord`) signs in with
     `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new token replaces the record instead of going to
     a file the record hides. The login counts as signed in when the CLI exits 0 and an account
-    (`.claude.json`) or credentials are there (`hasCredentials`); otherwise a folder this run
-    created is removed (for Codex with its `codex-merged/` record) and nothing is added.
+    (`.claude.json`) or credentials are there (`hasCredentials`, the check `status` uses; an
+    `unknown` answer counts as there, since the CLI reported the sign-in as done); otherwise a
+    folder this run created is removed (for Codex with its `codex-merged/` record) and nothing is
+    added.
 
     After the sign-in the command reads the account's email: for Claude from the `.claude.json`
     the CLI wrote (`~/.claude.json` for the login plain claude uses, whose probe folder's
@@ -1565,10 +1579,12 @@ These are known and left as they are.
   **`kurmis status --json`** prints its own shape, not the control API's answer, so it can stay
   stable while the daemon's usage snapshot changes. Times are ISO strings. `format` is raised
   only when a field is removed or changes meaning; fields may be added. Format 4 lets `id` and
-  `alias` be null. Format 5 calls a login's `machineOwn` `usedByPlainCli`.
+  `alias` be null. Format 5 calls a login's `machineOwn` `usedByPlainCli`. Format 6 lets
+  `credentials` be `"unknown"`, and it counts only the token, not a `.claude.json` that names an
+  account.
 
   ```json
-  { "format": 5,
+  { "format": 6,
     "daemon": { "version": "0.1.0", "pid": 4242, "port": 28411, "startedAt": "<ISO>", "older": false, "newer": false },
     "source": "daemon",
     "globalRouting": "on",
@@ -1598,7 +1614,8 @@ These are known and left as they are.
   an id. `warnings` holds a sentence for each login that is the same account as another login of
   its provider, and one when `globalRouting` is `on` and `daemon` is null. `signedIn` is what the daemon found: null when the daemon has not looked yet,
   and always null with `source` `files`. `credentials` is whether the login's credentials are on
-  this machine (`hasCredentials`) with `source` `files`, and null with `source` `daemon`. With
+  this machine (`checkCredentials`) with `source` `files`: `true`, `false`, or `"unknown"` when
+  a check could not run. It is null with `source` `daemon`. With
   `source` `files`, `usage` is the last snapshot the daemon wrote to `state.json`, `probing` is
   false, `blocked` is null and `codexStart` is null. `usage` and `blocked` may be null. A window
   whose reset has passed reads `utilization: 0`. `limitPercent` is null for a window that meters

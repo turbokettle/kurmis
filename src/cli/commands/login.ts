@@ -77,8 +77,9 @@ export interface LoginDeps {
   runner: ChildRunner
   findProgram: typeof findProgram
   /**
-   * Runs `codex login status` for a Codex login that keeps its sign-in in the keyring
-   * (`hasCredentials`), and `claude auth logout` or `codex logout` on a new sign-in of an account
+   * Runs the credential check (`hasCredentials`: `codex login status` for a Codex login that
+   * keeps its sign-in in the keyring, `security` or PowerShell for a Claude login without
+   * `.credentials.json`), and `claude auth logout` or `codex logout` on a new sign-in of an account
    * that is already a kurmis login.
    */
   runProgram: typeof runProgram
@@ -310,7 +311,8 @@ async function signIn(run: SignInRun): Promise<number> {
     rmSync(join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true })
   }
   const identity = provider === 'claude' ? (ref.usedByPlainCli ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home())) : null
-  if (identity === null && !(await hasCredentials(ref, context.env, deps.home(), deps))) {
+  // A check that could not run (`unknown`) does not undo a sign-in the CLI reported as done.
+  if (identity === null && (await hasCredentials(ref, context.env, deps.home(), deps)) === false) {
     cleanUp()
     return fail(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`)
   }

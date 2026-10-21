@@ -10961,7 +10961,7 @@ var MAX_ENCODED_COMMAND_CHARS = 3e4;
 function credentialFilter(secureStorageDir) {
   return `${keychainService(secureStorageDir)}/*`;
 }
-function credEnumScript(filters) {
+function credEnumScript(filters, blobs = true) {
   return [
     "$ErrorActionPreference='Stop'",
     "$ProgressPreference='SilentlyContinue'",
@@ -10981,7 +10981,7 @@ function credEnumScript(filters) {
     "  private static extern bool CredEnumerateW(string filter, int flags, out int count, out IntPtr credentials);",
     '  [DllImport("advapi32.dll")]',
     "  private static extern void CredFree(IntPtr buffer);",
-    "  public static string[] List(string filter) {",
+    "  public static string[] List(string filter, bool blobs) {",
     "    int count; IntPtr p;",
     "    if (!CredEnumerateW(filter, 0, out count, out p)) {",
     "      int e = Marshal.GetLastWin32Error();",
@@ -10993,10 +10993,11 @@ function credEnumScript(filters) {
     "      for (int i = 0; i < count; i++) {",
     "        CREDENTIAL c = (CREDENTIAL)Marshal.PtrToStructure(Marshal.ReadIntPtr(p, i * IntPtr.Size), typeof(CREDENTIAL));",
     "        if (c.Type != 1) continue;",
+    '        string line = "+ " + Convert.ToBase64String(Encoding.UTF8.GetBytes(Marshal.PtrToStringUni(c.TargetName)));',
+    "        if (!blobs) { lines[found++] = line; continue; }",
     "        byte[] b = new byte[c.CredentialBlobSize];",
     "        if (c.CredentialBlobSize > 0) Marshal.Copy(c.CredentialBlob, b, 0, c.CredentialBlobSize);",
-    "        string name = Marshal.PtrToStringUni(c.TargetName);",
-    '        lines[found++] = "+ " + Convert.ToBase64String(Encoding.UTF8.GetBytes(name)) + " " + Convert.ToBase64String(b);',
+    '        lines[found++] = line + " " + Convert.ToBase64String(b);',
     "      }",
     '      lines[found] = ". " + found;',
     "      string[] output = new string[found + 1];",
@@ -11007,7 +11008,7 @@ function credEnumScript(filters) {
     "}",
     "'@",
     `$filters=@(${filters.map(powerShellQuote).join(",")})`,
-    'for($i=0;$i -lt $filters.Count;$i++){foreach($line in [KurmisCredEnum]::List($filters[$i])){Write-Output ("$i "+$line)}}'
+    `for($i=0;$i -lt $filters.Count;$i++){foreach($line in [KurmisCredEnum]::List($filters[$i],${blobs ? "$true" : "$false"})){Write-Output ("$i "+$line)}}`
   ].join("\n");
 }
 function parseCredEnumOutput(stdout, count) {
@@ -11051,11 +11052,11 @@ function failureOf2(result) {
   const said = result.stderr.replace(/\s+/g, " ").trim();
   return `PowerShell exited with code ${String(result.code)}${said === "" ? "" : `: ${said.slice(0, 300)}`}`;
 }
-function powerShellCredentialRead(env, run2 = runProgram) {
+function powerShellCredentialRead(env, run2 = runProgram, blobs = true) {
   return async (filters) => {
     const all = [];
     for (const batch of credentialBatches(filters)) {
-      const { program, args } = powerShellInvocation(credEnumScript(batch), env);
+      const { program, args } = powerShellInvocation(credEnumScript(batch, blobs), env);
       const result = await run2(program, args, { timeoutMs: CREDENTIAL_READ_TIMEOUT_MS, env, maxOutputBytes: 16 * 1024 * 1024 });
       if (result.code !== 0 || result.error !== null) throw new Error(failureOf2(result));
       const answers = parseCredEnumOutput(result.stdout, batch.length);
@@ -11145,6 +11146,22 @@ async function holdsStoredRecord(secureStorageDir, env, platform = process.platf
   } catch {
     return false;
   }
+}
+async function storedRecordsExist(secureStorageDirs, read, preferred = preferredAccounts()) {
+  const filters = [...new Set(secureStorageDirs.map(credentialFilter))];
+  let answers;
+  try {
+    answers = await read(filters);
+  } catch {
+    return secureStorageDirs.map(() => "unknown");
+  }
+  return secureStorageDirs.map((dir) => {
+    const answer2 = answers[filters.indexOf(credentialFilter(dir))];
+    if (answer2 === void 0 || answer2.kind === "error") return "unknown";
+    const accounts = [...byAccount(keychainService(dir), answer2.items).keys()];
+    if (accounts.length === 0) return false;
+    return chooseAccount2(accounts, preferred) === null ? "unknown" : true;
+  });
 }
 
 // src/daemon/keychain.ts
@@ -12561,20 +12578,47 @@ function leftBehindText(login, platform) {
 var import_node_fs18 = require("node:fs");
 var import_node_path21 = require("node:path");
 var CODEX_LOGIN_STATUS_TIMEOUT_MS = 1e4;
-function namesAccount(file) {
+var KEYCHAIN_LOOKUP_TIMEOUT_MS = 3e3;
+function credentialsFileHasToken(dir) {
+  let text2;
   try {
-    return parseClaudeIdentity((0, import_node_fs18.readFileSync)(file, "utf8")) !== null;
-  } catch {
-    return false;
+    text2 = (0, import_node_fs18.readFileSync)((0, import_node_path21.join)(dir, CREDENTIALS_FILE_NAME), "utf8");
+  } catch (error) {
+    const code = error.code;
+    return code === "ENOENT" || code === "ENOTDIR" ? false : "unknown";
   }
+  return parseCredentials(text2) !== null;
 }
-function hasLocalCredentials(login, env, home) {
-  if (login.provider === "codex") return (0, import_node_fs18.existsSync)((0, import_node_path21.join)(codexHomeOf(login, env, home), "auth.json"));
-  if (login.usedByPlainCli) {
-    return (0, import_node_fs18.existsSync)((0, import_node_path21.join)(home, ".claude", ".credentials.json")) || namesAccount((0, import_node_path21.join)(home, CLAUDE_PROFILE_FILE));
+async function keychainItemExists(service, env, run2) {
+  const result = await run2(
+    systemProgram("security", env),
+    ["find-generic-password", "-s", service],
+    { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxOutputBytes: 64 * 1024 }
+  );
+  if (result.error !== null) return "unknown";
+  if (result.code === 0) return true;
+  return result.code === NO_SUCH_ITEM_EXIT_CODE ? false : "unknown";
+}
+function either(a, b) {
+  if (a === true || b === true) return true;
+  return a === "unknown" || b === "unknown" ? "unknown" : false;
+}
+async function claudeCredentials(logins, env, home, deps) {
+  const files = logins.map((login) => credentialsFileHasToken(claudeCredentialsDir(login, home)));
+  const left = logins.filter((_login, index) => files[index] !== true);
+  const platform = deps.platform ?? process.platform;
+  let stores = left.map(() => false);
+  if (left.length > 0 && platform === "darwin") {
+    stores = await Promise.all(left.map((login) => keychainItemExists(keychainService(claudeSecureStorageDir(login)), env, deps.runProgram)));
+  } else if (left.length > 0 && platform === "win32") {
+    const read = deps.readCredentialNames ?? powerShellCredentialRead(env, deps.runProgram, false);
+    stores = await storedRecordsExist(left.map(claudeSecureStorageDir), read, preferredAccounts(env));
   }
-  const folder = loginFolder(login);
-  return (0, import_node_fs18.existsSync)((0, import_node_path21.join)(folder, ".credentials.json")) || namesAccount((0, import_node_path21.join)(folder, CLAUDE_PROFILE_FILE));
+  return logins.map((login, index) => {
+    const file = files[index] ?? false;
+    if (file === true) return true;
+    return either(file, stores[left.indexOf(login)] ?? false);
+  });
 }
 function codexHomeOf(login, env, home, platform = process.platform) {
   const patched = applyEnvPatch(env, codexLoginEnv(login, env, platform), platform === "win32");
@@ -12600,7 +12644,7 @@ async function codexSignedIn2(login, env, deps) {
   try {
     program = deps.findProgram("codex", { env });
   } catch (error) {
-    if (error instanceof ProgramNotFoundError) return false;
+    if (error instanceof ProgramNotFoundError) return "unknown";
     throw error;
   }
   const result = await deps.runProgram(
@@ -12608,12 +12652,29 @@ async function codexSignedIn2(login, env, deps) {
     [...program.args, "login", "status"],
     { timeoutMs: CODEX_LOGIN_STATUS_TIMEOUT_MS, env: applyEnvPatch(env, codexLoginEnv(login, env)), maxOutputBytes: 64 * 1024 }
   );
+  if (result.error !== null) return "unknown";
   return result.code === 0;
 }
-async function hasCredentials(login, env, home, deps) {
-  if (hasLocalCredentials(login, env, home)) return true;
-  if (login.provider !== "codex" || !codexKeepsSignInElsewhere(codexHomeOf(login, env, home))) return false;
+async function codexCredentials(login, env, home, deps) {
+  const codexHome = codexHomeOf(login, env, home);
+  if ((0, import_node_fs18.existsSync)((0, import_node_path21.join)(codexHome, "auth.json"))) return true;
+  if (!codexKeepsSignInElsewhere(codexHome)) return false;
   return await codexSignedIn2(login, env, deps);
+}
+async function checkCredentials(logins, env, home, deps) {
+  const claude = logins.filter((login) => login.provider === "claude");
+  const codex = logins.filter((login) => login.provider === "codex");
+  const [claudeAnswers, codexAnswers] = await Promise.all([
+    claudeCredentials(claude, env, home, deps),
+    Promise.all(codex.map((login) => codexCredentials(login, env, home, deps)))
+  ]);
+  const answers = /* @__PURE__ */ new Map();
+  claude.forEach((login, index) => answers.set(login.id, claudeAnswers[index] ?? "unknown"));
+  codex.forEach((login, index) => answers.set(login.id, codexAnswers[index] ?? "unknown"));
+  return answers;
+}
+async function hasCredentials(login, env, home, deps) {
+  return (await checkCredentials([login], env, home, deps)).get(login.id) ?? "unknown";
 }
 
 // src/cli/commands/login.ts
@@ -12750,7 +12811,7 @@ async function signIn(run2) {
     (0, import_node_fs19.rmSync)((0, import_node_path22.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
   }
   const identity = provider === "claude" ? ref.usedByPlainCli ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home()) : null;
-  if (identity === null && !await hasCredentials(ref, context.env, deps.home(), deps)) {
+  if (identity === null && await hasCredentials(ref, context.env, deps.home(), deps) === false) {
     cleanUp();
     return fail2(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`);
   }
@@ -14781,7 +14842,7 @@ var setupCommand = createSetupCommand();
 var import_node_os15 = require("node:os");
 
 // src/cli/status-format.ts
-var STATUS_JSON_FORMAT = 5;
+var STATUS_JSON_FORMAT = 6;
 function daemonReport(answer2, globalRouting, version) {
   return {
     daemon: daemonOf(answer2),
@@ -14819,7 +14880,7 @@ function statusJson(report, now, options) {
       usedByPlainCli: login.usedByPlainCli,
       email: login.email ?? null,
       signedIn: fromDaemon ? login.signedIn : null,
-      credentials: fromDaemon ? null : report.credentials.get(login.id) ?? false,
+      credentials: fromDaemon ? null : report.credentials.get(login.id) ?? "unknown",
       probing: login.probing === true,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
@@ -14898,12 +14959,16 @@ function loginTitle(login) {
   const product = PROVIDER_NAMES2[login.provider];
   return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`;
 }
+function credentialsText(check) {
+  if (check === "unknown") return "credentials on this machine: unknown";
+  return check ? "credentials on this machine" : "no credentials on this machine";
+}
 function loginLines(login, now, labelWidth) {
   const title = loginTitle(login);
   const lines = login.email === null ? [title] : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`] : [title, `  ${login.email}`];
   if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`);
   const facts = [
-    login.credentials !== null ? login.credentials ? "credentials on this machine" : "no credentials on this machine" : login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
+    login.credentials !== null ? credentialsText(login.credentials) : login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
     login.routing ? "routing on" : "routing off",
     `limits ${String(login.fiveHourLimit)}% 5 hour, ${String(login.weeklyLimit)}% weekly`
   ];
@@ -15060,9 +15125,12 @@ the daemon's first usage probe.
 
 While the daemon is not running, the logins come from config.json, and the usage is the last
 the daemon read, with how long ago it read it. Kurmis cannot tell then whether a login is
-signed in; it shows whether the login's credentials are on this machine, from its files and,
-for a Codex login that keeps its sign-in in the system's keyring, from "codex login status".
-Codex logins show no email then, so the warning about one subscription covers Claude logins
+signed in; it shows whether the login's credentials are on this machine. For a Claude login
+that is its token: in its .credentials.json, or else in the macOS Keychain or Windows
+Credential Manager, which status asks whether the item exists without reading it. For a Codex
+login it is its auth.json, or for one that keeps its sign-in in the system's keyring, what
+"codex login status" says. When a check cannot run, the login shows "credentials on this
+machine: unknown". Codex logins show no email then, so the warning about one subscription covers Claude logins
 only. "kurmis claude", "kurmis codex" without --login, "kurmis setup" and
 "kurmis daemon start" each start the daemon.
 
@@ -15082,7 +15150,7 @@ Options:
                "source" says whether the logins come from the daemon or from the files. Each
                login has "alias", "id", "provider", "usedByPlainCli" (whether plain claude
                or plain codex uses it), "signedIn" (from the daemon) and "credentials"
-               (from the files).
+               (from the files: true, false or "unknown").
                "warnings" holds the warnings.
   -h, --help   Show this help.`;
 function createStatusCommand(overrides = {}) {
@@ -15203,12 +15271,12 @@ async function reportFromFiles(config, daemon, globalRouting, context, deps) {
       probing: false
     };
   });
-  const checks = await Promise.all(config.logins.map(async (login) => [login.id, await hasCredentials(login, context.env, home, deps)]));
+  const credentials = await checkCredentials(config.logins, context.env, home, deps);
   return {
     daemon: daemon === null ? null : daemonOf(daemon),
     source: "files",
     logins,
-    credentials: new Map(checks),
+    credentials,
     globalRouting,
     version: deps.version
   };

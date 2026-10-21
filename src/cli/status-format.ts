@@ -18,14 +18,16 @@ import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '..
 import { daemonAge } from '../daemon/lifecycle.ts'
 import { isSameClaudeAccount } from '../data/identity.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
+import type { CredentialCheck } from './local-credentials.ts'
 import { loginArgument, plainCliLoginText, PROVIDER_NAMES } from './login-names.ts'
 
 /**
  * Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added.
  * Format 4: a login's `id` and `alias` may be null. Format 5: a login's `machineOwn` is called
- * `usedByPlainCli`.
+ * `usedByPlainCli`. Format 6: a login's `credentials` may be `"unknown"`, and counts only the
+ * token, not a `.claude.json` that names an account.
  */
-export const STATUS_JSON_FORMAT = 5
+export const STATUS_JSON_FORMAT = 6
 
 export interface StatusJsonWindow {
   /** The provider's key for the window: `five_hour`, `seven_day`, `codex:primary`, ... */
@@ -80,11 +82,11 @@ export interface StatusJsonLogin {
   /** Whether the daemon found the login signed in; null when no daemon reported it or it has not looked yet. */
   signedIn: boolean | null
   /**
-   * With `source` `files`: whether the login's credentials are on this machine, from its files
-   * and, for a Codex login that keeps its sign-in in the keyring, `codex login status`. Null
-   * with `source` `daemon`.
+   * With `source` `files`: whether the login's credentials are on this machine
+   * (`checkCredentials` in `local-credentials.ts`), or `unknown` when a check could not run.
+   * Null with `source` `daemon`.
    */
-  credentials: boolean | null
+  credentials: CredentialCheck | null
   /** Whether a usage probe of the login is running now. */
   probing: boolean
   routing: boolean
@@ -146,7 +148,7 @@ export interface StatusReport {
   source: StatusSource
   logins: ReportLogin[]
   /** With `source` `files`: whether each login's credentials are on this machine, by login id. */
-  credentials: ReadonlyMap<string, boolean>
+  credentials: ReadonlyMap<string, CredentialCheck>
   globalRouting: GlobalRoutingState
   /** This kurmis' version, which with `CONTROL_API_VERSION` tells whether the daemon is older or newer. */
   version: string
@@ -202,7 +204,7 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
       usedByPlainCli: login.usedByPlainCli,
       email: login.email ?? null,
       signedIn: fromDaemon ? login.signedIn : null,
-      credentials: fromDaemon ? null : report.credentials.get(login.id) ?? false,
+      credentials: fromDaemon ? null : report.credentials.get(login.id) ?? 'unknown',
       probing: login.probing === true,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
@@ -318,6 +320,11 @@ function loginTitle(login: StatusJsonLogin): string {
   return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`
 }
 
+function credentialsText(check: CredentialCheck): string {
+  if (check === 'unknown') return 'credentials on this machine: unknown'
+  return check ? 'credentials on this machine' : 'no credentials on this machine'
+}
+
 function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): string[] {
   const title = loginTitle(login)
   const lines = login.email === null ? [title]
@@ -326,7 +333,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`)
   const facts = [
     login.credentials !== null
-      ? login.credentials ? 'credentials on this machine' : 'no credentials on this machine'
+      ? credentialsText(login.credentials)
       : login.signedIn === null ? 'sign-in not checked yet' : login.signedIn ? 'signed in' : 'signed out',
     login.routing ? 'routing on' : 'routing off',
     `limits ${String(login.fiveHourLimit)}% 5 hour, ${String(login.weeklyLimit)}% weekly`

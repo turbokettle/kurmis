@@ -3,7 +3,7 @@
 // When the daemon runs, the logins come from its status answer. When none runs, or its status
 // request fails, or this kurmis cannot read its answer, they come from `config.json`, with the
 // usage the daemon last wrote to `state.json` and whether each login's credentials are on this
-// machine (`hasCredentials`).
+// machine (`checkCredentials`).
 //
 // Status reads `config.json` with `loadConfig`, as the other commands do, so when the file has no
 // entry for the login plain claude or plain codex uses (or there is no file), it adds one with a
@@ -20,7 +20,7 @@ import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, writeLine, type CliContext, ty
 import { realDaemonClient, realFindProgram, settleWithin, type DaemonClient } from '../command-deps.ts'
 import type { DaemonConnection } from '../daemon-client.ts'
 import { globalRoutingState, type GlobalRoutingState } from '../global-routing.ts'
-import { hasCredentials } from '../local-credentials.ts'
+import { checkCredentials } from '../local-credentials.ts'
 import { daemonOf, daemonReport, formatStatus, statusJson, type ReportLogin, type StatusReport } from '../status-format.ts'
 
 /**
@@ -36,7 +36,10 @@ export interface StatusDeps {
   probeWaitMs: number
   /** The user's home folder, where `~/.claude`, `~/.claude.json` and `~/.codex` are. */
   home: () => string
-  /** Find and run `codex login status` for a Codex login that keeps its sign-in in the keyring. */
+  /**
+   * Find and run `codex login status` for a Codex login that keeps its sign-in in the keyring,
+   * and `security` (macOS) or PowerShell (Windows) for a Claude login without `.credentials.json`.
+   */
   findProgram: typeof findProgram
   runProgram: typeof runProgram
   globalRouting: (env: NodeJS.ProcessEnv) => GlobalRoutingState
@@ -65,9 +68,12 @@ the daemon's first usage probe.
 
 While the daemon is not running, the logins come from config.json, and the usage is the last
 the daemon read, with how long ago it read it. Kurmis cannot tell then whether a login is
-signed in; it shows whether the login's credentials are on this machine, from its files and,
-for a Codex login that keeps its sign-in in the system's keyring, from "codex login status".
-Codex logins show no email then, so the warning about one subscription covers Claude logins
+signed in; it shows whether the login's credentials are on this machine. For a Claude login
+that is its token: in its .credentials.json, or else in the macOS Keychain or Windows
+Credential Manager, which status asks whether the item exists without reading it. For a Codex
+login it is its auth.json, or for one that keeps its sign-in in the system's keyring, what
+"codex login status" says. When a check cannot run, the login shows "credentials on this
+machine: unknown". Codex logins show no email then, so the warning about one subscription covers Claude logins
 only. "kurmis claude", "kurmis codex" without --login, "kurmis setup" and
 "kurmis daemon start" each start the daemon.
 
@@ -87,7 +93,7 @@ Options:
                "source" says whether the logins come from the daemon or from the files. Each
                login has "alias", "id", "provider", "usedByPlainCli" (whether plain claude
                or plain codex uses it), "signedIn" (from the daemon) and "credentials"
-               (from the files).
+               (from the files: true, false or "unknown").
                "warnings" holds the warnings.
   -h, --help   Show this help.`
 
@@ -229,14 +235,12 @@ async function reportFromFiles(config: KurmisConfig | ConfigError, daemon: Statu
       probing: false
     }
   })
-  // The `codex login status` runs, if any, run at the same time.
-  const checks = await Promise.all(config.logins.map(async (login) =>
-    [login.id, await hasCredentials(login, context.env, home, deps)] as const))
+  const credentials = await checkCredentials(config.logins, context.env, home, deps)
   return {
     daemon: daemon === null ? null : daemonOf(daemon),
     source: 'files',
     logins,
-    credentials: new Map(checks),
+    credentials,
     globalRouting,
     version: deps.version
   }

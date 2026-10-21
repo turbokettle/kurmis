@@ -16,6 +16,7 @@ import {
   powerShellQuote,
   preferredAccounts,
   readStoredRecords,
+  storedRecordsExist,
   type CredentialRead,
   type FilterAnswer
 } from '../../src/platform/windows-credentials.ts'
@@ -69,7 +70,17 @@ describe('the CredEnumerateW script', () => {
     const script = credEnumScript(['Claude Code-credentials/*', "it's/*"])
     expect(script).toContain('CredEnumerateW(string filter, int flags, out int count, out IntPtr credentials)')
     expect(script).toContain("$filters=@('Claude Code-credentials/*','it''s/*')")
-    expect(script).toContain('[KurmisCredEnum]::List($filters[$i])')
+    expect(script).toContain('[KurmisCredEnum]::List($filters[$i],$true)')
+  })
+
+  it('lists the names without the blobs when asked to', () => {
+    const script = credEnumScript(['a/*'], false)
+    expect(script).toContain('[KurmisCredEnum]::List($filters[$i],$false)')
+    expect(script).toContain('if (!blobs) { lines[found++] = line; continue; }')
+    // The blob is copied out only after that line.
+    expect(script.indexOf('if (!blobs)')).toBeLessThan(script.indexOf('Marshal.Copy(c.CredentialBlob'))
+    expect(parseCredEnumOutput(`0 + ${encoded('a/claude-code-user')}\r\n0 . 1\r\n`, 1))
+      .toEqual([{ kind: 'items', items: new Map([['a/claude-code-user', Buffer.alloc(0)]]) }])
   })
 
   it('has its answers read back by index, with the count checked', () => {
@@ -191,8 +202,30 @@ describe('powerShellCredentialRead', () => {
     expect(error.message).not.toContain('c2VjcmV0')
   })
 
-  it('reaches only the PowerShell stand-in in tests, which fails', async () => {
-    await expect(powerShellCredentialRead({})(['a/*'])).rejects.toThrow(/PowerShell exited with code 1/)
+  it('reaches only the PowerShell stand-in in tests, whose Credential Manager is empty', async () => {
+    expect(await powerShellCredentialRead({})(['a/*', 'b/*'])).toEqual([{ kind: 'items', items: new Map() }, { kind: 'items', items: new Map() }])
+  })
+})
+
+describe('storedRecordsExist', () => {
+  it('finds a record by its name, chunked or not, under the expected account', async () => {
+    const other = 'C:\\kurmis\\claude\\other'
+    const chunked = 'C:\\kurmis\\claude\\chunked'
+    const held = store({
+      [`${SERVICE}/claude-code-user`]: '',
+      [`${keychainService(chunked)}/example-user#m`]: '',
+      [`${keychainService(chunked)}/example-user#0`]: ''
+    })
+    expect(await storedRecordsExist([null, other, chunked], held.read, ACCOUNTS)).toEqual([true, false, true])
+    expect(held.calls).toHaveLength(1)
+  })
+
+  it('answers unknown when Credential Manager cannot be listed or names no expected account', async () => {
+    expect(await storedRecordsExist([null], () => Promise.reject(new Error('PowerShell exited with code 1')), ACCOUNTS)).toEqual(['unknown'])
+    const failed: CredentialRead = (filters) => Promise.resolve(filters.map((): FilterAnswer => ({ kind: 'error', code: 5 })))
+    expect(await storedRecordsExist([null], failed, ACCOUNTS)).toEqual(['unknown'])
+    const several = store({ [`${SERVICE}/someone`]: '', [`${SERVICE}/another`]: '' })
+    expect(await storedRecordsExist([null], several.read, ACCOUNTS)).toEqual(['unknown'])
   })
 })
 

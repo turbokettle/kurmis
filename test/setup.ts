@@ -58,7 +58,8 @@ process.env.FAKE_REG_DIR = join(home, 'fake-reg')
 mkdirSync(process.env.FAKE_REG_DIR, { recursive: true })
 delete process.env.FAKE_REG_FAIL
 
-// The Windows programs: PowerShell (the Credential Manager read) fails and records its calls, taskkill
+// The Windows programs: PowerShell answers the Credential Manager read from its folder, which is
+// empty, and records its calls (test/platform/fake-windows/powershell.mjs), taskkill
 // records its calls and ends only the one pid it is given, and wscript, which kurmis only names
 // in the logon entry, fails when run. src/platform/system-programs.ts falls back to these
 // variables of this process even when a test hands kurmis an environment without them.

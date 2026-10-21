@@ -11,6 +11,7 @@ import { runProgram } from '../../../src/platform/run.ts'
 import { codexUsage } from '../../core/codex-usage-fixture.ts'
 import { accountUsage, usageWindow } from '../../core/usage-fixtures.ts'
 import { FAKE_CODEX_SCRIPT, readCodexRecord, writeClaudeCredentials, writeClaudeIdentity, writeCodexKeyringAuth } from '../../fakes/index.ts'
+import { FakeKeychain } from '../../daemon/fake-security/fake-keychain.ts'
 import { collect, fakeDaemonClient, loginStatus, statusAnswer } from '../helpers.ts'
 import { claudeRef, codexRef, OWN_CLAUDE, OWN_CLAUDE_REF, OWN_CODEX, OWN_CODEX_REF, writeTestConfig } from '../../logins.ts'
 
@@ -54,7 +55,7 @@ describe('kurmis status with the daemon running', () => {
     const out = collect()
     expect(await command({ daemon, globalRouting: () => 'paused' }).run(['--json'], out.context)).toBe(0)
     const json = JSON.parse(out.stdout()) as StatusJson
-    expect(json).toMatchObject({ format: 5, source: 'daemon', globalRouting: 'paused', daemon: { version: '0.1.0', pid: 4242, older: false } })
+    expect(json).toMatchObject({ format: 6, source: 'daemon', globalRouting: 'paused', daemon: { version: '0.1.0', pid: 4242, older: false } })
     expect(json.logins.map((login) => [login.id, login.alias, login.usedByPlainCli, login.signedIn, login.credentials])).toEqual([
       ['ownclaude1', 'ownclaude1', true, true, null], ['owncodex01', 'owncodex01', true, true, null]
     ])
@@ -189,12 +190,40 @@ describe('kurmis status with the daemon not running', () => {
     const json = collect({})
     expect(await command({ daemon }).run(['--json'], json.context)).toBe(0)
     const parsed = JSON.parse(json.stdout()) as StatusJson
-    expect(parsed).toMatchObject({ format: 5, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
+    expect(parsed).toMatchObject({ format: 6, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
     expect(parsed.logins.map((login) => [login.id, login.alias, login.usedByPlainCli, login.signedIn, login.credentials, login.sessions])).toEqual([
       [OWN_CLAUDE, OWN_CLAUDE, true, null, false, 0], [OWN_CODEX, OWN_CODEX, true, null, false, null],
       ['workclaude', 'work-example', false, null, true, 1], ['sidecodex1', 'sidecodex1', false, null, false, null]
     ])
     expect(parsed.logins[2]?.usage).toMatchObject({ fetchedAt: new Date(NOW - 3 * HOUR).toISOString(), windows: [{ key: 'five_hour', utilization: 42 }] })
+  })
+
+  test('shows no credentials for a login whose .claude.json names an account but whose token is gone, on macOS and Windows', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
+    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
+    for (const platform of ['darwin', 'win32'] as const) {
+      const out = collect({})
+      expect(await command({ daemon: fakeDaemonClient({ running: false }), platform }).run([], out.context)).toBe(0)
+      expect(out.stdout()).toContain(`${OWN_CLAUDE} (Claude)  own@example.com\n  the login plain claude uses\n  no credentials on this machine,`)
+      expect(out.stdout()).toContain('work-example (Claude, id workclaude)  work@example.com\n  no credentials on this machine,')
+    }
+  })
+
+  test('shows unknown when the Keychain cannot be asked', async () => {
+    const keychain = new FakeKeychain(process.env.FAKE_SECURITY_DIR!)
+    keychain.setMode('locked')
+    writeTestConfig({})
+    try {
+      const out = collect({})
+      expect(await command({ daemon: fakeDaemonClient({ running: false }), platform: 'darwin' }).run([], out.context)).toBe(0)
+      expect(out.stdout()).toContain(`${OWN_CLAUDE} (Claude)\n  the login plain claude uses\n  credentials on this machine: unknown,`)
+      const json = collect({})
+      expect(await command({ daemon: fakeDaemonClient({ running: false }), platform: 'darwin' }).run(['--json'], json.context)).toBe(0)
+      expect((JSON.parse(json.stdout()) as StatusJson).logins.map((login) => login.credentials)).toEqual(['unknown', false])
+    } finally {
+      keychain.setMode(null)
+    }
   })
 
   test('warns about an extra Claude login that is the account of the login plain claude uses, from the profile files', async () => {

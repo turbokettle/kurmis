@@ -214,10 +214,13 @@ While the daemon is not running, the first line says so and names the commands t
 `kurmis claude`, `kurmis codex` without `--login`, `kurmis setup` and `kurmis daemon start`. The
 logins and their settings come from `~/.kurmis/config.json`. The usage is the last the daemon
 read, with how long ago it read it. Kurmis cannot tell then whether a login is signed in, so it
-shows whether the login's credentials are on this machine instead. That check looks at files
-and does not show that the credentials still work. For a Codex login whose `config.toml` keeps
-the sign-in in the Keychain or Credential Manager (`cli_auth_credentials_store = "keyring"` or
-`"auto"`), it asks `codex login status`. Codex logins show no email then, so the warning about
+shows whether the login's credentials are on this machine instead. For a Claude login that is
+its token: in its `.credentials.json`, or else in the macOS Keychain or Windows Credential
+Manager, which kurmis asks whether the item exists without reading it. For a Codex login it is
+its `auth.json`, and for one whose `config.toml` keeps the sign-in in the Keychain or Credential
+Manager (`cli_auth_credentials_store = "keyring"` or `"auto"`), what `codex login status` says.
+The check does not show that the credentials still work. When it cannot run, the login shows
+`credentials on this machine: unknown`. Codex logins show no email then, so the warning about
 one subscription covers Claude logins only. The same goes when the daemon runs but does not
 answer the status request; a note on stderr says so.
 
