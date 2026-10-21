@@ -176,17 +176,25 @@ describe('a probe', () => {
     expect(poller.recentStaleProbes()).toEqual(new Set())
   })
 
-  test('is killed when the poller closes', async () => {
+  test('is killed when the poller closes, and close waits until it has ended', async () => {
     writeLogins({})
     let signal: AbortSignal | undefined
+    let ended = false
     const { table, poller } = setup((_id, options) => {
       signal = options.signal
+      // Like a real probe, which ends only once its killed process has exited.
       return new Promise((resolve) => {
-        options.signal?.addEventListener('abort', () => { resolve({ ok: false, signedIn: null, reason: 'shutdown', error: 'Stopped.' }) })
+        options.signal?.addEventListener('abort', () => {
+          setTimeout(() => {
+            ended = true
+            resolve({ ok: false, signedIn: null, reason: 'shutdown', error: 'Stopped.' })
+          }, 50)
+        })
       })
     })
     const running = poller.probe('claude:default', 'request')
-    poller.close()
+    await poller.close()
+    expect(ended).toBe(true)
     await running
     expect(signal?.aborted).toBe(true)
     // A probe that ends after close changes nothing.
@@ -206,7 +214,7 @@ describe('the poll', () => {
     })
     poller.start()
     await expect.poll(() => probed.length).toBeGreaterThanOrEqual(6)
-    poller.close()
+    await poller.close()
     expect(probed.slice(0, 3).sort()).toEqual(['claude:default', 'claude:work', 'codex:default'])
     expect(probed.slice(3)).not.toContain('claude:work')
     expect(poller.pollable()).toEqual(['claude:default', 'codex:default'])
@@ -228,6 +236,6 @@ describe('the poll', () => {
     expect(probes).toBe(stoppedAt)
     await poller.probe('claude:default', 'renewal')
     expect(probes).toBe(stoppedAt + 1)
-    poller.close()
+    await poller.close()
   })
 })

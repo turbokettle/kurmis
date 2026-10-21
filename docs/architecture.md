@@ -335,7 +335,8 @@ at once there. So on Windows only a control `stop`, and Ctrl-C or closing the co
    signal ends the wait. A control `stop` with a body `{ "maxWaitMs": <n> }` ends it after n
    milliseconds instead (`kurmis daemon stop` sends its own 30-second deadline this way); a
    `stop` without a body waits the whole 15 minutes;
-4. writes `state.json`, closes the remaining connections, removes `daemon.json` and exits 0.
+4. kills the usage probes that still run and waits for their processes to exit, writes
+   `state.json`, closes the remaining connections, removes `daemon.json` and exits 0.
 
 An uncaught error is logged by its error code only, and the daemon stops without waiting for its
 requests and exits 1. The next kurmis command starts a new one.

@@ -79,7 +79,7 @@ export interface DaemonApp {
    * those the open requests still ask for, go on until `close`.
    */
   stopPolling(): void
-  /** Stops the poll and running probes and writes `state.json`. */
+  /** Stops the poll, kills the running probes and waits for their processes to exit, and writes `state.json`. */
   close(): Promise<void>
 }
 
@@ -140,10 +140,10 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
     },
     close() {
       closed ??= (async () => {
-        poller.close()
+        const probesEnded = poller.close()
         upstream.close()
         tokens.clear()
-        await table.flush()
+        await Promise.all([table.flush(), probesEnded])
       })()
       return closed
     }
