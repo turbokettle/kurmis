@@ -761,7 +761,9 @@ These are known and left as they are.
   unit tests run without a daemon or a real CLI. The commands are:
   - `claude` and `codex` (above).
   - `status [--json]`: starts the daemon when needed and shows its status. When no signed-in
-    login has been read yet it asks for one probe and waits up to 15 seconds. The text shows
+    login has been read yet it asks for one probe and waits up to 15 seconds; then it ends the
+    request and closes its connection, so the command exits at once while the daemon finishes
+    the probe. `kurmis codex` does the same with its 5-second wait. The text shows
     per login the label, the email the daemon read from the login's own profile (on the
     terminal only), sign-in, routing, limits, use-first, sessions, each usage window with its
     reset, and why routing passes the login over (`routeBlockText`), and last which login

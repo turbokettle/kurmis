@@ -403,15 +403,20 @@ export async function readStatus(connection: DaemonConnection): Promise<StatusAn
   throw failureOf(result, connection, 'a status request')
 }
 
-/** `POST /_kurmis/probe`: probes the logins now and answers the status when done. */
-export async function requestProbe(connection: DaemonConnection, logins?: string[]): Promise<StatusAnswer> {
+/**
+ * `POST /_kurmis/probe`: probes the logins now and answers the status when done. `signal` ends
+ * the request and closes its connection, so a CLI that stops waiting can exit; the daemon still
+ * finishes the probe.
+ */
+export async function requestProbe(connection: DaemonConnection, logins?: string[], signal?: AbortSignal): Promise<StatusAnswer> {
   const result = await controlRequest({
     port: connection.port,
     key: connection.key,
     method: 'POST',
     path: CONTROL_PATHS.probe,
     body: logins === undefined ? {} : { logins },
-    timeoutMs: PROBE_TIMEOUT_MS
+    timeoutMs: PROBE_TIMEOUT_MS,
+    ...(signal === undefined ? {} : { signal })
   })
   if (result.kind === 'answered' && result.status === 200 && isStatusAnswer(result.body)) return result.body
   throw failureOf(result, connection, 'a usage probe')

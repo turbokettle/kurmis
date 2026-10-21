@@ -59,7 +59,7 @@ async function runStatus(args: string[], context: CliContext, deps: StatusDeps):
     const connection = await deps.daemon.ensureDaemon({ env: context.env })
     status = await deps.daemon.readStatus(connection)
     if (nothingProbedYet(status)) {
-      const probed = await settleWithin(deps.daemon.requestProbe(connection), deps.probeWaitMs)
+      const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, undefined, signal), deps.probeWaitMs)
       if (probed.kind === 'done') {
         status = probed.value
       } else {

@@ -296,6 +296,25 @@ describe('control requests', () => {
     expect(JSON.parse(daemon.requests[1]?.body ?? '')).toEqual({ logins: ['claude:work'] })
   })
 
+  it('closes the probe request and its connection when the signal is aborted', async () => {
+    const key = readOrCreateKey()
+    let closed: () => void = () => undefined
+    const connectionClosed = new Promise<void>((resolve) => {
+      closed = resolve
+    })
+    // A daemon whose probe never answers: only the client can end the request.
+    const { server, port } = await listen((request) => {
+      request.socket.on('close', () => closed())
+    })
+    servers.push(server)
+    const controller = new AbortController()
+    const probe = requestProbe({ port, key, pid: process.pid, version: '1.2.3' }, ['claude:work'], controller.signal)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    controller.abort()
+    await expect(probe).rejects.toThrow(DaemonError)
+    await connectionClosed
+  })
+
   it('turns a refused key and a stopped daemon into sentences', async () => {
     const key = readOrCreateKey()
     const daemon = await fakeDaemon('1'.repeat(64))

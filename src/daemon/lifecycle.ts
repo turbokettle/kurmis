@@ -33,6 +33,8 @@ export interface ControlRequest {
   /** Sent as JSON. */
   body?: unknown
   timeoutMs?: number
+  /** Ends the request at once, closing its connection; the answer is then `failed`. */
+  signal?: AbortSignal
 }
 
 /**
@@ -56,7 +58,8 @@ export function controlRequest(options: ControlRequest): Promise<ControlResult> 
       headers['content-type'] = 'application/json'
       headers['content-length'] = String(Buffer.byteLength(payload))
     }
-    const outgoing = request({ host: DAEMON_HOST, port: options.port, method: options.method, path: options.path, headers, agent: false },
+    const outgoing = request({ host: DAEMON_HOST, port: options.port, method: options.method, path: options.path, headers, agent: false,
+      signal: options.signal },
       (incoming) => {
         const chunks: Buffer[] = []
         let size = 0
