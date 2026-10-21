@@ -79,6 +79,17 @@ describe('nodeForJobs', () => {
     expect(nodeForJobs({ env, platform, execPath: real, realpath })).toBe(real)
   })
 
+  it("uses the resolved path of a running node in fnm's per-shell folder, as Windows reports it", () => {
+    const shell = 'C:\\Users\\Example\\AppData\\Local\\fnm_multishells\\4242_1700000000000'
+    const installed = 'C:\\Users\\Example\\AppData\\Roaming\\fnm\\node-versions\\v22.1.0\\installation\\node.exe'
+    const realpath = (path: string): string => (path.startsWith(shell) ? installed : path)
+    expect(nodeForJobs({ env: { Path: shell }, platform: 'win32', execPath: `${shell}\\node.exe`, realpath, temporaryFolders: [] }))
+      .toBe(installed)
+    // When the resolved path is temporary too, nothing better is known.
+    expect(nodeForJobs({ env: {}, platform: 'win32', execPath: `${shell}\\node.exe`, realpath: () => `${shell}\\node.exe`, temporaryFolders: [] }))
+      .toBe(`${shell}\\node.exe`)
+  })
+
   it('tells temporary paths apart, Windows paths without regard to case', () => {
     expect(isTemporaryPath('/Users/example/.local/state/fnm_multishells/1_2/bin/node', [], 'darwin')).toBe(true)
     expect(isTemporaryPath('/private/var/folders/ab/T/x/node', ['/private/var/folders'], 'darwin')).toBe(true)
