@@ -687,6 +687,39 @@ fake API, and fake Keychain, launchctl and registry folders. It builds the child
 environment from nothing, so only the fakes and the stand-ins of `test/setup.ts` can be reached.
 After each test it stops every daemon the test's commands started.
 
+## Known limits
+
+These are known and left as they are.
+
+- **One user per machine.** The daemon's port is fixed, and any local program that binds it
+  before the daemon does receives what the CLIs send there: the key in `x-kurmis-key` and, in
+  global mode, the CLI's own `Authorization` header. Kurmis assumes nobody else runs programs on
+  the machine. The README says so.
+- **A plain `claude` started inside a session on an extra login, in global mode.** The wrapper
+  starts the CLI with `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the extra login's folder in the
+  process environment, and a shell started from that session inherits it. A plain `claude` run
+  from that shell takes its routing variables from `settings.json`, whose
+  `ANTHROPIC_CUSTOM_HEADERS` has no `x-kurmis-started-on`, so the proxy counts it as started on
+  `claude:default`. That CLI reads the extra login's credentials and sends that login's token in
+  its `Authorization` header. When the proxy picks `claude:default` and has read no token for it,
+  it forwards that header, so the request is billed to the extra login while kurmis counts it as
+  `claude:default`. When the proxy has read `claude:default`'s token, which is the usual case,
+  the request is signed and counted correctly. The wrapper cannot avoid this: any variable it
+  could add to tell the nested CLI apart is overridden or never sent, because the `env` of
+  `settings.json` beats the process environment and the proxy only sees headers. Use
+  `kurmis claude` inside such a session instead.
+- **Version handover.** The new daemon reads `state.json` once, when it starts. While the old
+  daemon finishes its open requests, the usage, cooldowns and session placements it records stay
+  in its own memory, and the new daemon does not see them. Both daemons write the whole
+  `state.json` in that time, so the file holds whichever wrote last; the old daemon writes once
+  more as it stops, and a change the new one made before that is lost from the file (not from
+  the new daemon's memory) until the new daemon writes again.
+- **What counts as a usage limit.** A 429 counts as a usage-limit refusal when its
+  `anthropic-ratelimit-unified-status` is `rejected` or it carries
+  `anthropic-ratelimit-unified-representative-claim` or `anthropic-ratelimit-unified-overage-status`
+  (`isDefinitiveQuotaRejection`, the original router's rule). Any other 429 is treated as no capacity. This
+  has not been checked against a real usage-limit 429 from Anthropic yet.
+
 ## Code layout
 
 - `src/data/` holds the data folder: its paths, login ids, the JSON file helpers, the stores for

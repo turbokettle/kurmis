@@ -18,6 +18,9 @@ login changes is which subscription is billed.
 - **git**, and ssh access to the `turbokettle/kurmis` repository on GitHub, because npm clones it.
 - Claude Code (`claude`) and/or Codex (`codex`) installed as usual and on your `PATH`.
 - macOS or Windows. Linux should work but is not tested.
+- A machine only you use. The daemon listens on a fixed local port, and another user's program
+  that took that port first would receive kurmis' key and, after `kurmis setup`, Claude Code's
+  sign-in token.
 
 ## Install
 
