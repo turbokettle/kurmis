@@ -86,6 +86,11 @@ export function windowsAutostartScriptPath(): string {
   return join(kurmisHome(), 'autostart.js')
 }
 
+/** Exists while global routing is paused (`kurmis setup --pause`). */
+export function pausedFilePath(): string {
+  return join(kurmisHome(), 'paused.json')
+}
+
 /** The folder that holds the extra logins of one provider: `claude/` or `codex/`. */
 export function providerFolder(provider: LoginProvider): string {
   return join(kurmisHome(), provider)

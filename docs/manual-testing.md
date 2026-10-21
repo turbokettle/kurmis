@@ -84,10 +84,28 @@ because a renewal replaces the refresh token.
 4. Open the IDE extension (VS Code or JetBrains) and send one message. It should be routed too.
 5. Log out of the computer and in again, without running kurmis. `kurmis daemon status` should
    show a daemon started at the new login.
-6. `kurmis setup --undo`. `settings.json` should be byte-for-byte what it was before setup, and
-   the autostart entry gone.
-7. Run `kurmis setup` with `CLAUDE_CONFIG_DIR` set to the default `.claude` folder. It should
+6. `kurmis setup --pause`. `settings.json` should be byte-for-byte what it was before setup.
+   The autostart entry, `settings.json.kurmis-backup` and the daemon stay, and a new plain
+   `claude -p` does not show in `daemon.log`.
+7. `kurmis setup` again. Expect "Global routing was paused; it is on again." and a plain
+   `claude -p` routed again.
+8. Run `kurmis setup` with `CLAUDE_CONFIG_DIR` set to the default `.claude` folder. It should
    refuse and explain why.
+
+### Uninstall
+Run this last, since it removes the logins added above.
+
+1. `kurmis setup --uninstall-and-logout < /dev/null` (PowerShell: `$null | kurmis setup
+   --uninstall-and-logout`). It should list what it removes and refuse, because there is no
+   terminal to ask at.
+2. `kurmis setup --uninstall-and-logout` in a terminal, and answer `n`. Nothing should change.
+3. Run it again and answer `y`. Expect `settings.json` as it was before setup, no
+   `settings.json.kurmis-backup`, no autostart entry, no daemon, no data folder, and a last line
+   that says to run `npm uninstall -g kurmis`.
+4. A plain `claude -p --model haiku "Reply ok"` and a plain `codex exec "Reply ok"` still answer
+   on the machine's own sign-ins.
+5. The extra logins' Keychain items (macOS) or Credential Manager records (Windows) are gone,
+   and every file in `~/.codex` is still there.
 
 ### Codex
 1. `kurmis codex exec "Reply ok"` answers, on the login `kurmis status` named in its last line.

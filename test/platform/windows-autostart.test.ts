@@ -200,7 +200,7 @@ describe('the logon script', () => {
     expect(splitWindowsCommandLine(command)).toEqual([...PROGRAM, '--env', 'KURMIS_HOME=D:\\kurmis data'])
     expect(autostartScript(script).split('\r\n')).toEqual([
       '// Written by kurmis setup: starts the kurmis daemon at logon without a console window.',
-      '// kurmis setup --undo removes it.',
+      '// kurmis setup --uninstall-and-logout removes it.',
       'var shell = new ActiveXObject("WScript.Shell");',
       'shell.CurrentDirectory = "C:\\\\Users\\\\Example User";',
       `shell.Run(${jscriptString(command)}, 0, false);`,
@@ -214,7 +214,7 @@ describe('the logon script', () => {
     const lines = autostartScript(script).split('\r\n')
     expect(lines.slice(0, 4)).toEqual([
       '// Written by kurmis setup: starts the kurmis daemon at logon without a console window.',
-      '// kurmis setup --undo removes it.',
+      '// kurmis setup --uninstall-and-logout removes it.',
       'var shell = new ActiveXObject("WScript.Shell");',
       'shell.CurrentDirectory = "C:\\\\Users\\\\Example User";'
     ])

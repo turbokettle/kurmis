@@ -195,7 +195,8 @@ them out with `claude auth logout` or `codex logout` if you want to.
 
 ```sh
 kurmis setup
-kurmis setup --undo
+kurmis setup --pause
+kurmis setup --uninstall-and-logout
 ```
 
 Without setup, only Claude Code started through `kurmis claude` is routed. `kurmis setup` makes
@@ -236,9 +237,15 @@ Setup also warns when the file's `env` sets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH
 `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, which make a plain
 `claude` sign with that key or token, and leaves them.
 
-`kurmis setup --undo` removes kurmis' settings again (a value you changed yourself is left and
-reported) and the start at login. The daemon keeps running until you stop it, because
-`kurmis claude` still uses it.
+`kurmis setup --pause` takes kurmis' settings out of the file again; a value you changed
+yourself is left and reported. A plain `claude` and the editor extensions then no longer go
+through kurmis. The daemon, its start at login, your logins and the backup copy stay, so
+`kurmis claude` keeps working. `kurmis setup` turns global routing on again.
+
+`kurmis setup --uninstall-and-logout` removes everything kurmis set up; see "Uninstall" below.
+
+Claude Code sessions and editors that are already open keep the settings they started with, so
+restart them after any of these.
 
 **Working over ssh.** On macOS, a daemon started from an ssh login cannot read the login
 Keychain, so the logins whose token is in the Keychain are not routed. `kurmis status` shows
@@ -273,15 +280,26 @@ new one; `run` runs it in the terminal, which helps when looking into a problem.
 ## Uninstall
 
 ```sh
-kurmis setup --undo      # only if you ran "kurmis setup"
-kurmis logout <id>       # for each extra login, to remove its credentials
-kurmis daemon stop
+kurmis setup --uninstall-and-logout
 npm uninstall -g kurmis
 ```
 
-Kurmis keeps its data in `~/.kurmis` (`%USERPROFILE%\.kurmis` on Windows). Uninstalling leaves
-that folder; delete it to remove the extra logins' settings too. On macOS an extra Claude login's
-credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the folder does not.
+`kurmis setup --uninstall-and-logout` lists what it will remove and asks before it removes
+anything; `--yes` skips the question, and without a terminal it needs `--yes`. It removes:
+
+- kurmis' settings in your Claude Code settings file, and the backup copy setup made;
+- the daemon's start at login;
+- every login you added to kurmis. Each is signed out first, which removes its Keychain item
+  on macOS or its Windows Credential Manager record;
+- the daemon, which it stops;
+- the kurmis data folder, `~/.kurmis` (`%USERPROFILE%\.kurmis` on Windows). Links in a Codex
+  login's folder are removed, never what they point to, and files in the folder that kurmis did
+  not write are left.
+
+Your own Claude Code and Codex sign-ins are not signed out, so a plain `claude` and `codex` keep
+working. When a login cannot be signed out or the daemon cannot be stopped, the command says
+which, keeps the data folder, and exits 1; run it again once that is fixed. Its last line tells
+you to run `npm uninstall -g kurmis`.
 
 ## Troubleshooting
 

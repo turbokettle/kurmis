@@ -210,7 +210,7 @@ export function autostartScript(script: AutostartScript): string {
   const command = autostartCommandLine(script)
   const lines = [
     '// Written by kurmis setup: starts the kurmis daemon at logon without a console window.',
-    '// kurmis setup --undo removes it.',
+    '// kurmis setup --uninstall-and-logout removes it.',
     'var shell = new ActiveXObject("WScript.Shell");',
     `shell.CurrentDirectory = ${jscriptString(script.cwd)};`
   ]
