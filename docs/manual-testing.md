@@ -20,6 +20,10 @@ never holds tokens or request bodies, so it can be shared.
 - **`kurmis setup` changes every Claude Code on the machine.** Run it only on a machine where
   that is fine, or with `HOME` (Windows: `USERPROFILE` too) pointed at a scratch folder that
   holds a copy of `.claude/settings.json`.
+- **Codex with a scratch profile.** On Windows, Codex finds the home folder through Windows, not
+  through `USERPROFILE`, so pointing `HOME` and `USERPROFILE` at a scratch folder still leaves
+  Codex on the real `.codex`. Set `CODEX_HOME` to a scratch folder too when testing with a
+  scratch profile.
 - **Stopping things.** `kurmis daemon stop` stops the daemon. Only stop processes the test
   started.
 
