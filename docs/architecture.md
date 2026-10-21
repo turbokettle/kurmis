@@ -1067,6 +1067,11 @@ needs them.
   fails any test after which that file is not empty: a test whose code reached a real program
   fails even when the refusal let it pass.
 
+**Test processes.** Vitest runs each test file in a process of its own (`pool: 'forks'` in
+`vitest.config.ts`). In a worker thread a change to `process.env.HOME` does not reach
+`os.homedir()`, so the tests would read and write the real home folder; `test/setup.ts` stops
+with an error when `os.homedir()` is not its temporary home.
+
 **Testing the daemon process.** `test/daemon/bundle.ts` bundles kurmis into a temporary folder as
 `scripts/build.mjs` does, with a version the test chooses. `entry: 'real'` is the real CLI;
 `entry: 'fake'` runs `daemon run` around a small fake request handler

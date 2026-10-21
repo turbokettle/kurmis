@@ -1,7 +1,7 @@
 // Every test file runs with HOME and KURMIS_HOME pointing at a fresh temporary folder, so no
 // test can read or write the real ~/.claude, ~/.codex or ~/.kurmis by accident.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach } from 'vitest'
@@ -10,6 +10,13 @@ const home = mkdtempSync(join(tmpdir(), 'kurmis-test-home-'))
 process.env.HOME = home
 process.env.USERPROFILE = home
 process.env.KURMIS_HOME = join(home, '.kurmis')
+// os.homedir() must follow HOME (USERPROFILE on Windows). It does in a process of its own, but
+// not in a worker thread, so a test file run with --pool=threads would reach the real home.
+if (homedir() !== home) {
+  rmSync(home, { recursive: true, force: true })
+  throw new Error(`os.homedir() is ${homedir()}, not the temporary home ${home}, so the tests would reach the real ` +
+    'home folder. Run them in processes of their own (pool: \'forks\' in vitest.config.ts).')
+}
 delete process.env.CODEX_HOME
 delete process.env.CLAUDE_CONFIG_DIR
 delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR
