@@ -3,12 +3,13 @@
 //
 // The CLI reads `ANTHROPIC_CUSTOM_HEADERS` as newline-separated `Name: value` lines and adds
 // each to every request its inference client sends (the original router's `src/tools/claude/PROTOCOL.md`,
-// "Request headers on an inference call"). Kurmis puts two headers there: `x-kurmis-key` with
-// the daemon's secret, and `x-kurmis-login` when the CLI was started on a named login, which
-// pins the session to it. Neither is forwarded upstream. The CLI also sends
+// "Request headers on an inference call"). Kurmis puts up to three headers there:
+// `x-kurmis-key` with the daemon's secret, `x-kurmis-login` when the CLI was started with
+// `--login`, which pins the session to that login, and `x-kurmis-started-on` naming the login
+// whose credentials the CLI was started on. None of them is forwarded upstream. The CLI also sends
 // `X-Claude-Code-Session-Id` by itself, which is what the proxy tells sessions apart by.
 import { timingSafeEqual } from 'node:crypto'
-import { parseAccountId } from './accounts.ts'
+import { CLAUDE_DEFAULT_ACCOUNT_ID, parseAccountId } from './accounts.ts'
 
 /** The header that carries the daemon's secret. A proxy request without the right one is refused. */
 export const KEY_HEADER = 'x-kurmis-key'
@@ -16,11 +17,18 @@ export const KEY_HEADER = 'x-kurmis-key'
 /** The header that pins a request to one Claude login, by id (`claude:<name>`). */
 export const LOGIN_HEADER = 'x-kurmis-login'
 
+/**
+ * The header naming the login whose credentials the CLI was started on (`claude:<name>`). The
+ * proxy may forward the CLI's own `authorization` header only for that login. A request without
+ * it was sent by a CLI started on `claude:default`, such as a plain `claude` in global mode.
+ */
+export const STARTED_ON_HEADER = 'x-kurmis-started-on'
+
 /** The header the CLI names its session in. Its subagents and small-model requests share it. */
 export const SESSION_HEADER = 'x-claude-code-session-id'
 
 /** Headers kurmis adds for the proxy alone. The proxy strips them before forwarding. */
-export const KURMIS_HEADERS: readonly string[] = [KEY_HEADER, LOGIN_HEADER]
+export const KURMIS_HEADERS: readonly string[] = [KEY_HEADER, LOGIN_HEADER, STARTED_ON_HEADER]
 
 /** One `Name: value` line of `ANTHROPIC_CUSTOM_HEADERS`. */
 export interface CustomHeader {
@@ -51,14 +59,17 @@ export function formatCustomHeaders(headers: readonly CustomHeader[]): string {
 }
 
 /**
- * An `ANTHROPIC_CUSTOM_HEADERS` value with kurmis' headers in it: the key, and the login when
- * one is named. Headers the person set themselves are kept, ahead of kurmis' own, and any
- * kurmis header already there (as in a CLI started from inside a routed session) is replaced.
+ * An `ANTHROPIC_CUSTOM_HEADERS` value with kurmis' headers in it: the key, the pinned login when
+ * one is named, and the login the CLI was started on when that is given. Headers the person set
+ * themselves are kept, ahead of kurmis' own, and any kurmis header already there (as in a CLI
+ * started from inside a routed session) is replaced.
  */
-export function withRouteHeaders(existing: string | null | undefined, key: string, login: string | null): string {
+export function withRouteHeaders(existing: string | null | undefined, key: string, login: string | null,
+  startedOn: string | null = null): string {
   const own = parseCustomHeaders(existing).filter((header) => !KURMIS_HEADERS.includes(header.name.toLowerCase()))
   const added: CustomHeader[] = [{ name: KEY_HEADER, value: key }]
   if (login !== null) added.push({ name: LOGIN_HEADER, value: login })
+  if (startedOn !== null) added.push({ name: STARTED_ON_HEADER, value: startedOn })
   return formatCustomHeaders([...own, ...added])
 }
 
@@ -74,6 +85,11 @@ export interface RouteRequest {
    * Claude login reads as `invalid`, which the proxy should refuse rather than route on Auto.
    */
   login: string | null | 'invalid'
+  /**
+   * The Claude login the CLI was started on: the `x-kurmis-started-on` header, or
+   * `claude:default` without one. A header that does not name a Claude login reads as `invalid`.
+   */
+  startedOn: string | 'invalid'
   /** The CLI's session id, or null when the request has none. */
   sessionId: string | null
 }
@@ -81,12 +97,17 @@ export interface RouteRequest {
 export function readRouteRequest(get: RequestHeaderGetter): RouteRequest {
   const key = nonEmpty(get(KEY_HEADER))
   const named = nonEmpty(get(LOGIN_HEADER))
-  const parsed = named === null ? null : parseAccountId(named)
+  const startedOn = nonEmpty(get(STARTED_ON_HEADER))
   return {
     key,
-    login: named === null ? null : parsed?.provider === 'claude' ? named : 'invalid',
+    login: named === null ? null : claudeLoginOrInvalid(named),
+    startedOn: startedOn === null ? CLAUDE_DEFAULT_ACCOUNT_ID : claudeLoginOrInvalid(startedOn),
     sessionId: nonEmpty(get(SESSION_HEADER))
   }
+}
+
+function claudeLoginOrInvalid(value: string): string | 'invalid' {
+  return parseAccountId(value)?.provider === 'claude' ? value : 'invalid'
 }
 
 /** Whether a request's key is the daemon's secret, compared in constant time. */

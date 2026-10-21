@@ -15,17 +15,31 @@ export const ROUTED_CLI_MAX_RETRIES = 15
 /** The variables a routed CLI must not inherit: either would sign requests with an API key. */
 export const UNROUTED_KEY_VARIABLES: readonly string[] = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
 
+/**
+ * The variables that point a CLI at the daemon. `kurmis setup` writes these into the `env` of
+ * `~/.claude/settings.json`, and the wrapper passes them in its `--settings` argument too,
+ * because a variable in `settings.json` beats the process environment (docs/architecture.md).
+ */
+export const ROUTING_VARIABLES: readonly string[] = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS',
+  'ENABLE_TOOL_SEARCH', 'CLAUDE_CODE_MAX_RETRIES']
+
 export interface RoutedEnvInput {
   /** The daemon's port on 127.0.0.1. */
   port: number
   /** The daemon's secret, sent as `x-kurmis-key`. */
   key: string
-  /** The Claude login the CLI is pinned to (`claude:<name>`), or null on Auto. */
+  /** The Claude login the CLI is pinned to with `--login` (`claude:<name>`), or null on Auto. */
   login: string | null
   /**
-   * The folder the CLI is started on, as `CLAUDE_SECURESTORAGE_CONFIG_DIR`, for a login other
-   * than `claude:default`; null for the machine's own login. It is passed to the CLI as it
-   * stands, because the CLI names the login's Keychain item after exactly this string
+   * The login whose credentials the CLI is started on, sent as `x-kurmis-started-on`. For a
+   * pinned CLI it is the pinned login; on Auto it is `autoStartLogin`'s choice. Null leaves the
+   * header out, which the proxy reads as `claude:default`.
+   */
+  startedOn?: string | null
+  /**
+   * The folder the CLI is started on, as `CLAUDE_SECURESTORAGE_CONFIG_DIR`, when it is started on
+   * a login other than `claude:default`; null for the machine's own login. It is passed to the
+   * CLI as it stands, because the CLI names the login's Keychain item after exactly this string
    * (`keychainService` in `keychain-service.ts`).
    */
   secureStorageDir: string | null
@@ -43,33 +57,38 @@ export interface RoutedEnv {
  * What a routed CLI is started with.
  *
  * - `ANTHROPIC_BASE_URL` points it at the daemon.
- * - `ANTHROPIC_CUSTOM_HEADERS` carries the key, and the login when one was named.
+ * - `ANTHROPIC_CUSTOM_HEADERS` carries the key, the login when one was named, and the login
+ *   the CLI was started on.
  * - `ENABLE_TOOL_SEARCH=true`: the CLI turns tool search off unless the base URL's host is
  *   exactly `api.anthropic.com`, which a loopback proxy never is, so every MCP tool schema
  *   would be sent on every turn. The CLI's own log line for this case says to set the variable
  *   if the proxy forwards `tool_reference` blocks, and the kurmis proxy forwards the body as it
  *   came apart from the account uuid.
  * - `CLAUDE_CODE_MAX_RETRIES`, see `ROUTED_CLI_MAX_RETRIES`.
- * - `CLAUDE_SECURESTORAGE_CONFIG_DIR` names the login's folder when that is not the machine's
- *   own login. On the machine's own login it is removed, so a CLI started from inside a session
+ * - `CLAUDE_SECURESTORAGE_CONFIG_DIR` names the folder of the login the CLI is started on when
+ *   that is not the machine's own login. On the machine's own login it is removed, so a CLI started from inside a session
  *   on another login does not keep that login's folder.
  * - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed: a key would sign the requests
  *   itself and no subscription would be billed.
  */
 export function routedClaudeEnv(input: RoutedEnvInput): RoutedEnv {
+  const startedOn = input.startedOn ?? null
+  if (input.login !== null && startedOn !== null && startedOn !== input.login) {
+    throw new Error(`routedClaudeEnv: a CLI pinned to ${input.login} is started on that login, not on ${startedOn}`)
+  }
   const set: Record<string, string> = {
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(input.port)}`,
-    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login),
+    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login, startedOn),
     ENABLE_TOOL_SEARCH: 'true',
     CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES)
   }
   const unset = [...UNROUTED_KEY_VARIABLES]
-  const ownLogin = input.login === null || input.login === CLAUDE_DEFAULT_ACCOUNT_ID
-  if (ownLogin) {
+  const credentialsOf = startedOn ?? input.login ?? CLAUDE_DEFAULT_ACCOUNT_ID
+  if (credentialsOf === CLAUDE_DEFAULT_ACCOUNT_ID) {
     unset.push('CLAUDE_SECURESTORAGE_CONFIG_DIR')
   } else {
     if (input.secureStorageDir === null || input.secureStorageDir.length === 0) {
-      throw new Error(`routedClaudeEnv: login ${String(input.login)} needs its folder`)
+      throw new Error(`routedClaudeEnv: login ${credentialsOf} needs its folder`)
     }
     set['CLAUDE_SECURESTORAGE_CONFIG_DIR'] = input.secureStorageDir
   }

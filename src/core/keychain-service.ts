@@ -19,7 +19,10 @@
 // variable unset.
 //
 // When `CLAUDE_SECURESTORAGE_CONFIG_DIR` is unset but `CLAUDE_CONFIG_DIR` is set, the CLI hashes
-// its config folder instead. Kurmis never sets `CLAUDE_CONFIG_DIR`, so that case is left out.
+// its config folder instead. Kurmis runs `claude auth login` and the usage probes of an extra
+// login that way (`claudeLoginEnv` in `src/data/login-env.ts`), with `CLAUDE_CONFIG_DIR` set to
+// the same string a routed CLI gets as `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so both name the same
+// item.
 import { createHash } from 'node:crypto'
 
 /** The plain item name, which the machine's own Claude login uses. */

@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   formatCustomHeaders, KEY_HEADER, LOGIN_HEADER, parseCustomHeaders, readRouteRequest, routeKeyMatches,
-  SESSION_HEADER, withRouteHeaders
+  SESSION_HEADER, STARTED_ON_HEADER, withRouteHeaders
 } from '../../src/core/route-headers.ts'
 
 describe('ANTHROPIC_CUSTOM_HEADERS', () => {
@@ -25,6 +25,8 @@ describe('ANTHROPIC_CUSTOM_HEADERS', () => {
     const inherited = 'X-Team: blue\nX-Kurmis-Key: old\nx-kurmis-login: claude:old'
     expect(withRouteHeaders(inherited, 'new', null)).toBe('X-Team: blue\nx-kurmis-key: new')
     expect(withRouteHeaders(null, 'new', 'claude:work')).toBe('x-kurmis-key: new\nx-kurmis-login: claude:work')
+    expect(withRouteHeaders('x-kurmis-started-on: claude:old', 'new', null, 'claude:work'))
+      .toBe('x-kurmis-key: new\nx-kurmis-started-on: claude:work')
   })
 })
 
@@ -33,9 +35,15 @@ describe('a request to the proxy', () => {
 
   test('carries the key, the session and, when pinned, a Claude login', () => {
     expect(readRouteRequest(getter({ [KEY_HEADER]: 'secret', [LOGIN_HEADER]: 'claude:work', [SESSION_HEADER]: 'abc-123' })))
-      .toEqual({ key: 'secret', login: 'claude:work', sessionId: 'abc-123' })
-    expect(readRouteRequest(getter({}))).toEqual({ key: null, login: null, sessionId: null })
-    expect(readRouteRequest(getter({ [KEY_HEADER]: '  ', [LOGIN_HEADER]: '' }))).toEqual({ key: null, login: null, sessionId: null })
+      .toEqual({ key: 'secret', login: 'claude:work', startedOn: 'claude:default', sessionId: 'abc-123' })
+    expect(readRouteRequest(getter({}))).toEqual({ key: null, login: null, startedOn: 'claude:default', sessionId: null })
+    expect(readRouteRequest(getter({ [KEY_HEADER]: '  ', [LOGIN_HEADER]: '' })))
+      .toEqual({ key: null, login: null, startedOn: 'claude:default', sessionId: null })
+  })
+
+  test('names the login the CLI was started on, claude:default without the header', () => {
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'claude:work' })).startedOn).toBe('claude:work')
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'codex:work' })).startedOn).toBe('invalid')
   })
 
   test.each(['codex:work', 'work', 'claude:', 'claude:Work', 'claude:con'])('a login header of %j is invalid', (value) => {

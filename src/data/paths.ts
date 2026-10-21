@@ -50,6 +50,28 @@ export function previousLogPath(): string {
   return join(kurmisHome(), 'daemon.log.1')
 }
 
+/** The lock file `config.json`'s read-modify-write takes, so two CLIs do not lose each other's change. */
+export function configLockPath(): string {
+  return join(kurmisHome(), 'config.json.lock')
+}
+
+/**
+ * The config folder (`CLAUDE_CONFIG_DIR`) of the usage probe of `claude:default`. A probe on the
+ * user's own `~/.claude` would walk its transcripts and write into `~/.claude.json`, so it gets
+ * this folder instead, and its credentials are pointed back at the default place with an empty
+ * `CLAUDE_SECURESTORAGE_CONFIG_DIR` (`claudeProbeEnv` in `login-env.ts`). The CLI caches the
+ * login's profile in `.claude.json` here, which is where the daemon reads the default login's
+ * account uuid.
+ */
+export function claudeDefaultProbeFolder(): string {
+  return join(kurmisHome(), 'probe', 'claude-default')
+}
+
+/** An empty folder the usage probes run in, so they read no project's settings. */
+export function probeWorkFolder(): string {
+  return join(kurmisHome(), 'probe', 'cwd')
+}
+
 /** The folder that holds the extra logins of one provider: `claude/` or `codex/`. */
 export function providerFolder(provider: LoginProvider): string {
   return join(kurmisHome(), provider)

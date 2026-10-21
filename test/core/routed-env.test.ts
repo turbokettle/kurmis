@@ -40,6 +40,19 @@ describe('the routed environment', () => {
     expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('X-Team: blue\nx-kurmis-key: k')
   })
 
+  test('on Auto, started on another login: its folder and the started-on header, no pin', () => {
+    const env = routedClaudeEnv({ port: 1, key: 'k', login: null, startedOn: 'claude:work', secureStorageDir: FOLDER })
+    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-started-on: claude:work')
+    expect(env.set['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe(FOLDER)
+  })
+
+  test('pinned: the started-on login is the pinned one', () => {
+    const env = routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', startedOn: 'claude:work', secureStorageDir: FOLDER })
+    expect(env.set['ANTHROPIC_CUSTOM_HEADERS']).toBe('x-kurmis-key: k\nx-kurmis-login: claude:work\nx-kurmis-started-on: claude:work')
+    expect(() => routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', startedOn: 'claude:other', secureStorageDir: FOLDER }))
+      .toThrow()
+  })
+
   test('a named login with no folder is a mistake of the caller', () => {
     expect(() => routedClaudeEnv({ port: 1, key: 'k', login: 'claude:work', secureStorageDir: null })).toThrow()
   })
