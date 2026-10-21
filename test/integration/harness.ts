@@ -1,0 +1,341 @@
+// The harness of the integration tests: the real bundled kurmis, run as `node <bundle> …` child
+// processes, against the fakes. Each test makes a `World`: a temporary folder with its own HOME
+// (= USERPROFILE), KURMIS_HOME, fake Keychain, fake launchctl and fake registry folders, a free
+// port in `config.json`, and its own fake Anthropic API.
+//
+// What a child process gets is built here from nothing, not from `process.env`: only PATH (a
+// folder with `node` in it, then the system folders), TMPDIR, TZ, the folders above, and the
+// stand-in programs `test/setup.ts` names (`KURMIS_SECURITY_PROGRAM`, `KURMIS_LAUNCHCTL_PROGRAM`,
+// `KURMIS_REG_PROGRAM`). `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN` name the fake claude and
+// codex, so neither kurmis nor the daemon it starts ever looks for the real ones on PATH. No
+// `SSH_*`, `ANTHROPIC_*`, `CLAUDE_*` or `CODEX_HOME` variable reaches a child unless a test
+// passes one.
+//
+// Every daemon a world's commands start is stopped when the test ends (`kurmis daemon stop`),
+// and any pid that a `daemon.json` of the world named and that still runs this world's bundle is
+// killed after that.
+import { execFileSync, spawn } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, dirname, join } from 'node:path'
+import { afterEach } from 'vitest'
+import { buildTestBundle } from '../daemon/bundle.ts'
+import { freePort, waitUntil } from '../daemon/helpers.ts'
+import {
+  FAKE_CLAUDE_SCRIPT,
+  FAKE_CODEX_SCRIPT,
+  fakeToken,
+  readClaudeCredentials,
+  readCodexRecord,
+  readFakeClaudeRecord,
+  startFakeAnthropic,
+  writeClaudeCredentials,
+  type ClaudeCredentials,
+  type FakeAnthropic,
+  type FakeClaudeRecord,
+  type FakeCodexRecord
+} from '../fakes/index.ts'
+
+export { waitUntil }
+
+/** What one `kurmis` run ended with. */
+export interface KurmisResult {
+  code: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
+}
+
+export interface RunOptions {
+  /** Variables set over the world's environment; `undefined` removes one. */
+  env?: Record<string, string | undefined>
+  /** Written to stdin, which is then closed. Default: stdin is closed at once. */
+  input?: string
+  /** The folder kurmis starts in. Default: the world's `work` folder. */
+  cwd?: string
+  /** Default 60 s: generous, because the machine may be loaded. */
+  timeoutMs?: number
+  /** The bundle to run. Default: the world's. */
+  bundle?: string
+}
+
+export interface DaemonInfo {
+  pid: number
+  port: number
+  version: string
+  startedAt: number
+}
+
+export interface WorldOptions {
+  /** The version the bundle reports. Default: the version in package.json. */
+  version?: string
+  /** Written into `config.json` together with the port. */
+  config?: Record<string, unknown>
+}
+
+export interface World {
+  /** The world's folder; everything below lives in it. */
+  root: string
+  home: string
+  /** KURMIS_HOME. */
+  data: string
+  /** The folder kurmis starts in by default. */
+  work: string
+  port: number
+  api: FakeAnthropic
+  bundle: string
+  /** The environment every child gets, before `RunOptions.env`. */
+  env: Record<string, string>
+  /** `FAKE_CLAUDE_RECORD` and `FAKE_CODEX_RECORD`. */
+  claudeRecordFile: string
+  codexRecordFile: string
+  fakeKeychainDir: string
+  fakeLaunchctlDir: string
+  fakeRegDir: string
+  /** Runs `node <bundle> …args` and waits for it. */
+  kurmis(args: string[], options?: RunOptions): Promise<KurmisResult>
+  /** Writes `~/.claude/.credentials.json` for `claude:default` and answers what it wrote. */
+  signInDefaultClaude(options?: Partial<ClaudeCredentials>): ClaudeCredentials
+  /** Adds an extra Claude login through `kurmis login claude --name <name>` and answers its access token. */
+  addClaudeLogin(name: string, options?: { email?: string; label?: string }): Promise<string>
+  /** The folder of a login in the data folder. */
+  loginFolder(id: string): string
+  readConfig(): { port: number; logins: Array<Record<string, unknown>> } & Record<string, unknown>
+  /** `daemon.json`, or null when there is none. */
+  daemonInfo(): DaemonInfo | null
+  claudeRecord(): FakeClaudeRecord[]
+  codexRecord(): FakeCodexRecord[]
+  /** `kurmis status --json`, parsed; fails the test when it does not exit 0. */
+  status(): Promise<StatusJson>
+  /** Stops every daemon of this world and removes its folder. Called after each test. */
+  dispose(): Promise<void>
+}
+
+/** The parts of `kurmis status --json` the tests read. */
+export interface StatusJson {
+  format: number
+  daemon: { version: string; pid: number; port: number; startedAt: string }
+  logins: Array<{
+    id: string
+    provider: string
+    label: string
+    email: string | null
+    signedIn: boolean | null
+    probing: boolean
+    routing: boolean
+    fiveHourLimit: number
+    weeklyLimit: number
+    useFirst: boolean
+    usage: null | {
+      fetchedAt: string
+      source: string
+      plan: string | null
+      error: string | null
+      windows: Array<{ key: string; label: string; durationMinutes: number | null; utilization: number; resetsAt: string | null; plan: boolean; limitPercent: number | null }>
+    }
+    blocked: null | { kind: string; text: string; until: string | null }
+    sessions: number | null
+  }>
+  codexStart: null | { login: string; note: string | null }
+}
+
+/** The version in package.json, which `pnpm bundle` builds into the real bundle. */
+export const PACKAGE_VERSION = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version
+
+const worlds = new Set<World>()
+
+afterEach(async () => {
+  const open = [...worlds]
+  worlds.clear()
+  await Promise.all(open.map((world) => world.dispose()))
+})
+
+/** The stand-in program `test/setup.ts` put in `name`; fails when it is not set. */
+function standIn(name: string): string {
+  const value = process.env[name]
+  if (value === undefined || value === '' || !value.includes(`${join('test', '')}`)) {
+    throw new Error(`${name} is not a test stand-in (${String(value)}); test/setup.ts should have set it`)
+  }
+  return value
+}
+
+/** PATH for the children: a folder holding only `node`, then the system folders. */
+function childPath(root: string): string {
+  const bin = join(root, 'bin')
+  mkdirSync(bin, { recursive: true })
+  if (process.platform === 'win32') return [dirname(process.execPath), process.env.SystemRoot ? join(process.env.SystemRoot, 'System32') : ''].join(delimiter)
+  symlinkSync(process.execPath, join(bin, 'node'))
+  return [bin, '/usr/bin', '/bin'].join(delimiter)
+}
+
+/** Makes a world for the current test. It is disposed of after the test, whatever its outcome. */
+export async function createWorld(options: WorldOptions = {}): Promise<World> {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'kurmis-int-')))
+  const home = join(root, 'home')
+  const data = join(home, '.kurmis')
+  const work = join(root, 'work')
+  const fakeKeychainDir = join(root, 'fake-keychain')
+  const fakeLaunchctlDir = join(root, 'fake-launchctl')
+  const fakeRegDir = join(root, 'fake-reg')
+  for (const dir of [home, data, work, fakeKeychainDir, fakeLaunchctlDir, fakeRegDir]) mkdirSync(dir, { recursive: true })
+  const port = await freePort()
+  writeFileSync(join(data, 'config.json'), JSON.stringify({ version: 1, port, ...options.config }))
+  const [api, bundle] = await Promise.all([
+    startFakeAnthropic(),
+    buildTestBundle({ version: options.version ?? PACKAGE_VERSION, entry: 'real' })
+  ])
+  const claudeRecordFile = join(root, 'fake-claude.jsonl')
+  const codexRecordFile = join(root, 'fake-codex.jsonl')
+  const env: Record<string, string> = {
+    PATH: childPath(root),
+    HOME: home,
+    USERPROFILE: home,
+    KURMIS_HOME: data,
+    TMPDIR: process.env.TMPDIR ?? tmpdir(),
+    // The fake claude prints a reset in the local zone; a fixed one makes it predictable.
+    TZ: 'UTC',
+    KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT,
+    KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT,
+    KURMIS_UPSTREAM_URL: api.url,
+    KURMIS_SECURITY_PROGRAM: standIn('KURMIS_SECURITY_PROGRAM'),
+    FAKE_SECURITY_DIR: fakeKeychainDir,
+    KURMIS_LAUNCHCTL_PROGRAM: standIn('KURMIS_LAUNCHCTL_PROGRAM'),
+    FAKE_LAUNCHCTL_DIR: fakeLaunchctlDir,
+    KURMIS_REG_PROGRAM: standIn('KURMIS_REG_PROGRAM'),
+    FAKE_REG_DIR: fakeRegDir,
+    FAKE_CLAUDE_RECORD: claudeRecordFile,
+    FAKE_CODEX_RECORD: codexRecordFile
+  }
+  if (process.platform === 'win32' && process.env.SystemRoot !== undefined) env.SystemRoot = process.env.SystemRoot
+
+  /** Every daemon pid a `daemon.json` of this world has named. */
+  const daemonPids = new Set<number>()
+  const noteDaemon = (): void => {
+    const info = readDaemonInfo()
+    if (info !== null) daemonPids.add(info.pid)
+  }
+  const readDaemonInfo = (): DaemonInfo | null => {
+    try {
+      return JSON.parse(readFileSync(join(data, 'daemon.json'), 'utf8')) as DaemonInfo
+    } catch {
+      return null
+    }
+  }
+
+  const run = (args: string[], runOptions: RunOptions = {}): Promise<KurmisResult> => {
+    const childEnv: Record<string, string> = { ...env }
+    for (const [name, value] of Object.entries(runOptions.env ?? {})) {
+      if (value === undefined) delete childEnv[name]
+      else childEnv[name] = value
+    }
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [runOptions.bundle ?? bundle, ...args], {
+        env: childEnv,
+        cwd: runOptions.cwd ?? work,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      let stdout = ''
+      let stderr = ''
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk })
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        reject(new Error(`kurmis ${args.join(' ')} did not finish within ${String(runOptions.timeoutMs ?? 60_000)} ms\n` +
+          `stdout: ${stdout}\nstderr: ${stderr}`))
+      }, runOptions.timeoutMs ?? 60_000)
+      child.on('error', (error) => { clearTimeout(timer); reject(error) })
+      child.on('close', (code, signal) => {
+        clearTimeout(timer)
+        noteDaemon()
+        resolve({ code, signal, stdout, stderr })
+      })
+      child.stdin.end(runOptions.input ?? '')
+    })
+  }
+
+  const loginFolderOf = (id: string): string => {
+    const [provider, name] = id.split(':') as [string, string]
+    return join(data, provider, name)
+  }
+
+  let disposed = false
+  const world: World = {
+    root,
+    home,
+    data,
+    work,
+    port,
+    api,
+    bundle,
+    env,
+    claudeRecordFile,
+    codexRecordFile,
+    fakeKeychainDir,
+    fakeLaunchctlDir,
+    fakeRegDir,
+    kurmis: run,
+    signInDefaultClaude(credentials = {}) {
+      return writeClaudeCredentials(join(home, '.claude'), { accessToken: fakeToken('default'), ...credentials })
+    },
+    async addClaudeLogin(name, loginOptions = {}) {
+      const args = ['login', 'claude', '--name', name, ...(loginOptions.label === undefined ? [] : ['--label', loginOptions.label])]
+      const result = await run(args, { env: { FAKE_CLAUDE_EMAIL: loginOptions.email ?? `${name}@example.com` } })
+      if (result.code !== 0) throw new Error(`kurmis ${args.join(' ')} failed: ${JSON.stringify(result)}`)
+      const token = readClaudeCredentials(loginFolderOf(`claude:${name}`))?.accessToken
+      if (token === undefined) throw new Error(`claude:${name} has no token after kurmis login`)
+      return token
+    },
+    loginFolder: loginFolderOf,
+    readConfig: () => JSON.parse(readFileSync(join(data, 'config.json'), 'utf8')) as ReturnType<World['readConfig']>,
+    daemonInfo: readDaemonInfo,
+    claudeRecord: () => readFakeClaudeRecord(claudeRecordFile),
+    codexRecord: () => readCodexRecord(codexRecordFile),
+    async status() {
+      const result = await run(['status', '--json'])
+      if (result.code !== 0) throw new Error(`kurmis status --json failed: ${JSON.stringify(result)}`)
+      return JSON.parse(result.stdout) as StatusJson
+    },
+    async dispose() {
+      if (disposed) return
+      disposed = true
+      worlds.delete(world)
+      noteDaemon()
+      if (daemonPids.size > 0) {
+        await run(['daemon', 'stop'], { timeoutMs: 45_000 }).catch(() => undefined)
+        noteDaemon()
+      }
+      for (const pid of daemonPids) {
+        if (runsBundle(pid, bundle)) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch { /* Gone already. */ }
+          await waitUntil(() => !processAlive(pid), 5_000, `daemon ${String(pid)} to exit`).catch(() => undefined)
+        }
+      }
+      await api.close()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+  worlds.add(world)
+  return world
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/** Whether `pid` is alive and its command line names `bundle`, so a reused pid is never killed. */
+function runsBundle(pid: number, bundle: string): boolean {
+  if (!processAlive(pid)) return false
+  if (process.platform === 'win32') return true
+  try {
+    return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).includes(bundle)
+  } catch {
+    return false
+  }
+}
