@@ -11,6 +11,7 @@
 // a script works the same on every platform.
 import { spawn } from 'node:child_process'
 import { clearTimeout, setTimeout } from 'node:timers'
+import { refusedByGuard, withGuard } from './system-program-guard.ts'
 
 /** What `runProgram` keeps of a run's output, per stream, unless told otherwise. */
 export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
@@ -67,6 +68,10 @@ export function runProgram(program: string, args: readonly string[], options: Ru
   if ('refused' in invocation) {
     return Promise.resolve({ stdout: '', stderr: '', code: null, timedOut: false, outputTooLarge: false, error: invocation.refused })
   }
+  const guarded = refusedByGuard(invocation.command, options.env)
+  if (guarded !== null) {
+    return Promise.resolve({ stdout: '', stderr: '', code: null, timedOut: false, outputTooLarge: false, error: guarded })
+  }
   const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
   return new Promise((resolve) => {
     const stdout: Buffer[] = []
@@ -81,7 +86,7 @@ export function runProgram(program: string, args: readonly string[], options: Ru
       // Standard input is closed, so a program that reads it gets end-of-file at once rather
       // than waiting on a terminal until the deadline.
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: options.env ?? process.env,
+      env: withGuard(options.env ?? process.env),
       cwd: options.cwd,
       shell: false,
       windowsHide: true

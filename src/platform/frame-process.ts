@@ -20,6 +20,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { win32 } from 'node:path'
 import { clearTimeout, setTimeout } from 'node:timers'
 import { invocationFor } from './run.ts'
+import { refusedByGuard, withGuard } from './system-program-guard.ts'
 
 /** The longest single line kept while it is incomplete, unless told otherwise. */
 export const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024
@@ -149,13 +150,14 @@ export function startFrameProcess(program: string, args: readonly string[], opti
   const platform = options.platform ?? process.platform
   const invocation = invocationFor(program, args)
   if ('refused' in invocation) return endedBeforeStart('refused', null)
+  if (refusedByGuard(invocation.command, options.env) !== null) return endedBeforeStart('refused', null)
   if (options.signal?.aborted === true) return endedBeforeStart('aborted', null)
 
   let child: ChildProcess
   try {
     child = spawn(invocation.command, invocation.args, {
       stdio: ['pipe', 'pipe', 'ignore'],
-      env: options.env,
+      env: withGuard(options.env),
       cwd: options.cwd,
       shell: false,
       windowsHide: true,
@@ -315,8 +317,12 @@ function killTree(child: ChildProcess, platform: NodeJS.Platform, env: NodeJS.Pr
   const fallback = (): void => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
   }
+  if (refusedByGuard(command.command, env) !== null) {
+    fallback()
+    return
+  }
   try {
-    const taskkill = spawn(command.command, command.args, { stdio: 'ignore', shell: false, windowsHide: true, env })
+    const taskkill = spawn(command.command, command.args, { stdio: 'ignore', shell: false, windowsHide: true, env: withGuard(env) })
     taskkill.on('error', fallback)
     taskkill.on('exit', fallback)
   } catch {

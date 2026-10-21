@@ -21,6 +21,7 @@ import { spawn } from 'node:child_process'
 import { realpathSync, statSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
 import { runProgram, type RunResult } from './run.ts'
+import { refusedByGuard, withGuard } from './system-program-guard.ts'
 
 /** The test hook naming the bundle a daemon is started from. */
 export const ENTRY_VARIABLE = 'KURMIS_ENTRY'
@@ -124,10 +125,15 @@ export interface DetachedChild {
  */
 export function spawnDetached(start: DetachedStart): Promise<DetachedChild> {
   return new Promise((resolve, reject) => {
+    const guarded = refusedByGuard(start.command, start.env)
+    if (guarded !== null) {
+      reject(new Error(guarded))
+      return
+    }
     const child = spawn(start.command, [...start.args], {
       detached: true,
       stdio: 'ignore',
-      env: start.env,
+      env: withGuard(start.env),
       cwd: start.cwd,
       shell: false,
       windowsHide: true

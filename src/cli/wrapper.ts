@@ -17,6 +17,7 @@
 //   TerminateProcess, so it could not save anything. Node never reports SIGTERM on Windows.
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { constants } from 'node:os'
+import { refusedByGuard, withGuard } from '../platform/system-program-guard.ts'
 import type { Output } from './command.ts'
 
 /** The program to start and how. `command` and `args` come from `findProgram` plus the caller's arguments. */
@@ -112,10 +113,15 @@ export async function runInteractive(spec: ChildSpec, options: RunInteractiveOpt
       proc.on(signal, listener)
     }
 
+    const guarded = refusedByGuard(spec.command, spec.env)
+    if (guarded !== null) {
+      finish(notStarted(spec.command, Object.assign(new Error(guarded), { code: 'EACCES' })))
+      return
+    }
     try {
       child = spawn(spec.command, spec.args, {
         stdio: 'inherit',
-        env: spec.env,
+        env: withGuard(spec.env),
         cwd: spec.cwd,
         shell: false,
         // Interactive programs need their console window on Windows, so it is not hidden.

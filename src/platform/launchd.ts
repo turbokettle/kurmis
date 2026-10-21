@@ -33,6 +33,7 @@ import { join, resolve } from 'node:path'
 import { launchdJobFolder } from '../data/paths.ts'
 import { writeFileAtomic } from '../data/json-file.ts'
 import { PRIVATE_FILE_MODE } from './files.ts'
+import { GUARD_VARIABLE } from './system-program-guard.ts'
 import { runProgram, type RunResult } from './run.ts'
 
 export const LAUNCHCTL_PROGRAM = '/bin/launchctl'
@@ -140,7 +141,8 @@ export const DAEMON_JOB_VARIABLES: readonly string[] = [
   'KURMIS_SECURITY_PROGRAM',
   'KURMIS_ENTRY',
   'KURMIS_LAUNCHCTL_PROGRAM',
-  'KURMIS_REG_PROGRAM'
+  'KURMIS_REG_PROGRAM',
+  GUARD_VARIABLE
 ]
 
 /** The PATH a job gets when the caller has none: Homebrew's folders and the system's. */

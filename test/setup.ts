@@ -47,6 +47,11 @@ process.env.FAKE_REG_DIR = join(home, 'fake-reg')
 mkdirSync(process.env.FAKE_REG_DIR, { recursive: true })
 delete process.env.FAKE_REG_FAIL
 
+// No test may start a real launchctl, security, PowerShell, reg, taskkill, wscript, claude or
+// codex, even through an environment it built itself: kurmis refuses them while this is set
+// (src/platform/system-program-guard.ts), and passes it on to every program it starts.
+process.env.KURMIS_REFUSE_SYSTEM_PROGRAMS = '1'
+
 afterAll(() => {
   rmSync(home, { recursive: true, force: true })
 })

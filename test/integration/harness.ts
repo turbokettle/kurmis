@@ -205,7 +205,8 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     KURMIS_REG_PROGRAM: standIn('KURMIS_REG_PROGRAM'),
     FAKE_REG_DIR: fakeRegDir,
     FAKE_CLAUDE_RECORD: claudeRecordFile,
-    FAKE_CODEX_RECORD: codexRecordFile
+    FAKE_CODEX_RECORD: codexRecordFile,
+    KURMIS_REFUSE_SYSTEM_PROGRAMS: '1'
   }
   if (process.platform === 'win32' && process.env.SystemRoot !== undefined) env.SystemRoot = process.env.SystemRoot
 
