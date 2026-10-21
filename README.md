@@ -289,9 +289,9 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   then starts the daemon directly from the command you ran (an ssh session, or another session
   where the login Keychain could not be read), and such a daemon cannot read the Keychain either,
   so logins whose token is in the Keychain are not routed until the daemon is started from a
-  login at the screen. Give the program
-  that runs the job access to the volume (System Settings, Privacy & Security, Files and Folders
-  or Full Disk Access), or keep Node, kurmis and its data folder on the internal disk.
+  login at the screen. Give the program that runs the job access to the volume (System
+  Settings, Privacy & Security, Files and Folders or Full Disk Access), or keep Node, kurmis and
+  its data folder on the internal disk.
 - **Windows: PowerShell says running `kurmis.ps1` is disabled on this system.** PowerShell's
   default execution policy blocks the `kurmis.ps1` script npm installs next to `kurmis.cmd`.
   Run `kurmis.cmd` instead (it takes the same arguments), or allow local scripts for your user
