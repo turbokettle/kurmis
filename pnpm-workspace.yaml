@@ -1,0 +1,4 @@
+# esbuild's install script only fetches its binary, which pnpm already installs as an
+# optional dependency for the platform.
+allowBuilds:
+  esbuild: false

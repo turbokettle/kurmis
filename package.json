@@ -1,0 +1,33 @@
+{
+  "name": "kurmis",
+  "version": "0.1.0",
+  "description": "Use several Claude Code and Codex subscription logins on one machine",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "kurmis": "dist/kurmis.cjs"
+  },
+  "files": [
+    "dist/kurmis.cjs"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run",
+    "check": "tsc --noEmit && eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
+    "toml-eslint-parser": "0.10.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.0",
+    "vitest": "^4.1.12"
+  }
+}
