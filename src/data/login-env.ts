@@ -31,6 +31,12 @@ const NOT_INHERITED: EnvPatch = {
 }
 
 /**
+ * The variable that makes Claude Code on Windows keep its record in Credential Manager,
+ * whatever its feature flag says.
+ */
+export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CREDMAN'
+
+/**
  * The environment of `claude auth login`, `auth status` and `auth logout` on a login. An extra
  * login runs with its folder as the whole config folder (`CLAUDE_CONFIG_DIR`), so the CLI writes
  * the login's profile (`oauthAccount`) into that folder's `.claude.json`, and on macOS names the
@@ -38,12 +44,21 @@ const NOT_INHERITED: EnvPatch = {
  * `CLAUDE_SECURESTORAGE_CONFIG_DIR=<folder>` looks it up. `claude:default` runs with both
  * variables removed, so the CLI acts on `~/.claude` and `~/.claude.json` as usual. Naming
  * `~/.claude` instead would make the CLI look for `.claude.json` inside it.
+ *
+ * `forceCredentialManager` (Windows) adds `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`. The CLI's
+ * feature flag for Credential Manager is read from the config folder it runs with, and with it
+ * off the CLI uses only `.credentials.json`: `auth logout` deletes the file and leaves a record
+ * in Credential Manager, and `auth login` writes the file and leaves the old record, which the
+ * CLI and the daemon read first. With the variable the CLI uses Credential Manager with the file
+ * as fallback: `auth logout` deletes both, and `auth login` writes the record and deletes the
+ * file when there was no record before (Claude Code 2.1.306, read from its bundled source).
  */
-export function claudeLoginEnv(id: string): EnvPatch {
+export function claudeLoginEnv(id: string, forceCredentialManager = false): EnvPatch {
+  const force: EnvPatch = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: '1' } : {}
   if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return { CLAUDE_CONFIG_DIR: undefined, CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED }
+    return { CLAUDE_CONFIG_DIR: undefined, CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
   }
-  return { CLAUDE_CONFIG_DIR: loginFolder(id), CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED }
+  return { CLAUDE_CONFIG_DIR: loginFolder(id), CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
 }
 
 /**

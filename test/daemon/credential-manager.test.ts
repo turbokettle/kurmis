@@ -16,7 +16,8 @@ const credentialName = (secureStorageDir: string | null): string => `${keychainS
 
 /**
  * A Credential Manager in memory; `fail` makes the next reads throw as PowerShell under
- * Constrained Language Mode would, and `hold` makes them wait until `release` is called.
+ * Constrained Language Mode would, and `hold` makes them wait until `release` is called. A read
+ * answers what `items` held when it started.
  */
 function credentials(items: Record<string, string>): {
   read: CredentialRead; calls: number; fail: boolean; filters: string[][]; hold: boolean; release: () => void
@@ -31,12 +32,15 @@ function credentials(items: Record<string, string>): {
     read: async (filters: readonly string[]): Promise<FilterAnswer[]> => {
       state.calls++
       state.filters.push([...filters])
-      if (state.hold) await new Promise<void>((resolve) => waiting.push(resolve))
-      if (state.fail) throw new Error('PowerShell exited with code 1')
-      return filters.map((filter): FilterAnswer => {
+      // What the store holds when the read starts, as PowerShell would have listed it.
+      const answers = filters.map((filter): FilterAnswer => {
         const prefix = filter.replace(/\*$/, '')
         return { kind: 'items', items: new Map(Object.entries(items).filter(([name]) => name.startsWith(prefix)).map(([name, blob]) => [name, Buffer.from(blob)])) }
       })
+      const fail = state.fail
+      if (state.hold) await new Promise<void>((resolve) => waiting.push(resolve))
+      if (fail) throw new Error('PowerShell exited with code 1')
+      return answers
     }
   }
   return state
@@ -88,7 +92,7 @@ describe('CredentialManagerReader', () => {
     expect(reader.holds('claude:default')).toBe(true)
   })
 
-  it('does not read a login that has its file and no record here again until it is invalidated', async () => {
+  it('does not read a login that has its file and no record here again for 15 minutes, marked stale or not, unless it is invalidated', async () => {
     const store = credentials({})
     const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => true, read: store.read, now: () => now })
     await reader.prime(['claude:default'])
@@ -101,6 +105,109 @@ describe('CredentialManagerReader', () => {
     reader.invalidate('claude:default')
     await reader.prime(['claude:default'])
     await expect.poll(() => store.calls).toBe(2)
+  })
+
+  it('reads a login that has its file again after a failed read, with a wait that grows', async () => {
+    const items: Record<string, string> = { [credentialName(null)]: record('sk-ant-oat01-current') }
+    const store = credentials(items)
+    store.fail = true
+    const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => true, read: store.read, now: () => now })
+    const settled = async (calls: number): Promise<void> => {
+      await expect.poll(() => store.calls).toBe(calls)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    await reader.prime(['claude:default'])
+    await settled(1)
+    now += 61_000
+    await reader.prime(['claude:default'])
+    await settled(2)
+    // Two failures in a row: the next read is two minutes after the last one.
+    now += 61_000
+    await reader.prime(['claude:default'])
+    expect(store.calls).toBe(2)
+    store.fail = false
+    now += 60_000
+    await reader.prime(['claude:default'])
+    await settled(3)
+    expect(reader.read('claude:default')?.accessToken).toBe('sk-ant-oat01-current')
+    expect(reader.holds('claude:default')).toBe(true)
+  })
+
+  it('keeps the token and the found record through a failed read', async () => {
+    const store = credentials({ [credentialName(null)]: record('sk-ant-oat01-current') })
+    const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => false, read: store.read, now: () => now })
+    await reader.prime(['claude:default'])
+    store.fail = true
+    reader.invalidate('claude:default')
+    await reader.prime(['claude:default'])
+    expect(store.calls).toBe(2)
+    expect(reader.read('claude:default')?.accessToken).toBe('sk-ant-oat01-current')
+    expect(reader.holds('claude:default')).toBe(true)
+  })
+
+  it('finds a record that appears while the file exists within 15 minutes', async () => {
+    const items: Record<string, string> = {}
+    const store = credentials(items)
+    const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => true, read: store.read, now: () => now })
+    await reader.prime(['claude:default'])
+    await expect.poll(() => store.calls).toBe(1)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    items[credentialName(null)] = record('sk-ant-oat01-moved')
+    now += 14 * 60_000
+    await reader.prime(['claude:default'])
+    expect(store.calls).toBe(1)
+    now += 60_000
+    await reader.prime(['claude:default'])
+    await expect.poll(() => reader.read('claude:default')?.accessToken).toBe('sk-ant-oat01-moved')
+    expect(store.calls).toBe(2)
+  })
+
+  it('still holds a found record after invalidate, and waits for its new read even when the file exists', async () => {
+    const items: Record<string, string> = { [credentialName(null)]: record('sk-ant-oat01-first') }
+    const store = credentials(items)
+    const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => true, read: store.read, now: () => now })
+    await reader.prime(['claude:default'])
+    await expect.poll(() => reader.holds('claude:default')).toBe(true)
+    items[credentialName(null)] = record('sk-ant-oat01-renewed')
+    reader.invalidate('claude:default')
+    // A renewal probe started now still gets CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1.
+    expect(reader.holds('claude:default')).toBe(true)
+    await reader.prime(['claude:default'])
+    expect(reader.read('claude:default')?.accessToken).toBe('sk-ant-oat01-renewed')
+  })
+
+  it('answers the old token after invalidate until the new read lands', async () => {
+    const items: Record<string, string> = { [credentialName(null)]: record('sk-ant-oat01-first') }
+    const store = credentials(items)
+    const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => false, read: store.read, now: () => now })
+    await reader.prime(['claude:default'])
+    items[credentialName(null)] = record('sk-ant-oat01-second')
+    store.hold = true
+    reader.invalidate('claude:default')
+    const primed = reader.prime(['claude:default'])
+    await expect.poll(() => store.calls).toBe(2)
+    expect(reader.read('claude:default')?.accessToken).toBe('sk-ant-oat01-first')
+    store.release()
+    await primed
+    expect(reader.read('claude:default')?.accessToken).toBe('sk-ant-oat01-second')
+  })
+
+  it('does not use a read that started before invalidate', async () => {
+    const items: Record<string, string> = { [credentialName(null)]: record('sk-ant-oat01-before') }
+    const store = credentials(items)
+    store.hold = true
+    const reader = new CredentialManagerReader({ secureStorageDir: () => null, fileExists: () => false, read: store.read, now: () => now })
+    const first = reader.prime(['claude:default'])
+    await expect.poll(() => store.calls).toBe(1)
+    // The CLI renews the token while the read is going on, and the proxy invalidates the login.
+    items[credentialName(null)] = record('sk-ant-oat01-after')
+    reader.invalidate('claude:default')
+    const second = reader.prime(['claude:default'])
+    store.hold = false
+    store.release()
+    await Promise.all([first, second])
+    expect(reader.read('claude:default')?.accessToken).toBe('sk-ant-oat01-after')
+    expect(store.calls).toBe(2)
   })
 
   it('waits until every login it was asked about has been read, also when runs for other logins are going on', async () => {
@@ -181,6 +288,15 @@ describe('the token source on Windows', () => {
     expect(probeEnvironment(tokens, 'claude:work', env)).toBe(env)
     const mac = createTokenSource({ env: {}, platform: 'darwin', home: () => home, log })
     expect(probeEnvironment(mac, 'claude:default', env)).toBe(env)
+  })
+
+  it('gives a renewal probe started right after invalidate CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1', async () => {
+    const store = credentials({ [credentialName(null)]: record('sk-ant-oat01-refused') })
+    const tokens = createTokenSource({ env: {}, platform: 'win32', home: () => home, log, credentialRead: store.read })
+    await tokens.prime(['claude:default'])
+    // A 401: the proxy invalidates the login and starts the renewal probe with no read between.
+    tokens.invalidate('claude:default')
+    expect(probeEnvironment(tokens, 'claude:default', {})).toEqual({ CLAUDE_CODE_FORCE_WINDOWS_CREDMAN: '1' })
   })
 
   it('does not report a failed read of a login that has its file', async () => {

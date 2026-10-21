@@ -269,37 +269,43 @@ older version, after that daemon finishes the requests it has open.
   (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read
   when the Keychain gives no token: the CLI falls back to the file when it cannot use the
   Keychain, for example in an ssh session. On Linux only the file is read. On Windows, newer
-  Claude Code versions (seen from 2.1.150) keep the record in Windows Credential Manager
-  instead, when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag
-  `tengu_windows_credman` is on in the `.claude.json` of the config folder the CLI runs with.
-  Such a CLI reads Credential Manager first and the file only when Credential Manager has
-  nothing, and deletes the file when it first writes the record to Credential Manager. The
-  daemon reads in the same order (`src/daemon/credential-manager.ts`,
-  `src/platform/windows-credentials.ts`). It lists the generic credentials named
-  `<Keychain item name>/<account>` and takes the account name Claude Code uses on macOS (the
-  user's name), else `claude-code-user`, else the only one there is, since the Windows build's
-  account name could not be checked. The blob is the same JSON as the file, or, when
-  `…#m` holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes a
-  record longer than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script
-  declares it with `Add-Type` and prints each name and blob as base64; one run reads up to a
-  few hundred logins, and more are split into runs that keep the command line within Windows'
-  32,767 characters. That needs PowerShell's full language mode: under Constrained Language
-  Mode `Add-Type` is refused, the read fails (logged once as `token_read_failed` for a login
-  without the file), and only the file is used. The first request after the daemon starts waits
-  for that read only for a login without the file. A usage probe of a login whose record was
-  found in Credential Manager runs with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`
-  (`probeEnvironment`): the probe's config folder is not the one a routed CLI runs with, so its
-  feature flag may be off, and then it would not see the record and would report the login
-  signed out. An extra login's file is in its folder, the default login's is
-  `~/.claude/.credentials.json`. A Keychain or Credential Manager answer is kept for a minute;
-  an old Credential Manager answer, and one after a usage probe, is read again in the
-  background while it goes on being used, since starting PowerShell takes a second or two, and
-  after a renewal the next request waits for the new read. A login whose file exists and for
-  which Credential Manager had no record is not looked up there again until its token is
-  refused or renewed, because the CLI deletes the file when it moves the record; so a machine
-  whose logins all use the file runs PowerShell once per login, not every minute. The file is read again when its size
-  or modification time changes. Tokens are never written anywhere. Only whether a record has a
-  refresh token is kept, never the refresh token itself.
+  Claude Code versions (seen from 2.1.150) keep the record in Windows Credential Manager instead,
+  when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag `tengu_windows_credman` is
+  on in the CLI's config file: `.config.json` in the config folder the CLI runs with when that
+  file is there and not empty, else `.claude.json` in `CLAUDE_CONFIG_DIR` or the home folder. Such
+  a CLI reads Credential Manager first and the file only when Credential Manager has nothing, and
+  deletes the file when it first writes the record to Credential Manager. The daemon reads in the
+  same order (`src/daemon/credential-manager.ts`, `src/platform/windows-credentials.ts`). It lists
+  the generic credentials named `<Keychain item name>/<account>` and takes the account name Claude
+  Code uses on macOS (the user's name), else `claude-code-user`, else the only one there is, since
+  the Windows build's account name could not be checked. The blob is the same JSON as the file,
+  or, when `…#m` holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes
+  a record longer than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script
+  declares it with `Add-Type` and prints each name and blob as base64; one run reads up to 247
+  logins, and more are split into runs that keep the command line within Windows' 32,767
+  characters. That needs PowerShell's full language mode: under Constrained Language Mode
+  `Add-Type` is refused, the read fails (logged once as `token_read_failed` for a login without
+  the file, or whose record was found there), and only the file is used. A failed read keeps the
+  token and the found state from before, and is tried again after 1, 2, 4, 8, then every 15
+  minutes. A request waits for a Credential Manager read only for a login that was not read yet,
+  or not since its token was refused or renewed, and only when the login has no file or its record
+  was found there; any other login is answered from the file meanwhile. A usage probe of a login
+  whose last read that worked found its record in Credential Manager runs with
+  `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`probeEnvironment`): the probe's config folder is not the
+  one a routed CLI runs with, so its feature flag may be off, and then it would not see the record
+  and would report the login signed out. An extra login's file is in its folder, the default
+  login's is `~/.claude/.credentials.json`. A Keychain or Credential Manager answer is kept for a
+  minute. An old Credential Manager answer, and one after a usage probe, is read again in the
+  background while it goes on being used, since starting PowerShell takes a second or two. After a
+  refused token or a renewal, the Keychain and Credential Manager readers go on answering the old
+  token until the new read lands, and the next request waits for that read; a read that started
+  before is not used. A login whose file exists and for which Credential Manager had no record is
+  looked up there again only every 15 minutes, or after its token was refused or renewed, so a
+  machine whose logins all use the file runs PowerShell every 15 minutes, not every minute. A
+  record can still appear while the file is there, when the CLI could not delete the file after
+  moving the record, or when a CLI with the flag off wrote the file after a record was made. The
+  file is read again when its size or modification time changes. Tokens are never written
+  anywhere. Only whether a record has a refresh token is kept, never the refresh token itself.
 - **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when
   a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
   does not read leaves the config the daemon has.
@@ -1176,7 +1182,8 @@ These are known and left as they are.
   - `credentials.ts`, `keychain-service.ts`: the `.credentials.json` format and the Keychain
     item name.
 - `src/daemon/` holds the proxy, the control API, the token readers (`credentials.ts` for the
-  file, `keychain.ts` for the macOS Keychain), the usage probes and the daemon's lifecycle.
+  file, `keychain.ts` for the macOS Keychain, `credential-manager.ts` for Windows Credential
+  Manager, put together in `tokens.ts`), the usage probes and the daemon's lifecycle.
 - `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and
   `dispatch.ts` picks the command and handles `--help`, `--version` and `help <command>`.
   `wrapper.ts` runs an interactive child, `wrapper-args.ts` splits the wrappers' arguments,
@@ -1217,7 +1224,10 @@ These are known and left as they are.
     login's folder is created next (mode 0700), and for Codex prepared with `prepareCodexHome`,
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
-    wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
+    wrapper. On Windows a Claude login whose record is already in Credential Manager (one
+    PowerShell read, `holdsStoredRecord`) signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`,
+    so the new token replaces the record instead of going to a file the record hides. The
+    login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
     local credentials are there; otherwise a folder this run created is removed (for Codex with
     its `codex-merged/` record) and nothing is added. The email is printed and never stored; the label defaults to the name. A running
     daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
@@ -1226,8 +1236,10 @@ These are known and left as they are.
   - `logout <id>`: refuses the default logins. It holds the login's lock while it runs, and
     stops at once when a `kurmis login` of the login holds it. It removes the login from `config.json`, tells a
     running daemon to reload (so it stops probing the login), runs `claude auth logout` or
-    `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
-    item that may be left on macOS, and the removal goes on), and deletes the folder with
+    `codex logout` on it with a 30-second deadline (on Windows `claude auth logout` gets
+    `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, without which the CLI deletes only the file and leaves
+    the record in Credential Manager; a failure is a warning, naming the Keychain item or the
+    Windows credentials that may be left, and the removal goes on), and deletes the folder with
     `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
     without following them. For a Codex login it also deletes `codex-merged/<name>.json`, and
     when that record is all that is left of the login, deleting it is all logout does.

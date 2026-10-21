@@ -22,8 +22,9 @@
 // - `claude:default`, the machine's own login: the Keychain item with the plain name (its CLI
 //   runs without `CLAUDE_SECURESTORAGE_CONFIG_DIR`), and `<home>/.claude/.credentials.json`.
 //
-// `read` never waits. Keychain answers are fetched by `prime` and kept for a minute
-// (`KEYCHAIN_CACHE_MS`); the file is checked with one `stat` per `read`.
+// `read` never waits. Keychain and Credential Manager answers are fetched by `prime` and kept
+// for a minute (`KEYCHAIN_CACHE_MS`; `credential-manager.ts` says when it keeps them longer);
+// the file is checked with one `stat` per `read`.
 //
 // A failed Keychain read goes to the daemon log as `token_read_failed` with the login and a fixed
 // reason word, once per login until a read of it works. A missing item is not logged, because on
@@ -33,6 +34,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ClaudeCredentials } from '../core/credentials.ts'
 import type { DaemonLog, LogReason } from '../data/log.ts'
+import { FORCE_CREDENTIAL_MANAGER_VARIABLE } from '../data/login-env.ts'
 import { isDefaultLoginId, parseLoginId } from '../data/login-id.ts'
 import { loginFolder } from '../data/paths.ts'
 import { CREDENTIALS_FILE_NAME, CredentialsFileReader, type CredentialsSource } from './credentials.ts'
@@ -60,16 +62,15 @@ export interface TokenSource extends CredentialsSource {
   /** True when tokens come from the macOS Keychain (with the file as fallback). For whyPassedOver's `keychain`. */
   readonly keychain: boolean
   /**
-   * Has the next `prime` read the login again, as `invalidate` does, except that a Credential
-   * Manager answer goes on being used while it is read again rather than waited for.
+   * Has the next `prime` read the login again, as `invalidate` does, except that `prime` does
+   * not wait for the Credential Manager read: it goes on in the background. A Credential Manager
+   * login that is not read again every minute (its file exists and it had no record there, or
+   * its last read failed) keeps its longer wait.
    */
   markStale(id: string): void
-  /** Whether the last read found the login's record in Windows Credential Manager. */
+  /** Whether the last Credential Manager read of the login that worked found its record there. */
   inCredentialManager(id: string): boolean
 }
-
-/** The variable that makes Claude Code on Windows keep its record in Credential Manager. */
-export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CREDMAN'
 
 /**
  * The environment a usage probe of `id` gets: `env`, with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`

@@ -141,6 +141,21 @@ describe('kurmis login claude', () => {
     expect(existsSync(loginLockPath('claude:2'))).toBe(false)
   })
 
+  it('signs a login whose record is in Credential Manager in with CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1', async () => {
+    const asked: Array<string | null> = []
+    const inCredentialManager = (folder: string | null): Promise<boolean> => {
+      asked.push(folder)
+      return Promise.resolve(folder === loginFolder('claude:held'))
+    }
+    const runner = fakeRunner(claudeSignsIn())
+    const { login } = command(runner, { inCredentialManager })
+    expect(await login.run(['claude', '--name', 'held'], collect(routedEnv).context)).toBe(0)
+    expect(await login.run(['claude', '--name', 'plain'], collect(routedEnv).context)).toBe(0)
+    expect(asked).toEqual([loginFolder('claude:held'), loginFolder('claude:plain')])
+    expect(runner.specs[0]!.env.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBe('1')
+    expect(runner.specs[1]!.env.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBeUndefined()
+  })
+
   it('takes --name and --label, and the next login gets the next number', async () => {
     const { login } = command(fakeRunner(claudeSignsIn()))
     expect(await login.run(['claude', '--name', 'work', '--label', 'Work account'], collect().context)).toBe(0)
