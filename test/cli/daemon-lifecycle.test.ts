@@ -1,8 +1,8 @@
 // `kurmis daemon start|stop|restart|status` as the user runs them: each command is a process of
 // a test bundle (`test/daemon/bundle.ts`), and the daemons it starts run `daemon run` around the
 // fake request handling. Every daemon a test started is killed after it.
-import { execFile, spawn } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { execFile, spawn, spawnSync } from 'node:child_process'
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -88,6 +88,20 @@ function daemonInfo(home: string): { pid: number; port: number; version: string 
   return read.info
 }
 
+/**
+ * The pids of the `daemon run` processes of `bundle`. Each test file builds its bundles into a
+ * folder of its own, and its tests run one after another, so these are the current test's.
+ * Empty on Windows, which has no `ps`.
+ */
+function daemonRunPids(bundle: string): number[] {
+  if (process.platform === 'win32') return []
+  const listed = spawnSync('ps', ['-ax', '-ww', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout
+  const names = [bundle, realpathSync(bundle)]
+  return listed.split('\n')
+    .filter((line) => names.some((name) => line.includes(`${name} daemon run`)))
+    .map((line) => Number(line.trim().split(/\s+/)[0]))
+}
+
 describe('kurmis daemon', () => {
   it('starts a daemon, finds it again, shows its status and stops it', async () => {
     const { home, port } = await newHome()
@@ -127,6 +141,11 @@ describe('kurmis daemon', () => {
     const pid = daemonInfo(home)?.pid ?? 0
     expect(first.stdout).toContain(`(pid ${String(pid)})`)
     expect(second.stdout).toContain(`(pid ${String(pid)})`)
+    // Both CLIs started a daemon. The second one may still be starting when both CLIs have found
+    // the first; it must exit once it finds the port taken. Were it still running after this
+    // test's cleanup killed the first, it would bind the freed port and outlive the test.
+    for (const other of daemonRunPids(bundles.newer)) if (other !== pid) notePid(home, other)
+    await waitUntil(() => daemonRunPids(bundles.newer).every((other) => other === pid), 20_000, 'the second daemon to exit')
   }, 60_000)
 
   it('ignores a daemon.json left by a daemon that died', async () => {
