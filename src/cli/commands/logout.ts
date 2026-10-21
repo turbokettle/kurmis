@@ -12,6 +12,9 @@
 //
 // A login that is no longer in config.json but still has a folder (a removal that stopped
 // half-way) is cleaned up the same way.
+//
+// The whole removal holds the login's lock (`login-lock.ts`), so it never runs while a
+// `kurmis login` of the same login writes into the folder.
 import { lstatSync } from 'node:fs'
 import { keychainService } from '../../core/keychain-service.ts'
 import { changeConfig, ConfigError, findLogin, loadConfig, removeLogin } from '../../data/config.ts'
@@ -23,6 +26,7 @@ import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { runProgram } from '../../platform/run.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, realFindProgram, reloadIfRunning, reloadText, type DaemonClient } from '../command-deps.ts'
+import { LoginBusyError, lockLogin } from '../login-lock.ts'
 
 export interface LogoutDeps {
   daemon: DaemonClient
@@ -100,34 +104,49 @@ Options:
         return usageError('logout', `${id} is the machine's own login and cannot be removed. To sign it out, run "${cli}" yourself.`, context)
       }
 
-      const folder = loginFolder(id)
-      let listed: boolean
+      let lock
       try {
-        listed = findLogin(loadConfig(), id) !== undefined
-        if (listed) changeConfig((config) => removeLogin(config, id))
+        lock = lockLogin(id)
       } catch (error) {
-        if (error instanceof ConfigError) return fail(context, error.message)
+        if (error instanceof LoginBusyError) return fail(context, error.message)
         throw error
       }
-      const hasFolder = exists(folder)
-      if (!listed && !hasFolder) return fail(context, `there is no login ${id}; "kurmis list" shows them`)
-      const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null
-
-      // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the folder is gone.
-      if (hasFolder || provider === 'claude') {
-        const problem = await signOut(id, provider, folder, context.env)
-        if (problem !== null) writeLine(context.stderr, `kurmis logout: ${problem}`)
-      }
       try {
-        removeTreeSync(folder)
-      } catch (error) {
-        return fail(context, `${listed ? `${id} is removed from kurmis, but ` : ''}its folder ${folder} could not be deleted ` +
-          `(${error instanceof Error ? error.message : String(error)}). Close what uses it and run "kurmis logout ${id}" again.`)
+        return await removeLoginNow(id, provider, context)
+      } finally {
+        lock.release()
       }
-      writeLine(context.stdout, listed ? `Removed ${id}.` : `Deleted the folder that ${id} left behind.`)
-      if (reload !== null) writeLine(context.stdout, reload)
-      return EXIT_OK
     }
+  }
+
+  async function removeLoginNow(id: string, provider: 'claude' | 'codex', context: CliContext): Promise<number> {
+    const folder = loginFolder(id)
+    let listed: boolean
+    try {
+      listed = findLogin(loadConfig(), id) !== undefined
+      if (listed) changeConfig((config) => removeLogin(config, id))
+    } catch (error) {
+      if (error instanceof ConfigError) return fail(context, error.message)
+      throw error
+    }
+    const hasFolder = exists(folder)
+    if (!listed && !hasFolder) return fail(context, `there is no login ${id}; "kurmis list" shows them`)
+    const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null
+
+    // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the folder is gone.
+    if (hasFolder || provider === 'claude') {
+      const problem = await signOut(id, provider, folder, context.env)
+      if (problem !== null) writeLine(context.stderr, `kurmis logout: ${problem}`)
+    }
+    try {
+      removeTreeSync(folder)
+    } catch (error) {
+      return fail(context, `${listed ? `${id} is removed from kurmis, but ` : ''}its folder ${folder} could not be deleted ` +
+        `(${error instanceof Error ? error.message : String(error)}). Close what uses it and run "kurmis logout ${id}" again.`)
+    }
+    writeLine(context.stdout, listed ? `Removed ${id}.` : `Deleted the folder that ${id} left behind.`)
+    if (reload !== null) writeLine(context.stdout, reload)
+    return EXIT_OK
   }
 }
 

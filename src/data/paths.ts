@@ -112,3 +112,13 @@ export function loginFolder(id: string): string {
   }
   return join(providerFolder(providerOfLoginId(checked)), nameOfLoginId(checked))
 }
+
+/**
+ * The lock file that one `kurmis login` or `kurmis logout` of a login holds while it runs
+ * (`src/cli/login-lock.ts`): `locks/claude-work.lock` for `claude:work`. It is outside the
+ * login's folder, because the folder is created and deleted under it.
+ */
+export function loginLockPath(id: string): string {
+  const checked = toLoginId(id)
+  return join(kurmisHome(), 'locks', `${providerOfLoginId(checked)}-${nameOfLoginId(checked)}.lock`)
+}

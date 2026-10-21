@@ -81,7 +81,9 @@ The second form signs an existing login in again, for example after it was signe
 `kurmis login claude:work`, or `kurmis login claude:default` for the machine's own.
 
 Kurmis prints the email the login signed in with. It keeps no email itself: the label shown in
-lists is the name unless you give `--label`. If the sign-in fails, nothing is added.
+lists is the name unless you give `--label`. If the sign-in fails, nothing is added. Only one
+`kurmis login` or `kurmis logout` of the same login runs at a time; a second one stops and says
+so.
 
 ### `kurmis claude`
 

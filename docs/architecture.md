@@ -40,6 +40,11 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   under a name derived from this folder's path (`keychainService` in
   `src/core/keychain-service.ts`).
 - `codex/<name>/` is the `CODEX_HOME` of the extra Codex login `codex:<name>`.
+- `locks/<provider>-<name>.lock` (`locks/claude-work.lock`) exists while a `kurmis login` or
+  `kurmis logout` of that login runs (`src/cli/login-lock.ts`). It is the lock file of
+  `src/data/lock.ts`, held for the whole command, because a sign-in can take minutes. A second
+  run for the same login stops at once with a message naming the pid that holds it. A lock whose
+  pid no longer runs, or that is older than 24 hours, is taken over.
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
   names its own pid, so a replaced daemon never removes its successor's file. The CLI removes a
@@ -798,15 +803,23 @@ These are known and left as they are.
     `credentials: boolean` added.
   - `login claude|codex [--name <name>] [--label <text>]` adds a new login; without `--name` it
     takes the first free name of `2`, `3`, ... (`claude:2`). `login <id> [--label <text>]` signs
-    an existing login in again, the default ones included (and adds an id that is new). The
-    login's folder is created first (mode 0700), and for Codex prepared with `prepareCodexHome`,
+    an existing login in again, the default ones included (and adds an id that is new). First
+    it takes the login's lock (`locks/`, above) and reads `config.json` again under it; without
+    `--name` a number whose lock another run holds is passed over, so two `kurmis login claude`
+    at once get `claude:2` and `claude:3`. The lock is held until the command ends, so a failed
+    run can never delete the folder of a run that signed in, and a logout cannot delete a
+    folder a sign-in writes into. The
+    login's folder is created next (mode 0700), and for Codex prepared with `prepareCodexHome`,
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
     wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
     local credentials are there; otherwise a folder this run created is removed and nothing is
     added. The email is printed and never stored; the label defaults to the name. A running
-    daemon is told to reload; none is started for this.
-  - `logout <id>`: refuses the default logins. It removes the login from `config.json`, tells a
+    daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
+    it may still hold the login as signed out from before and Auto would pass it over until
+    its next poll; none is started for this.
+  - `logout <id>`: refuses the default logins. It holds the login's lock while it runs, and
+    stops at once when a `kurmis login` of the login holds it. It removes the login from `config.json`, tells a
     running daemon to reload (so it stops probing the login), runs `claude auth logout` or
     `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
     item that may be left on macOS, and the removal goes on), and deletes the folder with
