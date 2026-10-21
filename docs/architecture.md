@@ -835,9 +835,12 @@ An empty real folder where a link should go (Codex made it before the default ho
 folder) is replaced by the link. A folder with something in it, or a link to somewhere else, is
 left as it is with a warning, given once per folder. When two `kurmis codex` start on one login
 at the same moment, the one whose removal of the empty folder fails (the other removed it, or
-put its link there) or whose link creation fails with EEXIST reads the place again and finds
-the other's link. Every step that fails adds a warning to stderr and the start goes on.
-Only a home that cannot be created stops it.
+put its link there) or whose link creation fails with EEXIST or ENOENT reads the place again,
+after a short wait, and finds the other's link (`placeLink`). On Windows EBUSY, EPERM and
+EACCES count the same way: Windows makes a junction in steps (an empty folder first, then the
+link in it), so the other start can see that folder empty and remove it while it is being
+made. Every step that fails adds a warning to stderr and the start goes on. Only a home that
+cannot be created stops it.
 
 **What was merged.** `codex-merged/<name>.json` in the data folder records, for the login's
 home, the default home's `config.toml` without secrets as it was last merged in, a SHA-256 of

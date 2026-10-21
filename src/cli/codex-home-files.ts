@@ -31,6 +31,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants, type Dirent } from 'node:fs'
 import { lstat, open, readdir, readFile, rm, rmdir, stat } from 'node:fs/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import {
@@ -331,40 +332,82 @@ async function removeStaleLinks(
   }
 }
 
+/** How many times `placeLink` reads the place and tries to link it before it gives up. */
+const LINK_ATTEMPTS = 4
+
+/** How long `placeLink` waits before it reads the place again after a step another start got in the way of. */
+const LINK_RETRY_DELAY_MS = 25
+
+/**
+ * Whether a step at a link's place failed because another `kurmis codex` on the same login
+ * was making or replacing the link at the same moment, so that reading the place again finds
+ * out what is there: EEXIST (the other's link or folder is there now), ENOENT (the other
+ * removed the folder), and on Windows EBUSY, EPERM and EACCES. Windows makes a junction in
+ * steps (libuv creates an empty folder, opens it and sets the reparse point), and a step fails
+ * with one of those when the other start removed that folder or holds it open.
+ */
+export function retryableLinkError(code: string | undefined, platform: NodeJS.Platform): boolean {
+  if (code === 'EEXIST' || code === 'ENOENT') return true
+  return platform === 'win32' && (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES')
+}
+
 /**
  * Makes `place` a link to `from` unless it is one: `linked` when it is in the end, `conflict`
  * when a folder with something in it or a link elsewhere is there. An empty real folder is
- * removed first (`rmdir` removes only an empty one). Another `kurmis codex` on the same login
- * may do the same at the same moment: then removing the folder fails because it is gone or is
- * the other's link already, or creating the link fails with EEXIST, and the place is read again.
+ * removed first (`rmdir` removes only an empty one).
+ *
+ * Another `kurmis codex` on the same login may do the same at the same moment. On Windows the
+ * empty folder seen may even be the other's junction while it is being made, and removing it
+ * makes the other's next step fail. So when removing the folder or creating the link fails
+ * with an error `retryableLinkError` accepts, the place is read again after a short wait, up
+ * to `LINK_ATTEMPTS` times, and the other's link is found there. When the place never becomes
+ * the link, the last error of creating it is thrown, so a lasting failure (no right to make a
+ * link there) is not reported as a folder of the login's own. `link` is replaced in tests.
  */
-async function placeLink(from: string, place: string, platform: NodeJS.Platform): Promise<'linked' | 'conflict'> {
-  for (let attempt = 0; attempt < 2; attempt++) {
+export async function placeLink(from: string, place: string, platform: NodeJS.Platform,
+  link: typeof linkFolder = linkFolder): Promise<'linked' | 'conflict'> {
+  let failure: unknown = null
+  for (let attempt = 1; attempt <= LINK_ATTEMPTS; attempt++) {
+    if (attempt > 1) await delay(LINK_RETRY_DELAY_MS)
     const found = await readFolderLink(place, platform)
     const action = codexLinkAction(found, from, platform)
     if (action === 'linked') return 'linked'
     if (action === 'conflict') {
       if (found.kind !== 'other') return 'conflict'
-      if (!(await removeEmptyFolder(place))) continue
+      const removed = await removeEmptyFolder(place, platform)
+      if (removed === 'kept') return 'conflict'
+      if (removed === 'again') continue
     }
     try {
-      await linkFolder(from, place, platform)
+      await link(from, place, platform)
       return 'linked'
     } catch (error) {
-      if (errorCode(error) !== 'EEXIST') throw error
+      if (!retryableLinkError(errorCode(error), platform)) throw error
+      failure = error
     }
   }
-  return codexLinkAction(await readFolderLink(place, platform), from, platform) === 'linked' ? 'linked' : 'conflict'
+  if (codexLinkAction(await readFolderLink(place, platform), from, platform) === 'linked') return 'linked'
+  if (failure !== null && errorCode(failure) !== 'EEXIST') throw failure
+  return 'conflict'
 }
 
-/** Removes `place` when it is a real folder with nothing in it. Answers whether it did. */
-async function removeEmptyFolder(place: string): Promise<boolean> {
+/**
+ * Removes `place` when it is a real folder with nothing in it. Answers `removed` when it did,
+ * `kept` when the place is a file or a folder with something in it, and `again` when another
+ * start at the same place explains what happened: the place is a link now, or it is gone,
+ * or on Windows it is held open (`retryableLinkError`).
+ */
+async function removeEmptyFolder(place: string, platform: NodeJS.Platform): Promise<'removed' | 'kept' | 'again'> {
   try {
-    if (!(await lstat(place)).isDirectory()) return false
+    const stats = await lstat(place)
+    if (stats.isSymbolicLink()) return 'again'
+    if (!stats.isDirectory()) return 'kept'
     await rmdir(place)
-    return true
-  } catch {
-    return false
+    return 'removed'
+  } catch (error) {
+    const code = errorCode(error)
+    // Removing a link answers ENOTDIR on macOS and Linux.
+    return code === 'ENOTDIR' || (code !== 'EEXIST' && retryableLinkError(code, platform)) ? 'again' : 'kept'
   }
 }
 

@@ -20,9 +20,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { tomlValue } from '../../src/core/codex-account-config.ts'
-import { codexSourceHome, prepareCodexHome, writeIfUnchanged } from '../../src/cli/codex-home-files.ts'
+import { codexSourceHome, placeLink, prepareCodexHome, retryableLinkError, writeIfUnchanged } from '../../src/cli/codex-home-files.ts'
 import { codexMergedRecordPath, loginFolder } from '../../src/data/paths.ts'
-import { normaliseLinkTarget } from '../../src/platform/links.ts'
+import { linkFolder as realLinkFolder, normaliseLinkTarget } from '../../src/platform/links.ts'
 import { canCreateSymlinks, linkFolder } from '../host.ts'
 
 // Windows has no folder permissions that chmod could change.
@@ -499,5 +499,64 @@ describe('prepareCodexHome: what a later start keeps', () => {
       for (const prepared of both) expect(prepared.warnings.filter((line) => /link/i.test(line))).toEqual([])
       expect(linkTarget(join(home(), 'sessions'))).toBe(join(source(), 'sessions'))
     }
+  })
+})
+
+describe('placeLink when another start works at the same place', () => {
+  const failWith = (code: string): Error => Object.assign(new Error(`made-up ${code}`), { code })
+
+  test('finds the other start\'s link after its own step failed with ENOENT', async () => {
+    const from = join(root, 'shared')
+    const place = join(root, 'place')
+    mkdirSync(from)
+    let calls = 0
+    // The other start removed the folder this one was making its link in, and made its own.
+    const link: typeof realLinkFolder = async (target, at, platform) => {
+      calls++
+      await realLinkFolder(target, at, platform)
+      throw failWith('ENOENT')
+    }
+    expect(await placeLink(from, place, process.platform, link)).toBe('linked')
+    expect(calls).toBe(1)
+    expect(linkTarget(place)).toBe(from)
+  })
+
+  test('replaces an empty folder, and leaves a folder with something in it as a conflict at once', async () => {
+    const from = join(root, 'shared')
+    mkdirSync(from)
+    mkdirSync(join(root, 'empty'))
+    expect(await placeLink(from, join(root, 'empty'), process.platform)).toBe('linked')
+    mkdirSync(join(root, 'full'))
+    writeFileSync(join(root, 'full', 'one.txt'), 'x\n')
+    const link: typeof realLinkFolder = async () => { throw new Error('not called') }
+    expect(await placeLink(from, join(root, 'full'), process.platform, link)).toBe('conflict')
+  })
+
+  test('throws the error of a step that keeps failing, rather than calling the place a conflict', async () => {
+    const from = join(root, 'shared')
+    mkdirSync(from)
+    let calls = 0
+    const gone: typeof realLinkFolder = async () => {
+      calls++
+      throw failWith('ENOENT')
+    }
+    await expect(placeLink(from, join(root, 'place'), process.platform, gone)).rejects.toThrow('made-up ENOENT')
+    expect(calls).toBe(4)
+    const denied: typeof realLinkFolder = async () => { throw failWith('EACCES') }
+    if (!windows) await expect(placeLink(from, join(root, 'place'), process.platform, denied)).rejects.toThrow('made-up EACCES')
+  })
+
+  test('tries again after EBUSY and EPERM on Windows only', () => {
+    for (const code of ['EEXIST', 'ENOENT']) {
+      expect(retryableLinkError(code, 'darwin')).toBe(true)
+      expect(retryableLinkError(code, 'win32')).toBe(true)
+    }
+    for (const code of ['EBUSY', 'EPERM', 'EACCES']) {
+      expect(retryableLinkError(code, 'win32')).toBe(true)
+      expect(retryableLinkError(code, 'darwin')).toBe(false)
+      expect(retryableLinkError(code, 'linux')).toBe(false)
+    }
+    expect(retryableLinkError('ENOSPC', 'win32')).toBe(false)
+    expect(retryableLinkError(undefined, 'win32')).toBe(false)
   })
 })
