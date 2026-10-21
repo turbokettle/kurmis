@@ -282,7 +282,12 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   const wscript = wscriptPath(options.env)
   const unusable = await scriptHostProblem(wscript, reg)
   if (unusable !== null) {
-    return { changed: false, where: null, warning: `The logon entry was not written: ${unusable} The next kurmis command starts the daemon anyway.` }
+    return {
+      changed: false,
+      where: null,
+      warning: `The logon entry was not written: ${unusable} The next kurmis command starts the daemon anyway.`,
+      noEntryPossible: true
+    }
   }
   let changed = removeOldVbsScript(scriptPath)
   if (readScript(scriptPath) !== text) {

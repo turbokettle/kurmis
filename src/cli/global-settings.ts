@@ -36,7 +36,7 @@
 import { chmodSync, copyFileSync, constants, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { KURMIS_HEADERS, KEY_HEADER, parseCustomHeaders, STARTED_ON_NONE, withRouteHeaders } from '../core/route-headers.ts'
-import { ROUTING_VARIABLES, routedClaudeEnv } from '../core/routed-env.ts'
+import { OAUTH_TOKEN_VARIABLES, ROUTING_VARIABLES, routedClaudeEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { kurmisHome } from '../data/paths.ts'
 import { PRIVATE_FILE_MODE, replaceFileSync, restrictToUserSync, userOnlyMode } from '../platform/files.ts'
@@ -46,8 +46,11 @@ import { claudeUserSettingsPath } from './settings-arg.ts'
 const BASE_URL = 'ANTHROPIC_BASE_URL'
 const CUSTOM_HEADERS = 'ANTHROPIC_CUSTOM_HEADERS'
 
-/** Variables in `env` that would sign requests with an API key instead of a subscription login. */
-const KEY_VARIABLES: readonly string[] = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
+/**
+ * Variables in `env` that would make Claude Code sign its requests with something other than a
+ * kurmis login: an API key, or a subscription token of its own (`OAUTH_TOKEN_VARIABLES`).
+ */
+const KEY_VARIABLES: readonly string[] = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', ...OAUTH_TOKEN_VARIABLES]
 
 /** A byte order mark some editors put at the start of a file. It is kept as it was. */
 const BOM = '\uFEFF'
@@ -400,8 +403,11 @@ function displayValue(value: unknown): string {
 
 function keyVariableWarnings(env: Record<string, unknown> | undefined): string[] {
   if (env === undefined) return []
-  return KEY_VARIABLES.filter((name) => env[name] !== undefined).map((name) =>
-    `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`)
+  return KEY_VARIABLES.filter((name) => env[name] !== undefined).map((name) => OAUTH_TOKEN_VARIABLES.includes(name)
+    ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of ` +
+      'claude:default\'s credentials, and a request kurmis sends on claude:default may be billed to the token\'s account. ' +
+      'Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.'
+    : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`)
 }
 
 /**
@@ -730,6 +736,11 @@ function isReadOnly(mode: number): boolean {
   return (mode & 0o200) === 0
 }
 
+/** The refusal of a read-only file on Windows, with the command that clears the attribute. */
+function readOnlyError(target: string): SettingsFileError {
+  return new SettingsFileError(`it is read-only. Clear that with attrib -R "${target}" and run the command again`)
+}
+
 /**
  * Writes the edit, when it changed anything, and backs the file up before. With `userOnly` (setup,
  * whose file holds the key) the file ends up readable by the user only: a new file gets mode
@@ -749,7 +760,7 @@ function writeEdit(
   const before = existed ? statSync(target).mode & 0o777 : PRIVATE_FILE_MODE
   if (platform === 'win32' && existed && isReadOnly(before)) {
     // Windows cannot rename a file over a read-only one, and the new file would be read-only too.
-    throw new SettingsFileError(`it is read-only. Clear that with "attrib -R ${target}" and run the command again`)
+    throw readOnlyError(target)
   }
   const backup = existed ? backUp(path, userOnly && !edit.hadKurmis, platform) : null
   const mode = userOnly ? userOnlyMode(before) : before
@@ -803,15 +814,17 @@ export function setupSettingsFile(path: string, values: SetupValues, platform: N
 
 /**
  * Throws the `SettingsFileError` `setupSettingsFile` would throw for the file as it is now, and
- * writes nothing. Setup asks this before it starts the daemon.
+ * writes nothing. Setup asks this before it starts the daemon. Answers whether the file already
+ * holds kurmis' settings, from an earlier setup.
  */
-export function checkSetupSettingsFile(path: string, values: SetupValues, platform: NodeJS.Platform = process.platform): void {
+export function checkSetupSettingsFile(path: string, values: SetupValues, platform: NodeJS.Platform = process.platform): boolean {
   try {
     const text = readText(path)
-    applySetupToText(text, values)
+    const edit = applySetupToText(text, values)
     if (platform === 'win32' && text !== null && isReadOnly(statSync(writeTarget(path)).mode)) {
-      throw new SettingsFileError(`it is read-only. Clear that with "attrib -R ${writeTarget(path)}" and run the command again`)
+      throw readOnlyError(writeTarget(path))
     }
+    return edit.hadKurmis
   } catch (error) {
     failWith(path, error)
   }

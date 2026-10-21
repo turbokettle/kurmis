@@ -239,9 +239,12 @@ describe('registering through reg.exe', () => {
       programArguments: PROGRAM, scriptPath: scriptPath() })
     expect(missing.where).toBeNull()
     expect(missing.warning).toContain('no-wscript.exe does not exist, so Windows Script Host')
+    // Running setup again cannot help, so setup counts it as done.
+    expect(missing.noEntryPossible).toBe(true)
     await regFor()(['add', 'HKCU\\Software\\Microsoft\\Windows Script Host\\Settings', '/v', 'Enabled', '/t', 'REG_SZ', '/d', '0', '/f'])
     const off = await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })
     expect(off.warning).toContain('Windows Script Host, which starts the daemon at logon without a console window, is turned off')
+    expect(off.noEntryPossible).toBe(true)
     expect(regCalls().some((call) => call[1] === RUN_KEY && call[0] === 'add')).toBe(false)
     expect(existsSync(scriptPath())).toBe(false)
   })

@@ -11,6 +11,7 @@ import {
   readUserSettingsArg,
   readUserSettingsEnv,
   routingVariables,
+  settingsEnv,
   SETTINGS_FILE_MAX_AGE_MS,
   storeSettings,
   storeSettingsFile,
@@ -209,6 +210,13 @@ describe('merging', () => {
     } finally {
       rmSync(folder, { recursive: true, force: true, maxRetries: 10 })
     }
+  })
+
+  test('settingsEnv adds the subscription token variables, set to the empty string', () => {
+    const routed = routedClaudeEnv({ port: 40123, key: 'k', login: null, secureStorageDir: null })
+    expect(settingsEnv(routed)).toEqual({ ...routingVariables(routed), CLAUDE_CODE_OAUTH_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '' })
+    // Merged over the person's own, the empty values win.
+    expect(mergeRoutingSettings({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'fake' } }, settingsEnv(routed)).env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: '' })
   })
 
   test('routingVariables keeps the four routing variables and leaves out the credentials folder', () => {

@@ -110,7 +110,8 @@ own `ENABLE_TOOL_SEARCH` or `CLAUDE_CODE_MAX_RETRIES`, wherever you set it, is l
 
 A `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) in your shell would make claude sign its
 requests with that token instead of a kurmis login, so `kurmis claude` starts claude without it
-and says so.
+and says so. One in the `env` of your `--settings` or of `~/.claude/settings.json` is set to an
+empty value for that claude, which Claude Code reads as unset, also with a note.
 
 ### `kurmis codex`
 
@@ -217,6 +218,15 @@ signs in with the login in that folder instead, which kurmis does not know, so k
 signs its requests as `claude:default`: they go to your extra logins only. `kurmis claude` is
 not affected; it always starts claude on the login it names, `claude:default` included.
 
+On macOS and Windows, setup stops when `CLAUDE_CONFIG_DIR` names `~/.claude` itself: Claude
+Code keeps separate credentials for a `claude` started with the variable set, even to that
+folder, and both kinds of `claude` read `~/.claude/settings.json`. Unset the variable and run
+setup again.
+
+Setup also warns when the file's `env` sets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, which make a plain
+`claude` sign with that key or token, and leaves them.
+
 `kurmis setup --undo` removes kurmis' settings again (a value you changed yourself is left and
 reported) and the start at login. The daemon keeps running until you stop it, because
 `kurmis claude` still uses it.
@@ -290,8 +300,8 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   programs installed with npm.
 - **Windows: setup says the logon entry was not written because of Windows Script Host.** The
   logon entry starts the daemon without a console window through `wscript.exe`. When Windows
-  Script Host is missing or turned off, setup writes no entry; the next kurmis command starts the
-  daemon anyway.
+  Script Host is missing or turned off, setup writes no entry, warns and still exits 0; the next
+  kurmis command starts the daemon anyway.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
   now; try again. If no kurmis command is running, delete `~/.kurmis/config.json.lock`.
 - **A command says the daemon could not be reached.** Look at the end of `daemon.log`, or run

@@ -17,8 +17,8 @@
 // is taken, so two `kurmis login claude` at the same moment get `claude:2` and `claude:3`.
 //
 // After a sign-in a running daemon is told to read config.json again and asked to probe the
-// login, because it may still hold the login as signed out from before (G4 in the review): Auto
-// would pass the login over until its next usage check.
+// login, because it may still hold the login as signed out from before: Auto would pass the
+// login over until its next usage check.
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'

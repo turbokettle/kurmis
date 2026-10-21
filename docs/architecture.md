@@ -152,8 +152,10 @@ older version, after that daemon finishes the requests it has open.
   403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
   login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on, or
   `x-kurmis-started-on: none`, which says the CLI's credentials are no kurmis login's (below,
-  "`claude:default` and `CLAUDE_CONFIG_DIR`"). Either one naming no Claude login, `none` aside,
-  is a 400. None of them is forwarded upstream. The body is read whole
+  "`claude:default` and `CLAUDE_CONFIG_DIR`"). `none` is accepted only in
+  `x-kurmis-started-on`; an `x-kurmis-login` that names no Claude login, `none` included, is a
+  400, and so is an `x-kurmis-started-on` that is neither `none` nor a Claude login. None of
+  them is forwarded upstream. The body is read whole
   (at most 64 MB), because a request may have to be sent more than once. A body that is not JSON
   is a 400. Otherwise it goes upstream as the bytes that came, except for the account uuid in
   `metadata.user_id`, which is set to the chosen login's (`outgoingBody` in
@@ -500,7 +502,8 @@ warns when the Node it registers is in such a folder (`nodeForJobs`, `isTemporar
     the user is logged on or not, which needs a stored password or elevation.
   - *When Windows Script Host cannot run it.* Setup checks that `wscript.exe` exists and that
     `Enabled` is not 0 under `Software\Microsoft\Windows Script Host\Settings` (HKCU and HKLM).
-    Otherwise it writes no entry and warns; the next kurmis command starts the daemon anyway.
+    Otherwise it writes no entry and warns, and setup exits 0; the next kurmis command starts
+    the daemon anyway.
   - *Comparing the value.* reg.exe prints in the console's OEM code page, which Node reads as
     UTF-8, so a value with letters outside ASCII does not read back as written. The comparison
     counts each run of letters outside ASCII as matching any other such run (`sameRunData`); a
@@ -528,8 +531,14 @@ warns when the Node it registers is in such a folder (`nodeForJobs`, `isTemporar
 - `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` removed, because a CLI
   with a token of its own sends that token instead of the credentials of the login it was
   started on, and the proxy forwards the started-on login's header when it has read no token
-  for that login, so the request would be billed to whatever account the token belongs to. The
-  wrapper prints one line on stderr when either was set.
+  for that login, so the request would be billed to whatever account the token belongs to. A
+  value in the `env` of a settings file would beat that, so the wrapper's `--settings` (below)
+  sets both to the empty string, which Claude Code 2.1.306 reads as unset: it tests
+  `CLAUDE_CODE_OAUTH_TOKEN` for a value that is not empty wherever it reads it, and takes the
+  same path for an empty `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` as for an unset one (read
+  from its bundled source). The wrapper prints one line on stderr for each place that set either:
+  the environment, the user settings file, the person's `--settings` (`settingsEnv` in
+  `src/cli/settings-arg.ts`).
 
 **Kurmis' own options come first.** `kurmis claude` and `kurmis codex` read their options
 (`--login <id>`, `--help`) from the front of the argument list and stop at the first argument
@@ -616,8 +625,8 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   A symlinked file is written through the link: the link stays, its target gets the change, and
   setup warns that the key is written to that target and names it. A link whose target does
   not exist yet gets that target created, so the link is not replaced by a plain file.
-- On Windows a read-only file (its read-only attribute set) is refused with the `attrib -R`
-  command that clears it, because a rename over a read-only file fails there. A write that
+- On Windows a read-only file (its read-only attribute set) is refused with the
+  `attrib -R "<path>"` command that clears it, because a rename over a read-only file fails there. A write that
   fails because another program holds the file open is reported as a sentence, not a stack.
 - When setup changes an existing file that holds none of kurmis' settings, it first copies it
   to `settings.json.kurmis-backup` (mode 0600), replacing an older backup: after a setup, an
@@ -635,12 +644,19 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   `config.json`, or with an `x-kurmis-key` in the same `env`'s headers) is refused, so another
   proxy is not cut off silently. A value of the person's own for `ENABLE_TOOL_SEARCH` or
   `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept exactly
-  as written, ahead of kurmis' lines.
+  as written, ahead of kurmis' lines. An `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` in the same `env` is
+  kept with a warning, since a plain `claude` then signs with that key or token
+  (`KEY_VARIABLES` in `src/cli/global-settings.ts`).
 - When the daemon cannot be started, or runs on another port than `config.json` names, nothing
   is written and setup exits 1. When autostart then fails, the settings change stands and setup
   exits 1; running it again is safe. A launchd agent that is written but can be loaded only at
-  the next login, and a platform without autostart (Linux), are warnings with exit 0: the
-  daemon runs now, and the next kurmis command starts it after a restart.
+  the next login, a Windows machine where no logon entry can be written because Windows Script
+  Host is missing or turned off (`noEntryPossible` in `src/platform/autostart.ts`), and a
+  platform without autostart (Linux) are warnings with exit 0: the daemon runs now, and the
+  next kurmis command starts it after a restart. When the daemon cannot be started and the file
+  already holds kurmis' settings from an earlier setup, setup says so rather than that Claude
+  Code does not use kurmis yet.
 
 `kurmis setup --undo` removes only the values that are still kurmis': a key the person changed is
 left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the
@@ -677,6 +693,16 @@ for itself, so kurmis keeps `claude:default` fixed and makes sure no request is 
   because the CLI names its Keychain or Credential Manager item after the value. On Linux a
   value that resolves to `~/.claude` is the same file and does not count
   (`configDirHasOwnCredentials` in `src/data/login-env.ts`).
+- So on macOS and Windows `kurmis setup` refuses to run while `CLAUDE_CONFIG_DIR` names
+  `~/.claude` itself (compared with links resolved and without regard to case,
+  `namesDefaultClaudeFolder`), and says to unset the variable and run setup again. The file it
+  would write is `~/.claude/settings.json`, which every plain `claude` reads too, with or
+  without the variable, and those two kinds of CLI have different credentials, so no
+  `x-kurmis-started-on` in that file is right for both. `kurmis setup --undo` still runs.
+- `kurmis claude` with `CLAUDE_CONFIG_DIR` naming `~/.claude` starts claude on
+  `claude:default`'s credentials as above, which are the ones a `claude` without the variable
+  uses, and its note says that the variable would otherwise give claude a Keychain item (or
+  Credential Manager entry) of its own.
 
 ## The wrapper
 
@@ -1047,6 +1073,16 @@ These are known and left as they are.
   plain `claude` signs in as `claude:default`. It reads `$CLAUDE_CONFIG_DIR/settings.json`, whose
   headers say `x-kurmis-started-on: none`, so the proxy does not use `claude:default` for it
   although it could. Its requests go to the extra logins, or get the 599 when there is none.
+- **A plain `claude` with `CLAUDE_CONFIG_DIR` naming `~/.claude`, after a setup without the
+  variable.** Setup writes `~/.claude/settings.json` with no `x-kurmis-started-on`, so the proxy
+  counts every plain `claude` that reads it as started on `claude:default`. One run from a shell
+  with `CLAUDE_CONFIG_DIR=~/.claude` reads that file too, but signs in with the Keychain item (or
+  Credential Manager entry) named after the variable's value, which may hold another account or
+  none. When the proxy picks `claude:default` and has read its token, the request is signed and
+  counted as `claude:default`. When it has read no token for `claude:default`, it forwards the
+  CLI's own `Authorization` header, so the request is billed to whatever account that item
+  holds while kurmis counts it as `claude:default`. Kurmis cannot tell these CLIs apart, since
+  the variable is not sent with the request. Unset the variable, or use `kurmis claude`.
 - **Version handover.** The new daemon reads `state.json` once, when it starts. While the old
   daemon finishes its open requests, the usage, cooldowns and session placements it records stay
   in its own memory, and the new daemon does not see them. Both daemons write the whole
