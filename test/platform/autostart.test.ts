@@ -130,6 +130,8 @@ describe('Windows logon entry', () => {
     windowsScriptPath: scriptPath()
   })
 
+  // About ten runs of the reg.exe stand-in, each a Node start, which takes longer on Windows and
+  // on a loaded machine than the default 5 s allow.
   it('registers the Run value and the script, idempotently, and removes them', async () => {
     expect(await registerAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     const script = readFileSync(scriptPath()).subarray(2).toString('utf16le')
@@ -142,7 +144,7 @@ describe('Windows logon entry', () => {
     expect(await unregisterAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     expect(existsSync(scriptPath())).toBe(false)
     expect(launchctlCalls()).toEqual([])
-  })
+  }, 30_000)
 })
 
 describe('other platforms', () => {
