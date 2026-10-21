@@ -25,7 +25,7 @@
 // cut off whatever the user pointed Claude Code at.
 import { chmodSync, copyFileSync, constants, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
-import { KURMIS_HEADERS, KEY_HEADER, parseCustomHeaders } from '../core/route-headers.ts'
+import { KURMIS_HEADERS, KEY_HEADER, parseCustomHeaders, STARTED_ON_NONE, withRouteHeaders } from '../core/route-headers.ts'
 import { ROUTING_VARIABLES, routedClaudeEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { kurmisHome } from '../data/paths.ts'
@@ -86,6 +86,13 @@ export interface SetupValues {
   port: number
   /** The daemon's secret, from the `key` file. */
   key: string
+  /**
+   * The file is `$CLAUDE_CONFIG_DIR/settings.json`, read only by CLIs that sign in with the
+   * credentials in that folder, which are not `claude:default`'s (`configDirHasOwnCredentials`).
+   * The custom headers then say so (`STARTED_ON_NONE`), and the proxy never signs those CLIs'
+   * requests as `claude:default`.
+   */
+  credentialsOfItsOwn?: boolean
 }
 
 export interface UndoValues {
@@ -342,6 +349,7 @@ export function kurmisEnvValues(values: SetupValues, existingHeaders: string | n
     const value = routed.set[name]
     if (value !== undefined) out[name] = value
   }
+  if (values.credentialsOfItsOwn === true) out[CUSTOM_HEADERS] = withRouteHeaders(existingHeaders, values.key, null, STARTED_ON_NONE)
   return out
 }
 

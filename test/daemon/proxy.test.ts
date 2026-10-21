@@ -199,6 +199,32 @@ describe('the hold after a pin-back', () => {
   })
 })
 
+describe('a CLI whose credentials are no kurmis login\'s (x-kurmis-started-on: none)', () => {
+  const none = { 'x-kurmis-started-on': 'none', authorization: 'Bearer cli-own-token' }
+
+  test('is never signed as claude:default, and its own header is never forwarded', async () => {
+    const h = await twoLogins()
+    expect((await messages(h, S1, none)).status).toBe(200)
+    expect((await messages(h, S2, none)).status).toBe(200)
+    expect(bearers(h)).toEqual([WORK, WORK])
+    // A 401 from the extra login does not reach that CLI, which could not sign it in again.
+    h.api.scriptFor(WORK, reply.unauthorized(), reply.unauthorized())
+    const answer = await messages(h, S3, none)
+    expect(answer.status).toBe(599)
+    expect(bearers(h).slice(2)).toEqual([WORK, WORK])
+  }, 30_000)
+
+  test('with no extra login to use gets the proxy\'s 599 saying why', async () => {
+    harness = await startHarness()
+    writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
+    const answer = await messages(harness, S1, none)
+    expect(answer.status).toBe(599)
+    expect(answer.text).toContain('CLAUDE_CONFIG_DIR')
+    expect(answer.text).toContain('kurmis login claude')
+    expect(harness.api.apiRequests()).toHaveLength(0)
+  })
+})
+
 describe('a refusal whose body stalls', () => {
   const quotaHeaders = (): Record<string, string> => ({
     'content-type': 'application/json',

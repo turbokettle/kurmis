@@ -305,21 +305,28 @@ export function withoutExpiringTokens(rows: readonly RouteAccount[], now: number
  * a usage limit (`poolLimitAnswer`); a pool with nothing it can sign for could not have served
  * the request whatever anybody's usage said, and gets the proxy's own 599 (`noSignerAnswer`).
  */
-export function refusalAnswer(session: RouteSession, rows: readonly RouteAccount[], now: number):
-  ProxyAnswer & { kind: 'no-signer' | 'pool-limit'; resetAt: number | null } {
+export function refusalAnswer(session: RouteSession, rows: readonly RouteAccount[], now: number,
+  cliOnOwnCredentials = false): ProxyAnswer & { kind: 'no-signer' | 'pool-limit'; resetAt: number | null } {
   const usable = withoutExpiringTokens(rows, now, session)
-  if (accountsInScope(session, usable).length === 0) return { ...noSignerAnswer(), kind: 'no-signer', resetAt: null }
+  if (accountsInScope(session, usable).length === 0) return { ...noSignerAnswer(cliOnOwnCredentials), kind: 'no-signer', resetAt: null }
   return { ...poolLimitAnswer(session, usable, now), kind: 'pool-limit' }
 }
 
 /**
  * The proxy's own 599 for a request no login here can sign. Not a usage limit, and never a 401,
  * which would send the CLI off to renew a token that is not the problem. The CLI retries a 5xx
- * and honours `retry-after`.
+ * and honours `retry-after`. `cliOnOwnCredentials` is a request whose CLI said its credentials
+ * are no kurmis login's (`STARTED_ON_NONE`), and the message then says why `claude:default` was
+ * not used.
  */
-export function noSignerAnswer(): ProxyAnswer {
-  const message = 'No Claude login kurmis may use for this session could sign the request. ' +
-    'Run `kurmis status` to see which logins are signed in.'
+export function noSignerAnswer(cliOnOwnCredentials = false): ProxyAnswer {
+  const message = cliOnOwnCredentials
+    ? 'No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with ' +
+      'CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not kurmis\' claude:default, ' +
+      'and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude ' +
+      'with `kurmis claude`, or run `kurmis setup --undo` with that CLAUDE_CONFIG_DIR.'
+    : 'No Claude login kurmis may use for this session could sign the request. ' +
+      'Run `kurmis status` to see which logins are signed in.'
   return {
     status: ROUTER_REFUSAL_STATUS,
     headers: { 'content-type': 'application/json', 'retry-after': '5' },

@@ -190,6 +190,11 @@ A plain `claude` then runs on Auto. Restart Claude Code sessions and editors tha
 open. If the file already points `ANTHROPIC_BASE_URL` at another proxy, setup stops and changes
 nothing.
 
+`claude:default` is the login in `~/.claude`. When `CLAUDE_CONFIG_DIR` is set, a plain `claude`
+signs in with the login in that folder instead, which kurmis does not know, so kurmis never
+signs its requests as `claude:default`: they go to your extra logins only. `kurmis claude` is
+not affected; it always starts claude on the login it names, `claude:default` included.
+
 `kurmis setup --undo` removes kurmis' settings again (a value you changed yourself is left and
 reported) and the start at login. The daemon keeps running until you stop it, because
 `kurmis claude` still uses it.

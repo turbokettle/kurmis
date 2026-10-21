@@ -10,6 +10,7 @@
 // nothing when it is already done.
 import { ConfigError, loadConfig } from '../../data/config.ts'
 import { readOrCreateKey } from '../../data/daemon-file.ts'
+import { configDirHasOwnCredentials } from '../../data/login-env.ts'
 import {
   registerAutostart,
   unregisterAutostart,
@@ -186,13 +187,19 @@ async function runSetup(undo: boolean, deps: SetupDeps, context: CliContext): Pr
 
   let result: SettingsFileResult
   try {
-    result = undo ? undoSettingsFile(path, { port }) : setupSettingsFile(path, { port: port!, key: readOrCreateKey() })
+    result = undo ? undoSettingsFile(path, { port })
+      : setupSettingsFile(path, { port: port!, key: readOrCreateKey(), credentialsOfItsOwn: configDirHasOwnCredentials(context.env, deps.platform) })
   } catch (error) {
     if (!(error instanceof SettingsFileError)) throw error
     writeLine(context.stderr, `kurmis setup: ${error.message}`)
     return EXIT_FAILURE
   }
   reportFile(result, undo, context)
+  if (!undo && configDirHasOwnCredentials(context.env, deps.platform)) {
+    writeLine(context.stdout, 'CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that ' +
+      'folder, which is not kurmis\' claude:default. Kurmis sends its requests only to the extra logins and never signs them ' +
+      'as claude:default. "kurmis claude" still starts on claude:default.')
+  }
 
   let ok = await autostartStep(undo, deps, context)
   if (undo) {

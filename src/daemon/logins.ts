@@ -168,7 +168,10 @@ export class LoginTable {
    * The routing rows of the Claude logins, for one request.
    *
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
-   * request carries an `authorization` header of its own. The proxy forwards that header for
+   * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
+   * credentials are no kurmis login's (`STARTED_ON_NONE`): no login is signed with its header,
+   * and `claude:default`, whose token belongs to another account than the CLI's, is left out of
+   * the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that header for
    * the started-on login when it holds no token for it (decision 5), so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
    *
@@ -176,15 +179,16 @@ export class LoginTable {
    * started-on login and `pinned`, the login the request names with `x-kurmis-login`: their
    * requests go to it and get its 401 as it is.
    */
-  routeRows(startedOn: string, callerSigns: boolean, pinned: string | null = null): RouteAccount[] {
+  routeRows(startedOn: string | null, callerSigns: boolean, pinned: string | null = null): RouteAccount[] {
     const now = this.options.now()
     return this.claudeLogins().map((login) => {
-      const token = this.options.tokens.read(login.id)
+      const notTheCli = startedOn === null && login.id === CLAUDE_DEFAULT_ACCOUNT_ID
+      const token = notTheCli ? null : this.options.tokens.read(login.id)
       const passThrough = token === null && callerSigns && login.id === startedOn
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned
       return {
         id: login.id,
-        loggedIn: !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
+        loggedIn: !notTheCli && !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
         credentialsReadable: token !== null || passThrough,
         tokenExpiresAt: token?.expiresAt ?? null,
         usage: this.usage(login.id),

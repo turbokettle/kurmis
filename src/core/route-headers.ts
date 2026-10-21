@@ -6,7 +6,8 @@
 // "Request headers on an inference call"). Kurmis puts up to three headers there:
 // `x-kurmis-key` with the daemon's secret, `x-kurmis-login` when the CLI was started with
 // `--login`, which pins the session to that login, and `x-kurmis-started-on` naming the login
-// whose credentials the CLI was started on. None of them is forwarded upstream. The CLI also sends
+// whose credentials the CLI was started on, or `none` when they are no kurmis login's. None of
+// them is forwarded upstream. The CLI also sends
 // `X-Claude-Code-Session-Id` by itself, which is what the proxy tells sessions apart by.
 import { timingSafeEqual } from 'node:crypto'
 import { CLAUDE_DEFAULT_ACCOUNT_ID, parseAccountId } from './accounts.ts'
@@ -23,6 +24,15 @@ export const LOGIN_HEADER = 'x-kurmis-login'
  * it was sent by a CLI started on `claude:default`, such as a plain `claude` in global mode.
  */
 export const STARTED_ON_HEADER = 'x-kurmis-started-on'
+
+/**
+ * The value of `STARTED_ON_HEADER` that says the CLI's credentials are no kurmis login's: global
+ * mode writes it into `$CLAUDE_CONFIG_DIR/settings.json`, which only a CLI that reads the
+ * credentials in that folder uses (`configDirHasOwnCredentials` in `src/data/login-env.ts`). The
+ * proxy then never forwards the CLI's own `authorization` header and never signs the request as
+ * `claude:default`.
+ */
+export const STARTED_ON_NONE = 'none'
 
 /** The header the CLI names its session in. Its subagents and small-model requests share it. */
 export const SESSION_HEADER = 'x-claude-code-session-id'
@@ -87,9 +97,10 @@ export interface RouteRequest {
   login: string | null | 'invalid'
   /**
    * The Claude login the CLI was started on: the `x-kurmis-started-on` header, or
-   * `claude:default` without one. A header that does not name a Claude login reads as `invalid`.
+   * `claude:default` without one. Null for `none` (`STARTED_ON_NONE`): no kurmis login. Any other
+   * header that does not name a Claude login reads as `invalid`.
    */
-  startedOn: string | 'invalid'
+  startedOn: string | null | 'invalid'
   /** The CLI's session id, or null when the request has none. */
   sessionId: string | null
 }
@@ -101,7 +112,9 @@ export function readRouteRequest(get: RequestHeaderGetter): RouteRequest {
   return {
     key,
     login: named === null ? null : claudeLoginOrInvalid(named),
-    startedOn: startedOn === null ? CLAUDE_DEFAULT_ACCOUNT_ID : claudeLoginOrInvalid(startedOn),
+    startedOn: startedOn === null ? CLAUDE_DEFAULT_ACCOUNT_ID
+      : startedOn.toLowerCase() === STARTED_ON_NONE ? null
+        : claudeLoginOrInvalid(startedOn),
     sessionId: nonEmpty(get(SESSION_HEADER))
   }
 }

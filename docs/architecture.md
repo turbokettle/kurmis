@@ -139,8 +139,10 @@ older version, after that daemon finishes the requests it has open.
 - **The proxy** is every other routed path (`src/daemon/proxy.ts`). A request needs the header
   `x-kurmis-key: <secret>`, which reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`, else it gets
   403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
-  login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on. Either one
-  naming no Claude login is a 400. None of them is forwarded upstream. The body is read whole
+  login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on, or
+  `x-kurmis-started-on: none`, which says the CLI's credentials are no kurmis login's (below,
+  "`claude:default` and `CLAUDE_CONFIG_DIR`"). Either one naming no Claude login, `none` aside,
+  is a 400. None of them is forwarded upstream. The body is read whole
   (at most 64 MB), because a request may have to be sent more than once. A body that is not JSON
   is a 400. Otherwise it goes upstream as the bytes that came, except for the account uuid in
   `metadata.user_id`, which is set to the chosen login's (`outgoingBody` in
@@ -164,7 +166,10 @@ older version, after that daemon finishes the requests it has open.
 - **Signing.** The proxy signs with `Bearer <token>` for the token it read for the chosen login.
   When the chosen login is the one the CLI was started on and no token was read for it, the
   CLI's own `authorization` header is forwarded instead. No other login is ever signed with the
-  CLI's header. A 401 is handled this way:
+  CLI's header. A request with `x-kurmis-started-on: none` is never signed with the CLI's header,
+  and `claude:default` is left out of its pool, because the CLI is signed in to another account
+  than `claude:default`'s; when no other login can take it, the proxy's 599 says so. A 401 is
+  handled this way:
   - A 401 on the CLI's own header goes to the CLI as it is: the CLI owns that token.
   - A 401 on a token the proxy read makes it read the token again. When the record has a
     refresh token, the proxy renews it once through a probe (the probe's CLI renews a refused
@@ -541,6 +546,30 @@ Claude Code sessions that are already open keep the settings they started with.
 Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
 headers. The proxy answers that path itself.
 
+**`claude:default` and `CLAUDE_CONFIG_DIR`.** `claude:default` is the login in `~/.claude`: the
+daemon reads its token from the Keychain item with the plain name or from
+`~/.claude/.credentials.json`, its probe runs with `CLAUDE_SECURESTORAGE_CONFIG_DIR` empty, and
+`kurmis login claude:default` runs without `CLAUDE_CONFIG_DIR`. Claude Code 2.1.306 (read from
+its bundled source) takes its credentials from `CLAUDE_SECURESTORAGE_CONFIG_DIR` when that is
+set, the empty string meaning the default ones, and otherwise from `CLAUDE_CONFIG_DIR`: the file
+in that folder, and a Keychain item named after the variable's value (`keychain-service.ts`). So
+a CLI started with `CLAUDE_CONFIG_DIR` set may be signed in to another account than
+`claude:default`. The daemon is one per user and cannot follow a variable that each shell sets
+for itself, so kurmis keeps `claude:default` fixed and makes sure no request is signed as
+`claude:default` for a CLI on other credentials:
+
+- `kurmis claude` on `claude:default` sets `CLAUDE_SECURESTORAGE_CONFIG_DIR` to the empty string,
+  so the CLI signs in with `claude:default`'s own credentials while its settings and transcripts
+  still come from `CLAUDE_CONFIG_DIR`. When `CLAUDE_CONFIG_DIR` is set it says so on stderr.
+- `kurmis setup` from a shell with `CLAUDE_CONFIG_DIR` set writes
+  `$CLAUDE_CONFIG_DIR/settings.json`, which only CLIs with that variable read, and those sign in
+  with the credentials in that folder. So setup adds `x-kurmis-started-on: none` to the custom
+  headers there, and says so. The proxy then signs those CLIs' requests only with extra logins.
+- On macOS and Windows any value of `CLAUDE_CONFIG_DIR` counts, the path of `~/.claude` too,
+  because the CLI names its Keychain or Credential Manager item after the value. On Linux a
+  value that resolves to `~/.claude` is the same file and does not count
+  (`configDirHasOwnCredentials` in `src/data/login-env.ts`).
+
 ## The wrapper
 
 `kurmis claude`, `kurmis codex` and `kurmis login` start their CLI through `runInteractive` in
@@ -741,6 +770,12 @@ These are known and left as they are.
   could add to tell the nested CLI apart is overridden or never sent, because the `env` of
   `settings.json` beats the process environment and the proxy only sees headers. Use
   `kurmis claude` inside such a session instead.
+- **A plain `claude` inside a `kurmis claude` session on `claude:default`, with
+  `CLAUDE_CONFIG_DIR` set and global mode set up from it.** The session's
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` is empty, and a shell started from it passes that on, so the
+  plain `claude` signs in as `claude:default`. It reads `$CLAUDE_CONFIG_DIR/settings.json`, whose
+  headers say `x-kurmis-started-on: none`, so the proxy does not use `claude:default` for it
+  although it could. Its requests go to the extra logins, or get the 599 when there is none.
 - **Version handover.** The new daemon reads `state.json` once, when it starts. While the old
   daemon finishes its open requests, the usage, cooldowns and session placements it records stay
   in its own memory, and the new daemon does not see them. Both daemons write the whole

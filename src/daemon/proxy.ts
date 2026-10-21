@@ -211,6 +211,7 @@ export function createProxy(options: ProxyOptions): Proxy {
       currentAccountId: table.sessionLogin(sessionKey),
       pinnedAccountId: pinned
     }
+    /** The login the CLI was started on; null when its credentials are no kurmis login's (`STARTED_ON_NONE`). */
     const startedOn = info.startedOn
     const callerAuthorization = headerValue(req, 'authorization') ?? null
     const rowsNow = (): RouteAccount[] => table.routeRows(startedOn, callerAuthorization !== null, info.login)
@@ -350,7 +351,7 @@ export function createProxy(options: ProxyOptions): Proxy {
           res.writeHead(leftAnswer.status, downstreamResponseHeaders(leftAnswer.headers)).end(leftAnswer.body)
           return
         }
-        answerRefusal(res, session, rows, refusals, attempted, excluded)
+        answerRefusal(res, session, rows, refusals, attempted, excluded, startedOn === null)
         return
       }
       const token = tokens.read(row.id)
@@ -483,7 +484,7 @@ export function createProxy(options: ProxyOptions): Proxy {
    * hand the proxy answers itself (`refusalAnswer`).
    */
   function answerRefusal(res: ServerResponse, session: RouteSession, rows: RouteAccount[], refusals: KeptRefusal[],
-    attempted: ReadonlySet<string>, excluded: ReadonlySet<string>): void {
+    attempted: ReadonlySet<string>, excluded: ReadonlySet<string>, cliOnOwnCredentials: boolean): void {
     const fields: LogFields = { count: attempted.size }
     if (refusals.length > 0) {
       const first = [...refusals].sort((a, b) => a.until - b.until)[0]!
@@ -499,7 +500,7 @@ export function createProxy(options: ProxyOptions): Proxy {
       res.writeHead(first.status, downstreamResponseHeaders(first.headers)).end(first.body)
       return
     }
-    const answer = refusalAnswer(session, rows, now())
+    const answer = refusalAnswer(session, rows, now(), cliOnOwnCredentials)
     log.write('pool_exhausted', { ...fields, reason: answer.kind === 'no-signer' ? 'no_credentials' : 'usage_limit',
       status: answer.status, ...(answer.resetAt === null ? {} : { until: answer.resetAt }) })
     send(res, answer)
