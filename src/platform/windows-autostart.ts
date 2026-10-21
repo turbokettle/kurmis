@@ -339,7 +339,8 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   }
   const added = await reg(regAddArgs(data))
   if (!ok(added)) {
-    // The Run value may still name the old VBScript, which is kept so that logon still starts the daemon.
+    // The Run value may still name the old VBScript, which is kept so that logon still starts
+    // the daemon.
     return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` }
   }
   removeOldVbsScript(scriptPath)
