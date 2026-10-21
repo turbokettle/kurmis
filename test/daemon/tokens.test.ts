@@ -36,7 +36,8 @@ function source(options: Partial<TokenSourceOptions> = {}): TokenSource {
     platform: 'darwin',
     home: () => home,
     log,
-    keychainReadTimeoutMs: 500,
+    // Long enough for the Node stand-in to start on a loaded machine; see keychain.test.ts.
+    keychainReadTimeoutMs: 10_000,
     ...options
   })
 }
@@ -154,7 +155,7 @@ test('macOS: a read that does not answer is logged as a timeout and the item is 
   keychain.setItem(PLAIN, record(fakeToken('default-item')))
   keychain.setMode('prompt')
   let now = 1_000_000
-  const tokens = source({ now: () => now })
+  const tokens = source({ now: () => now, keychainReadTimeoutMs: 500 })
   await tokens.prime([DEFAULT])
   expect(tokens.read(DEFAULT)?.accessToken).toBe(fakeToken('default-file'))
   keychain.setMode(null)

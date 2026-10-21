@@ -22,7 +22,11 @@ const WORK = 'claude:work'
 const PLAIN = 'Claude Code-credentials'
 const SECRET = JSON.stringify({ claudeAiOauth: { accessToken: 'fake-token', expiresAt: 4_100_000_000_000 } })
 /** Short, so the tests of a `security` that never answers do not wait three seconds each. */
-const TIMEOUT_MS = 500
+// A read that should answer gets a deadline that a loaded machine still meets: the stand-in is a
+// Node script, and starting Node can take over a second when many tests run at once. A test of a
+// read that never answers passes the short HANG_TIMEOUT_MS instead.
+const TIMEOUT_MS = 10_000
+const HANG_TIMEOUT_MS = 500
 
 let dir: string
 let keychain: FakeKeychain
@@ -224,7 +228,7 @@ test('onFailure hears of a read that did not answer once, as a timeout', async (
   keychain.setMode('prompt')
   let now = 1_000_000
   const failures: KeychainReadFailure[] = []
-  const credentials = reader({ now: () => now, onFailure: (failure) => failures.push(failure) })
+  const credentials = reader({ readTimeoutMs: HANG_TIMEOUT_MS, now: () => now, onFailure: (failure) => failures.push(failure) })
   await credentials.prime([DEFAULT])
   now += 61_000
   await credentials.prime([DEFAULT])
@@ -268,7 +272,7 @@ test('an empty item reads as no token', async () => {
 test('a security that never answers is killed and reads as no token', async () => {
   keychain.setItem(PLAIN, SECRET)
   keychain.setMode('prompt')
-  const credentials = reader()
+  const credentials = reader({ readTimeoutMs: HANG_TIMEOUT_MS })
   const started = Date.now()
   await credentials.prime([DEFAULT])
   expect(credentials.read(DEFAULT)).toBeNull()
@@ -284,7 +288,7 @@ test('an item whose read did not answer is never read again, so it puts up at mo
   keychain.setMode('prompt')
   let now = 1_000_000
   const lines: string[] = []
-  const credentials = reader({ now: () => now, log: (line) => lines.push(line) })
+  const credentials = reader({ readTimeoutMs: HANG_TIMEOUT_MS, now: () => now, log: (line) => lines.push(line) })
   await credentials.prime([DEFAULT])
   expect(credentials.read(DEFAULT)).toBeNull()
 
@@ -374,7 +378,7 @@ test('the probe says why a login Keychain cannot be read', async () => {
 
 test('a probe that never answers counts as unreadable', async () => {
   keychain.setMode('prompt')
-  expect(await probeLoginKeychain(FAKE_SECURITY, TIMEOUT_MS)).toEqual({ readable: false, reason: expect.stringContaining('did not answer') })
+  expect(await probeLoginKeychain(FAKE_SECURITY, HANG_TIMEOUT_MS)).toEqual({ readable: false, reason: expect.stringContaining('did not answer') })
 })
 
 test('the Keychain holds the secret on macOS only', () => {
