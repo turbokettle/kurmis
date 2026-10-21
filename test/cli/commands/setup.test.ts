@@ -1,12 +1,12 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createSetupCommand } from '../../../src/cli/commands/setup.ts'
 import { backupPathFor } from '../../../src/cli/global-settings.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
 import type { AutostartOptions, AutostartResult } from '../../../src/platform/autostart.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
-import { canCreateSymlinks } from '../../host.ts'
+import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
 const home = process.env.HOME as string
 const kurmisHome = process.env.KURMIS_HOME as string
@@ -20,7 +20,7 @@ interface FakeAutostart {
 }
 
 /** Autostart that keeps its entry in memory, or fails with `warning` / `throws`. */
-function fakeAutostart(options: { warning?: string; throws?: string; loadsAtNextLogin?: boolean } = {}): FakeAutostart {
+function fakeAutostart(options: { warning?: string; throws?: string; loadsAtNextLogin?: boolean; noEntryPossible?: boolean } = {}): FakeAutostart {
   let registered = false
   const calls: string[] = []
   const where = '/example/LaunchAgents/kurmis.plist'
@@ -30,6 +30,7 @@ function fakeAutostart(options: { warning?: string; throws?: string; loadsAtNext
       calls.push(`register:${String(given.platform)}`)
       if (options.throws !== undefined) throw new Error(options.throws)
       if (options.loadsAtNextLogin === true) return { changed: true, where, warning: options.warning ?? '', loadsAtNextLogin: true }
+      if (options.noEntryPossible === true) return { changed: false, where: null, warning: options.warning ?? '', noEntryPossible: true }
       if (options.warning !== undefined) return { changed: false, where: null, warning: options.warning }
       const changed = !registered
       registered = true
@@ -220,6 +221,16 @@ describe('kurmis setup', () => {
     expect(result.stderr).toContain(`${settingsPath} was not changed, so Claude Code does not use kurmis yet.`)
   })
 
+  it('says the file still holds an earlier setup when the daemon cannot start', async () => {
+    expect((await run(setup().command, [])).code).toBe(0)
+    const text = readFileSync(settingsPath, 'utf8')
+    const result = await run(setup({ ensureFails: 'port 40123 is busy' }).command, [])
+    expect(result.code).toBe(1)
+    expect(readFileSync(settingsPath, 'utf8')).toBe(text)
+    expect(result.stderr).toContain(`${settingsPath} was not changed. It still holds kurmis' settings from an earlier setup`)
+    expect(result.stderr).not.toContain('does not use kurmis yet')
+  })
+
   it('writes nothing when the daemon runs on another port than config.json names', async () => {
     writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 1, port: 30003 }))
     const { command } = setup()
@@ -234,6 +245,16 @@ describe('kurmis setup', () => {
     const result = await run(command, [])
     expect(result.code).toBe(0)
     expect(result.stderr).toBe('Warning: The login item is written and starts the daemon at your next login, but it could not be loaded now: no GUI session\n')
+    expect(existsSync(settingsPath)).toBe(true)
+  })
+
+  it('counts a machine where no logon entry can be written as done, with a warning', async () => {
+    const warning = 'The logon entry was not written: C:\\Windows\\System32\\wscript.exe does not exist. The next kurmis command starts the daemon anyway.'
+    const { command } = setup({}, fakeAutostart({ noEntryPossible: true, warning }), 'win32')
+    const result = await run(command, [])
+    expect(result.code).toBe(0)
+    expect(result.stderr).toBe(`Warning: ${warning}\n`)
+    expect(result.stderr).not.toContain('run "kurmis setup" again')
     expect(existsSync(settingsPath)).toBe(true)
   })
 
@@ -271,6 +292,55 @@ describe('kurmis setup', () => {
     expect((await run(command, ['--undo'], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
     expect(readFileSync(join(dir, 'settings.json'), 'utf8')).not.toContain('x-kurmis')
     rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
+  })
+
+  it('refuses a CLAUDE_CONFIG_DIR that names ~/.claude itself on macOS and Windows, and changes nothing', async () => {
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    for (const [platform, value] of [
+      ['darwin', join(home, '.claude')],
+      ['darwin', `${join(home, '.claude')}${sep}`],
+      // macOS and Windows file systems usually ignore case, and so does the comparison.
+      ['darwin', join(home, '.CLAUDE')],
+      ['win32', join(home, '.claude')]
+    ] as const) {
+      const { client, autostart, command } = setup({}, fakeAutostart(), platform)
+      const result = await run(command, [], { CLAUDE_CONFIG_DIR: value })
+      expect(result.code).toBe(1)
+      expect(result.stderr).toContain(`CLAUDE_CONFIG_DIR is set to ${value}, which is the default Claude Code folder ${join(home, '.claude')}.`)
+      expect(result.stderr).toContain('Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again.')
+      expect(existsSync(settingsPath)).toBe(false)
+      expect(client.calls).toEqual([])
+      expect(autostart.calls).toEqual([])
+    }
+  })
+
+  it('refuses a CLAUDE_CONFIG_DIR that is a link to ~/.claude', async () => {
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    const link = join(home, 'claude-link')
+    linkFolder(join(home, '.claude'), link)
+    try {
+      const result = await run(setup().command, [], { CLAUDE_CONFIG_DIR: link })
+      expect(result.code).toBe(1)
+      expect(result.stderr).toContain('Unset CLAUDE_CONFIG_DIR')
+    } finally {
+      // Removes the link, not the folder it points to; a junction is removed like a folder.
+      if (process.platform === 'win32') rmdirSync(link)
+      else unlinkSync(link)
+    }
+  })
+
+  it('accepts a CLAUDE_CONFIG_DIR that names ~/.claude on Linux, where it reads the same credentials', async () => {
+    const { command } = setup({}, fakeAutostart(), 'linux')
+    const result = await run(command, [], { CLAUDE_CONFIG_DIR: join(home, '.claude') })
+    expect(result.code).toBe(0)
+    expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis-started-on')
+  })
+
+  it('still undoes with a CLAUDE_CONFIG_DIR that names ~/.claude', async () => {
+    expect((await run(setup().command, [])).code).toBe(0)
+    const result = await run(setup().command, ['--undo'], { CLAUDE_CONFIG_DIR: join(home, '.claude') })
+    expect(result.code).toBe(0)
+    expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis')
   })
 
   it('without CLAUDE_CONFIG_DIR names no started-on login, so a plain claude counts as on claude:default', async () => {

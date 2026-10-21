@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applySetupToText,
   backupPathFor,
+  checkSetupSettingsFile,
   claudeSettingsPath,
   kurmisEnvValues,
   SettingsFileError,
@@ -178,6 +179,16 @@ describe('applySetupToText', () => {
     const edit = applySetupToText(text, VALUES)
     expect(edit.warnings.join(' ')).toContain('ANTHROPIC_API_KEY')
     expect(envOf(edit.text)!.ANTHROPIC_API_KEY).toBe('sk-example')
+  })
+
+  it('warns about a subscription token in env and leaves it', () => {
+    const text = JSON.stringify({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'fake-token', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '3' } })
+    const edit = applySetupToText(text, VALUES)
+    expect(edit.warnings).toHaveLength(2)
+    expect(edit.warnings[0]).toContain('The "env" also sets CLAUDE_CODE_OAUTH_TOKEN, so a plain claude signs in with that subscription token')
+    expect(edit.warnings[1]).toContain('CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR')
+    expect(edit.warnings.join(' ')).not.toContain('fake-token')
+    expect(envOf(edit.text)!.CLAUDE_CODE_OAUTH_TOKEN).toBe('fake-token')
   })
 
   it('handles strings with escapes, nested objects and a byte order mark', () => {
@@ -525,11 +536,16 @@ describe('the settings file', () => {
   })
 
   it('on Windows a read-only file is refused with what to do, and not changed', () => {
-    const path = join(freshDir(), 'settings.json')
+    const dir = join(freshDir(), 'Example User')
+    mkdirSync(dir)
+    const path = join(dir, 'settings.json')
     writeFileSync(path, '{}\n')
     chmodSync(path, 0o444)
     try {
-      expect(() => setupSettingsFile(path, VALUES, 'win32')).toThrow(/was not changed: it is read-only\. Clear that with "attrib -R /)
+      // The path is quoted, since it may hold a space.
+      const said = `was not changed: it is read-only. Clear that with attrib -R "${realpathSync(path)}" and run the command again`
+      expect(() => checkSetupSettingsFile(path, VALUES, 'win32')).toThrow(said)
+      expect(() => setupSettingsFile(path, VALUES, 'win32')).toThrow(said)
       expect(readFileSync(path, 'utf8')).toBe('{}\n')
       expect(existsSync(backupPathFor(path))).toBe(false)
     } finally {
