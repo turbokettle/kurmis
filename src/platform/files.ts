@@ -1,6 +1,6 @@
 // File operations that behave differently per OS: renaming over a file another program has
 // open, flushing a folder, and file and folder permissions.
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync } from 'node:fs'
+import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, renameSync, statSync } from 'node:fs'
 import { open, rename } from 'node:fs/promises'
 
 /**
@@ -13,6 +13,25 @@ export const PRIVATE_FILE_MODE = 0o600
 
 /** Mode for the data folder and the login folders. Ignored on Windows, as above. */
 export const PRIVATE_DIR_MODE = 0o700
+
+/** A file mode with the group and other bits cleared; the user's own bits stay as they are. */
+export function userOnlyMode(mode: number): number {
+  return mode & 0o700
+}
+
+/**
+ * Clears the group and other bits of an existing file's mode, so only the user may read it.
+ * Answers the mode it had before when that changed it, and null when the mode already had no
+ * such bits. A symbolic link's target is changed. On Windows node ignores modes (see
+ * `PRIVATE_FILE_MODE`), so this does nothing there and answers null.
+ */
+export function restrictToUserSync(path: string, platform: NodeJS.Platform = process.platform): number | null {
+  if (platform === 'win32') return null
+  const mode = statSync(path).mode & 0o777
+  if (userOnlyMode(mode) === mode) return null
+  chmodSync(path, userOnlyMode(mode))
+  return mode
+}
 
 /**
  * The codes Windows gives when a rename fails because another program has the destination

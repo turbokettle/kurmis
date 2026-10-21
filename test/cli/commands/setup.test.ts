@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createSetupCommand } from '../../../src/cli/commands/setup.ts'
@@ -115,6 +115,44 @@ describe('kurmis setup', () => {
     expect(second.stdout).toContain('The file already has kurmis\' settings; nothing to change.')
     expect(second.stdout).toContain('The daemon already starts at login')
     expect(readFileSync(settingsPath, 'utf8')).toBe(text)
+  })
+
+  it.skipIf(process.platform === 'win32')('makes the file and its backup readable only by the user and says so', async () => {
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    writeFileSync(settingsPath, '{\n  "model": "opus"\n}\n')
+    chmodSync(settingsPath, 0o644)
+    const { command } = setup()
+    const first = await run(command, [])
+    expect(first.code).toBe(0)
+    expect(first.stdout).toContain('Made the file readable only by you, because it holds kurmis\' key (its mode was 0644).')
+    expect(statSync(settingsPath).mode & 0o777).toBe(0o600)
+    expect(statSync(backupPathFor(settingsPath)).mode & 0o777).toBe(0o600)
+
+    chmodSync(backupPathFor(settingsPath), 0o644)
+    const second = await run(command, [])
+    expect(second.stdout).toContain(`Made ${backupPathFor(settingsPath)} readable only by you (its mode was 0644).`)
+    expect(second.stdout).not.toContain('Made the file readable')
+    expect(statSync(backupPathFor(settingsPath)).mode & 0o777).toBe(0o600)
+  })
+
+  it.skipIf(process.platform === 'win32')('warns that the key goes to the target of a linked settings file', async () => {
+    const dotfiles = join(home, 'dotfiles')
+    mkdirSync(dotfiles, { recursive: true })
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    const target = join(dotfiles, 'claude-settings.json')
+    writeFileSync(target, '{}\n')
+    symlinkSync(target, settingsPath)
+    try {
+      const { command } = setup()
+      const result = await run(command, [])
+      expect(result.code).toBe(0)
+      expect(result.stderr).toContain(
+        `Warning: ${settingsPath} is a symbolic link, so kurmis' key is written to the file it points to, ${realpathSync(target)}.`)
+      const undone = await run(command, ['--undo'])
+      expect(undone.stderr).not.toContain('symbolic link')
+    } finally {
+      rmSync(dotfiles, { recursive: true, force: true })
+    }
   })
 
   it('refuses a file it cannot parse and does nothing else', async () => {

@@ -144,7 +144,9 @@ describe.skipIf(process.platform !== 'darwin')('kurmis setup on macOS', () => {
     expect(readFileSync(settingsPath(world), 'utf8')).toBe(expectedAfterSetup(world.port, key))
     const env = (JSON.parse(readFileSync(settingsPath(world), 'utf8')) as { env: Record<string, string> }).env
     expect(Object.keys(env).sort()).toEqual(['MY_SETTING', ...ROUTING_VARIABLES].sort())
-    expect(fileMode(settingsPath(world))).toBe(0o644)
+    // The file now holds the key, so setup made it readable only by the user.
+    expect(fileMode(settingsPath(world))).toBe(0o600)
+    expect(setup.stdout).toContain('Made the file readable only by you, because it holds kurmis\' key (its mode was 0644).')
     const backup = `${settingsPath(world)}.kurmis-backup`
     expect(readFileSync(backup, 'utf8')).toBe(ORIGINAL)
     expect(fileMode(backup)).toBe(0o600)
@@ -198,7 +200,8 @@ describe.skipIf(process.platform !== 'darwin')('kurmis setup on macOS', () => {
     expect(undo.stdout).toContain(`The daemon no longer starts at login (${plistPath(world)}).`)
     expect(undo.stdout).toContain('The daemon keeps running')
     expect(readFileSync(settingsPath(world), 'utf8')).toBe(ORIGINAL)
-    expect(fileMode(settingsPath(world))).toBe(0o644)
+    // Undo keeps the mode setup left.
+    expect(fileMode(settingsPath(world))).toBe(0o600)
     expect(existsSync(plistPath(world))).toBe(false)
     expect(launchctlCalls(world)).toContainEqual(['bootout', `gui/${String(uid)}/${LABEL}`])
     expect(launchctlJobs(world)).toEqual({})

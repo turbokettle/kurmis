@@ -192,6 +192,36 @@ describe('every window a snapshot carries', () => {
     ])
   })
 
+  test('a per-model entry that repeats the Opus or Sonnet window is shown once, under its fixed key', () => {
+    const RESET = '2026-09-09T20:00:00.000Z'
+    const usage = claudeUsage({
+      sevenDayOpus: { utilization: 4, resetsAt: RESET },
+      sevenDaySonnet: { utilization: 9, resetsAt: '2026-09-09T20:00:00Z' },
+      modelScoped: [
+        { displayName: 'Opus', utilization: 4, resetsAt: RESET },
+        { displayName: 'sonnet', utilization: 9, resetsAt: RESET },
+        { displayName: 'Fable', utilization: 4, resetsAt: RESET }
+      ]
+    })
+
+    expect(allUsageWindows(usage).map((window) => window.key)).toEqual(['seven_day_opus', 'seven_day_sonnet', 'Fable'])
+    // The stored snapshot keeps both.
+    expect(usage.modelScoped).toHaveLength(3)
+  })
+
+  test('a per-model entry with other figures than the window of the same name is shown beside it', () => {
+    const RESET = '2026-09-09T20:00:00.000Z'
+    const usage = claudeUsage({
+      sevenDayOpus: { utilization: 4, resetsAt: RESET },
+      modelScoped: [
+        { displayName: 'Opus', utilization: 30, resetsAt: RESET },
+        { displayName: 'Sonnet', utilization: 9, resetsAt: RESET }
+      ]
+    })
+
+    expect(allUsageWindows(usage).map((window) => window.key)).toEqual(['seven_day_opus', 'Opus', 'Sonnet'])
+  })
+
   test('a Codex plan is the windows the server named, less the hidden one', () => {
     expect(allUsageWindows(codexUsage()).map((window) => window.key))
       .toEqual(['codex:primary'])

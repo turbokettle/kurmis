@@ -411,10 +411,17 @@ login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon
 - The file is edited as text: only the members of `env` change, and key order, indent, line
   endings and a byte order mark stay as they were. A file that is not plain JSON (comments,
   trailing commas), or whose top level or `env` is not an object, is refused and not written.
-  A symlinked file is written through the link.
+  A symlinked file is written through the link: the link stays, its target gets the change, and
+  setup warns that the key is written to that target and names it.
 - Before the first change to an existing file, it is copied to `settings.json.kurmis-backup`
-  (mode 0600), which is never overwritten. A new file gets mode 0600; an existing one keeps its
-  mode.
+  (mode 0600), which is never overwritten.
+- The file holds the key after setup, so setup makes it readable by the user only: a new file
+  gets mode 0600, and an existing one has its group and other bits cleared (0644 becomes 0600),
+  also when setup finds kurmis' settings already there and writes nothing. An existing backup
+  has its group and other bits cleared too. Setup says when it changed a mode. Undo keeps the
+  mode the file has. On Windows node ignores modes, so nothing is changed there; the file is
+  protected by the access list it inherits from its folder (`PRIVATE_FILE_MODE` in
+  `src/platform/files.ts`).
 - An `ANTHROPIC_BASE_URL` that is not kurmis' (`http://127.0.0.1:<port>` with the port of
   `config.json`, or with an `x-kurmis-key` in the same `env`'s headers) is refused, so another
   proxy is not cut off silently. A value of the person's own for `ENABLE_TOOL_SEARCH` or
@@ -653,7 +660,9 @@ After each test it stops every daemon the test's commands started.
     per login the label, the email the daemon read from the login's own profile (on the
     terminal only), sign-in, routing, limits, use-first, sessions, each usage window with its
     reset, and why routing passes the login over (`routeBlockText`), and last which login
-    `kurmis codex` would start on (`src/cli/status-format.ts`).
+    `kurmis codex` would start on (`src/cli/status-format.ts`). Resets are shown as the time
+    left; a cooldown's end is shown in local time (`02:10`, with the date when it is on another
+    day) with the time left after it.
   - `list [--json]`: the logins from `config.json` without the daemon, with the columns `ID LABEL
     AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`. Credentials is a check of local files only: an
     extra Claude login's `.credentials.json` or a `.claude.json` naming an account in its folder,
@@ -705,7 +714,13 @@ After each test it stops every daemon the test's commands started.
   ```
 
   `usage` and `blocked` may be null. A window whose reset has passed reads `utilization: 0`.
-  `limitPercent` is null for a window that meters one model rather than the plan. `sessions` is
+  `limitPercent` is null for a window that meters one model rather than the plan. The CLI's
+  `get_usage` answer has the server's `seven_day_opus` and `seven_day_sonnet` windows and, in
+  `model_scoped`, the per-model weekly windows from the server's `limits` list, so one model's
+  window can come twice, as `seven_day_opus` and as `Opus`. An `Opus` or `Sonnet` entry with the
+  same figure and reset as the fixed window is left out of `windows` and the text
+  (`repeatsModelWindow` in `src/core/usage-rules.ts`); the daemon's snapshot keeps both.
+  `blocked.text` gives a cooldown's end as an ISO time, as the daemon's log does. `sessions` is
   null for Codex logins, and `codexStart` is null without Codex logins. A Claude login's
   `blocked` comes from the daemon; a Codex login's is the Codex choice's rule.
 - `src/version.ts` holds the version, which the build takes from `package.json`.

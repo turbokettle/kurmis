@@ -18,7 +18,9 @@ function sampleStatus() {
         fetchedAt: NOW - 3 * MINUTE,
         fiveHour: usageWindow(42, at(2 * HOUR + 10 * MINUTE)),
         sevenDay: usageWindow(63.4, at(3 * 24 * HOUR + 4 * HOUR)),
-        sevenDayOpus: usageWindow(12, at(3 * 24 * HOUR + 4 * HOUR))
+        sevenDayOpus: usageWindow(12, at(3 * 24 * HOUR + 4 * HOUR)),
+        // get_usage can also list the Opus window by name; it is shown once.
+        modelScoped: [{ displayName: 'Opus', ...usageWindow(12, at(3 * 24 * HOUR + 4 * HOUR)) }]
       })
     }),
     loginStatus('claude:work', {
@@ -51,7 +53,7 @@ function sampleStatus() {
 
 describe('kurmis status as text', () => {
   test('one block per login, with usage, limits, routing and why a login is passed over', () => {
-    expect(formatStatus(sampleStatus(), NOW, { keychain: false })).toBe(`kurmis daemon 0.1.0, pid 4242, port 40123, running for 2h 5m
+    expect(formatStatus(sampleStatus(), NOW, { keychain: false, timeZone: 'UTC' })).toBe(`kurmis daemon 0.1.0, pid 4242, port 40123, running for 2h 5m
 
 claude:default
   signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
@@ -77,7 +79,7 @@ claude:spare
 claude:cool
   signed in, routing on, limits 100% 5 hour, 100% weekly, 0 sessions
   usage not read yet
-  passed over: cooling down until 2026-09-13T02:10:00.000Z (in 1h)
+  passed over: cooling down until 02:10 (in 1h)
 
 codex:default
   signed in, routing on, limits 100% 5 hour, 100% weekly, plan plus
@@ -97,6 +99,18 @@ codex:work
 kurmis codex would start on codex:default. Every Codex login is at its limit;
 starting on codex:default, whose usage comes back first (in 1h).
 `)
+  })
+
+  test('gives a cooldown\'s end in local time, with the date when it is on another day', () => {
+    const status = (until: number) => statusAnswer([loginStatus('claude:cool', { block: { kind: 'cooldown', until }, cooldownUntil: until })])
+    expect(formatStatus(status(NOW + HOUR), NOW, { keychain: false, timeZone: 'Asia/Tokyo' }))
+      .toContain('passed over: cooling down until 11:10 (in 1h)')
+    expect(formatStatus(status(NOW + 23 * HOUR), NOW, { keychain: false, timeZone: 'Asia/Tokyo' }))
+      .toContain('passed over: cooling down until 2026-09-14 09:10 (in 23h)')
+    expect(formatStatus(status(NOW + HOUR), NOW, { keychain: false })).not.toContain('2026-09-13T02:10:00.000Z')
+    // A cooldown with no end says so in words.
+    expect(formatStatus(statusAnswer([loginStatus('claude:cool', { block: { kind: 'cooldown', until: null } })]), NOW, { keychain: false }))
+      .toContain('passed over: cooling down until a usage probe says it is back')
   })
 
   test('every line fits in 80 columns', () => {
@@ -160,6 +174,8 @@ describe('kurmis status as JSON', () => {
     })
     expect(json.logins[0]?.usage?.windows.find((window) => window.key === 'seven_day_opus'))
       .toMatchObject({ plan: false, limitPercent: null })
+    // The Opus window that get_usage also lists by name is there once.
+    expect(json.logins[0]?.usage?.windows.map((window) => window.key)).toEqual(['five_hour', 'seven_day', 'seven_day_opus'])
     expect(json.logins[2]?.usage).toBeNull()
     expect(json.logins[2]?.signedIn).toBeNull()
     expect(json.logins[3]?.blocked).toEqual({

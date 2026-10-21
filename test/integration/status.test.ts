@@ -128,6 +128,8 @@ describe.skipIf(process.platform === 'win32')('kurmis status, end to end', () =>
     })
     // The fake's Opus window meters one model, so no routing limit applies to it.
     expect(windowOf(claudeDefault, 'seven_day_opus')).toMatchObject({ utilization: 4, plan: false, limitPercent: null })
+    // The fake also lists the same Opus window in model_scoped, as get_usage can; it is shown once.
+    expect(claudeDefault.usage?.windows.map((window) => window.key)).toEqual(['five_hour', 'seven_day', 'seven_day_opus'])
 
     const work = loginOf(status, 'claude:work')
     expect(work).toMatchObject({ provider: 'claude', label: 'Work', email: 'work@example.com', fiveHourLimit: 80, weeklyLimit: 90, sessions: 0 })
@@ -219,5 +221,7 @@ describe.skipIf(process.platform === 'win32')('kurmis status, end to end', () =>
     const text = await world.kurmis(['status'])
     expect(text.stdout).toContain('claude:default\n  signed out, routing on')
     expect(text.stdout).toMatch(/claude:work {2}work@example\.com\n[^\n]*1 session[^\n]*\n(?: {2}[^\n]*\n)*? {2}usage read just now from a forwarded answer\n {2}passed over: /)
+    // The text gives the cooldown's end in local time; the JSON above keeps it as ISO.
+    expect(text.stdout).toMatch(/passed over: cooling down until (?:\d{4}-\d{2}-\d{2} )?\d{2}:\d{2} \(in [^)]+\)\n/)
   }, 120_000)
 })

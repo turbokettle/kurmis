@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync, lstatSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync, lstatSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -327,22 +327,70 @@ describe('the settings file', () => {
     if (posix) expect(statSync(path).mode & 0o777).toBe(0o600)
   })
 
-  it('backs the file up once, keeps its mode, and gives the backup mode 0600', () => {
+  it('backs the file up once, and makes the file and the backup readable only by the user', () => {
     const path = join(freshDir(), 'settings.json')
     const original = '{\n  "model": "opus"\n}\n'
     writeFileSync(path, original)
-    chmodSync(path, 0o640)
+    chmodSync(path, 0o644)
     const first = setupSettingsFile(path, VALUES)
     expect(first.backupWritten).toBe(backupPathFor(path))
     expect(readFileSync(backupPathFor(path), 'utf8')).toBe(original)
     if (posix) {
-      expect(statSync(path).mode & 0o777).toBe(0o640)
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+      expect(first.modeBefore).toBe(0o644)
       expect(statSync(backupPathFor(path)).mode & 0o777).toBe(0o600)
     }
     const again = setupSettingsFile(path, { port: 30002, key: KEY })
     expect(again.changed).toBe(true)
     expect(again.backupWritten).toBeNull()
     expect(readFileSync(backupPathFor(path), 'utf8')).toBe(original)
+  })
+
+  it.skipIf(!posix)('clears only the group and other bits, and keeps the user\'s own', () => {
+    const path = join(freshDir(), 'settings.json')
+    writeFileSync(path, '{}\n')
+    chmodSync(path, 0o751)
+    expect(setupSettingsFile(path, VALUES).modeBefore).toBe(0o751)
+    expect(statSync(path).mode & 0o777).toBe(0o700)
+  })
+
+  it.skipIf(!posix)('makes a file that already has kurmis\' settings readable only by the user, without rewriting it', () => {
+    const path = join(freshDir(), 'settings.json')
+    setupSettingsFile(path, VALUES)
+    chmodSync(path, 0o644)
+    const before = statSync(path).mtimeMs
+    const result = setupSettingsFile(path, VALUES)
+    expect(result.changed).toBe(false)
+    expect(result.modeBefore).toBe(0o644)
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+    expect(statSync(path).mtimeMs).toBe(before)
+    expect(setupSettingsFile(path, VALUES).modeBefore).toBeNull()
+  })
+
+  it.skipIf(!posix)('makes a backup from earlier readable only by the user', () => {
+    const path = join(freshDir(), 'settings.json')
+    writeFileSync(path, '{\n  "model": "opus"\n}\n')
+    setupSettingsFile(path, VALUES)
+    chmodSync(backupPathFor(path), 0o644)
+    const changed = setupSettingsFile(path, { port: 30002, key: KEY })
+    expect(changed.backupWritten).toBeNull()
+    expect(changed.backupModeBefore).toBe(0o644)
+    expect(statSync(backupPathFor(path)).mode & 0o777).toBe(0o600)
+    chmodSync(backupPathFor(path), 0o640)
+    const unchanged = setupSettingsFile(path, { port: 30002, key: KEY })
+    expect(unchanged.changed).toBe(false)
+    expect(unchanged.backupModeBefore).toBe(0o640)
+    expect(statSync(backupPathFor(path)).mode & 0o777).toBe(0o600)
+  })
+
+  it.skipIf(!posix)('undo keeps the file\'s mode', () => {
+    const path = join(freshDir(), 'settings.json')
+    setupSettingsFile(path, VALUES)
+    chmodSync(path, 0o640)
+    const undone = undoSettingsFile(path, { port: PORT })
+    expect(undone.changed).toBe(true)
+    expect(undone.modeBefore).toBeNull()
+    expect(statSync(path).mode & 0o777).toBe(0o640)
   })
 
   it('writes nothing when nothing changes', () => {
@@ -386,9 +434,19 @@ describe('the settings file', () => {
     const link = join(dir, 'settings.json')
     writeFileSync(target, '{\n  "model": "opus"\n}\n')
     symlinkSync(target, link)
-    setupSettingsFile(link, VALUES)
+    chmodSync(target, 0o644)
+    const result = setupSettingsFile(link, VALUES)
     expect(lstatSync(link).isSymbolicLink()).toBe(true)
     expect(envOf(readFileSync(target, 'utf8'))).toEqual(KURMIS_ENV)
     expect(readFileSync(backupPathFor(link), 'utf8')).toBe('{\n  "model": "opus"\n}\n')
+    expect(result.linkTarget).toBe(realpathSync(target))
+    expect(result.modeBefore).toBe(0o644)
+    expect(statSync(target).mode & 0o777).toBe(0o600)
+  })
+
+  it('names no link target for a plain file', () => {
+    const path = join(freshDir(), 'settings.json')
+    writeFileSync(path, '{}\n')
+    expect(setupSettingsFile(path, VALUES).linkTarget).toBeNull()
   })
 })

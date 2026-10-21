@@ -19,6 +19,7 @@ import {
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, type DaemonClient } from '../command-deps.ts'
 import {
+  backupPathFor,
   claudeSettingsPath,
   setupSettingsFile,
   SettingsFileError,
@@ -42,7 +43,9 @@ Routes every Claude Code on this machine through kurmis, not only the ones start
 - puts kurmis' address and key in the "env" block of your Claude Code settings file,
   ~/.claude/settings.json (or settings.json in CLAUDE_CONFIG_DIR when that is set), so a plain
   "claude" and the IDE extensions use your kurmis logins too. Nothing else in the file changes,
-  and the file is copied to settings.json.kurmis-backup before kurmis first changes it;
+  and the file is copied to settings.json.kurmis-backup before kurmis first changes it.
+  Because the file then holds kurmis' key, on macOS and Linux setup makes it and the copy
+  readable only by you;
 - makes the kurmis daemon start when you log in;
 - starts the daemon now.
 
@@ -70,6 +73,12 @@ function reportFile(result: SettingsFileResult, undo: boolean, context: CliConte
   writeLine(context.stdout, `Claude Code settings: ${result.path}`)
   if (result.backupWritten !== null) writeLine(context.stdout, `Saved a copy of the file as it was to ${result.backupWritten}.`)
   if (!undo && !result.existed) writeLine(context.stdout, 'Created the file, readable only by you.')
+  if (result.modeBefore !== null) {
+    writeLine(context.stdout, `Made the file readable only by you, because it holds kurmis' key (its mode was ${modeText(result.modeBefore)}).`)
+  }
+  if (result.backupModeBefore !== null) {
+    writeLine(context.stdout, `Made ${backupPathFor(result.path)} readable only by you (its mode was ${modeText(result.backupModeBefore)}).`)
+  }
   if (result.envCreated) writeLine(context.stdout, 'Added an "env" block.')
   for (const change of result.changes) {
     const line = changeLine(change, undo)
@@ -82,6 +91,14 @@ function reportFile(result: SettingsFileResult, undo: boolean, context: CliConte
       : 'The file already has kurmis\' settings; nothing to change.')
   }
   for (const warning of result.warnings) writeLine(context.stderr, `Warning: ${warning}`)
+  if (!undo && result.linkTarget !== null) {
+    writeLine(context.stderr, `Warning: ${result.path} is a symbolic link, so kurmis' key is written to the file it points to, ${result.linkTarget}.`)
+  }
+}
+
+/** A file mode in octal, as `chmod` takes it: `0644`. */
+function modeText(mode: number): string {
+  return `0${(mode & 0o777).toString(8).padStart(3, '0')}`
 }
 
 function errorText(error: unknown): string {

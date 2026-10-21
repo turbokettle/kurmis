@@ -9,6 +9,7 @@ import {
   SEVEN_DAY_MINS,
   type AccountUsage,
   type AccountUsageMap,
+  type ModelUsageWindow,
   type NamedUsageWindow,
   type UsageWindow
 } from './claude-usage.ts'
@@ -33,7 +34,8 @@ export function shownUsageWindows<T extends { key: string }>(
 /**
  * Every window a snapshot carries that is worth looking at, whichever provider it is: a Claude
  * plan's fixed set plus its per-model windows, or the Codex windows the server named. Disabled
- * or mirrored extra usage and the hidden Codex bucket are left out.
+ * or mirrored extra usage, a per-model window that repeats the Opus or Sonnet window
+ * (`repeatsModelWindow`), and the hidden Codex bucket are left out.
  */
 export function allUsageWindows(usage: AccountUsage | null | undefined): NamedUsageWindow[] {
   if (!usage) return []
@@ -51,6 +53,7 @@ export function allUsageWindows(usage: AccountUsage | null | undefined): NamedUs
     })
   }
   for (const entry of usage.modelScoped) {
+    if (repeatsModelWindow(usage, entry)) continue
     out.push({
       key: entry.displayName,
       label: entry.displayName,
@@ -63,6 +66,26 @@ export function allUsageWindows(usage: AccountUsage | null | undefined): NamedUs
 }
 
 /**
+ * Whether a per-model window only repeats the snapshot's seven-day Opus or Sonnet window. The
+ * CLI's `get_usage` answer carries the server's `seven_day_opus` and `seven_day_sonnet` windows,
+ * and separately `model_scoped`, which the CLI builds from the server's list of per-model weekly
+ * limits. The same model's weekly window can be in both, as `seven_day_opus` and as an entry
+ * named `Opus`. It counts as the same window when the name matches and the figure and the reset
+ * are the same; with different figures both are shown. Both come from the same probe, because
+ * the rate-limit headers of a forwarded answer update neither.
+ */
+export function repeatsModelWindow(usage: AccountUsage, entry: ModelUsageWindow): boolean {
+  const name = entry.displayName.trim().toLowerCase()
+  const fixed = name === 'opus' ? usage.sevenDayOpus : name === 'sonnet' ? usage.sevenDaySonnet : null
+  return fixed !== null && fixed.utilization === entry.utilization && sameTime(fixed.resetsAt, entry.resetsAt)
+}
+
+/** Whether two ISO times, either of which may be missing, name the same moment. */
+function sameTime(a: string | null, b: string | null): boolean {
+  return a === b || (a !== null && b !== null && Date.parse(a) === Date.parse(b))
+}
+
+/**
  * The seven-day window with extra usage counted in, when extra usage is enabled and the window
  * says something the plain seven-day window does not. With the same figure and reset it only
  * mirrors that window, and is left out.
@@ -72,11 +95,7 @@ export function extraUsageWindow(usage: AccountUsage | null | undefined): UsageW
   const overage = usage.sevenDayOverage ?? null
   const plain = usage.sevenDay
   if (overage === null || plain === null) return overage
-  const sameReset = overage.resetsAt === plain.resetsAt || (
-    overage.resetsAt !== null && plain.resetsAt !== null &&
-    Date.parse(overage.resetsAt) === Date.parse(plain.resetsAt)
-  )
-  return overage.utilization === plain.utilization && sameReset ? null : overage
+  return overage.utilization === plain.utilization && sameTime(overage.resetsAt, plain.resetsAt) ? null : overage
 }
 
 /**

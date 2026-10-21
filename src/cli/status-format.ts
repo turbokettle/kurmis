@@ -49,7 +49,10 @@ export interface StatusJsonUsage {
 
 export interface StatusJsonBlock {
   kind: RouteBlock['kind']
-  /** The reason as a sentence, the same as the text output. */
+  /**
+   * The reason as a sentence, as the daemon's log words it, with how long is left. The text
+   * output says the same, except that it gives a cooldown's end in local time.
+   */
   text: string
   /** ISO time the block is expected to end (a cooldown's end, or the full window's reset); null when unknown. */
   until: string | null
@@ -92,6 +95,8 @@ export interface StatusJson {
 export interface StatusFormatOptions {
   /** Whether the logins' tokens come from the macOS Keychain, which changes a block's wording. */
   keychain: boolean
+  /** The IANA time zone the text output gives times in; the machine's own when absent. */
+  timeZone?: string
 }
 
 /** The status as `kurmis status --json` prints it. */
@@ -121,6 +126,12 @@ export function statusJson(answer: StatusAnswer, now: number, options: StatusFor
 /** The status as `kurmis status` prints it, ending in a newline. Fits 80 columns. */
 export function formatStatus(answer: StatusAnswer, now: number, options: StatusFormatOptions): string {
   const json = statusJson(answer, now, options)
+  // The text gives times in local time; the JSON keeps them as ISO strings.
+  json.logins.forEach((login, index) => {
+    const source = answer.logins[index]
+    const block = source === undefined ? null : routeBlockOf(answer, source, now)
+    if (login.blocked !== null && block !== null) login.blocked.text = blockText(block, now, options, true)
+  })
   const lines: string[] = [
     `kurmis daemon ${answer.version}, pid ${String(answer.pid)}, port ${String(answer.port)}, ` +
       `running for ${spanText(now - answer.startedAt)}`
@@ -207,21 +218,50 @@ function usageJson(login: LoginStatus, usage: AccountUsage, now: number): Status
   }
 }
 
+/** Why routing would pass the login over now: the daemon's answer for Claude, the Codex choice's rule for Codex. */
+function routeBlockOf(answer: StatusAnswer, login: LoginStatus, now: number): RouteBlock | null {
+  return login.provider === 'codex' ? codexRouteBlock(answer, login.id, now) : login.block
+}
+
 function blockJson(answer: StatusAnswer, login: LoginStatus, now: number, options: StatusFormatOptions): StatusJsonBlock | null {
-  const block = login.provider === 'codex' ? codexRouteBlock(answer, login.id, now) : login.block
+  const block = routeBlockOf(answer, login, now)
   if (block === null) return null
-  let text = routeBlockText(block, options.keychain)
   let until: string | null = null
+  if (block.kind === 'cooldown' && block.until !== null) until = isoTime(block.until)
+  else if (block.kind === 'over-limit') until = block.resetsAt
+  return { kind: block.kind, text: blockText(block, now, options, false), until }
+}
+
+/** A block as a sentence with how long is left; with `localTime`, a cooldown's end is in local time rather than ISO. */
+function blockText(block: RouteBlock, now: number, options: StatusFormatOptions, localTime: boolean): string {
   if (block.kind === 'cooldown' && block.until !== null) {
-    until = isoTime(block.until)
+    const text = localTime
+      ? `cooling down until ${localTimeText(block.until, now, options.timeZone)}`
+      : routeBlockText(block, options.keychain)
     const left = resetsInText(block.until, now)
-    if (left !== null) text += ` (${left.replace('resets ', '')})`
-  } else if (block.kind === 'over-limit') {
-    until = block.resetsAt
-    const left = resetsInText(block.resetsAt, now)
-    if (left !== null) text += `; it ${left}`
+    return left === null ? text : `${text} (${left.replace('resets ', '')})`
   }
-  return { kind: block.kind, text, until }
+  const text = routeBlockText(block, options.keychain)
+  if (block.kind !== 'over-limit') return text
+  const left = resetsInText(block.resetsAt, now)
+  return left === null ? text : `${text}; it ${left}`
+}
+
+/**
+ * A time as a 24-hour clock in `timeZone` (the machine's own when absent) shows it: `03:10`,
+ * with the date in front (`2026-09-14 03:10`) when it falls on another day than `now`.
+ */
+export function localTimeText(at: number, now: number, timeZone?: string): string {
+  const format = new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  })
+  const parts = (time: number): Record<string, string> =>
+    Object.fromEntries(format.formatToParts(time).map((part) => [part.type, part.value]))
+  const then = parts(at)
+  const today = parts(now)
+  const clock = `${then.hour ?? ''}:${then.minute ?? ''}`
+  const date = `${then.year ?? ''}-${then.month ?? ''}-${then.day ?? ''}`
+  return date === `${today.year ?? ''}-${today.month ?? ''}-${today.day ?? ''}` ? clock : `${date} ${clock}`
 }
 
 function codexStart(answer: StatusAnswer, now: number): StatusJson['codexStart'] {

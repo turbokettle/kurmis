@@ -1,5 +1,15 @@
+import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isLockedFileError, RENAME_RETRY_DELAYS_MS, retryWhileLocked, retryWhileLockedSync } from '../../src/platform/files.ts'
+import {
+  isLockedFileError,
+  RENAME_RETRY_DELAYS_MS,
+  restrictToUserSync,
+  retryWhileLocked,
+  retryWhileLockedSync,
+  userOnlyMode
+} from '../../src/platform/files.ts'
 
 function errorWithCode(code: string): NodeJS.ErrnoException {
   return Object.assign(new Error(code), { code })
@@ -64,5 +74,42 @@ describe('retryWhileLocked', () => {
   it('throws at once elsewhere', async () => {
     const op = failing('EBUSY', 1)
     await expect(retryWhileLocked(async () => op.run(), 'linux')).rejects.toThrow('EBUSY')
+  })
+})
+
+describe('restrictToUserSync', () => {
+  function fileWithMode(mode: number): { path: string; done: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), 'kurmis-files-'))
+    const path = join(dir, 'settings.json')
+    writeFileSync(path, '{}')
+    chmodSync(path, mode)
+    return { path, done: () => rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  it('clears the group and other bits and keeps the user\'s', () => {
+    expect(userOnlyMode(0o644)).toBe(0o600)
+    expect(userOnlyMode(0o755)).toBe(0o700)
+    expect(userOnlyMode(0o600)).toBe(0o600)
+  })
+
+  it.skipIf(process.platform === 'win32')('changes the file and answers its old mode, or null when it was already user-only', () => {
+    const file = fileWithMode(0o644)
+    try {
+      expect(restrictToUserSync(file.path, 'darwin')).toBe(0o644)
+      expect(statSync(file.path).mode & 0o777).toBe(0o600)
+      expect(restrictToUserSync(file.path, 'darwin')).toBeNull()
+    } finally {
+      file.done()
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('does nothing on Windows', () => {
+    const file = fileWithMode(0o644)
+    try {
+      expect(restrictToUserSync(file.path, 'win32')).toBeNull()
+      expect(statSync(file.path).mode & 0o777).toBe(0o644)
+    } finally {
+      file.done()
+    }
   })
 })

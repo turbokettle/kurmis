@@ -23,13 +23,13 @@
 //
 // Setup refuses an `ANTHROPIC_BASE_URL` that is not kurmis', because replacing it would silently
 // cut off whatever the user pointed Claude Code at.
-import { chmodSync, copyFileSync, constants, readFileSync, realpathSync, statSync } from 'node:fs'
+import { chmodSync, copyFileSync, constants, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { KURMIS_HEADERS, KEY_HEADER, parseCustomHeaders } from '../core/route-headers.ts'
 import { ROUTING_VARIABLES, routedClaudeEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { kurmisHome } from '../data/paths.ts'
-import { PRIVATE_FILE_MODE } from '../platform/files.ts'
+import { PRIVATE_FILE_MODE, restrictToUserSync, userOnlyMode } from '../platform/files.ts'
 import { claudeUserSettingsPath } from './settings-arg.ts'
 
 const BASE_URL = 'ANTHROPIC_BASE_URL'
@@ -575,6 +575,15 @@ export interface SettingsFileResult extends SettingsEdit {
   existed: boolean
   /** The backup written now, or null when none was written (one already existed, or no change). */
   backupWritten: string | null
+  /** The file a symbolic link at `path` points to, which is the file that was read and written; null when `path` is no link. */
+  linkTarget: string | null
+  /**
+   * Setup only: the settings file's mode before setup cleared its group and other bits, because
+   * the file holds kurmis' key. Null when the mode had none of those bits, or on Windows.
+   */
+  modeBefore: number | null
+  /** Setup only: the same for the backup file. */
+  backupModeBefore: number | null
 }
 
 function readText(path: string): string | null {
@@ -596,6 +605,27 @@ function writeTarget(path: string): string {
   }
 }
 
+/** Where a symbolic link at `path` points, or null when `path` is not a link. */
+function linkTargetOf(path: string): string | null {
+  try {
+    if (!lstatSync(path).isSymbolicLink()) return null
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+  return writeTarget(path)
+}
+
+/** `restrictToUserSync` for a file that may not exist; null when it does not. */
+function restrictIfPresent(path: string): number | null {
+  try {
+    return restrictToUserSync(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
 /** Copies the file to its backup unless a backup is already there. Returns the backup's path, or null. */
 function backUpOnce(path: string): string | null {
   const backup = backupPathFor(path)
@@ -609,16 +639,29 @@ function backUpOnce(path: string): string | null {
   return backup
 }
 
-function writeEdit(path: string, edit: SettingsEdit, existed: boolean): string | null {
-  if (!edit.changed) return null
-  const backup = existed ? backUpOnce(path) : null
+/**
+ * Writes the edit, when it changed anything, and backs the file up before. With `userOnly` (setup,
+ * whose file holds the key) the file ends up readable by the user only: a new file gets mode
+ * 0600 and an existing one loses its group and other bits, also when the edit changed nothing.
+ * Without it (undo) an existing file keeps its mode. Answers the backup written and the mode
+ * the file had before its group and other bits were cleared.
+ */
+function writeEdit(
+  path: string,
+  edit: SettingsEdit,
+  existed: boolean,
+  userOnly: boolean
+): { backup: string | null; modeBefore: number | null } {
   const target = writeTarget(path)
-  // An existing file keeps its mode. The mode given to the write is reduced by the umask, so it
-  // is set again afterwards. A new file holds the key, so only the user may read it.
-  const mode = existed ? statSync(target).mode & 0o777 : PRIVATE_FILE_MODE
+  if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target) : null }
+  const backup = existed ? backUpOnce(path) : null
+  const before = existed ? statSync(target).mode & 0o777 : PRIVATE_FILE_MODE
+  const mode = userOnly ? userOnlyMode(before) : before
+  // The mode given to the write is reduced by the umask, so it is set again afterwards.
   writeFileAtomicSync(target, edit.text, { mode })
-  if (process.platform !== 'win32') chmodSync(target, mode)
-  return backup
+  if (process.platform === 'win32') return { backup, modeBefore: null }
+  chmodSync(target, mode)
+  return { backup, modeBefore: existed && mode !== before ? before : null }
 }
 
 function failWith(path: string, error: unknown): never {
@@ -637,20 +680,33 @@ export function setupSettingsFile(path: string, values: SetupValues): SettingsFi
   } catch (error) {
     failWith(path, error)
   }
-  const backupWritten = writeEdit(path, edit, text !== null)
-  return { ...edit, path, existed: text !== null, backupWritten }
+  const written = writeEdit(path, edit, text !== null, true)
+  // The backup of a file from before kurmis may hold other secrets of the user's; a backup an
+  // older kurmis wrote, or one copied by hand, may not be user-only yet.
+  const backupModeBefore = written.backup === null ? restrictIfPresent(backupPathFor(path)) : null
+  return {
+    ...edit,
+    path,
+    existed: text !== null,
+    backupWritten: written.backup,
+    linkTarget: linkTargetOf(path),
+    modeBefore: written.modeBefore,
+    backupModeBefore
+  }
 }
 
 /** Takes kurmis' routing variables out of the settings file again. A missing file is left missing. */
 export function undoSettingsFile(path: string, values: Omit<UndoValues, 'backupText'>): SettingsFileResult {
   const text = readText(path)
-  if (text === null) return { ...emptyEdit(''), path, existed: false, backupWritten: null }
+  if (text === null) {
+    return { ...emptyEdit(''), path, existed: false, backupWritten: null, linkTarget: null, modeBefore: null, backupModeBefore: null }
+  }
   let edit: SettingsEdit
   try {
     edit = undoSetupInText(text, { ...values, backupText: readText(backupPathFor(path)) })
   } catch (error) {
     failWith(path, error)
   }
-  const backupWritten = writeEdit(path, edit, true)
-  return { ...edit, path, existed: true, backupWritten }
+  const written = writeEdit(path, edit, true, false)
+  return { ...edit, path, existed: true, backupWritten: written.backup, linkTarget: linkTargetOf(path), modeBefore: null, backupModeBefore: null }
 }
