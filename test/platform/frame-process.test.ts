@@ -151,8 +151,10 @@ test('on Windows a kill asks taskkill to end the program\'s tree, and the progra
   await sleep(100)
   proc.kill()
   expect(await proc.exited).toMatchObject({ end: 'killed' })
-  const lines = readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as unknown)
-  expect(lines).toEqual([['/PID', String(pid), '/T', '/F']])
+  // On Windows the earlier tests' kills also run the stand-in, which can write its call after this
+  // test emptied the file, so only the calls for this program count.
+  const lines = readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[])
+  expect(lines.filter((line) => line[1] === String(pid))).toEqual([['/PID', String(pid), '/T', '/F']])
   expect(isRunning(pid)).toBe(false)
 })
 

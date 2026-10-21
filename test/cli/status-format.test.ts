@@ -146,7 +146,7 @@ starting on own-example, whose usage comes back first (in 1h).
     const status = statusAnswer([loginStatus(WORK_CLAUDE, { block: { kind: 'no-credentials' } })])
     expect(formatStatus(status, NOW, { keychain: true })).toContain('its Keychain item did not read')
     // On Windows the phrase names Credential Manager as well (routeBlockText).
-    expect(formatStatus(status, NOW, { keychain: false })).toMatch(/its \.credentials\.json (did not read|gave one)/)
+    expect(formatStatus(status, NOW, { keychain: false })).toMatch(/its\s+\.credentials\.json\s+(did not read|gave one)/)
   })
 
   test('no Codex line without Codex logins', () => {

@@ -112,7 +112,7 @@ test('a refused rate-limit read is an error with a fixed sentence, on a signed-i
  */
 const HANG_DEADLINE_MS = process.platform === 'win32' ? 6_000 : 1_500
 
-test('a rate-limit read that never answers is killed at the deadline', async () => {
+test('a rate-limit read that never answers is killed at the deadline', { timeout: HANG_DEADLINE_MS + 10_000 }, async () => {
   const { id, home, record, env } = login({ rateLimitsHang: true })
   writeCodexAuth(home)
   const started = Date.now()

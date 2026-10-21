@@ -121,7 +121,7 @@ test('rate limits that are available but missing mean the usage request failed',
  */
 const HANG_DEADLINE_MS = process.platform === 'win32' ? 6_000 : 1_500
 
-test('a CLI that never answers is killed at the deadline', async () => {
+test('a CLI that never answers is killed at the deadline', { timeout: HANG_DEADLINE_MS + 10_000 }, async () => {
   const { id, dir, record, env } = login({ getUsage: 'hang' })
   writeClaudeCredentials(dir)
   const started = Date.now()

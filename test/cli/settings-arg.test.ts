@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { routedClaudeEnv } from '../../src/core/routed-env.ts'
 import {
@@ -96,7 +96,7 @@ describe('readUserSettingsArg', () => {
 
   test('uses the file reader it is given', () => {
     const result = readUserSettingsArg(['--settings', 'x.json'], { cwd: '/work', readFile: (path) => JSON.stringify({ path }) })
-    expect(result).toMatchObject({ settings: { path: join('/work', 'x.json') } })
+    expect(result).toMatchObject({ settings: { path: resolve('/work', 'x.json') } })
   })
 })
 
