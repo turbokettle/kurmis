@@ -6,9 +6,9 @@
 // - **When.** The CLI uses Credential Manager when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set
 //   or the server-side feature flag `tengu_windows_credman` is on. The flag is read from the
 //   `cachedGrowthBookFeatures` of the CLI's own config file, the one that follows
-//   `CLAUDE_CONFIG_DIR` (`<CLAUDE_CONFIG_DIR or home>/.claude.json`, or the older
-//   `.config.json`). Checked in the bundled JavaScript of Claude Code 2.1.306 for macOS, which
-//   has this part.
+//   `CLAUDE_CONFIG_DIR`: the older `.config.json` in the config folder when it is there and not
+//   empty, else `<CLAUDE_CONFIG_DIR or home>/.claude.json`. Checked in the bundled JavaScript
+//   of Claude Code 2.1.306 for macOS, which has this part.
 // - **Read order.** The storage is the CLI's generic "primary with a fallback" storage: a read
 //   takes the primary (here Credential Manager) and the fallback (`.credentials.json`) only when
 //   the primary has nothing. The first write that goes to the primary deletes the fallback file,
@@ -273,8 +273,9 @@ export function recordFromItems(service: string, items: ReadonlyMap<string, Buff
 
 /**
  * Reads the record of each login (`secureStorageDirs`, as `keychainService` takes them) from
- * Credential Manager. One PowerShell run for up to about a hundred logins. Throws when
- * PowerShell could not read at all.
+ * Credential Manager. One PowerShell run reads up to 247 logins, the most `credentialBatches`
+ * fits in one command line, and more take several runs. Throws when PowerShell could not read
+ * at all.
  */
 export async function readStoredRecords(secureStorageDirs: ReadonlyArray<string | null>, read: CredentialRead,
   preferred: readonly string[] = preferredAccounts()): Promise<StoredRecord[]> {
