@@ -17,12 +17,16 @@ delete process.env.ANTHROPIC_BASE_URL
 delete process.env.ANTHROPIC_API_KEY
 delete process.env.ANTHROPIC_AUTH_TOKEN
 delete process.env.ANTHROPIC_CUSTOM_HEADERS
-delete process.env.KURMIS_CLAUDE_BIN
-delete process.env.KURMIS_CODEX_BIN
 delete process.env.KURMIS_UPSTREAM_URL
 delete process.env.SSH_CONNECTION
 delete process.env.SSH_CLIENT
 delete process.env.SSH_TTY
+
+// Kurmis code a test runs (the daemon's usage probes, the wrapper) finds claude and codex through
+// these. They name a program that only fails, so no test can start the real claude or codex from
+// PATH. A test that uses a fake names it; a test of the PATH search removes them from its env.
+process.env.KURMIS_CLAUDE_BIN = join(dirname(fileURLToPath(import.meta.url)), 'no-real-program.mjs')
+process.env.KURMIS_CODEX_BIN = process.env.KURMIS_CLAUDE_BIN
 
 // Anything that reads the macOS Keychain in a test reads this stand-in, with no items, unless
 // the test points it elsewhere. The real `/usr/bin/security` is never run by a test.
