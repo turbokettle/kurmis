@@ -10,7 +10,7 @@
 // Node's `lstat` reports a junction as a symbolic link, and `readlink` answers its target.
 // Some Node versions answer a junction's target with the `\\?\` prefix of Windows' long-path
 // form (`\\?\C:\Users\...`, `\\?\UNC\server\share\...`), so the target is read back without it.
-import { lstat, readlink, symlink } from 'node:fs/promises'
+import { lstat, readlink, rmdir, symlink, unlink } from 'node:fs/promises'
 import { posix, win32 } from 'node:path'
 import type { CodexLinkPlace } from '../core/codex-home.ts'
 
@@ -90,5 +90,27 @@ export async function linkFolder(target: string, place: string, platform: NodeJS
     } catch {
       throw error
     }
+  }
+}
+
+/**
+ * Removes the link at `place`, never what it points at. Throws when `place` is not a link,
+ * so a real folder that took its place in the meantime is left alone. On Windows a junction
+ * or a folder symlink is a folder entry: libuv's `unlink` removes it, and where it answers
+ * EPERM, EISDIR or EACCES, `rmdir` without recursion removes the link itself (the same way
+ * `src/platform/remove-tree.ts` does).
+ */
+export async function removeFolderLink(place: string, platform: NodeJS.Platform = process.platform): Promise<void> {
+  if (!(await lstat(place)).isSymbolicLink()) throw new Error(`${place} is not a link`)
+  if (platform !== 'win32') {
+    await unlink(place)
+    return
+  }
+  try {
+    await unlink(place)
+  } catch (error) {
+    const code = errorCode(error)
+    if (code !== 'EPERM' && code !== 'EISDIR' && code !== 'EACCES') throw error
+    await rmdir(place)
   }
 }

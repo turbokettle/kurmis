@@ -11,6 +11,7 @@ import {
   codexHomeEntryAction,
   codexLinkAction,
   codexPrivateName,
+  codexStaleLink,
   type CodexConfigRefresh
 } from '../../src/core/codex-home.ts'
 
@@ -69,6 +70,21 @@ describe('which entries of the default home a login gets', () => {
       expect(codexPrivateName(name), name).toBe(false)
     }
   })
+
+  // The sandbox's setup marker is valid only with the passwords beside it, and Codex's sandbox
+  // service refuses a home whose sandbox folders are links.
+  test('keeps every folder of the Windows sandbox private', () => {
+    for (const name of ['.sandbox', '.sandbox-bin', '.sandbox-secrets', '.Sandbox', '.sandbox_cache']) {
+      expect(codexHomeEntryAction(name, 'directory'), name).toBe('skip')
+      expect(codexHomeEntryAction(name, 'directory-link'), name).toBe('skip')
+    }
+    expect(codexHomeEntryAction('sandboxes', 'directory')).toBe('link')
+  })
+
+  test('links a link in the default home that leads to a folder', () => {
+    expect(codexHomeEntryAction('skills', 'directory-link')).toBe('link')
+    expect(codexHomeEntryAction('secrets', 'directory-link')).toBe('skip')
+  })
 })
 
 describe('a link in the login home', () => {
@@ -106,16 +122,46 @@ describe('a link in the login home', () => {
   })
 })
 
-describe("the login's AGENTS.md", () => {
-  test('is copied when the login has none or a different one', () => {
-    expect(codexAgentsCopy('# house rules\n', null)).toBe('# house rules\n')
-    expect(codexAgentsCopy('# house rules\n', '# edited by hand\n')).toBe('# house rules\n')
+describe("the login's AGENTS.md and AGENTS.override.md", () => {
+  test('are copied when the login has none or a different one', () => {
+    expect(codexAgentsCopy('# house rules\n', null, false)).toEqual({ action: 'write', content: '# house rules\n' })
+    expect(codexAgentsCopy('# house rules\n', '# edited by hand\n', false)).toEqual({ action: 'write', content: '# house rules\n' })
   })
 
-  test('is left as it is when it is the same, or the default home has none', () => {
-    expect(codexAgentsCopy('# house rules\n', '# house rules\n')).toBeNull()
-    expect(codexAgentsCopy(null, '# the login\'s own\n')).toBeNull()
-    expect(codexAgentsCopy(null, null)).toBeNull()
+  test('are left as they are when they are the same, or the default home has none and kurmis did not copy them', () => {
+    expect(codexAgentsCopy('# house rules\n', '# house rules\n', true)).toBeNull()
+    expect(codexAgentsCopy(null, '# the login\'s own\n', false)).toBeNull()
+    expect(codexAgentsCopy(null, null, false)).toBeNull()
+  })
+
+  // Codex reads AGENTS.override.md first, so a stale copy would keep overriding.
+  test('are removed when the default home no longer has the file and the copy is the one kurmis made', () => {
+    expect(codexAgentsCopy(null, '# old override\n', true)).toEqual({ action: 'remove' })
+  })
+
+  test('include AGENTS.override.md', () => {
+    expect(codexHomeEntryAction('AGENTS.override.md', 'file')).toBe('copy')
+  })
+})
+
+describe('a stale link in the login home', () => {
+  const source = '/home/someone/.codex'
+
+  test('is one kurmis made to a folder no longer shared, or one that leads nowhere', () => {
+    expect(codexStaleLink('memories', '/home/someone/.codex/memories', source, false, false, 'darwin')).toBe(true)
+    expect(codexStaleLink('memories', '/home/someone/.codex/memories', source, true, false, 'darwin')).toBe(false)
+    // A link into a default home used before, which is gone.
+    expect(codexStaleLink('memories', '/old/codex/memories', source, true, true, 'darwin')).toBe(true)
+  })
+
+  test('is never a link of the user\'s own to somewhere else', () => {
+    expect(codexStaleLink('memories', '/elsewhere/notes', source, true, true, 'darwin')).toBe(false)
+    expect(codexStaleLink('memories', '/old/codex/memories', source, true, false, 'darwin')).toBe(false)
+  })
+
+  test('compares Windows paths ignoring case', () => {
+    expect(codexStaleLink('Memories', 'C:\\Users\\Someone\\.codex\\memories', 'c:\\users\\someone\\.codex', false, false, 'win32')).toBe(true)
+    expect(codexStaleLink('memories', 'D:\\old\\MEMORIES', 'c:\\users\\someone\\.codex', true, true, 'win32')).toBe(true)
   })
 })
 
@@ -128,58 +174,75 @@ describe("the login's config.toml", () => {
   }
 
   test('is copied from the default home when the login has none', () => {
-    const refresh = codexConfigRefresh('model = "gpt-a"\n', null)
-    expect(refresh).toEqual({ action: 'write', content: 'model = "gpt-a"\n', missingSecrets: false, mergeFailure: null })
+    const refresh = codexConfigRefresh('model = "gpt-a"\n', null, null)
+    expect(refresh).toEqual({ action: 'write', content: 'model = "gpt-a"\n', merged: 'model = "gpt-a"\n', missingSecrets: false, heldBack: [], mergeFailure: null })
   })
 
   test('takes a setting the default home has since changed, and replaces a hand edit', () => {
-    expect(written(codexConfigRefresh('model = "gpt-b"\n', 'model = "edited by hand"\n'))).toEqual({ model: 'gpt-b' })
+    expect(written(codexConfigRefresh('model = "gpt-b"\n', 'model = "edited by hand"\n', null))).toEqual({ model: 'gpt-b' })
   })
 
   test("keeps the login's own secrets, never copies the default home's, and says one is missing", () => {
     const source = 'model = "gpt-b"\n[mcp_servers.demo]\nurl = "https://new.invalid"\n[mcp_servers.demo.env]\nCUSTOM = "DEFAULT_CANARY"\n'
     const own = 'model = "old"\n[mcp_servers.demo]\nurl = "https://old.invalid"\n[mcp_servers.demo.env]\nCUSTOM = "ACCOUNT_CANARY"\n'
 
-    const kept = codexConfigRefresh(source, own)
+    const kept = codexConfigRefresh(source, own, null)
     expect(kept.action === 'write' && kept.content).toContain('ACCOUNT_CANARY')
     expect(kept.action === 'write' && kept.content).not.toContain('DEFAULT_CANARY')
     expect(kept).toMatchObject({ missingSecrets: false })
 
-    const fresh = codexConfigRefresh(source, null)
+    const fresh = codexConfigRefresh(source, null, null)
     expect(fresh.action === 'write' && fresh.content).not.toContain('DEFAULT_CANARY')
     expect(fresh).toMatchObject({ action: 'write', missingSecrets: true })
   })
 
   test('is not rewritten when it holds the same settings in another layout', () => {
-    expect(codexConfigRefresh('model = "gpt-a"\n', "model   =   'gpt-a'\n"))
-      .toEqual({ action: 'keep', content: null, missingSecrets: false, mergeFailure: null })
+    expect(codexConfigRefresh('model = "gpt-a"\n', "model   =   'gpt-a'\n", null))
+      .toEqual({ action: 'keep', content: null, merged: 'model = "gpt-a"\n', missingSecrets: false, heldBack: [], mergeFailure: null })
   })
 
   // The login's own trust is kept, so with nothing to merge in the file is not touched.
   test('is left as it is, trust included, when the default home has no config.toml', () => {
     const own = `model = "gpt-old"\n${hook}[projects.'e:\\a']\ntrust_level = "trusted"\n`
-    expect(codexConfigRefresh(null, own)).toEqual({ action: 'keep', content: null, missingSecrets: false, mergeFailure: null })
-    expect(codexConfigRefresh(null, null)).toEqual({ action: 'keep', content: null, missingSecrets: false, mergeFailure: null })
+    expect(codexConfigRefresh(null, own, null)).toEqual({ action: 'keep', content: null, merged: null, missingSecrets: false, heldBack: [], mergeFailure: null })
+    expect(codexConfigRefresh(null, null, null)).toEqual({ action: 'keep', content: null, merged: null, missingSecrets: false, heldBack: [], mergeFailure: null })
   })
 
   test("keeps the login's own hook trust when the default home has a file", () => {
-    expect(written(codexConfigRefresh('model = "gpt-b"\n', `model = "gpt-a"\n${hook}`)))
+    expect(written(codexConfigRefresh('model = "gpt-b"\n', `model = "gpt-a"\n${hook}`, null)))
       .toEqual({ model: 'gpt-b', hooks: { state: { k: { trusted_hash: 'sha256:own' } } } })
   })
 
   test('leaves the login file as it is, and says why, when the default home cannot be merged', () => {
-    expect(codexConfigRefresh('model = [\n', hook)).toEqual({
+    expect(codexConfigRefresh('model = [\n', hook, null)).toEqual({
       action: 'keep',
       content: null,
+      merged: null,
       missingSecrets: false,
+      heldBack: [],
       mergeFailure: "the default home's config.toml could not be merged in: config.toml is not valid TOML"
     })
   })
 
   test('leaves a login file that is not TOML as it is, without repeating it', () => {
-    const refresh = codexConfigRefresh('model = "gpt-a"\n', 'hooks = [\nSECRET_CANARY')
+    const refresh = codexConfigRefresh('model = "gpt-a"\n', 'hooks = [\nSECRET_CANARY', null)
     expect(refresh).toMatchObject({ action: 'keep', content: null, mergeFailure: expect.stringMatching(/login's config\.toml is not valid TOML/) })
     expect(JSON.stringify(refresh)).not.toContain('CANARY')
-    expect(codexConfigRefresh(null, 'hooks = [\n')).toMatchObject({ action: 'keep', mergeFailure: null })
+    expect(codexConfigRefresh(null, 'hooks = [\n', null)).toMatchObject({ action: 'keep', mergeFailure: null })
+  })
+})
+
+describe("the login's config.toml with a last merged copy", () => {
+  test('keeps a setting Codex wrote into the login and removes one the default home dropped', () => {
+    const first = codexConfigRefresh('model = "gpt-a"\nold = 1\n', null, null)
+    const own = `${first.content ?? ''}[notice]\nhide_full_access_warning = true\n`
+    const second = codexConfigRefresh('model = "gpt-a"\n', own, first.merged)
+    expect(second.action).toBe('write')
+    expect(tomlValue(second.content ?? '')).toEqual({ model: 'gpt-a', notice: { hide_full_access_warning: true } })
+    expect(second.merged).toBe('model = "gpt-a"\n')
+  })
+
+  test('answers no new merged copy when the default home has no config.toml', () => {
+    expect(codexConfigRefresh(null, 'model = "a"\n', 'model = "a"\n')).toMatchObject({ action: 'keep', merged: null })
   })
 })

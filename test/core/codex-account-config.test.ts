@@ -22,11 +22,16 @@ function settingsOf(text: string): unknown {
   return prune(tomlValue(text))
 }
 
+/** A merge with no last merged copy: the first merge, or the one after kurmis was updated. */
+function merge(source: string, target: string): ReturnType<typeof mergeAccountConfig> {
+  return mergeAccountConfig(source, target, null)
+}
+
 describe("an extra Codex login's config.toml", () => {
   it('leaves out the default home\'s secret tables and says a secret is missing', () => {
     const source = '[mcp_servers.demo]\nurl = "https://fixture.invalid"\n[mcp_servers.demo.env]\nCUSTOM = "DO_NOT_COPY"\n'
     expect(publicAccountConfig(source)).not.toContain('DO_NOT_COPY')
-    const result = mergeAccountConfig(source, '')
+    const result = merge(source, '')
     expect(result.missingSecrets).toBe(true)
     expect(result.content).not.toContain('DO_NOT_COPY')
     expect(tomlValue(result.content)).toMatchObject({ mcp_servers: { demo: { url: 'https://fixture.invalid' } } })
@@ -35,7 +40,7 @@ describe("an extra Codex login's config.toml", () => {
   it('keeps inline env and header arguments of the login without copying the default values', () => {
     const source = 'mcp_servers.demo = { url = "https://new.invalid", env = { CUSTOM = "DEFAULT_CANARY" }, args = ["-H", "X-Custom: DEFAULT_HEADER"] }'
     const target = 'mcp_servers.demo = { url = "https://old.invalid", env = { CUSTOM = "ACCOUNT_CANARY" }, args = ["-H", "X-Custom: ACCOUNT_HEADER"] }'
-    const result = mergeAccountConfig(source, target)
+    const result = merge(source, target)
     expect(result.content).toContain('https://new.invalid')
     expect(result.content).toContain('ACCOUNT_CANARY')
     expect(result.content).toContain('ACCOUNT_HEADER')
@@ -45,7 +50,7 @@ describe("an extra Codex login's config.toml", () => {
   })
 
   it('takes every other setting from the default home', () => {
-    const result = mergeAccountConfig('model = "next"\n[features]\nmemories = false\n', 'model = "first"\n[features]\nmemories = true\n')
+    const result = merge('model = "next"\n[features]\nmemories = false\n', 'model = "first"\n[features]\nmemories = true\n')
     expect(tomlValue(result.content)).toEqual({ model: 'next', features: { memories: false } })
   })
 
@@ -63,7 +68,7 @@ describe("an extra Codex login's config.toml", () => {
     ].join('\n')
 
     it("keeps the login's own folder and hook trust when the default home has none", () => {
-      const result = mergeAccountConfig('model = "next"\n', loginOwn)
+      const result = merge('model = "next"\n', loginOwn)
       expect(settingsOf(result.content)).toEqual({
         model: 'next',
         hooks: { state: { [hookKey]: { trusted_hash: 'sha256:login' } } },
@@ -87,7 +92,7 @@ describe("an extra Codex login's config.toml", () => {
         'trust_level = "trusted"',
         ''
       ].join('\n')
-      const result = mergeAccountConfig('model = "next"\n', own)
+      const result = merge('model = "next"\n', own)
       expect(settingsOf(result.content)).toEqual({
         model: 'next',
         hooks: {
@@ -100,12 +105,12 @@ describe("an extra Codex login's config.toml", () => {
         projects: { 'e:\\own': { trust_level: 'trusted' } }
       })
       // A second refresh changes nothing.
-      expect(mergeAccountConfig('model = "next"\n', result.content).content).toBe(result.content)
+      expect(merge('model = "next"\n', result.content).content).toBe(result.content)
     })
 
     it("lets the default home's hook switched off win over the login's enabled = true", () => {
       const key = 'file:/repo/.codex/hooks.json:stop:0:0'
-      const result = mergeAccountConfig(
+      const result = merge(
         `[hooks.state.${JSON.stringify(key)}]\nenabled = false\n`,
         `[hooks.state.${JSON.stringify(key)}]\nenabled = true\n`
       )
@@ -114,7 +119,7 @@ describe("an extra Codex login's config.toml", () => {
 
     it("lets the login's hook switched off win over the default home's enabled = true", () => {
       const key = 'file:/repo/.codex/hooks.json:stop:0:0'
-      const result = mergeAccountConfig(
+      const result = merge(
         `[hooks.state.${JSON.stringify(key)}]\nenabled = true\n`,
         `[hooks.state.${JSON.stringify(key)}]\nenabled = false\n`
       )
@@ -122,7 +127,7 @@ describe("an extra Codex login's config.toml", () => {
     })
 
     it("lets a folder the default home marks untrusted win over the login's trusted", () => {
-      const result = mergeAccountConfig(
+      const result = merge(
         "[projects.'e:\\shared']\ntrust_level = \"untrusted\"\n",
         "[projects.'e:\\shared']\ntrust_level = \"trusted\"\n"
       )
@@ -130,7 +135,7 @@ describe("an extra Codex login's config.toml", () => {
     })
 
     it("keeps the login's own hash where the two homes trust different versions of a hook", () => {
-      const result = mergeAccountConfig(
+      const result = merge(
         `[hooks.state.${JSON.stringify(hookKey)}]\ntrusted_hash = "sha256:default"\n`,
         `[hooks.state.${JSON.stringify(hookKey)}]\ntrusted_hash = "sha256:login"\n`
       )
@@ -146,7 +151,7 @@ describe("an extra Codex login's config.toml", () => {
         'enabled = false',
         ''
       ].join('\n')
-      const result = mergeAccountConfig(source, loginOwn)
+      const result = merge(source, loginOwn)
       expect(settingsOf(result.content)).toEqual({
         hooks: {
           state: {
@@ -159,7 +164,7 @@ describe("an extra Codex login's config.toml", () => {
     })
 
     it("fills in a trust field of the default home that the login's entry for the same hook lacks", () => {
-      const result = mergeAccountConfig(
+      const result = merge(
         `[hooks.state.${JSON.stringify(hookKey)}]\ntrusted_hash = "sha256:default"\nenabled = true\n`,
         `[hooks.state.${JSON.stringify(hookKey)}]\nenabled = false\n`
       )
@@ -185,25 +190,25 @@ describe("an extra Codex login's config.toml", () => {
         'trust_level = "untrusted"',
         ''
       ].join('\n')
-      const result = mergeAccountConfig(source, target)
+      const result = merge(source, target)
       expect(tomlValue(result.content)).toEqual({
         hooks: { state: { [hookKey]: { trusted_hash: 'sha256:login', enabled: false } } },
         projects: { 'e:\\login-only': { trust_level: 'untrusted' } }
       })
       // A second refresh changes nothing.
-      expect(mergeAccountConfig(source, result.content).content).toBe(result.content)
+      expect(merge(source, result.content).content).toBe(result.content)
     })
 
     // The login's own values are kept, so a restrictive value stays even after the default
     // home trusts the folder again.
     it("keeps the login's untrusted folder after the default home trusts it again", () => {
-      const first = mergeAccountConfig("[projects.'e:\\a']\ntrust_level = \"untrusted\"\n", '').content
-      const second = mergeAccountConfig("[projects.'e:\\a']\ntrust_level = \"trusted\"\n", first).content
+      const first = merge("[projects.'e:\\a']\ntrust_level = \"untrusted\"\n", '').content
+      const second = merge("[projects.'e:\\a']\ntrust_level = \"trusted\"\n", first).content
       expect(tomlValue(second)).toEqual({ projects: { 'e:\\a': { trust_level: 'untrusted' } } })
     })
 
     it('still removes a setting of the login that the default home dropped', () => {
-      const result = mergeAccountConfig('', `model = "old"\n${loginOwn}`)
+      const result = merge('', `model = "old"\n${loginOwn}`)
       expect(tomlValue(result.content)).not.toHaveProperty('model')
       expect(tomlValue(result.content)).toHaveProperty(['projects', 'e:\\login-only', 'trust_level'], 'untrusted')
     })
@@ -221,33 +226,35 @@ describe("an extra Codex login's config.toml", () => {
         ''
       ].join('\n')
       expect(publicAccountConfig(source)).not.toMatch(/CANARY/)
-      const result = mergeAccountConfig(source, '')
+      const result = merge(source, '')
       expect(result.content).not.toMatch(/CANARY/)
       expect(result.missingSecrets).toBe(true)
     })
 
+    // The folder or hook key is never read as a secret name; the fields below it are judged
+    // by their own names.
     it('does not copy a secret-named field inside a trust table whose name looks secret', () => {
       const source = [
-        "[projects.'e:\\secrets-tool']",
+        "[projects.'e:\\deploy-token']",
         'trust_level = "trusted"',
         'password = "FOLDER_CANARY"',
         `[hooks.state.${JSON.stringify(hookKey)}]`,
         'trusted_hash = "sha256:default"',
         'api_key = "HOOK_CANARY"',
-        'note = "NOTE_CANARY"',
+        'note = "plain note"',
         ''
       ].join('\n')
-      const result = mergeAccountConfig(source, '')
+      const result = merge(source, '')
       expect(result.content).not.toMatch(/CANARY/)
       expect(tomlValue(result.content)).toEqual({
-        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:default' } } },
-        projects: { 'e:\\secrets-tool': { trust_level: 'trusted' } }
+        hooks: { state: { [hookKey]: { trusted_hash: 'sha256:default', note: 'plain note' } } },
+        projects: { 'e:\\deploy-token': { trust_level: 'trusted' } }
       })
       expect(result.missingSecrets).toBe(true)
     })
 
     it("keeps the login's own secret-named value in [projects] where it was", () => {
-      const result = mergeAccountConfig('model = "next"\n', '[projects]\npassword = "LOGIN_CANARY"\n')
+      const result = merge('model = "next"\n', '[projects]\npassword = "LOGIN_CANARY"\n')
       expect(tomlValue(result.content)).toEqual({ model: 'next', projects: { password: 'LOGIN_CANARY' } })
       expect(result.missingSecrets).toBe(false)
     })
@@ -268,14 +275,14 @@ describe("an extra Codex login's config.toml", () => {
       ['an inline table for hooks.state', '[hooks]\nstate = { k = { enabled = false } }\n'],
       ['one inline table for everything', 'hooks = { state = { k = { enabled = false } } }\n']
     ])('keeps a hook switched off with %s and adds the default home\'s hash beside it', (_form, target) => {
-      const result = mergeAccountConfig(source, target)
+      const result = merge(source, target)
       expect(tomlValue(result.content)).toEqual(wanted)
       // A second refresh changes nothing.
-      expect(mergeAccountConfig(source, result.content).content).toBe(result.content)
+      expect(merge(source, result.content).content).toBe(result.content)
     })
 
     it('adds a second hook beside an inline hooks.state', () => {
-      const result = mergeAccountConfig(
+      const result = merge(
         '[hooks.state."k2"]\ntrusted_hash = "sha256:two"\n',
         'hooks.state = { k = { enabled = false } }\n'
       )
@@ -285,7 +292,7 @@ describe("an extra Codex login's config.toml", () => {
     })
 
     it('adds a folder beside folders written as dotted keys', () => {
-      const result = mergeAccountConfig(
+      const result = merge(
         "[projects.'e:\\b']\ntrust_level = \"trusted\"\n",
         "projects.'e:\\a'.trust_level = \"untrusted\"\n"
       )
@@ -295,12 +302,12 @@ describe("an extra Codex login's config.toml", () => {
     })
 
     it('sets, adds and removes settings inside dotted and inline tables', () => {
-      const result = mergeAccountConfig(
+      const result = merge(
         '[features]\nmemories = false\nfresh = true\n[tui]\ntheme = "dark"\n',
         'features.memories = true\nfeatures.old = 1\ntui = { theme = "light", old = 2, older = 3 }\n'
       )
       expect(tomlValue(result.content)).toEqual({ features: { memories: false, fresh: true }, tui: { theme: 'dark' } })
-      expect(mergeAccountConfig('[features]\nmemories = false\nfresh = true\n[tui]\ntheme = "dark"\n', result.content).content).toBe(result.content)
+      expect(merge('[features]\nmemories = false\nfresh = true\n[tui]\ntheme = "dark"\n', result.content).content).toBe(result.content)
     })
   })
 
@@ -312,7 +319,7 @@ describe("an extra Codex login's config.toml", () => {
       'args = ["run --token\\tDEFAULT_CANARY"]\n',
       'auth_line = "Bearer\\u0009DEFAULT_CANARY"\n'
     ]) {
-      const result = mergeAccountConfig(source, '')
+      const result = merge(source, '')
       expect(result.content).not.toContain('CANARY')
       expect(result.missingSecrets).toBe(true)
       expect(publicAccountConfig(source)).not.toContain('CANARY')
@@ -327,7 +334,7 @@ describe("an extra Codex login's config.toml", () => {
       expect(tomlValue(publicAccountConfig(server))).toEqual(tomlValue(server))
       const servers = tomlValue(publicAccountConfig(server))['mcp_servers'] as Record<string, Record<string, unknown>>
       expect(Object.hasOwn(servers, name) ? servers[name]!['command'] : undefined).toBe('node')
-      const result = mergeAccountConfig(`model = "b"\n${server}`, `model = "a"\n${server}`)
+      const result = merge(`model = "b"\n${server}`, `model = "a"\n${server}`)
       expect(result.content).toBe(`model = "b"\n${server}`)
       expect(sameTomlSettings(server, '')).toBe(false)
     })
@@ -335,7 +342,7 @@ describe("an extra Codex login's config.toml", () => {
     it('never changes a shared prototype', () => {
       const source = 'constructor.prototype.leak_one = 1\n[a.__proto__]\nleak_two = 2\n[b.toString]\nleak_three = 3\n'
       expect(sameTomlSettings(publicAccountConfig(source), source)).toBe(true)
-      expect(sameTomlSettings(mergeAccountConfig(source, '').content, source)).toBe(true)
+      expect(sameTomlSettings(merge(source, '').content, source)).toBe(true)
       tomlValue(source)
       const probe: Record<string, unknown> = {}
       expect([probe['leak_one'], probe['leak_two'], probe['leak_three']]).toEqual([undefined, undefined, undefined])
@@ -374,29 +381,29 @@ describe("an extra Codex login's config.toml", () => {
   // number, and rounds an integer past 2^53. The merge compares and writes TOML's own types.
   describe('values JavaScript numbers and objects cannot hold exactly', () => {
     it('keeps a date inside an inline table when another value there changes', () => {
-      const result = mergeAccountConfig('x = { date = 2030-01-01, n = 2 }\n', 'x = { date = 2030-01-01, n = 1 }\n')
+      const result = merge('x = { date = 2030-01-01, n = 2 }\n', 'x = { date = 2030-01-01, n = 1 }\n')
       expect(result.content).toBe('x = { date = 2030-01-01, n = 2 }\n')
     })
 
     it('copies dates of every kind', () => {
       const source = 'a = 2030-01-01\nb = 2030-01-01 10:00:00z\nc = 10:00:00\nd = 2030-01-01T10:00:00\n'
       expect(sameTomlSettings(publicAccountConfig(source), source)).toBe(true)
-      expect(sameTomlSettings(mergeAccountConfig(source, '').content, source)).toBe(true)
+      expect(sameTomlSettings(merge(source, '').content, source)).toBe(true)
     })
 
     it('replaces a date with a different date', () => {
-      expect(mergeAccountConfig('d = 2030-01-01\n', 'd = 2030-01-02\n').content).toBe('d = 2030-01-01\n')
+      expect(merge('d = 2030-01-01\n', 'd = 2030-01-02\n').content).toBe('d = 2030-01-01\n')
       expect(sameTomlSettings('d = 2030-01-01\n', 'd = 2030-01-01T00:00:00\n')).toBe(false)
     })
 
     it('copies an integer past 2^53 exactly', () => {
       expect(publicAccountConfig('n = 9007199254740993\n')).toBe('n = 9007199254740993\n')
-      expect(mergeAccountConfig('n = 9007199254740993\n', 'n = 9007199254740992\n').content).toBe('n = 9007199254740993\n')
+      expect(merge('n = 9007199254740993\n', 'n = 9007199254740992\n').content).toBe('n = 9007199254740993\n')
     })
 
     it('tells an integer from a float', () => {
-      expect(mergeAccountConfig('n = 1.0\n', 'n = 1\n').content).toBe('n = 1.0\n')
-      expect(mergeAccountConfig('n = 1\n', 'n = 1.0\n').content).toBe('n = 1\n')
+      expect(merge('n = 1.0\n', 'n = 1\n').content).toBe('n = 1.0\n')
+      expect(merge('n = 1\n', 'n = 1.0\n').content).toBe('n = 1\n')
       expect(sameTomlSettings('n = 1\n', 'n = 1.0\n')).toBe(false)
       expect(sameTomlSettings('n = 0x10\n', 'n = 16\n')).toBe(true)
     })
@@ -407,11 +414,11 @@ describe("an extra Codex login's config.toml", () => {
   describe('arrays of tables', () => {
     it('leaves a list the login already has as it is', () => {
       const text = 'model = "m"\n[[agents]]\nname = "a"\n[agents.limits]\nturns = 3\n[[agents]]\nname = "b"\n'
-      expect(mergeAccountConfig(text, text).content).toBe(text)
+      expect(merge(text, text).content).toBe(text)
     })
 
     it('copies a list the login does not have', () => {
-      const result = mergeAccountConfig('[[agents]]\nname = "a"\n[[agents]]\nname = "b"\n', 'model = "m"\n')
+      const result = merge('[[agents]]\nname = "a"\n[[agents]]\nname = "b"\n', 'model = "m"\n')
       expect(tomlValue(result.content)).toEqual({ agents: [{ name: 'a' }, { name: 'b' }] })
       expect(result.content).toContain('[[agents]]')
     })
@@ -419,27 +426,29 @@ describe("an extra Codex login's config.toml", () => {
     it("replaces the login's list with the default home's", () => {
       const source = 'model = "m"\n[[agents]]\nname = "b"\n[[agents]]\nname = "c"\n[agents.limits]\nturns = 1\n'
       const target = 'model = "x"\n[[agents]]\nname = "a"\n[tui]\ntheme = "dark"\n'
-      const result = mergeAccountConfig(source, target)
-      expect(tomlValue(result.content)).toEqual({ model: 'm', tui: {}, agents: [{ name: 'b' }, { name: 'c', limits: { turns: 1 } }] })
+      const result = merge(source, target)
+      // [tui] lost its last setting, so its header went too.
+      expect(tomlValue(result.content)).toEqual({ model: 'm', agents: [{ name: 'b' }, { name: 'c', limits: { turns: 1 } }] })
+      expect(result.content).not.toContain('[tui]')
       // A second refresh changes nothing.
-      expect(mergeAccountConfig(source, result.content).content).toBe(result.content)
+      expect(merge(source, result.content).content).toBe(result.content)
     })
 
     it('removes a list the default home dropped', () => {
-      const result = mergeAccountConfig('model = "m"\n', '[[agents]]\nname = "a"\n[agents.limits]\nturns = 3\n')
+      const result = merge('model = "m"\n', '[[agents]]\nname = "a"\n[agents.limits]\nturns = 3\n')
       expect(tomlValue(result.content)).toEqual({ model: 'm' })
     })
 
     it('changes a value in place, keeping the comments and where the list stands', () => {
       const target = '[[agents]] # explanation\n# note\nname = "a"\n\n[tui]\ntheme = "dark"\n'
-      const result = mergeAccountConfig('[[agents]]\nname = "b"\n[tui]\ntheme = "dark"\n', target)
+      const result = merge('[[agents]]\nname = "b"\n[tui]\ntheme = "dark"\n', target)
       expect(result.content).toBe('[[agents]] # explanation\n# note\nname = "b"\n\n[tui]\ntheme = "dark"\n')
     })
 
     it('sets, adds and removes values inside elements and their tables in place', () => {
       const source = '[[agents]]\nname = "a"\nturns = 5\n[agents.limits]\nsoft = 2\n[[agents]]\nname = "b"\n'
       const target = '# list\n[[agents]]\nname = "a"\nold = true # gone\n[agents.limits]\nsoft = 1\nhard = 3\n[[agents]]\nname = "b"\n[tui]\ntheme = "dark"\n'
-      const result = mergeAccountConfig(`${source}[tui]\ntheme = "dark"\n`, target)
+      const result = merge(`${source}[tui]\ntheme = "dark"\n`, target)
       expect(tomlValue(result.content)).toEqual({
         agents: [{ name: 'a', turns: 5, limits: { soft: 2 } }, { name: 'b' }],
         tui: { theme: 'dark' }
@@ -450,26 +459,221 @@ describe("an extra Codex login's config.toml", () => {
 
     it('adds elements after the last one and takes out elements past the new end', () => {
       const target = '[[agents]]\nname = "a" # first\n[tui]\ntheme = "dark"\n'
-      const longer = mergeAccountConfig('[[agents]]\nname = "a"\n[[agents]]\nname = "b"\n[tui]\ntheme = "dark"\n', target)
+      const longer = merge('[[agents]]\nname = "a"\n[[agents]]\nname = "b"\n[tui]\ntheme = "dark"\n', target)
       expect(longer.content).toBe('[[agents]]\nname = "a" # first\n[[agents]]\nname = "b"\n[tui]\ntheme = "dark"\n')
-      const shorter = mergeAccountConfig('[[agents]]\nname = "a"\n[tui]\ntheme = "dark"\n', longer.content)
+      const shorter = merge('[[agents]]\nname = "a"\n[tui]\ntheme = "dark"\n', longer.content)
       expect(tomlValue(shorter.content)).toEqual({ agents: [{ name: 'a' }], tui: { theme: 'dark' } })
       expect(shorter.content).toContain('name = "a" # first')
     })
 
     it('writes CRLF lines into a file that uses them', () => {
       const target = '[[agents]]\r\nname = "a"\r\n[tui]\r\ntheme = "dark"\r\n'
-      const result = mergeAccountConfig('[[agents]]\nname = "b"\n[[agents]]\nname = "c"\n[tui]\ntheme = "dark"\nfresh = true\n', target)
+      const result = merge('[[agents]]\nname = "b"\n[[agents]]\nname = "c"\n[tui]\ntheme = "dark"\nfresh = true\n', target)
       expect(tomlValue(result.content)).toEqual({ agents: [{ name: 'b' }, { name: 'c' }], tui: { theme: 'dark', fresh: true } })
       expect(result.content.replace(/\r\n/g, '')).not.toContain('\n')
     })
 
     it("keeps the login's list whole when it holds a secret, and does not copy one that does", () => {
       const own = '[[agents]]\nname = "a"\nenv = { K = "LOGIN_CANARY" }\n'
-      expect(mergeAccountConfig('[[agents]]\nname = "b"\n', own).content).toBe(own)
-      const result = mergeAccountConfig('[[agents]]\nname = "b"\nenv = { K = "DEFAULT_CANARY" }\n', '')
+      expect(merge('[[agents]]\nname = "b"\n', own).content).toBe(own)
+      const result = merge('[[agents]]\nname = "b"\nenv = { K = "DEFAULT_CANARY" }\n', '')
       expect(result.content).not.toContain('CANARY')
       expect(result.missingSecrets).toBe(true)
     })
+  })
+})
+
+// The merge with the last merged copy: which settings of the login's file came from the
+// default home, and which Codex or the user wrote there themselves.
+describe('the three-way merge', () => {
+  /** Merges twice: once to get the last merged copy, then again after the changes. */
+  function refresh(firstSource: string, login: (merged: string) => string, nextSource: string): ReturnType<typeof mergeAccountConfig> {
+    const first = merge(firstSource, '')
+    return mergeAccountConfig(nextSource, login(first.content), first.merged)
+  }
+
+  it('keeps what Codex wrote into the login\'s file itself', () => {
+    const source = 'model = "gpt-a"\n[features]\nmemories = true\n'
+    const result = refresh(source, (content) => `${content}[notice]\nhide_full_access_warning = true\n[plugins."demo"]\nenabled = true\n`, source)
+    expect(tomlValue(result.content)).toEqual({
+      model: 'gpt-a',
+      features: { memories: true },
+      notice: { hide_full_access_warning: true },
+      plugins: { demo: { enabled: true } }
+    })
+  })
+
+  it("keeps the login's own /model choice until the default home changes its model", () => {
+    const source = 'model = "gpt-a"\n'
+    const chosen = refresh(source, (content) => content.replace('gpt-a', 'gpt-mini'), source)
+    expect(tomlValue(chosen.content)).toEqual({ model: 'gpt-mini' })
+    const changed = mergeAccountConfig('model = "gpt-b"\n', chosen.content, chosen.merged)
+    expect(tomlValue(changed.content)).toEqual({ model: 'gpt-b' })
+  })
+
+  it('removes a setting the default home dropped, and keeps one it never had', () => {
+    const result = refresh('model = "a"\nold = 1\n', (content) => `${content}own = 2\n`, 'model = "a"\n')
+    expect(tomlValue(result.content)).toEqual({ model: 'a', own: 2 })
+  })
+
+  it('takes a table out whole, with its secrets, when its last ordinary setting goes', () => {
+    const source = 'model = "a"\n[mcp_servers.demo]\nurl = "https://fixture.invalid"\n'
+    const result = refresh(source, (content) => `${content}[mcp_servers.demo.env]\nAPI_KEY = "LOGIN_CANARY"\n`, 'model = "a"\n')
+    expect(tomlValue(result.content)).toEqual({ model: 'a' })
+    expect(result.content).not.toContain('mcp_servers')
+  })
+
+  it('takes such a table out on the first merge as well', () => {
+    const result = merge('model = "a"\n', 'model = "a"\n[mcp_servers.demo]\ncommand = "x"\n[mcp_servers.demo.env]\nK = "LOGIN_CANARY"\n')
+    expect(result.content).toBe('model = "a"\n')
+  })
+
+  it("keeps a table that only ever held the login's own secrets", () => {
+    const own = '[shell_environment_policy.set]\nTOKEN = "LOGIN_CANARY"\n'
+    expect(refresh('model = "a"\n', (content) => content + own, 'model = "b"\n').content).toContain('LOGIN_CANARY')
+  })
+
+  it('lets trust from the default home follow it, and keeps the login\'s own', () => {
+    const untrusted = "[projects.'/w/a']\ntrust_level = \"untrusted\"\n"
+    // The untrusted mark came from the default home, so trusting the folder there reaches the login.
+    const again = refresh(untrusted, (content) => content, "[projects.'/w/a']\ntrust_level = \"trusted\"\n")
+    expect(tomlValue(again.content)).toEqual({ projects: { '/w/a': { trust_level: 'trusted' } } })
+    // The login's own mark stays when the default home trusts the folder.
+    const own = refresh('model = "a"\n', (content) => content + untrusted, "model = \"a\"\n[projects.'/w/a']\ntrust_level = \"trusted\"\n")
+    expect(tomlValue(own.content)).toEqual({ model: 'a', projects: { '/w/a': { trust_level: 'untrusted' } } })
+    // Trust the default home gave and then dropped goes; the login's own stays.
+    const dropped = refresh("[projects.'/w/b']\ntrust_level = \"trusted\"\n", (content) => content + untrusted, '')
+    expect(tomlValue(dropped.content)).toEqual({ projects: { '/w/a': { trust_level: 'untrusted' } } })
+  })
+
+  it('stores the last merged copy without secrets', () => {
+    const result = merge('model = "a"\nexperimental_bearer_token = "DEFAULT_CANARY"\n[mcp_servers.demo.env]\nK = "DEFAULT_CANARY"\n', '')
+    expect(result.merged).toBe('model = "a"\n')
+  })
+
+  it('treats a last merged copy that is not TOML as none', () => {
+    const result = mergeAccountConfig('model = "a"\n', 'model = "a"\nold = 1\n', 'model = [\n')
+    expect(tomlValue(result.content)).toEqual({ model: 'a' })
+  })
+
+  it('is stable: a second merge with nothing changed gives the same file', () => {
+    const source = 'model = "a"\n[projects."/w"]\ntrust_level = "trusted"\n[[agents]]\nname = "x"\n'
+    const first = merge(source, '')
+    const second = mergeAccountConfig(source, first.content, first.merged)
+    expect(second.content).toBe(first.content)
+    expect(second.merged).toBe(first.merged)
+  })
+})
+
+describe('which keys hold secrets', () => {
+  it.each([
+    ['model_providers.p.experimental_bearer_token = "DEFAULT_CANARY"\n'],
+    ['features.multi_agent_v2.message_board_remote.bearer_token = "DEFAULT_CANARY"\n'],
+    ['mcp_servers.m.bearer_token = "DEFAULT_CANARY"\n'],
+    ['mcp_servers.m.oauth.client_secret = "DEFAULT_CANARY"\n'],
+    ['model_providers.p.query_params = { sig = "DEFAULT_CANARY" }\n'],
+    ['otel.exporter.otlp-http.headers = { "x-api-key" = "DEFAULT_CANARY" }\n'],
+    ['access_token = "DEFAULT_CANARY"\n'],
+    ['api_key = "DEFAULT_CANARY"\n'],
+    ['apiKey = "DEFAULT_CANARY"\n'],
+    ['db_password = "DEFAULT_CANARY"\n']
+  ])('never copies %s', (source) => {
+    const result = merge(source, '')
+    expect(result.content).not.toContain('CANARY')
+    expect(result.merged).not.toContain('CANARY')
+    expect(result.missingSecrets).toBe(true)
+  })
+
+  it('copies settings whose names only look like secrets, and warns about none of them', () => {
+    const source = [
+      'cli_auth_credentials_store = "keyring"',
+      'mcp_oauth_credentials_store = "file"',
+      'mcp_oauth_callback_port = 4321',
+      'model_auto_compact_token_limit = 200000',
+      'tool_output_token_limit = 9000',
+      '[features]',
+      'secret_auth_storage = true',
+      '[mcp_servers.m]',
+      'url = "https://fixture.invalid"',
+      'bearer_token_env_var = "DEMO_TOKEN"',
+      'env_vars = ["HOME"]',
+      'env_http_headers = { "X-Demo" = "DEMO_HEADER" }',
+      'auth = "oauth"',
+      '[model_providers.p]',
+      'env_key = "DEMO_API_KEY"',
+      '[otel.exporter.otlp-http.tls]',
+      'client-private-key = "/keys/client.pem"',
+      ''
+    ].join('\n')
+    const result = merge(source, '')
+    expect(sameTomlSettings(result.content, source)).toBe(true)
+    expect(result.missingSecrets).toBe(false)
+    expect(result.heldBack).toEqual([])
+  })
+
+  it("keeps the login's own bearer token where the default home has another", () => {
+    const result = merge('[model_providers.p]\nbase_url = "https://b.invalid"\nexperimental_bearer_token = "DEFAULT_CANARY"\n',
+      '[model_providers.p]\nbase_url = "https://a.invalid"\nexperimental_bearer_token = "LOGIN_TOKEN"\n')
+    expect(tomlValue(result.content)).toEqual({ model_providers: { p: { base_url: 'https://b.invalid', experimental_bearer_token: 'LOGIN_TOKEN' } } })
+    expect(result.content).not.toContain('DEFAULT_CANARY')
+    expect(result.missingSecrets).toBe(false)
+  })
+})
+
+describe('files the merge used to fail on', () => {
+  it('reads a default home config.toml that starts with a byte order mark', () => {
+    const result = merge('﻿model = "a"\n', '﻿model = "b"\n')
+    expect(result.content).toBe('model = "a"\n')
+    expect(publicAccountConfig('﻿model = "a"\n')).toBe('model = "a"\n')
+    expect(sameTomlSettings('﻿model = "a"\n', 'model = "a"\n')).toBe(true)
+  })
+
+  it('follows a key that changes between a value and a table, both ways', () => {
+    const toTable = merge('[tools]\nweb_search = true\n', 'tools = "all"\n')
+    expect(tomlValue(toTable.content)).toEqual({ tools: { web_search: true } })
+    const toValue = merge('tools = "all"\n', '[tools]\nweb_search = true\n')
+    expect(tomlValue(toValue.content)).toEqual({ tools: 'all' })
+  })
+
+  it('copies folder and hook names that contain text such as secret:', () => {
+    const source = '[projects."/w/secret:x"]\ntrust_level = "trusted"\n[hooks.state."file:/w/password=1/hooks.json:stop:0:0"]\ntrusted_hash = "sha256:a"\n'
+    const result = merge(source, '')
+    expect(sameTomlSettings(result.content, source)).toBe(true)
+  })
+
+  it('keeps a multi-line string multi-line, as the default home wrote it', () => {
+    const source = 'developer_instructions = """\nline one\nline two\n"""\nn = 0x10\n'
+    expect(merge(source, '').content).toBe(source)
+  })
+
+  // The two-way merge parsed the file again for every setting and took 5 to 7 seconds for
+  // 1000 folders; this merge is linear and takes about 0.2 seconds for 2000 on an idle machine.
+  it('merges a file with two thousand folders in a few seconds at most', () => {
+    const folders = Array.from({ length: 2000 }, (_, index) => `[projects."/w/p${String(index)}"]\ntrust_level = "trusted"\n`).join('')
+    const started = Date.now()
+    const first = merge(`model = "a"\n${folders}`, '')
+    const second = mergeAccountConfig(`model = "b"\n${folders}`, `${first.content}[notice]\nseen = true\n`, first.merged)
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(Object.keys(tomlValue(second.content)['projects'] as object)).toHaveLength(2000)
+    expect(tomlValue(second.content)).toMatchObject({ model: 'b', notice: { seen: true } })
+  })
+})
+
+describe('settings held back by a secret', () => {
+  it('names a list of tables whose new element was not copied because the list holds a secret', () => {
+    const own = '[[agents]]\nname = "a"\nenv = { K = "LOGIN_CANARY" }\n'
+    const source = '[[agents]]\nname = "a"\nenv = { K = "DEFAULT_CANARY" }\n[[agents]]\nname = "b"\n'
+    const result = merge(source, own)
+    expect(result.content).toBe(own)
+    expect(result.heldBack).toEqual(['agents'])
+    expect(JSON.stringify(result)).not.toContain('DEFAULT_CANARY')
+    // The same list apart from its secrets is not named.
+    expect(merge('[[agents]]\nname = "a"\nenv = { K = "DEFAULT_CANARY" }\n', own).heldBack).toEqual([])
+  })
+
+  it("names a setting the login's secret value stands in the way of", () => {
+    const result = merge('[mcp_servers.m]\ncommand = "run"\n', '[mcp_servers.m]\ncommand = "run --token LOGIN_CANARY"\n')
+    expect(result.content).toContain('LOGIN_CANARY')
+    expect(result.heldBack).toEqual(['mcp_servers.m.command'])
   })
 })

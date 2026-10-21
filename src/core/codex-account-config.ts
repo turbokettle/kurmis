@@ -1,45 +1,124 @@
 /**
  * The `config.toml` an extra Codex login's home gets: the default home's settings without
- * anything that looks like a secret, with the secrets that login's own copy already has
- * kept in place. Copied from the original router's `src/tools/claude/core/codex-account-config.ts`; the
- * trust rules below differ from the original router's.
+ * its secrets, merged into the login's own file. Started from the original router's
+ * `src/tools/claude/core/codex-account-config.ts`; the merge and the trust rules below differ
+ * from the original router's.
  *
  * An extra Codex login runs with its own `CODEX_HOME` (`codex/<name>/` in the data folder).
- * Before every start its `config.toml` is made again from `~/.codex/config.toml` with
- * `mergeAccountConfig` (`codex-home.ts` says when). A secret, such as an MCP server's `env`
- * table or a bearer header, is never copied; a login that needs one keeps its own. Layout,
- * comments and TOML types (integer or float, the kind of date) are kept.
+ * Before every start its `config.toml` is merged again from `~/.codex/config.toml` with
+ * `mergeAccountConfig` (`codex-home.ts` says when). Layout, comments and TOML types (integer
+ * or float, the kind of date) of the login's file are kept. A value copied from the default
+ * home keeps the way it was written there (a multi-line string stays multi-line), and comments
+ * of the default home are not copied.
  *
- * Codex keeps trust in the `config.toml` of the home it runs with: `hooks.state."<hook key>"`
- * for a hook (`trusted_hash`, `enabled`) and `projects."<folder>"` for a folder
- * (`trust_level`). A session asks for this trust and writes it into the login's own file, so
- * those values are kept across refreshes, and the default home's values fill in the trust
- * fields the login's file does not have. Where both files have a value for the same field of
- * the same hook or folder (`mergedTrust`):
+ * **Three-way merge.** Codex writes to the `config.toml` of the home it runs with: a `/model`
+ * choice, a notice the user has seen (`[notice]`), a plugin switched on, trust. So the merge
+ * needs to know which settings of the login's file came from the default home. Kurmis keeps
+ * the default home's settings as they were last merged in (`merged` in the answer, stored by
+ * the caller outside the Codex home) and merges three ways, one setting (a value, or a whole
+ * array) at a time:
+ *
+ * - a setting the default home has is taken from it, unless the default home's value is the
+ *   one last merged in and the login's file has another: then the login changed it, and the
+ *   login's value stays until the default home changes it;
+ * - a setting the login's file has and the default home no longer has is removed when it was
+ *   in the last merged copy, and kept when it never was (the login's own);
+ * - a table that loses its last setting that is not a secret goes as a whole, the login's
+ *   own secrets in it included. Codex refuses a file with an MCP server that has only an `env`
+ *   table left, for example.
+ *
+ * With no last merged copy (the first merge after kurmis was updated to keep one), every
+ * setting of the login's file that is not a secret or trust counts as merged in before, as
+ * the earlier two-way merge treated it: what the default home lacks is removed once, and
+ * from then on the login's own settings are told apart.
+ *
+ * **Secrets.** A secret is never copied from the default home, and a secret in the login's
+ * file is never changed or removed by the merge, except with its whole table (`secretKeyName`
+ * and `secretValue` say what counts). Where the login's secret stands in the way of a
+ * setting of the default home, or the default home has a secret setting that differs from
+ * the login's in more than its secrets, the login's stays and `heldBack` names the setting.
+ *
+ * **Trust.** Codex keeps trust in `hooks.state."<hook key>"` for a hook (`trusted_hash`,
+ * `trusted_content_hash`, `enabled`) and `projects."<folder>"` for a folder (`trust_level`). A trust field the login
+ * has a value of its own for (one that is not the last merged one) is combined with the
+ * default home's (`mergedTrust`):
  *
  * - `enabled`: `false` wins, so a hook switched off in either home stays off;
  * - `trust_level`: `"untrusted"` wins over any other value;
- * - `trusted_hash`: the login's own hash stays. A hash trusts one version of a hook, the one
- *   that hashes to it, so neither hash trusts more than the other. The login's hash is the
- *   one a session on that login asked for. Taking the default home's would undo that on
- *   every refresh, and dropping both would only last until the next refresh filled the
- *   default home's hash in.
+ * - `trusted_hash` and `trusted_content_hash`: the login's own hash stays. A hash trusts one
+ *   version of a hook, the one that hashes to it, so neither hash trusts more than the other.
+ *   The login's hash is the one a session on that login asked for. Taking the default home's
+ *   would undo that on every refresh.
+ *
+ * A trust field whose value came from the default home follows the default home, so trusting
+ * a folder again in `~/.codex` reaches the login. A login's own trust field stays when the
+ * default home drops it, and on the first merge without a last merged copy every trust field
+ * of the login counts as its own.
  *
  * the original router drops the trust a login's own file gave, because a model in a session could have
  * written it there. Kurmis keeps it: kurmis has no window in which a person gives trust, and
  * a model that can write the login's file can as well write `~/.codex/config.toml`, whose
- * trust reaches every login.
- *
- * Because the login's own values are kept, the restrictive values ratchet: once a folder is
- * `"untrusted"` or a hook `enabled = false` in the login's file, trusting it again in the
- * default home does not reach the login. It has to be trusted again in a session on that
- * login, or the line removed from the login's file.
+ * trust reaches every login. Because the login's own restrictive values win, a folder the
+ * login marked `"untrusted"` or a hook it switched off stays so until it is trusted again in
+ * a session on that login, or the line is removed from the login's file.
  */
 import { parseTOML, type AST } from 'toml-eslint-parser'
 
-/** Keys whose values are never copied: environment tables, headers and credentials. */
-const OPAQUE_KEY = /^(env|environment|set|http_headers|headers|env_http_headers|bearer_token_env_var|auth|authentication)$/i
-const SECRET_KEY = /(?:api.?key|secret|password|credential|access.?token|refresh.?token|authorization|oauth|private.?key)/i
+/** One key of a path: a table's key, or the index of an element of an array of tables. */
+type PathKey = string | number
+
+type Dict = Record<string, unknown>
+
+// ---- what counts as a secret
+
+/**
+ * Tables whose values are secrets whatever they are called: an MCP server's environment
+ * (`env`), the environment `shell_environment_policy` sets (`set`), HTTP headers and a model
+ * provider's query parameters, which Codex sends as they are written.
+ */
+const SECRET_TABLES = new Set(['env', 'set', 'http_headers', 'headers', 'query_params'])
+
+/** Last words of a key name that say its value is a secret: `bearer_token`, `client_secret`, `db_password`. */
+const SECRET_LAST_WORDS = new Set(['token', 'secret', 'secrets', 'password', 'passwd', 'passphrase', 'authorization', 'cookie', 'apikey'])
+
+/** Words before a last word `key` that make it not a secret: `env_key` names a variable, `public_key` is public. */
+const PUBLIC_KEY_WORDS = new Set(['env', 'public'])
+
+/** Key names Codex uses for something that is not a secret although the rule below would say so: a path to a key file. */
+const PUBLIC_NAMES = new Set(['client-private-key'])
+
+/** The words of a key name, split at `_`, `-`, `.`, spaces and lower-to-upper case changes, in lower case. */
+function keyWords(key: string): string[] {
+  return key.replace(/([a-z\d])([A-Z])/g, '$1_$2').toLowerCase().split(/[^a-z\d]+/).filter((word) => word.length > 0)
+}
+
+/**
+ * Whether a key's name says that the strings under it are secrets.
+ *
+ * The rule reads the last word of the name, because in Codex's settings the last word says
+ * what the value is: `experimental_bearer_token`, `bearer_token`, `access_token` and
+ * `client_secret` are secrets, while `bearer_token_env_var` and `env_key` name an environment
+ * variable, `cli_auth_credentials_store` and `mcp_oauth_credentials_store` name a kind of
+ * store, `mcp_oauth_callback_port` is a port, and `model_auto_compact_token_limit` and
+ * `max_tokens` are counts. A last word `key` is a secret (`api_key`, `private_key`,
+ * `x-api-key`) except in `env_key` and `public_key`. A few table names hold secrets whatever
+ * their values are called (`SECRET_TABLES`), and a few names Codex uses for paths are not
+ * secrets (`PUBLIC_NAMES`).
+ *
+ * The name alone never makes a boolean, a number or a date a secret (`secretValue`), so a
+ * switch such as `features.secret_auth_storage` is copied.
+ */
+export function secretKeyName(key: string): boolean {
+  const lower = key.toLowerCase()
+  if (SECRET_TABLES.has(lower)) return true
+  if (PUBLIC_NAMES.has(lower)) return false
+  const words = keyWords(key)
+  const last = words.at(-1)
+  if (last === undefined) return false
+  if (SECRET_LAST_WORDS.has(last)) return true
+  return last === 'key' && !PUBLIC_KEY_WORDS.has(words.at(-2) ?? '')
+}
+
 const SECRET_TEXT = /(?:\bBearer\s+\S+|\b(?:sk|ghp|github_pat|xox[baprs])[-_][a-z\d_-]{8,}|-----BEGIN [\w ]*PRIVATE KEY-----|https?:\/\/[^\s/@:]*:[^\s/@]+@|[?&](?:token|key|secret|signature|password)=[^&#\s]+|(?:api[_-]?key|secret|password|authorization|access[_-]?token)\s*[=:]\s*["']?[^\s,"'}]+)/i
 
 /**
@@ -50,42 +129,78 @@ function secretLooking(text: string): boolean {
   return SECRET_TEXT.test(text) || /--(?:token|api-key|password|secret)(?:[=\s]+)\S+/i.test(text)
 }
 
-function opaqueKey(key: string): boolean {
-  return OPAQUE_KEY.test(key) || SECRET_KEY.test(key)
+/** An argument list that passes a header, a token or an environment value on the command line. */
+function secretArguments(value: readonly unknown[]): boolean {
+  return value.some((arg) => typeof arg === 'string' && /^(?:-H|--(?:env|header|headers|token|api-key|password|secret|authorization))(?:=|$)/i.test(arg))
 }
-
-/** One key of a path: a table's key, or the index of an element of an array of tables. */
-type PathKey = string | number
 
 /** The tables Codex keeps trust in, one per folder or hook, and the fields of each that hold trust. */
 const TRUST_TABLES: ReadonlyArray<{ parent: readonly string[]; fields: readonly PathKey[] }> = [
   { parent: ['projects'], fields: ['trust_level'] },
-  { parent: ['hooks', 'state'], fields: ['trusted_hash', 'enabled'] }
+  { parent: ['hooks', 'state'], fields: ['trusted_hash', 'trusted_content_hash', 'enabled'] }
 ]
 
 /**
- * Where the folder or hook key sits in a path, or -1. That is only for a path naming a trust
- * table itself (`table` true) or one trust field of it (`table` false). A plain value right
- * under `[projects]` or `[hooks.state]`, or a field that holds no trust, gets -1.
+ * Where a folder or hook key sits in a path that goes into its trust table, or -1. A value
+ * placed straight under `[projects]` or `[hooks.state]` has no such key: its last key is its
+ * own name.
  */
-function trustNameIndex(path: readonly PathKey[], table: boolean): number {
-  for (const { parent, fields } of TRUST_TABLES) {
-    if (!parent.every((key, index) => path[index] === key)) continue
-    const name = parent.length
-    if (table ? path.length === name + 1 : path.length === name + 2 && fields.includes(path[name + 1]!)) return name
+function trustNameIndex(path: readonly PathKey[]): number {
+  for (const { parent } of TRUST_TABLES) {
+    if (path.length >= parent.length + 2 && parent.every((key, index) => path[index] === key)) return parent.length
   }
   return -1
 }
 
-/**
- * Whether any key of a path marks a secret. `table` says whether the path names a table.
- * The name of a trust table is a hook key or a folder, so it is not read as one: a
- * repository called `secrets-tool` is not a secret. Every other key is.
- */
-function opaquePath(path: readonly PathKey[], table: boolean): boolean {
-  const name = trustNameIndex(path, table)
-  return path.some((key, index) => index !== name && typeof key === 'string' && opaqueKey(key))
+/** Whether a path is one trust field of one trust table. */
+function trustValue(path: readonly PathKey[]): boolean {
+  for (const { parent, fields } of TRUST_TABLES) {
+    if (path.length === parent.length + 2 && parent.every((key, index) => path[index] === key) && fields.includes(path.at(-1)!)) return true
+  }
+  return false
 }
+
+/**
+ * Whether a key on a path says the strings below it are secrets. A folder or hook key is not
+ * read as one, so a repository called `deploy-token` is not a secret.
+ */
+function secretPath(path: readonly PathKey[]): boolean {
+  const name = trustNameIndex(path)
+  return path.some((key, index) => index !== name && typeof key === 'string' && secretKeyName(key))
+}
+
+/**
+ * Whether a value holds a secret. `named` says a key above it has a secret name, which makes
+ * every string below it a secret. A string is also a secret when its text looks like one
+ * (read as the file means it, escapes decoded), and an argument list when it passes a header
+ * or a token. A boolean, a number or a date is never a secret.
+ */
+function secretValue(value: unknown, named: boolean): boolean {
+  if (typeof value === 'string') return named || secretLooking(value)
+  if (Array.isArray(value)) return secretArguments(value) || value.some((item) => secretValue(item, named))
+  if (isTable(value)) return Object.entries(value as Dict).some(([key, child]) => secretValue(child, named || secretKeyName(key)))
+  return false
+}
+
+/** Whether the setting at a path, with this value, is a secret. */
+function secretSetting(path: readonly PathKey[], value: unknown): boolean {
+  return secretValue(value, secretPath(path))
+}
+
+/** Stands in for a secret when two values are compared apart from their secrets. */
+const MASK = Symbol('secret')
+
+/** A value with every secret in it replaced by `MASK`, for comparing two values apart from their secrets. */
+function masked(value: unknown, named: boolean): unknown {
+  if (typeof value === 'string') return named || secretLooking(value) ? MASK : value
+  if (Array.isArray(value)) return secretArguments(value) ? MASK : value.map((item) => masked(item, named))
+  if (!isTable(value)) return value
+  const out = dict()
+  for (const [key, child] of Object.entries(value as Dict)) out[key] = masked(child, named || secretKeyName(key))
+  return out
+}
+
+// ---- values
 
 /**
  * A TOML value that JavaScript has no exact type for: an integer, which may be too large
@@ -131,31 +246,6 @@ function isTable(value: unknown): boolean {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof TomlScalar)
 }
 
-/** Whether a path is one trust field of one trust table. */
-function trustValue(path: readonly PathKey[]): boolean {
-  return trustNameIndex(path, false) >= 0
-}
-
-/**
- * The value one trust field ends up with, given the login's own value and the default
- * home's (`undefined` when the default home has none). `path` is one trust field, as
- * `trustValue` accepts it. The header comment explains the rules.
- */
-function mergedTrust(path: readonly PathKey[], own: unknown, fromDefault: unknown): unknown {
-  if (fromDefault === undefined) return own
-  const field = path.at(-1)
-  if (field === 'enabled') return own === false || fromDefault === false ? false : own
-  if (field === 'trust_level') return fromDefault === 'untrusted' ? fromDefault : own
-  return own
-}
-
-/** An argument list that passes a header, a token or an environment value on the command line. */
-function opaqueArguments(value: unknown): boolean {
-  return Array.isArray(value) && value.some((arg) => typeof arg === 'string' && /^(?:-H|--(?:env|header|headers|token|api-key|password|secret|authorization))(?:=|$)/i.test(arg))
-}
-
-type Dict = Record<string, unknown>
-
 /**
  * A table with no prototype. A file may use any key, `constructor`, `__proto__` and
  * `toString` included, and on a table like this each is an ordinary key of its own.
@@ -178,13 +268,38 @@ function at(root: unknown, path: readonly PathKey[]): unknown {
   return path.reduce<unknown>((value, key) => (typeof key === 'number' ? (Array.isArray(value) ? value[key] : undefined) : own(value, key)), root)
 }
 
+/** Sets the value at a path of string keys, making a table of whatever is on the way. */
+function setAt(root: Dict, path: readonly string[], value: unknown): void {
+  let table = root
+  for (const key of path.slice(0, -1)) {
+    if (!isTable(own(table, key))) table[key] = dict()
+    table = table[key] as Dict
+  }
+  table[path.at(-1)!] = value
+}
+
+/** Removes the value at a path of string keys, when it is there. */
+function removeAt(root: Dict, path: readonly string[]): void {
+  const parent = at(root, path.slice(0, -1))
+  if (isTable(parent) && Object.hasOwn(parent as object, path.at(-1)!)) delete (parent as Dict)[path.at(-1)!]
+}
+
+/** A copy of a value with its tables copied, so changing a table of the copy leaves the original alone. */
+function copyTables(value: unknown): unknown {
+  if (!isTable(value)) return value
+  const out = dict()
+  for (const [key, child] of Object.entries(value as Dict)) out[key] = copyTables(child)
+  return out
+}
+
 /**
  * JSON with the keys sorted, so two equal values compare equal as text. A `TomlScalar` is
  * written with its kind, so an integer never equals a float, nor a date a string. Keys are
- * sorted by code unit, not by locale: a locale sort ranks "é" and "é" equal, and
+ * sorted by code unit, not by locale: a locale sort ranks "é" and "é" equal, and
  * their order would then depend on the file.
  */
 function stableJson(value: unknown): string {
+  if (value === MASK) return '"<secret>"'
   if (value instanceof TomlScalar) return `${value.kind}:${JSON.stringify(value.text)}`
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
   if (value !== null && typeof value === 'object') {
@@ -193,6 +308,52 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
+function same(a: unknown, b: unknown): boolean {
+  return stableJson(a) === stableJson(b)
+}
+
+/** One setting: a value that is not a table (an array, an array of tables included) and its path. */
+interface Setting {
+  path: string[]
+  value: unknown
+}
+
+/** Every setting in a table, in the order of its keys. An empty table holds none. */
+function settingsOf(value: unknown, base: string[] = []): Setting[] {
+  return Object.entries(record(value)).flatMap(([key, child]) =>
+    isTable(child) ? settingsOf(child, [...base, key]) : [{ path: [...base, key], value: child }])
+}
+
+/** The path of every table below a table, not counting the table itself and not going into arrays. */
+function tablePaths(value: unknown, base: string[] = []): string[][] {
+  return Object.entries(record(value)).flatMap(([key, child]) =>
+    isTable(child) ? [[...base, key], ...tablePaths(child, [...base, key])] : [])
+}
+
+/** Whether a table holds any setting that is not a secret. */
+function holdsOrdinarySetting(value: unknown, path: string[]): boolean {
+  return settingsOf(value, path).some((setting) => !secretSetting(setting.path, setting.value))
+}
+
+/** A value with its empty tables left out: an empty table sets nothing. */
+function withoutEmptyTables(value: unknown): unknown {
+  if (!isTable(value)) return value
+  const out = dict()
+  for (const [key, child] of Object.entries(value as Dict)) {
+    const kept = withoutEmptyTables(child)
+    if (!isTable(kept) || Object.keys(kept as Dict).length > 0) out[key] = kept
+  }
+  return out
+}
+
+// ---- reading a file
+
+/** The text without a UTF-8 byte order mark at its start, which the TOML parser refuses. */
+function withoutBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/** Parses a text that has no byte order mark. Callers strip one first, so offsets match the text they edit. */
 function parseToml(text: string): AST.TOMLProgram {
   try {
     return parseTOML(text, { tomlVersion: '1.0' })
@@ -256,7 +417,7 @@ function tableValue(ast: AST.TOMLProgram, convert: (node: AST.TOMLValue) => unkn
  * tables have no prototype, like `dict()`.
  */
 export function tomlValue(text: string): Record<string, unknown> {
-  return tableValue(parseToml(text), (node) => node.value)
+  return tableValue(parseToml(withoutBom(text)), (node) => node.value)
 }
 
 /**
@@ -271,6 +432,239 @@ function typedValue(ast: AST.TOMLProgram): Dict {
 
 function typedToml(text: string): Dict {
   return typedValue(parseToml(text))
+}
+
+/**
+ * How each plain value of a file is written there, by path, with the value it stands for.
+ * A value copied from the default home is written the same way where it fits, so a
+ * multi-line string stays multi-line and `0x10` stays hexadecimal. Arrays and inline tables
+ * are left out, since comments can sit inside them.
+ */
+type ValueTexts = Map<string, { text: string; value: unknown }>
+
+function valueTexts(text: string, ast: AST.TOMLProgram): ValueTexts {
+  const out: ValueTexts = new Map()
+  const visit = (node: AST.TOMLKeyValue, base: string[]): void => {
+    const path = [...base, ...keyParts(node.key)]
+    if (node.value.type === 'TOMLInlineTable') {
+      for (const child of node.value.body) visit(child, path)
+    } else if (node.value.type === 'TOMLValue') {
+      out.set(JSON.stringify(path), { text: text.slice(node.value.range[0], node.value.range[1]), value: scalar(node.value) })
+    }
+  }
+  for (const node of ast.body[0].body) {
+    if (node.type === 'TOMLKeyValue') visit(node, [])
+    else if (!node.resolvedKey.some((key) => typeof key === 'number')) {
+      for (const child of node.body) visit(child, node.resolvedKey as string[])
+    }
+  }
+  return out
+}
+
+// ---- writing values
+
+function tomlLiteral(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value).replace(/\u007f/g, '\\u007f')
+  if (typeof value === 'boolean') return String(value)
+  if (value instanceof TomlScalar) return value.text
+  if (Array.isArray(value)) return `[${value.map(tomlLiteral).join(', ')}]`
+  if (value !== null && typeof value === 'object') return `{ ${Object.entries(value).map(([k, v]) => `${tomlKey(k)} = ${tomlLiteral(v)}`).join(', ')} }`
+  throw new Error('config.toml holds a value that cannot be written back')
+}
+
+/** One key as TOML: bare where TOML allows it, quoted otherwise. */
+function tomlKey(key: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlLiteral(key)
+}
+
+function dottedKey(path: readonly PathKey[]): string {
+  return path.map((key) => tomlKey(String(key))).join('.')
+}
+
+/** A value as TOML, written as the default home wrote it when `texts` has it for this path. */
+function literalFor(path: readonly string[], value: unknown, texts: ValueTexts): string {
+  const known = texts.get(JSON.stringify(path))
+  return known !== undefined && same(known.value, value) ? known.text : tomlLiteral(value)
+}
+
+function samePath(a: readonly PathKey[], b: readonly PathKey[]): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
+function newline(text: string): string {
+  return text.includes('\r\n') ? '\r\n' : '\n'
+}
+
+/** The offset just past the end of the line that `offset` is on. */
+function lineEnd(text: string, offset: number): number {
+  const end = text.indexOf('\n', offset)
+  return end < 0 ? text.length : end + 1
+}
+
+/** The offset where the line that `offset` is on starts. */
+function lineStart(text: string, offset: number): number {
+  return text.lastIndexOf('\n', offset - 1) + 1
+}
+
+/**
+ * The range to cut to take a node out: its whole line when nothing but space and a comment
+ * shares the line with it, else the node alone.
+ */
+function cutRange(text: string, [start, end]: readonly [number, number]): [number, number] {
+  const from = lineStart(text, start)
+  const to = lineEnd(text, end)
+  return text.slice(from, start).trim() === '' && /^[ \t]*(?:#[^\r\n]*)?\r?\n?$/.test(text.slice(end, to)) ? [from, to] : [start, end]
+}
+
+/** The text with `lines` put in at `offset`, which starts a line or ends the file. */
+function insertLines(text: string, offset: number, lines: string, nl: string): string {
+  const before = text.slice(0, offset)
+  return `${before}${before.length === 0 || before.endsWith('\n') ? '' : nl}${lines}${text.slice(offset)}`
+}
+
+/** A list of tables written as `[[name]]` tables, one for each element. */
+function arrayTables(path: readonly PathKey[], value: readonly unknown[], nl: string): string {
+  const header = `[[${dottedKey(path)}]]${nl}`
+  return value.map((table) => header + Object.entries(record(table)).map(([key, child]) => `${tomlKey(key)} = ${tomlLiteral(child)}${nl}`).join('')).join('')
+}
+
+function isArrayOfTables(value: unknown): value is unknown[] {
+  return Array.isArray(value) && value.length > 0 && value.every(isTable)
+}
+
+// ---- rewriting a file in one pass
+
+interface Edit {
+  start: number
+  end: number
+  text: string
+}
+
+/**
+ * The file changed to hold `desired`, in one pass over one parse: a key whose value changed
+ * gets the new value where it stands, a key `desired` lacks is cut out with its line, a
+ * `[table]` `desired` lacks is cut out whole, and a new key goes into the section that already
+ * defines its table (its `[header]`, or the section whose dotted keys define it), else under a
+ * new `[header]` at the end. An inline table that changed is written anew. An array of tables
+ * that changed is left for `settle`. The answer is not checked here; `rewrite` checks it.
+ */
+function rewriteInOnePass(text: string, desired: Dict, texts: ValueTexts): string {
+  const ast = parseToml(text)
+  const current = typedValue(ast)
+  const nl = newline(text)
+  const edits: Edit[] = []
+  /** Paths whose value the text holds once the edits are made, as JSON. Everything below one is held too. */
+  const held = new Set<string>()
+  /** The kept `[header]` of each table, by path as JSON. */
+  const headers = new Map<string, AST.TOMLTable>()
+  /** For each table defined by kept dotted keys, the section those keys are in. */
+  const dotted = new Map<string, readonly string[]>()
+  /** Where the lines of each section end, by the section's path as JSON. */
+  const sectionEnds = new Map<string, number>([[JSON.stringify([]), 0]])
+
+  const cut = (range: readonly [number, number]): void => {
+    const [start, end] = cutRange(text, range)
+    edits.push({ start, end, text: '' })
+  }
+  const visitKeyValue = (node: AST.TOMLKeyValue, section: string[]): void => {
+    const keys = keyParts(node.key)
+    const path = [...section, ...keys]
+    const want = at(desired, path)
+    const inline = node.value.type === 'TOMLInlineTable'
+    if (want === undefined || (isTable(want) && !inline)) {
+      cut(node.range)
+      return
+    }
+    for (let depth = 1; depth < keys.length; depth++) dotted.set(JSON.stringify(path.slice(0, section.length + depth)), section)
+    sectionEnds.set(JSON.stringify(section), lineEnd(text, node.range[1]))
+    held.add(JSON.stringify(path))
+    if (same(want, at(current, path))) return
+    edits.push({ start: node.value.range[0], end: node.value.range[1], text: inline ? tomlLiteral(want) : literalFor(path, want, texts) })
+  }
+
+  const arrays = new Map<string, { path: string[]; tables: AST.TOMLTable[] }>()
+  for (const node of ast.body[0].body) {
+    if (node.type === 'TOMLKeyValue') {
+      visitKeyValue(node, [])
+      continue
+    }
+    const index = node.resolvedKey.findIndex((key) => typeof key === 'number')
+    if (index >= 0) {
+      const path = node.resolvedKey.slice(0, index) as string[]
+      const id = JSON.stringify(path)
+      const array = arrays.get(id) ?? { path, tables: [] }
+      array.tables.push(node)
+      arrays.set(id, array)
+      continue
+    }
+    const path = node.resolvedKey as string[]
+    if (!isTable(at(desired, path))) {
+      cut(node.range)
+      continue
+    }
+    headers.set(JSON.stringify(path), node)
+    sectionEnds.set(JSON.stringify(path), lineEnd(text, node.range[1]))
+    for (const child of node.body) visitKeyValue(child, path)
+  }
+  for (const [id, { path, tables }] of arrays) {
+    const want = at(desired, path)
+    if (want === undefined) {
+      for (const table of tables) cut(table.range)
+      continue
+    }
+    // Held either way: an array that changed is settled one element at a time afterwards.
+    held.add(id)
+  }
+
+  const isHeld = (path: readonly string[]): boolean => path.some((_, index) => held.has(JSON.stringify(path.slice(0, index + 1))))
+  const inserts = new Map<number, string>()
+  const insertAt = (offset: number, lines: string): void => {
+    inserts.set(offset, (inserts.get(offset) ?? '') + lines)
+  }
+  const newTables = new Map<string, { path: readonly string[]; lines: string }>()
+  const appendToNewTable = (path: readonly string[], line: string): void => {
+    const id = JSON.stringify(path)
+    const table = newTables.get(id) ?? { path, lines: '' }
+    table.lines += line
+    newTables.set(id, table)
+  }
+  let newArrays = ''
+
+  for (const { path, value } of settingsOf(desired)) {
+    if (isHeld(path)) continue
+    if (isArrayOfTables(value)) {
+      newArrays += arrayTables(path, value, nl)
+      continue
+    }
+    const literal = literalFor(path, value, texts)
+    const parent = path.slice(0, -1)
+    let placed = false
+    for (let depth = parent.length; depth >= 1 && !placed; depth--) {
+      const table = parent.slice(0, depth)
+      const id = JSON.stringify(table)
+      const section = headers.has(id) ? table : dotted.get(id)
+      if (section === undefined) continue
+      if (headers.has(id) && depth < parent.length) appendToNewTable(parent, `${tomlKey(path.at(-1)!)} = ${literal}${nl}`)
+      else insertAt(sectionEnds.get(JSON.stringify(section))!, `${dottedKey(path.slice(section.length))} = ${literal}${nl}`)
+      placed = true
+    }
+    if (placed) continue
+    if (parent.length === 0) insertAt(sectionEnds.get(JSON.stringify([]))!, `${tomlKey(path[0]!)} = ${literal}${nl}`)
+    else appendToNewTable(parent, `${tomlKey(path.at(-1)!)} = ${literal}${nl}`)
+  }
+  const atEnd = [...newTables.values()].map(({ path, lines }) => `[${dottedKey(path)}]${nl}${lines}`).join('') + newArrays
+  if (atEnd !== '') insertAt(text.length, atEnd)
+  for (const [offset, lines] of inserts) {
+    const lead = offset > 0 && text[offset - 1] !== '\n' ? nl : ''
+    edits.push({ start: offset, end: offset, text: lead + lines })
+  }
+
+  // The last edit in the file first, so the offsets of the others stay right. At one offset a
+  // cut goes before an insertion, so the insertion is not cut.
+  edits.sort((a, b) => b.start - a.start || b.end - a.end)
+  let out = text
+  for (const { start, end, text: replacement } of edits) out = out.slice(0, start) + replacement + out.slice(end)
+  return out
 }
 
 /**
@@ -318,7 +712,7 @@ function tomlEntries(ast: AST.TOMLProgram): TomlEntry[] {
 }
 
 /** The file's settings: every entry except those inside an element of an array of tables. */
-function settings(ast: AST.TOMLProgram): TomlEntry[] {
+function topEntries(ast: AST.TOMLProgram): TomlEntry[] {
   return tomlEntries(ast).filter((entry) => !inArray(entry.path))
 }
 
@@ -328,60 +722,6 @@ function inlineEntry(entry: TomlEntry): boolean {
 
 function entryStart(entry: TomlEntry): number {
   return entry.node?.range[0] ?? entry.tables[0]!.range[0]
-}
-
-function tomlLiteral(value: unknown): string {
-  if (typeof value === 'string') return JSON.stringify(value).replace(/\u007f/g, '\\u007f')
-  if (typeof value === 'boolean') return String(value)
-  if (value instanceof TomlScalar) return value.text
-  if (Array.isArray(value)) return `[${value.map(tomlLiteral).join(', ')}]`
-  if (value !== null && typeof value === 'object') return `{ ${Object.entries(value).map(([k, v]) => `${tomlKey(k)} = ${tomlLiteral(v)}`).join(', ')} }`
-  throw new Error('config.toml holds a value that cannot be written back')
-}
-
-/** One key as TOML: bare where TOML allows it, quoted otherwise. */
-function tomlKey(key: string): string {
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlLiteral(key)
-}
-
-function samePath(a: readonly PathKey[], b: readonly PathKey[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-/** A copy of a value with one path set. The tables and arrays along the path are copied, the rest shared. */
-function withValue(root: unknown, path: readonly PathKey[], value: unknown): unknown {
-  if (path.length === 0) return value
-  const [key, ...rest] = path
-  if (typeof key === 'number') {
-    const list = Array.isArray(root) ? [...root] : []
-    list[key] = withValue(list[key], rest, value)
-    return list
-  }
-  const table = Object.assign(dict(), record(root))
-  table[key!] = withValue(own(root, key!), rest, value)
-  return table
-}
-
-function newline(text: string): string {
-  return text.includes('\r\n') ? '\r\n' : '\n'
-}
-
-/** The offset just past the end of the line that `offset` is on. */
-function lineEnd(text: string, offset: number): number {
-  const end = text.indexOf('\n', offset)
-  return end < 0 ? text.length : end + 1
-}
-
-/** The text with `lines` put in at `offset`, which starts a line or ends the file. */
-function insertLines(text: string, offset: number, lines: string, nl: string): string {
-  const before = text.slice(0, offset)
-  return `${before}${before.length === 0 || before.endsWith('\n') ? '' : nl}${lines}${text.slice(offset)}`
-}
-
-/** A list of tables written as `[[name]]` tables, one for each element. */
-function arrayTables(path: readonly PathKey[], value: readonly unknown[], nl: string): string {
-  const header = `[[${path.map((key) => tomlKey(String(key))).join('.')}]]${nl}`
-  return value.map((table) => header + Object.entries(record(table)).map(([key, child]) => `${tomlKey(key)} = ${tomlLiteral(child)}${nl}`).join('')).join('')
 }
 
 /**
@@ -401,7 +741,7 @@ function insertions(text: string, ast: AST.TOMLProgram, entries: TomlEntry[], pa
   const inTable = (depth: number): string | null => {
     const rest = path.slice(depth)
     if (inArray(rest)) return null
-    const line = `${rest.map((key) => tomlKey(String(key))).join('.')} = ${literal}`
+    const line = `${dottedKey(rest)} = ${literal}`
     const prefix = path.slice(0, depth)
     const inline = entries.find((row) => inlineEntry(row) && samePath(row.path, prefix))?.node?.value
     if (inline?.type === 'TOMLInlineTable') {
@@ -417,12 +757,10 @@ function insertions(text: string, ast: AST.TOMLProgram, entries: TomlEntry[], pa
   }
   const parents = path.slice(0, -1)
   const candidates: Array<string | null> = []
-  if (!inArray(path) && Array.isArray(value) && value.length > 0 && value.every(isTable)) {
-    candidates.push(insertLines(text, text.length, arrayTables(path, value, nl), nl))
-  }
+  if (!inArray(path) && isArrayOfTables(value)) candidates.push(insertLines(text, text.length, arrayTables(path, value, nl), nl))
   candidates.push(inTable(parents.length))
   if (parents.length > 0 && !inArray(path)) {
-    const header = `[${parents.map((key) => tomlKey(String(key))).join('.')}]${nl}${tomlKey(String(path.at(-1)))} = ${literal}${nl}`
+    const header = `[${dottedKey(parents)}]${nl}${tomlKey(String(path.at(-1)))} = ${literal}${nl}`
     candidates.push(insertLines(text, text.length, header, nl))
   }
   for (let depth = parents.length - 1; depth >= 0; depth--) candidates.push(inTable(depth))
@@ -443,7 +781,7 @@ function leaves(value: unknown, base: string[] = []): string[][] {
  * a list of tables, or a change does not fit in place.
  */
 function replaceArrayOfTables(text: string, path: readonly PathKey[], old: unknown, value: unknown): string | null {
-  if (!Array.isArray(old) || !Array.isArray(value) || value.length === 0 || !value.every(isTable)) return null
+  if (!Array.isArray(old) || !isArrayOfTables(value)) return null
   const nl = newline(text)
   const array = (current: string): TomlEntry | undefined =>
     tomlEntries(parseToml(current)).find((entry) => entry.node === null && samePath(entry.path, path))
@@ -478,17 +816,17 @@ function replaceArrayOfTables(text: string, path: readonly PathKey[], old: unkno
  * and is otherwise taken out and written anew. A key that is not there yet goes into the
  * table that holds it, however that table is written, and a table that is not there yet
  * goes at the end. The first place that gives valid TOML with only that one value changed
- * is taken. Values are compared with their TOML types.
+ * is taken. Values are compared with their TOML types. This parses the file again for each
+ * place it tries, so `settle` uses it only for what the one-pass rewrite left.
  */
 function patchToml(text: string, path: PathKey[], value: unknown): string {
-  if (path.length === 0 || opaquePath(path, false)) throw new Error('a secret key cannot be copied')
+  if (path.length === 0 || secretSetting(path, value)) throw new Error('a secret cannot be copied')
   const ast = parseToml(text)
   const literal = tomlLiteral(value)
-  if (secretLooking(literal) || opaqueTree(value)) throw new Error('a secret value cannot be copied')
   const current = typedValue(ast)
   const entries = tomlEntries(ast)
   const entry = entries.find((row) => samePath(row.path, path))
-  if (entry && stableJson(at(current, path)) === stableJson(value)) return text
+  if (entry && same(at(current, path), value)) return text
   const wanted = stableJson(withValue(current, path, value))
   const fits = (candidate: string): boolean => {
     try {
@@ -510,6 +848,20 @@ function patchToml(text: string, path: PathKey[], value: unknown): string {
   return found
 }
 
+/** A copy of a value with one path set. The tables and arrays along the path are copied, the rest shared. */
+function withValue(root: unknown, path: readonly PathKey[], value: unknown): unknown {
+  if (path.length === 0) return value
+  const [key, ...rest] = path
+  if (typeof key === 'number') {
+    const list = Array.isArray(root) ? [...root] : []
+    list[key] = withValue(list[key], rest, value)
+    return list
+  }
+  const table = Object.assign(dict(), record(root))
+  table[key!] = withValue(own(root, key!), rest, value)
+  return table
+}
+
 /**
  * The file with one entry taken out, the rest byte for byte. Inside an inline table the
  * comma that separated it goes too. An array of tables loses every table that belongs to it.
@@ -528,117 +880,212 @@ function removeEntry(text: string, { node, holder, tables }: TomlEntry): string 
   return text.slice(0, start) + text.slice(end)
 }
 
-/** A value with its empty tables left out: an empty table sets nothing. */
-function withoutEmptyTables(value: unknown): unknown {
-  if (!isTable(value)) return value
+/**
+ * The file brought the rest of the way to `desired` one setting at a time: each setting that
+ * differs is set with `patchToml`, each one `desired` lacks is taken out, and then each
+ * `[table]` `desired` lacks. Slow on a large file, so it runs only for what the one-pass
+ * rewrite left (a changed array of tables) or when that rewrite did not give valid TOML.
+ */
+function settle(text: string, desired: Dict): string {
+  let out = text
+  const now = typedToml(out)
+  for (const { path, value } of settingsOf(desired).filter((setting) => !same(at(now, setting.path), setting.value))) {
+    out = patchToml(out, path, value)
+  }
+  // One at a time, the last in the file first, because taking a key out of an inline
+  // table moves the text of the keys after it.
+  for (;;) {
+    const remove = topEntries(parseToml(out)).filter((entry) => !inlineEntry(entry) && at(desired, entry.path) === undefined)
+    const last = remove.sort((a, b) => entryStart(b) - entryStart(a))[0]
+    if (last === undefined) break
+    out = removeEntry(out, last)
+  }
+  for (;;) {
+    const table = parseToml(out).body[0].body.find((node): node is AST.TOMLTable =>
+      node.type === 'TOMLTable' && !inArray(node.resolvedKey) && !isTable(at(desired, node.resolvedKey)))
+    if (table === undefined) break
+    out = out.slice(0, table.range[0]) + out.slice(table.range[1])
+  }
+  return out
+}
+
+/** Whether a text holds `desired`, empty tables aside. */
+function holds(text: string, desired: Dict): boolean {
+  try {
+    return same(withoutEmptyTables(typedToml(text)), withoutEmptyTables(desired))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The file changed to hold `desired`, its layout and comments kept where they can be. The
+ * one-pass rewrite does nearly all of it; `settle` finishes what it left, and starts again
+ * from the file itself when the one-pass result is not valid TOML. Throws when neither gives
+ * a file that holds `desired`.
+ */
+function rewrite(text: string, desired: Dict, texts: ValueTexts): string {
+  if (same(typedToml(text), desired)) return text
+  for (const start of [() => rewriteInOnePass(text, desired, texts), () => text]) {
+    try {
+      const out = settle(start(), desired)
+      if (holds(out, desired)) return out
+    } catch {
+      // Try the next way.
+    }
+  }
+  throw new Error('config.toml could not be written so that it holds the merged settings')
+}
+
+// ---- the merge
+
+/** The settings of a typed file that are not secrets, as a table. */
+function publicSettings(values: Dict): Dict {
   const out = dict()
-  for (const [key, child] of Object.entries(value as Dict)) {
-    const kept = withoutEmptyTables(child)
-    if (!isTable(kept) || Object.keys(kept as Dict).length > 0) out[key] = kept
+  for (const setting of settingsOf(values)) {
+    if (!secretSetting(setting.path, setting.value)) setAt(out, setting.path, setting.value)
   }
   return out
 }
 
 /**
- * Whether a value that is not a table looks like a secret. A string is read as the file
- * means it, with its escapes decoded: a tab written `\t` is a tab here.
+ * The value one trust field ends up with, given the login's own value and the default
+ * home's. `path` is one trust field, as `trustValue` accepts it. The header comment explains
+ * the rules.
  */
-function protectedValue(value: unknown): boolean {
-  if (Array.isArray(value)) return opaqueArguments(value) || value.some(opaqueTree)
-  if (typeof value === 'string') return secretLooking(value)
-  if (value instanceof TomlScalar) return secretLooking(value.text)
-  return false
+function mergedTrust(path: readonly PathKey[], own: unknown, fromDefault: unknown): unknown {
+  const field = path.at(-1)
+  if (field === 'enabled') return own === false || fromDefault === false ? false : own
+  if (field === 'trust_level') return fromDefault === 'untrusted' ? fromDefault : own
+  return own
 }
 
-function opaqueTree(value: unknown): boolean {
-  return protectedValue(value) || ((isTable(value) || Array.isArray(value)) && Object.entries(value as object).some(([key, child]) => opaqueKey(key) || opaqueTree(child)))
-}
-
-/** The default home's settings with every secret-looking key and value left out. */
+/** The default home's settings with every secret left out, as TOML. */
 export function publicAccountConfig(text: string): string {
-  let result = ''
-  const visit = (value: unknown, path: string[]): void => {
-    if (opaquePath(path, isTable(value)) || protectedValue(value)) return
-    if (isTable(value)) {
-      for (const [key, child] of Object.entries(value as Dict)) visit(child, [...path, key])
-    } else result = patchToml(result, path, value)
-  }
-  visit(typedToml(text), [])
-  if (secretLooking(result)) throw new Error('config.toml could not be copied without its secrets')
-  return result
+  const source = withoutBom(text)
+  const ast = parseToml(source)
+  return rewrite('', publicSettings(typedValue(ast)), valueTexts(source, ast))
+}
+
+/** What `mergeAccountConfig` answers. */
+export interface AccountConfigMerge {
+  /** The login's new `config.toml`. */
+  content: string
+  /**
+   * The default home's settings that were merged in, secrets left out, as TOML: what the
+   * caller keeps as the last merged copy for the next merge.
+   */
+  merged: string
+  /** The default home has a secret the login lacks, such as an MCP server's `env` table. */
+  missingSecrets: boolean
+  /**
+   * Settings, as dotted paths, where the default home's value was not applied because a
+   * secret stands in the way: the login's value holds a secret, or the default home's does
+   * and it differs from the login's in more than its secrets. Never holds a value.
+   */
+  heldBack: string[]
 }
 
 /**
- * The login's `config.toml` made to hold the default home's settings: every public value
- * set, every public value the default no longer has removed, and every secret the login
- * already had kept. The login's own trust values are kept as well, merged with the default
- * home's by `mergedTrust`.
- * `missingSecrets` says the default home has a secret the login lacks, such as an MCP
- * server's `env` table.
+ * The login's `config.toml` merged three ways with the default home's: `source` is the
+ * default home's file, `target` the login's ('' when it has none) and `lastMerged` the
+ * `merged` text of the last merge, or null when there is none. The header comment explains
+ * the rules.
  *
- * `source` is the default home's file and `target` the login's ('' when it has none).
- * Throws when either is not valid TOML, or when the login's own secrets and trust cannot be
- * kept in place. No message names a value from either file.
+ * Throws when `source` or `target` is not valid TOML, or the result cannot be written. No
+ * message names a value from either file. A `lastMerged` that is not valid TOML counts as
+ * none.
  */
-export function mergeAccountConfig(source: string, target: string): { content: string; missingSecrets: boolean } {
-  const targetValues = typedToml(target)
-  const kept = (entry: TomlEntry): boolean => opaquePath(entry.path, inlineEntry(entry)) || protectedValue(at(targetValues, entry.path))
-  const targetEntries = settings(parseToml(target))
-  const opaque = targetEntries.filter(kept)
-  let publicSource = publicAccountConfig(source)
-  const publicValues = typedToml(publicSource)
-  for (const entry of targetEntries) {
-    if (inlineEntry(entry) || !trustValue(entry.path) || kept(entry)) continue
-    const merged = mergedTrust(entry.path, at(targetValues, entry.path), at(publicValues, entry.path))
-    publicSource = patchToml(publicSource, entry.path, merged)
-  }
-  const values = typedToml(publicSource)
-  const preserve = (current: unknown, incoming: unknown, path: string[]): unknown => {
-    const next = Object.assign(dict(), record(incoming))
-    for (const [key, value] of Object.entries(record(current))) {
-      if (opaquePath([...path, key], isTable(value)) || protectedValue(value)) next[key] = value
-      else if (isTable(value)) {
-        const child = preserve(value, next[key], [...path, key])
-        if (Object.keys(record(child)).length > 0) next[key] = child
-      }
+export function mergeAccountConfig(source: string, target: string, lastMerged: string | null): AccountConfigMerge {
+  const sourceText = withoutBom(source)
+  const targetText = withoutBom(target)
+  const sourceAst = parseToml(sourceText)
+  const sourceValues = typedValue(sourceAst)
+  const targetValues = typedToml(targetText)
+  const fromSource = publicSettings(sourceValues)
+  let base: Dict | null = null
+  if (lastMerged !== null && targetText !== '') {
+    try {
+      base = typedToml(withoutBom(lastMerged))
+    } catch {
+      base = null
     }
-    return next
   }
-  const desired = preserve(targetValues, values, [])
-  let content = target
-  const incoming = settings(parseToml(publicSource)).filter((entry) => !inlineEntry(entry))
-  for (const { path } of incoming) {
-    if (opaque.some((entry) => samePath(entry.path, path))) continue
-    content = patchToml(content, path, at(values, path))
+
+  const desired = copyTables(targetValues) as Dict
+  const heldBack: string[] = []
+  // The login's settings the default home no longer has.
+  for (const { path, value } of settingsOf(targetValues)) {
+    if (secretSetting(path, value) || at(fromSource, path) !== undefined) continue
+    const trust = trustValue(path)
+    if (base === null) {
+      if (!trust) removeAt(desired, path)
+      continue
+    }
+    const last = at(base, path)
+    if (last === undefined || (trust && !same(value, last))) continue
+    removeAt(desired, path)
   }
-  // One at a time, the last in the file first, because taking a key out of an inline
-  // table moves the text of the keys after it.
-  for (;;) {
-    const remove = settings(parseToml(content)).filter((entry) =>
-      !inlineEntry(entry) && !opaquePath(entry.path, false) && !protectedValue(at(targetValues, entry.path)) && at(values, entry.path) === undefined)
-    const last = remove.sort((a, b) => entryStart(b) - entryStart(a))[0]
-    if (last === undefined) break
-    content = removeEntry(content, last)
+  // The default home's settings.
+  for (const { path, value } of settingsOf(fromSource)) {
+    const prefixSecret = path.some((_, index) => {
+      const above = at(targetValues, path.slice(0, index + 1))
+      return above !== undefined && !isTable(above) && secretSetting(path.slice(0, index + 1), above)
+    })
+    const belowSecret = isTable(at(targetValues, path)) && !holdsOnlyOrdinary(at(targetValues, path), path)
+    if (prefixSecret || belowSecret) {
+      if (!same(masked(value, secretPath(path)), masked(at(targetValues, path), secretPath(path)))) heldBack.push(dottedKey(path))
+      continue
+    }
+    const own = at(targetValues, path)
+    const ownValue = own !== undefined && !isTable(own) ? own : undefined
+    const last = base === null ? undefined : at(base, path)
+    let next = value
+    if (trustValue(path)) {
+      if (ownValue !== undefined && (last === undefined || !same(ownValue, last))) next = mergedTrust(path, ownValue, value)
+    } else if (ownValue !== undefined && last !== undefined && same(value, last) && !same(ownValue, last)) {
+      next = ownValue
+    }
+    setAt(desired, path, next)
   }
-  if (stableJson(withoutEmptyTables(typedToml(content))) !== stableJson(withoutEmptyTables(desired))) {
-    throw new Error("the login's own secrets and trust in config.toml could not be kept in place")
+  // A table that lost its last setting that is not a secret goes as a whole.
+  for (const path of tablePaths(targetValues)) {
+    if (!holdsOrdinarySetting(at(targetValues, path), path)) continue
+    const now = at(desired, path)
+    if (isTable(now) && !holdsOrdinarySetting(now, path)) removeAt(desired, path)
   }
-  const sourceValues = typedToml(source)
-  const sourceOpaque = settings(parseToml(source))
-    .filter((entry) => opaquePath(entry.path, inlineEntry(entry)) || protectedValue(at(sourceValues, entry.path)))
-  const missingSecrets = sourceOpaque.some(({ path }) => !opaque.some((row) => samePath(row.path, path)))
-  return { content, missingSecrets }
+  // The default home's secrets: missing from the login, or kept apart from a change.
+  let missingSecrets = false
+  for (const { path, value } of settingsOf(sourceValues)) {
+    if (!secretSetting(path, value)) continue
+    const kept = at(desired, path)
+    if (kept === undefined) missingSecrets = true
+    else if (!same(masked(value, secretPath(path)), masked(kept, secretPath(path)))) heldBack.push(dottedKey(path))
+  }
+
+  const texts = valueTexts(sourceText, sourceAst)
+  return {
+    content: rewrite(targetText, desired, texts),
+    merged: rewrite('', fromSource, texts),
+    missingSecrets,
+    heldBack: [...new Set(heldBack)]
+  }
+}
+
+/** Whether every setting in a table is not a secret. */
+function holdsOnlyOrdinary(value: unknown, path: string[]): boolean {
+  return settingsOf(value, path).every((setting) => !secretSetting(setting.path, setting.value))
 }
 
 /** Whether two `config.toml` texts hold the same settings, whatever their layout. Throws when either is not valid TOML. */
 export function sameTomlSettings(a: string, b: string): boolean {
-  return stableJson(typedToml(a)) === stableJson(typedToml(b))
+  return same(typedToml(withoutBom(a)), typedToml(withoutBom(b)))
 }
 
 /** Whether a text is valid TOML. */
 export function validToml(text: string): boolean {
   try {
-    parseToml(text)
+    parseToml(withoutBom(text))
     return true
   } catch {
     return false
