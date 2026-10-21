@@ -114,13 +114,15 @@ export interface CallOptions {
   method?: string
   headers?: Record<string, string>
   body?: unknown
+  /** The body as exact text, sent as it is instead of `body`. */
+  text?: string
   /** Aborts the request. */
   signal?: AbortSignal
 }
 
-/** One request to the daemon; the body is sent as JSON. */
+/** One request to the daemon; the body is sent as JSON, or `text` as it is. */
 export function call(harness: Pick<Harness, 'port'>, path: string, options: CallOptions = {}): Promise<CallResult> {
-  const body = options.body === undefined ? undefined : JSON.stringify(options.body)
+  const body = options.text ?? (options.body === undefined ? undefined : JSON.stringify(options.body))
   return new Promise((resolve, reject) => {
     const started = Date.now()
     const req = request({

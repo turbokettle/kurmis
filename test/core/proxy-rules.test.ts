@@ -48,22 +48,24 @@ describe('which requests the proxy routes', () => {
 })
 
 describe('the request sent upstream', () => {
+  const bytes = (value: unknown): Buffer => Buffer.from(JSON.stringify(value))
+
   test('signs for the chosen login, drops kurmis\' headers and the replaced ones, and keeps the rest', () => {
     const { headers, body } = upstreamRequest({
       'x-kurmis-key': 'secret', 'x-kurmis-login': 'claude:work', authorization: 'Bearer cli-token',
       'x-api-key': 'sk-example', host: '127.0.0.1:1234', 'content-length': '999', 'accept-encoding': 'gzip',
       connection: 'keep-alive, x-private', 'x-private': 'drop', 'keep-alive': 'timeout=5',
       'anthropic-beta': ['oauth-2025-04-20', 'other'], 'x-claude-code-session-id': 'abc'
-    }, { model: 'claude-example', metadata: { user_id: '{"account_uuid":"old","session_id":"abc"}' } },
+    }, bytes({ model: 'claude-example', metadata: { user_id: '{"account_uuid":"old","session_id":"abc"}' } }),
     'Bearer work-token', 'work-uuid')
     expect(headers).toEqual({
       authorization: 'Bearer work-token',
       'accept-encoding': 'identity',
       'anthropic-beta': 'oauth-2025-04-20, other',
       'x-claude-code-session-id': 'abc',
-      'content-length': String(Buffer.byteLength(body ?? ''))
+      'content-length': String(body?.length)
     })
-    expect(JSON.parse(body ?? '')).toEqual({ model: 'claude-example',
+    expect(JSON.parse(body?.toString('utf8') ?? '')).toEqual({ model: 'claude-example',
       metadata: { user_id: '{"account_uuid":"work-uuid","session_id":"abc"}' } })
   })
 
@@ -77,16 +79,49 @@ describe('the request sent upstream', () => {
     const input = '{"device_id":"device","account_uuid":"old","session_id":"session","extra":{"a":1}}'
     expect(rewriteUserId(input, 'new')).toBe('{"device_id":"device","account_uuid":"new","session_id":"session","extra":{"a":1}}')
     expect(rewriteUserId('{"session_id":"session"}', 'new')).toBe('{"session_id":"session","account_uuid":"new"}')
+    expect(rewriteUserId('{}', 'new')).toBe('{"account_uuid":"new"}')
+    expect(rewriteUserId(' { "a" : 1 } ', 'new')).toBe(' { "a" : 1 ,"account_uuid":"new"} ')
+  })
+
+  test('changes no other byte of user_id: spacing, escapes and large numbers stay', () => {
+    const input = '{ "device_id" : "d\\u00e9v", "account_uuid": "old", "n": 12345678901234567890 }'
+    expect(rewriteUserId(input, 'new')).toBe('{ "device_id" : "d\\u00e9v", "account_uuid": "new", "n": 12345678901234567890 }')
+    expect(rewriteUserId('{"account_uuid":"same"}', 'same')).toBe('{"account_uuid":"same"}')
+    // A repeated name: JSON.parse keeps the last, and so does the rewrite.
+    expect(rewriteUserId('{"account_uuid":"a","account_uuid":"b"}', 'new')).toBe('{"account_uuid":"a","account_uuid":"new"}')
   })
 
   test.each(['not json', '', 'null', '[]', '42', '"string"'])('leaves unsupported user_id %j unchanged', (input) => {
     expect(rewriteUserId(input, 'new')).toBe(input)
   })
 
-  test('a body is passed as it is with no uuid or no user_id', () => {
-    expect(outgoingBody({ metadata: { user_id: '{}' } }, null)).toBe('{"metadata":{"user_id":"{}"}}')
-    expect(outgoingBody({ model: 'm' }, 'uuid')).toBe('{"model":"m"}')
-    expect(outgoingBody(null, 'uuid')).toBe('null')
+  test('a body is passed as it is with no uuid, no user_id, or a uuid that is already right', () => {
+    const withUserId = bytes({ metadata: { user_id: '{}' } })
+    expect(outgoingBody(withUserId, null)).toBe(withUserId)
+    const plain = bytes({ model: 'm' })
+    expect(outgoingBody(plain, 'uuid')).toBe(plain)
+    expect(outgoingBody(Buffer.from('null'), 'uuid').toString()).toBe('null')
+    const same = bytes({ metadata: { user_id: '{"account_uuid":"uuid"}' } })
+    expect(outgoingBody(same, 'uuid')).toBe(same)
+    for (const text of ['{"metadata":"x"}', '{"metadata":{"user_id":7}}', '[{"metadata":{"user_id":"{}"}}]', '{"other":{"metadata":{"user_id":"{}"}}}']) {
+      expect(outgoingBody(Buffer.from(text), 'uuid').toString()).toBe(text)
+    }
+  })
+
+  test('only the user_id string changes: integers above 2^53, key order, spacing and other text keep their bytes', () => {
+    const text = '{\n  "max_tokens": 9007199254740993,\n  "z": "caf\u00e9 \\"quoted\\" {not: a, brace]",\n' +
+      '  "metadata" : { "x": [1, {"user_id": "inner"}], "user_id" : "{\\"device_id\\":\\"d\\",\\"account_uuid\\":\\"old\\"}" },\n' +
+      '  "a": 1.50e+3\n}'
+    const out = outgoingBody(Buffer.from(text, 'utf8'), 'new-uuid').toString('utf8')
+    expect(out).toBe(text.replace('\\"account_uuid\\":\\"old\\"', '\\"account_uuid\\":\\"new-uuid\\"'))
+    expect(out).toContain('9007199254740993')
+    expect((JSON.parse(out) as { metadata: { user_id: string } }).metadata.user_id).toBe('{"device_id":"d","account_uuid":"new-uuid"}')
+  })
+
+  test('the content-length is that of the bytes sent', () => {
+    const text = '{"metadata":{"user_id":"{\\"account_uuid\\":\\"o\\"}"},"t":"\u00e9\u00e9"}'
+    const { headers, body } = upstreamRequest({}, Buffer.from(text, 'utf8'), 'Bearer t', 'a-much-longer-uuid')
+    expect(headers['content-length']).toBe(String(Buffer.byteLength(body?.toString('utf8') ?? '', 'utf8')))
   })
 })
 

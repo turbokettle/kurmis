@@ -176,10 +176,9 @@ export function createProxy(options: ProxyOptions): Proxy {
       refuseTooLarge(req, res, maxBodyBytes, lingerMs)
       return
     }
-    let body: unknown
-    try {
-      body = read.length === 0 ? undefined : JSON.parse(read.toString('utf8'))
-    } catch {
+    // The body is checked once and then sent on as the bytes that came (`outgoingBody`).
+    const body = read.length === 0 ? undefined : read
+    if (body !== undefined && !isJson(body)) {
       log.write('proxy_rejected', { reason: 'invalid', status: 400 })
       send(res, invalidRequest('The request body is not JSON.'))
       return
@@ -499,6 +498,15 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name.toLowerCase()]
   const text = Array.isArray(value) ? value[0] : value
   return text === undefined || text.length === 0 ? undefined : text
+}
+
+function isJson(bytes: Buffer): boolean {
+  try {
+    JSON.parse(bytes.toString('utf8'))
+    return true
+  } catch {
+    return false
+  }
 }
 
 function asLogin(id: string): LoginId | undefined {

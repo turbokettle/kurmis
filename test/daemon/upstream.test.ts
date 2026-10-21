@@ -169,7 +169,7 @@ describe('createUpstream', () => {
       method: 'POST',
       path: '/v1/messages?beta=true',
       headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)), 'x-custom': 'value' },
-      body,
+      body: Buffer.from(body),
       signal: new AbortController().signal
     })
     expect(answer.status).toBe(201)
@@ -214,7 +214,7 @@ describe('createUpstream', () => {
       method: 'POST',
       path: '/v1/messages',
       headers: { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) },
-      body,
+      body: Buffer.from(body),
       signal: new AbortController().signal
     })
     expect(answer.status).toBe(200)

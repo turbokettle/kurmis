@@ -136,7 +136,11 @@ older version, after that daemon finishes the requests it has open.
   403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
   login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on. Either one
   naming no Claude login is a 400. None of them is forwarded upstream. The body is read whole
-  (at most 64 MB), because a request may have to be sent more than once. A larger body gets a
+  (at most 64 MB), because a request may have to be sent more than once. A body that is not JSON
+  is a 400. Otherwise it goes upstream as the bytes that came, except for the account uuid in
+  `metadata.user_id`, which is set to the chosen login's (`outgoingBody` in
+  `src/core/proxy-rules.ts`): only that string is replaced in the text, so key order, white space
+  and integers above 2^53 reach Anthropic as the CLI sent them. A larger body gets a
   413 with an error in the shape of Anthropic's own (`request_too_large`), which the CLI does
   not retry. The proxy then goes on reading the rest of the body and throws it away, for at most
   5 s after the answer (`TOO_LARGE_LINGER_MS`), and closes the connection, for the same reason

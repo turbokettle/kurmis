@@ -103,7 +103,7 @@ export interface UpstreamRequest {
   path: string
   /** From `upstreamRequest()`; already has `content-length` when there is a body. */
   headers: Record<string, string>
-  body?: string
+  body?: Buffer
   /** Aborting it destroys the upstream request, or its answer, at any point. */
   signal: AbortSignal
 }
