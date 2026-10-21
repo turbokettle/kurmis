@@ -201,4 +201,23 @@ describe('the poll', () => {
     expect(probed.slice(3)).not.toContain('claude:work')
     expect(poller.pollable()).toEqual(['claude:default', 'codex:default'])
   })
+
+  test('stops when the daemon starts to stop, while a probe asked for still runs', async () => {
+    writeLogins({})
+    let probes = 0
+    const { poller } = setup((id) => {
+      probes++
+      return Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 1) })
+    })
+    poller.start()
+    await expect.poll(() => probes).toBeGreaterThanOrEqual(4)
+    poller.stopPolling()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const stoppedAt = probes
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(probes).toBe(stoppedAt)
+    await poller.probe('claude:default', 'renewal')
+    expect(probes).toBe(stoppedAt + 1)
+    poller.close()
+  })
 })

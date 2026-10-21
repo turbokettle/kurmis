@@ -74,6 +74,11 @@ export interface DaemonApp {
   openRequests(): number
   /** Resolves once no proxied request is open. */
   drained(): Promise<void>
+  /**
+   * Stops the 15-minute usage poll, when the daemon starts to stop. Probes that are running, and
+   * those the open requests still ask for, go on until `close`.
+   */
+  stopPolling(): void
   /** Stops the poll and running probes and writes `state.json`. */
   close(): Promise<void>
 }
@@ -130,6 +135,9 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
     },
     openRequests: () => proxy.openRequests(),
     drained: () => proxy.drained(),
+    stopPolling() {
+      poller.stopPolling()
+    },
     close() {
       closed ??= (async () => {
         poller.close()

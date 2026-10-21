@@ -59,15 +59,26 @@ export class UsagePoller {
   private readonly controller = new AbortController()
   private timer: ReturnType<typeof setInterval> | null = null
   private closed = false
+  private pollStopped = false
 
   constructor(private readonly options: UsagePollerOptions) {}
 
   /** Probes every login once, then every signed-in login each `intervalMs`. */
   start(): void {
-    if (this.closed || this.timer !== null) return
+    if (this.closed || this.pollStopped || this.timer !== null) return
     void this.probeMany(this.options.table.logins().map((login) => login.id), 'start')
     this.timer = setInterval(() => { void this.probeMany(this.pollable(), 'poll') }, this.options.intervalMs ?? POLL_INTERVAL_MS)
     this.timer.unref?.()
+  }
+
+  /**
+   * Stops the timer of the poll, for a daemon that is stopping. Running probes and probes asked
+   * for later still run.
+   */
+  stopPolling(): void {
+    this.pollStopped = true
+    if (this.timer !== null) clearInterval(this.timer)
+    this.timer = null
   }
 
   /** Stops the timer and kills the probes that are running. */

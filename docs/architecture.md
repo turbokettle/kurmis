@@ -275,6 +275,11 @@ per user. When the port is busy, the daemon asks the holder for its status with 
 - any other program is an error, exit 1, that says to set `"port"` in `config.json` (1024 to
   65535).
 
+A bind that fails with EACCES or EADDRNOTAVAIL is an error, exit 1, with the same advice and
+the command that lists the port ranges Windows reserves (`netsh int ipv4 show excludedportrange
+protocol=tcp`): on Windows a port inside such a range (Hyper-V, WSL and Docker reserve them) is
+refused with EACCES although nothing listens on it.
+
 Only after the bind does the daemon write `daemon.json` and start the request handling, which
 reads `state.json`, so a daemon that loses the bind never touches the state. Requests that
 arrive while the request handling starts wait for it.
@@ -284,7 +289,8 @@ Windows a SIGTERM from another process cannot be caught: Node's `process.kill` e
 at once there. So on Windows only a control `stop`, and Ctrl-C or closing the console of a
 `daemon run` in a terminal (SIGINT, SIGHUP), stop it this way. The daemon:
 
-1. stops accepting at once, which frees the port;
+1. stops accepting at once, which frees the port, and stops the 15-minute usage poll (probes
+   that run and probes its open requests ask for still run);
 2. closes idle keep-alive connections, again every second, and marks its answers
    `connection: close`, so a CLI's next request opens a connection to whatever holds the port
    next;
@@ -301,7 +307,9 @@ requests and exits 1. The next kurmis command starts a new one.
 
 **Version handover.** A CLI that finds a daemon of an older version starts a new daemon, and the
 new daemon does the handover: it sends the old one a control `stop` and tries the bind every
-100 ms for up to 10 seconds. The old daemon frees the port as soon as it has answered, and
+100 ms for up to 10 seconds. While the old daemon closes, its port may answer the status request
+with nothing or with an error; once the stop is sent that counts as the old daemon going away,
+not as another program, and the bind is tried again. The old daemon frees the port as soon as it has answered, and
 finishes its open requests in the background while the new one serves. A routed Claude CLI
 retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
 in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older
