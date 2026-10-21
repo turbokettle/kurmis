@@ -6,8 +6,10 @@
 // What a child process gets is built here from nothing, not from `process.env`: only PATH (a
 // folder with `node` in it, then the system folders), TMPDIR, TZ, the folders above, and the
 // stand-in programs `test/setup.ts` names (`KURMIS_SECURITY_PROGRAM`, `KURMIS_LAUNCHCTL_PROGRAM`,
-// `KURMIS_REG_PROGRAM`). `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN` name the fake claude and
-// codex, so neither kurmis nor the daemon it starts ever looks for the real ones on PATH. No
+// `KURMIS_REG_PROGRAM`, `KURMIS_POWERSHELL_PROGRAM`, `KURMIS_TASKKILL_PROGRAM`,
+// `KURMIS_WSCRIPT_PROGRAM`), and the file the guard records refusals in
+// (`KURMIS_REFUSED_PROGRAMS_LOG`). `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN` name the fake
+// claude and codex, so neither kurmis nor the daemon it starts ever looks for the real ones on PATH. No
 // `SSH_*`, `ANTHROPIC_*`, `CLAUDE_*` or `CODEX_HOME` variable reaches a child unless a test
 // passes one.
 //
@@ -204,6 +206,12 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     FAKE_LAUNCHCTL_DIR: fakeLaunchctlDir,
     KURMIS_REG_PROGRAM: standIn('KURMIS_REG_PROGRAM'),
     FAKE_REG_DIR: fakeRegDir,
+    KURMIS_POWERSHELL_PROGRAM: standIn('KURMIS_POWERSHELL_PROGRAM'),
+    FAKE_POWERSHELL_DIR: join(root, 'fake-powershell'),
+    KURMIS_TASKKILL_PROGRAM: standIn('KURMIS_TASKKILL_PROGRAM'),
+    FAKE_TASKKILL_DIR: join(root, 'fake-taskkill'),
+    KURMIS_WSCRIPT_PROGRAM: standIn('KURMIS_WSCRIPT_PROGRAM'),
+    KURMIS_REFUSED_PROGRAMS_LOG: process.env.KURMIS_REFUSED_PROGRAMS_LOG ?? '',
     FAKE_CLAUDE_RECORD: claudeRecordFile,
     FAKE_CODEX_RECORD: codexRecordFile,
     KURMIS_REFUSE_SYSTEM_PROGRAMS: '1'

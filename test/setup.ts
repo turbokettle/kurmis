@@ -1,10 +1,10 @@
 // Every test file runs with HOME and KURMIS_HOME pointing at a fresh temporary folder, so no
 // test can read or write the real ~/.claude, ~/.codex or ~/.kurmis by accident.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll } from 'vitest'
+import { afterAll, afterEach } from 'vitest'
 
 const home = mkdtempSync(join(tmpdir(), 'kurmis-test-home-'))
 process.env.HOME = home
@@ -42,15 +42,48 @@ process.env.FAKE_LAUNCHCTL_DIR = join(home, 'fake-launchctl')
 mkdirSync(process.env.FAKE_LAUNCHCTL_DIR, { recursive: true })
 delete process.env.FAKE_LAUNCHCTL_RUN
 delete process.env.FAKE_LAUNCHCTL_FAIL_BOOTSTRAP
+delete process.env.FAKE_LAUNCHCTL_JOB_EXIT
 process.env.KURMIS_REG_PROGRAM = join(dirname(fileURLToPath(import.meta.url)), 'platform', 'fake-reg', 'reg.mjs')
 process.env.FAKE_REG_DIR = join(home, 'fake-reg')
 mkdirSync(process.env.FAKE_REG_DIR, { recursive: true })
 delete process.env.FAKE_REG_FAIL
 
+// The Windows programs: PowerShell (the WMI start) fails and records its calls, taskkill
+// records its calls and ends only the one pid it is given, and wscript, which kurmis only names
+// in the logon entry, fails when run. src/platform/system-programs.ts falls back to these
+// variables of this process even when a test hands kurmis an environment without them.
+const fakeWindows = join(dirname(fileURLToPath(import.meta.url)), 'platform', 'fake-windows')
+process.env.KURMIS_POWERSHELL_PROGRAM = join(fakeWindows, 'powershell.mjs')
+process.env.FAKE_POWERSHELL_DIR = join(home, 'fake-powershell')
+delete process.env.FAKE_POWERSHELL_PID
+process.env.KURMIS_TASKKILL_PROGRAM = join(fakeWindows, 'taskkill.mjs')
+process.env.FAKE_TASKKILL_DIR = join(home, 'fake-taskkill')
+process.env.KURMIS_WSCRIPT_PROGRAM = join(fakeWindows, 'wscript.mjs')
+
 // No test may start a real launchctl, security, PowerShell, reg, taskkill, wscript, claude or
 // codex, even through an environment it built itself: kurmis refuses them while this is set
 // (src/platform/system-program-guard.ts), and passes it on to every program it starts.
 process.env.KURMIS_REFUSE_SYSTEM_PROGRAMS = '1'
+
+// The guard writes every program it refused to this file, and a test after which it is not
+// empty fails: its code reached a real system program instead of a stand-in. A test that
+// checks the guard itself empties the file.
+const refusals = join(home, 'refused-programs.log')
+process.env.KURMIS_REFUSED_PROGRAMS_LOG = refusals
+writeFileSync(refusals, '')
+
+afterEach(() => {
+  let text: string
+  try {
+    text = readFileSync(refusals, 'utf8')
+  } catch {
+    return
+  }
+  if (text.trim() === '') return
+  writeFileSync(refusals, '')
+  throw new Error(`This test reached real system programs, which the guard refused: ${text.trim().split('\n').join(', ')}. ` +
+    'Point the code at the stand-ins of test/setup.ts (src/platform/system-programs.ts).')
+})
 
 afterAll(() => {
   rmSync(home, { recursive: true, force: true })

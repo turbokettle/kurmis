@@ -52,10 +52,19 @@ function describeStart(result: StartResult): string {
 }
 
 const start: Handler = async (args, context) => {
-  const parsed = parseCommandArgs('daemon start', args, { 'no-launchd': { type: 'boolean' } }, context)
+  const parsed = parseCommandArgs('daemon start', args, {
+    'no-launchd': { type: 'boolean' },
+    env: { type: 'string', multiple: true }
+  }, context)
   if (typeof parsed === 'number') return parsed
+  const assignments = daemonRunAssignments(parsed.values.env ?? [])
+  if (typeof assignments === 'string') return usageError('daemon start', assignments, context)
+  // As for `daemon run`: the data folder's paths come from `process.env`, and the daemon this
+  // starts gets the variables through `context.env`. The Windows logon script passes them so.
+  for (const [name, value] of Object.entries(assignments)) process.env[name] = value
+  const startContext = { ...context, env: { ...context.env, ...assignments } }
   try {
-    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(context, parsed.values['no-launchd'] === true))))
+    writeLine(context.stdout, describeStart(await startDaemon(clientOptions(startContext, parsed.values['no-launchd'] === true))))
     return EXIT_OK
   } catch (error) {
     return failed(error, context)
@@ -84,6 +93,11 @@ const stop: Handler = async (args, context) => {
     }
     if (found === null || !(await stopDaemon(clientOptions(context)))) {
       writeLine(context.stdout, 'The kurmis daemon is not running.')
+      const silent = found === null ? silentDaemon() : null
+      if (silent !== null) {
+        writeLine(context.stdout, `Process ${String(silent.pid)}, named in daemon.json, does not answer on ${address(silent.port)}, so ` +
+          'it was not asked to stop. It may be finishing its open requests before it stops.')
+      }
     } else {
       writeLine(context.stdout, `Stopped the kurmis daemon (pid ${String(found.pid)}).`)
     }
@@ -188,6 +202,8 @@ The daemon is the background process that routes Claude requests. "kurmis claude
 when it is not running, so it seldom needs starting by hand.
 
   start [--no-launchd]    Start it in the background, replacing one of an older version.
+                          --env NAME=VALUE sets a kurmis variable, as for "run"; the
+                          Windows logon entry uses it.
   stop                    Stop it after it finishes the requests it has open, waiting at most
                           30 seconds for them.
   restart [--no-launchd]  Start a new one now; the old one finishes its open requests first.

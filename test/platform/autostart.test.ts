@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { registerAutostart, unregisterAutostart } from '../../src/platform/autostart.ts'
 import { AUTOSTART_LABEL, autostartPlistPath, guiDomain, jobState, launchAgentsDir, launchctlFor } from '../../src/platform/launchd.ts'
-import { RUN_ENTRY_DESCRIPTION, parseRegQuery, regFor, regQueryArgs } from '../../src/platform/windows-autostart.ts'
+import { RUN_ENTRY_DESCRIPTION, parseRegQuery, regFor, regQueryArgs, wscriptPath } from '../../src/platform/windows-autostart.ts'
 
 const ENTRY = '/opt/example/lib/node_modules/kurmis/dist/kurmis.cjs'
 const NODE = '/opt/homebrew/bin/node'
@@ -110,8 +110,18 @@ describe('macOS login item', () => {
   })
 })
 
+describe('a Node in a temporary folder', () => {
+  it('is registered with a warning that it may be gone at the next login', async () => {
+    const result = await registerAutostart({ env: process.env, platform: 'darwin', entry: ENTRY,
+      nodePath: '/Users/example/.local/state/fnm_multishells/4242_1/bin/node' })
+    expect(result.changed).toBe(true)
+    expect(result.warning).toContain('which is in a temporary folder and may be gone at your next login')
+    expect((await registerAutostart(mac())).warning).toBeUndefined()
+  })
+})
+
 describe('Windows logon entry', () => {
-  const scriptPath = (): string => join(process.env.HOME ?? '', 'win-autostart', 'autostart.vbs')
+  const scriptPath = (): string => join(process.env.HOME ?? '', 'win-autostart', 'autostart.js')
   const win = () => ({
     env: { ...process.env, SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\Example User' },
     platform: 'win32' as const,
@@ -123,9 +133,11 @@ describe('Windows logon entry', () => {
   it('registers the Run value and the script, idempotently, and removes them', async () => {
     expect(await registerAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     const script = readFileSync(scriptPath()).subarray(2).toString('utf16le')
-    expect(script).toContain('shell.Run """C:\\Program Files\\nodejs\\node.exe"" ""C:\\Users\\Example User\\AppData\\Roaming\\npm\\node_modules\\kurmis\\dist\\kurmis.cjs"" daemon start --no-launchd", 0, False')
+    expect(script).toContain('shell.Run("\\"C:\\\\Program Files\\\\nodejs\\\\node.exe\\" \\"C:\\\\Users\\\\Example User\\\\AppData\\\\Roaming' +
+      '\\\\npm\\\\node_modules\\\\kurmis\\\\dist\\\\kurmis.cjs\\" daemon start --no-launchd --env KURMIS_HOME=')
+    expect(script).toContain(', 0, false);')
     const value = parseRegQuery((await regFor()(regQueryArgs())).stdout, 'kurmis')
-    expect(value?.data).toBe(`C:\\Windows\\System32\\wscript.exe //B //Nologo ${scriptPath().includes(' ') ? `"${scriptPath()}"` : scriptPath()}`)
+    expect(value?.data).toBe(`${wscriptPath()} //B //Nologo //E:JScript ${scriptPath().includes(' ') ? `"${scriptPath()}"` : scriptPath()}`)
     expect(await registerAutostart(win())).toEqual({ changed: false, where: RUN_ENTRY_DESCRIPTION })
     expect(await unregisterAutostart(win())).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     expect(existsSync(scriptPath())).toBe(false)

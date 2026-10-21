@@ -91,7 +91,7 @@ export function launchdJobFolder(): string {
 
 /** The script the Windows logon entry runs to start the daemon without a console window. */
 export function windowsAutostartScriptPath(): string {
-  return join(kurmisHome(), 'autostart.vbs')
+  return join(kurmisHome(), 'autostart.js')
 }
 
 /** The folder that holds the extra logins of one provider: `claude/` or `codex/`. */

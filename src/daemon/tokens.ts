@@ -6,7 +6,11 @@
 //   CLI runs with (`keychainService` in `src/core/keychain-service.ts`). The CLI reads the item
 //   first, and the login's `.credentials.json` when there is no item, so the daemon does the
 //   same: the item first, and the file whenever the item gives no token.
-// - Windows and Linux: in `.credentials.json` only.
+// - Windows: in `.credentials.json`, or, in newer CLI versions, in Windows Credential Manager,
+//   which the CLI reads first. The CLI deletes the file once the record is in Credential
+//   Manager, so for a login without the file the daemon reads Credential Manager
+//   (`CredentialManagerReader` in `credential-manager.ts`), and the file otherwise.
+// - Linux: in `.credentials.json` only.
 //
 // The two kinds of login:
 //
@@ -21,14 +25,18 @@
 // A failed Keychain read goes to the daemon log as `token_read_failed` with the login and a fixed
 // reason word, once per login until a read of it works. A missing item is not logged, because on
 // macOS a login that keeps its record in the file, or is signed out, has none.
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ClaudeCredentials } from '../core/credentials.ts'
 import type { DaemonLog, LogReason } from '../data/log.ts'
 import { isDefaultLoginId, parseLoginId } from '../data/login-id.ts'
 import { loginFolder } from '../data/paths.ts'
-import { CredentialsFileReader, type CredentialsSource } from './credentials.ts'
-import { KeychainCredentialsReader, SECURITY_PROGRAM, keychainHoldsSecret, type KeychainFailureKind } from './keychain.ts'
+import { CREDENTIALS_FILE_NAME, CredentialsFileReader, type CredentialsSource } from './credentials.ts'
+import { CredentialManagerReader, type CredentialManagerFailureKind } from './credential-manager.ts'
+import { powerShellCredentialRead, type CredentialRead } from '../platform/windows-credentials.ts'
+import { systemProgram } from '../platform/system-programs.ts'
+import { KeychainCredentialsReader, keychainHoldsSecret, type KeychainFailureKind } from './keychain.ts'
 
 export interface TokenSourceOptions {
   /** `KURMIS_SECURITY_PROGRAM` (a test hook) names the `security` program; else `SECURITY_PROGRAM`. */
@@ -41,6 +49,8 @@ export interface TokenSourceOptions {
   log?: DaemonLog
   /** How long one `security` call may take. Defaults to `KEYCHAIN_READ_TIMEOUT_MS`; tests pass less. */
   keychainReadTimeoutMs?: number
+  /** Windows: reads Credential Manager. Runs PowerShell (`powerShellCredentialRead`) by default; tests pass their own. */
+  credentialRead?: CredentialRead
 }
 
 export interface TokenSource extends CredentialsSource {
@@ -48,10 +58,12 @@ export interface TokenSource extends CredentialsSource {
   readonly keychain: boolean
 }
 
-/** The `security` program the daemon runs: `KURMIS_SECURITY_PROGRAM` when set and not empty, else `/usr/bin/security`. */
-export function securityProgramOf(env: NodeJS.ProcessEnv): string {
-  const override = env.KURMIS_SECURITY_PROGRAM
-  return override !== undefined && override !== '' ? override : SECURITY_PROGRAM
+/**
+ * The `security` program the daemon runs: `KURMIS_SECURITY_PROGRAM` from `env`, else from this
+ * process's environment, else `/usr/bin/security` (`systemProgram`).
+ */
+export function securityProgramOf(env: NodeJS.ProcessEnv, processEnv: NodeJS.ProcessEnv = process.env): string {
+  return systemProgram('security', env, processEnv)
 }
 
 /**
@@ -78,6 +90,18 @@ export function claudeCredentialsDir(id: string, home: string): string {
 export function createTokenSource(options: TokenSourceOptions): TokenSource {
   const home = options.home ?? homedir
   const file = new CredentialsFileReader({ credentialsDir: (id) => claudeCredentialsDir(id, home()) })
+  const credentialManager = (options.platform ?? process.platform) === 'win32'
+    ? new CredentialManagerReader({
+        secureStorageDir: claudeSecureStorageDir,
+        fileExists: (id) => existsSync(join(claudeCredentialsDir(id, home()), CREDENTIALS_FILE_NAME)),
+        read: options.credentialRead ?? powerShellCredentialRead(options.env),
+        now: options.now,
+        onFailure: (failure) => {
+          const login = parseLoginId(failure.id)
+          if (login !== null) options.log?.write('token_read_failed', { login: login.id, reason: credentialManagerReasonOf(failure.kind) })
+        }
+      })
+    : null
   const keychain = keychainHoldsSecret(options.platform ?? process.platform)
     ? new KeychainCredentialsReader({
         accounts: { secureStorageDir: claudeSecureStorageDir },
@@ -95,18 +119,21 @@ export function createTokenSource(options: TokenSourceOptions): TokenSource {
     keychain: keychain !== null,
     read(id: string): ClaudeCredentials | null {
       if (!isClaudeLoginId(id)) return null
-      return keychain?.read(id) ?? file.read(id)
+      return credentialManager?.read(id) ?? keychain?.read(id) ?? file.read(id)
     },
-    prime(ids: readonly string[]): Promise<void> {
-      return keychain === null ? Promise.resolve() : keychain.prime(ids.filter(isClaudeLoginId))
+    async prime(ids: readonly string[]): Promise<void> {
+      const claude = ids.filter(isClaudeLoginId)
+      await Promise.all([keychain?.prime(claude), credentialManager?.prime(claude)])
     },
     invalidate(id: string): void {
       if (!isClaudeLoginId(id)) return
       keychain?.invalidate(id)
+      credentialManager?.invalidate(id)
       file.invalidate(id)
     },
     clear(): void {
       keychain?.clear()
+      credentialManager?.clear()
       file.clear()
     }
   }
@@ -123,6 +150,11 @@ export function logReasonOf(kind: KeychainFailureKind): LogReason {
     case 'not_run':
     case 'failed': return 'other'
   }
+}
+
+/** The daemon log's reason word for a failed Credential Manager read. */
+function credentialManagerReasonOf(kind: CredentialManagerFailureKind): LogReason {
+  return kind === 'not_credentials' ? 'invalid' : 'other'
 }
 
 function isClaudeLoginId(id: string): boolean {

@@ -3,14 +3,23 @@
 // - **Where:** the value `kurmis` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 //   Explorer runs every value there at logon, for this user only, and writing it needs no admin
 //   rights. It also shows up in Task Manager's Startup tab, where the user can turn it off.
-//   A Task Scheduler task could do the same but needs `schtasks.exe` XML and, for some
-//   settings, elevation; a shortcut in the Startup folder needs COM to write.
 // - **No console window:** node.exe is a console program, so running it straight from the Run
 //   value would open a console window at every logon. The value runs
-//   `wscript.exe //B //Nologo <autostart.vbs>` instead, and the script starts node with
-//   `WScript.Shell.Run <command>, 0, False`: window style 0 is hidden, and False means it does
+//   `wscript.exe //B //Nologo //E:JScript <autostart.js>` instead, and the script starts node with
+//   `WScript.Shell.Run(<command>, 0, false)`: window style 0 is hidden, and false means it does
 //   not wait. `//B` keeps wscript from showing a dialog when something fails at logon; the next
 //   kurmis command starts the daemon anyway.
+// - **Why JScript and the Run value.** The script used to be VBScript. Microsoft has deprecated
+//   VBScript: since Windows 11 24H2 it is an optional feature, which is to be turned off by
+//   default and later removed. JScript runs in the same Windows Script Host (`wscript.exe`) and
+//   is not part of that deprecation, so the start stays hidden and needs no admin rights. The
+//   other ways were weighed and are worse without admin rights: a shortcut in the Startup folder
+//   needs COM to write and still opens node's console window (at best minimized); a Task
+//   Scheduler logon task may need elevation to create, depending on policy, and runs node in a
+//   visible console unless it runs whether the user is logged on or not, which needs a stored
+//   password or elevation. When `wscript.exe` is missing, or Windows Script Host is turned off
+//   (`Enabled` = 0 under `Software\Microsoft\Windows Script Host\Settings`), setup writes no
+//   entry and says so; the next kurmis command starts the daemon anyway.
 // - **REG_SZ with full paths:** the value names `wscript.exe` by its full path, with the
 //   Windows folder read from `SystemRoot` when setup runs, rather than `%SystemRoot%` in a
 //   REG_EXPAND_SZ value. The Windows folder does not move, and so the value does not depend on
@@ -20,22 +29,27 @@
 //   `\"`), and reg.exe reads its command line with the same rules, so the quotes inside the
 //   value reach the registry as they are. `reg add /d "\"C:\...\" ..."` is also the form
 //   Microsoft documents for a value with quotes.
+// - **Reading it back:** reg.exe prints in the console's OEM code page, not UTF-8, so a value
+//   with letters outside ASCII does not read back as written. The comparison with what setup
+//   would write treats each run of such letters as matching any other run (`sameRunData`); a
+//   value that still looks different is simply written again.
 // - **The script** is UTF-16 with a byte order mark, which wscript reads whatever the system's
-//   ANSI code page is, so a user folder with letters outside it still works. It sets the
-//   kurmis variables the daemon needs (`KURMIS_HOME` as an absolute path, and the test hooks,
-//   when set at setup) in its own environment before it starts node, since a program started at
-//   logon gets only the user's environment from Windows. PATH is that environment's, which is the
-//   user's normal one.
+//   ANSI code page is, so a user folder with letters outside it still works. A program started
+//   at logon gets only the user's environment from Windows, so the kurmis variables the daemon
+//   needs (`KURMIS_HOME` as an absolute path, and the test hooks, when set at setup) go on its
+//   command line as `--env NAME=VALUE`, which `daemon start` and `daemon run` put into their
+//   environment. PATH is that environment's, which is the user's normal one.
 //
-// `KURMIS_REG_PROGRAM` (a test hook) names a stand-in for reg.exe; tests use
-// `test/platform/fake-reg/reg.mjs`.
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, win32 } from 'node:path'
+// `KURMIS_REG_PROGRAM` and `KURMIS_WSCRIPT_PROGRAM` (test hooks) name stand-ins for reg.exe and
+// wscript.exe; tests use `test/platform/fake-reg/reg.mjs` and `test/platform/fake-windows/`.
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, win32 } from 'node:path'
 import { windowsAutostartScriptPath } from '../data/paths.ts'
 import { makePrivateDirSync } from './files.ts'
 import { windowsCommandLine } from './detach.ts'
 import { DAEMON_JOB_VARIABLES } from './launchd.ts'
 import { runProgram, type RunResult } from './run.ts'
+import { inheritedTestHooks, SYSTEM_PROGRAM_VARIABLES, systemProgram, systemRoot } from './system-programs.ts'
 import type { AutostartResult } from './autostart.ts'
 
 /** The registry key whose values Explorer runs at the user's logon. */
@@ -45,30 +59,23 @@ export const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 export const RUN_VALUE_NAME = 'kurmis'
 
 /** The test hook naming a stand-in for `reg.exe`. */
-export const REG_VARIABLE = 'KURMIS_REG_PROGRAM'
+export const REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg
 
 const REG_TIMEOUT_MS = 30_000
 
 /** Where the entry is, for the person to see. */
 export const RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`
 
-/** The Windows folder: `SystemRoot`, else `windir`, else `C:\Windows`. */
-export function systemRoot(env: NodeJS.ProcessEnv = process.env): string {
-  for (const name of ['SystemRoot', 'SYSTEMROOT', 'windir', 'WINDIR']) {
-    const value = env[name]
-    if (value !== undefined && value !== '') return value.replace(/[\\/]+$/, '')
-  }
-  return 'C:\\Windows'
+export { systemRoot }
+
+/** `KURMIS_REG_PROGRAM` (from `env`, else this process's environment), otherwise `<SystemRoot>\System32\reg.exe`. */
+export function regProgram(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): string {
+  return systemProgram('reg', env, processEnv)
 }
 
-/** `KURMIS_REG_PROGRAM` when it is set and not empty, otherwise `<SystemRoot>\System32\reg.exe`. */
-export function regProgram(env: NodeJS.ProcessEnv = process.env): string {
-  const named = env[REG_VARIABLE]
-  return named !== undefined && named !== '' ? named : `${systemRoot(env)}\\System32\\reg.exe`
-}
-
-export function wscriptPath(env: NodeJS.ProcessEnv = process.env): string {
-  return `${systemRoot(env)}\\System32\\wscript.exe`
+/** `KURMIS_WSCRIPT_PROGRAM` (as for `regProgram`), otherwise `<SystemRoot>\System32\wscript.exe`. */
+export function wscriptPath(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): string {
+  return systemProgram('wscript', env, processEnv)
 }
 
 /** Runs `reg.exe` with these arguments and answers what happened. Never rejects. */
@@ -79,9 +86,36 @@ export function regFor(env: NodeJS.ProcessEnv = process.env): Reg {
   return (args) => runProgram(program, args, { timeoutMs: REG_TIMEOUT_MS, env })
 }
 
-/** The Run value's data: wscript running the script, hidden and without dialogs. */
+/** The Run value's data: wscript running the script as JScript, hidden and without dialogs. */
 export function runValueData(wscript: string, scriptPath: string): string {
-  return windowsCommandLine([wscript, '//B', '//Nologo', scriptPath])
+  return windowsCommandLine([wscript, '//B', '//Nologo', '//E:JScript', scriptPath])
+}
+
+/** Where Windows Script Host is turned on or off, per user and for the machine. */
+export const SCRIPT_HOST_SETTINGS_KEYS = [
+  'HKCU\\Software\\Microsoft\\Windows Script Host\\Settings',
+  'HKLM\\Software\\Microsoft\\Windows Script Host\\Settings'
+]
+
+/**
+ * Whether `reg query <key> /v Enabled` says Windows Script Host is turned off: `Enabled` is 0,
+ * as a REG_DWORD (`0x0`) or a REG_SZ (`0`). A missing value means it is on.
+ */
+export function scriptHostDisabled(query: RunResult): boolean {
+  if (query.code !== 0 || query.error !== null) return false
+  const value = parseRegQuery(query.stdout, 'Enabled')
+  return value !== null && /^(0x0+|0)$/i.test(value.data.trim())
+}
+
+/**
+ * Whether two Run values are the same, allowing for reg.exe printing in the OEM code page: each
+ * run of characters outside ASCII, in either, counts as one character that matches any other
+ * such run. Letters outside ASCII never come out as ASCII, so a value that differs in its
+ * ASCII parts is always seen as different.
+ */
+export function sameRunData(read: string, written: string): boolean {
+  const skeleton = (text: string): string => text.replace(/[\u0080-\uffff]+/g, '\u0000')
+  return skeleton(read) === skeleton(written)
 }
 
 export function regAddArgs(data: string): string[] {
@@ -111,12 +145,12 @@ export function parseRegQuery(stdout: string, name: string): { type: string; dat
 }
 
 /**
- * A VBScript string literal: in quotes, with each quote inside doubled. A line break cannot be
- * in one, so text with a line break is refused.
+ * A JScript string literal: in double quotes, with each backslash and double quote inside
+ * escaped. A line break cannot be in one, so text with a line break is refused.
  */
-export function vbsString(text: string): string {
-  if (/[\r\n]/.test(text)) throw new Error('a value for the logon script has a line break in it')
-  return `"${text.replace(/"/g, '""')}"`
+export function jscriptString(text: string): string {
+  if (/[\r\n\u2028\u2029]/.test(text)) throw new Error('a value for the logon script has a line break in it')
+  return `"${text.replace(/[\\"]/g, (char) => `\\${char}`)}"`
 }
 
 /**
@@ -125,10 +159,11 @@ export function vbsString(text: string): string {
  * passes on the command line. `KURMIS_HOME` is made absolute (Windows path rules, from the
  * current folder), since the daemon starts in another folder.
  */
-export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}
+  const hooks = inheritedTestHooks(env, processEnv)
   for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name]
+    const value = env[name] || hooks[name]
     if (value !== undefined && value !== '') out[name] = name === 'KURMIS_HOME' ? win32.resolve(value) : value
   }
   return out
@@ -137,21 +172,26 @@ export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env
 export interface AutostartScript {
   /** `[node, bundle, 'daemon', 'start', '--no-launchd']`. */
   programArguments: readonly string[]
-  /** Variables set in the script's environment, which node inherits. */
+  /** Variables the daemon needs, passed on its command line as `--env NAME=VALUE`. */
   environment: Readonly<Record<string, string>>
   /** The folder node starts in: the user's profile folder. */
   cwd: string
 }
 
-/** The text of the logon script. Lines end with CRLF. */
+/** The command line the logon script runs: the program, then `--env NAME=VALUE` for each variable. */
+export function autostartCommandLine(script: AutostartScript): string {
+  const assignments = Object.entries(script.environment).flatMap(([name, value]) => ['--env', `${name}=${value}`])
+  return windowsCommandLine([...script.programArguments, ...assignments])
+}
+
+/** The text of the logon script, in JScript. Lines end with CRLF. */
 export function autostartScript(script: AutostartScript): string {
   const lines = [
-    "' Written by kurmis setup: starts the kurmis daemon at logon without a console window.",
-    "' kurmis setup --undo removes it.",
-    'Set shell = CreateObject("WScript.Shell")',
-    ...Object.entries(script.environment).map(([name, value]) => `shell.Environment("Process")(${vbsString(name)}) = ${vbsString(value)}`),
-    `shell.CurrentDirectory = ${vbsString(script.cwd)}`,
-    `shell.Run ${vbsString(windowsCommandLine(script.programArguments))}, 0, False`
+    '// Written by kurmis setup: starts the kurmis daemon at logon without a console window.',
+    '// kurmis setup --undo removes it.',
+    'var shell = new ActiveXObject("WScript.Shell");',
+    `shell.CurrentDirectory = ${jscriptString(script.cwd)};`,
+    `shell.Run(${jscriptString(autostartCommandLine(script))}, 0, false);`
   ]
   return `${lines.join('\r\n')}\r\n`
 }
@@ -196,6 +236,32 @@ function userProfile(env: NodeJS.ProcessEnv): string {
 }
 
 /**
+ * Why Windows Script Host cannot run the logon script, or null when it can: `wscript.exe` is
+ * missing, or Script Host is turned off for the user or the machine.
+ */
+async function scriptHostProblem(wscript: string, reg: Reg): Promise<string | null> {
+  if (!existsSync(wscript)) {
+    return `${wscript} does not exist, so Windows Script Host, which starts the daemon at logon without a console window, ` +
+      'is not installed or was removed.'
+  }
+  for (const key of SCRIPT_HOST_SETTINGS_KEYS) {
+    if (scriptHostDisabled(await reg(['query', key, '/v', 'Enabled']))) {
+      return `Windows Script Host, which starts the daemon at logon without a console window, is turned off ("Enabled" is 0 ` +
+        `under ${key}). Turn it on, or ask whoever manages this machine, and run kurmis setup again.`
+    }
+  }
+  return null
+}
+
+/** The VBScript logon script an older kurmis wrote next to `scriptPath`, removed. Answers whether there was one. */
+function removeOldVbsScript(scriptPath: string): boolean {
+  const old = join(dirname(scriptPath), 'autostart.vbs')
+  if (old === scriptPath || !existsSync(old)) return false
+  rmSync(old, { force: true })
+  return true
+}
+
+/**
  * Writes the logon script and the Run value, each only when it differs from what is there.
  * A reg.exe failure is answered as a warning.
  */
@@ -213,16 +279,21 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   } catch (error) {
     return { changed: false, where: null, warning: `The logon entry was not written: ${(error as Error).message}.` }
   }
-  let changed = false
+  const wscript = wscriptPath(options.env)
+  const unusable = await scriptHostProblem(wscript, reg)
+  if (unusable !== null) {
+    return { changed: false, where: null, warning: `The logon entry was not written: ${unusable} The next kurmis command starts the daemon anyway.` }
+  }
+  let changed = removeOldVbsScript(scriptPath)
   if (readScript(scriptPath) !== text) {
     makePrivateDirSync(dirname(scriptPath))
     writeFileSync(scriptPath, encodeScript(text))
     changed = true
   }
-  const data = runValueData(wscriptPath(options.env), scriptPath)
+  const data = runValueData(wscript, scriptPath)
   const query = await reg(regQueryArgs())
   const current = ok(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null
-  if (current !== null && current.type === 'REG_SZ' && current.data === data) {
+  if (current !== null && current.type === 'REG_SZ' && sameRunData(current.data, data)) {
     return { changed, where: RUN_ENTRY_DESCRIPTION }
   }
   const added = await reg(regAddArgs(data))
@@ -252,5 +323,6 @@ export async function unregisterWindowsAutostart(options: WindowsAutostartOption
     rmSync(scriptPath, { force: true })
     changed = true
   }
+  if (removeOldVbsScript(scriptPath)) changed = true
   return warning === undefined ? { changed, where: RUN_ENTRY_DESCRIPTION } : { changed, where: RUN_ENTRY_DESCRIPTION, warning }
 }

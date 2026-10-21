@@ -1,7 +1,7 @@
 // The daemon client against an in-process HTTP server standing in for the daemon. Starting real
 // daemon processes is tested in `daemon-lifecycle.test.ts`.
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve, win32 } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -54,8 +54,15 @@ async function freePort(): Promise<number> {
 
 let servers: Server[] = []
 
+interface FakeDaemonBehaviour {
+  /** How long it takes to answer a status request. */
+  statusDelayMs?: number
+  /** The HTTP status it answers a stop request with; 200 by default. */
+  stopStatus?: number
+}
+
 /** A server that answers the control API like a daemon of `version` would, with the right key. */
-async function fakeDaemon(key: string, patch: Partial<StatusAnswer> = {}): Promise<FakeDaemon> {
+async function fakeDaemon(key: string, patch: Partial<StatusAnswer> = {}, behaviour: FakeDaemonBehaviour = {}): Promise<FakeDaemon> {
   const requests: FakeDaemon['requests'] = []
   let port = 0
   const { server, port: bound } = await listen((request, response, body) => {
@@ -68,8 +75,12 @@ async function fakeDaemon(key: string, patch: Partial<StatusAnswer> = {}): Promi
     const json = (value: unknown): void => {
       response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(value))
     }
-    if (request.url === '/_kurmis/status' || request.url === '/_kurmis/probe') json(status(port, patch))
-    else if (request.url === '/_kurmis/reload' || request.url === '/_kurmis/stop') json({ ok: true })
+    if (request.url === '/_kurmis/status' && behaviour.statusDelayMs !== undefined) {
+      setTimeout(() => json(status(port, patch)), behaviour.statusDelayMs)
+    } else if (request.url === '/_kurmis/status' || request.url === '/_kurmis/probe') json(status(port, patch))
+    else if (request.url === '/_kurmis/stop' && behaviour.stopStatus !== undefined) {
+      response.writeHead(behaviour.stopStatus, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, error: 'example' }))
+    } else if (request.url === '/_kurmis/reload' || request.url === '/_kurmis/stop') json({ ok: true })
     else response.writeHead(404).end()
   })
   port = bound
@@ -163,6 +174,14 @@ describe('findDaemon', () => {
     expect((await findDaemon({ env: {} }))?.port).toBe(daemon.port)
   })
 
+  it('waits for a daemon that is slower than a few seconds to answer', async () => {
+    const key = readOrCreateKey()
+    const daemon = await fakeDaemon(key, {}, { statusDelayMs: 4_000 })
+    writeDaemonFile({ pid: process.pid, port: daemon.port, version: '1.2.3', startedAt: 1 })
+    usePort(daemon.port)
+    expect((await findDaemon({ env: {} }))?.port).toBe(daemon.port)
+  }, 20_000)
+
   it('does not take a server that refuses the key for a daemon', async () => {
     readOrCreateKey()
     const other = await fakeDaemon('0'.repeat(64))
@@ -239,10 +258,93 @@ describe('startDaemon', () => {
     expect(processExists(pid)).toBe(true)
   })
 
+  it('says the stop failed, and starts nothing, when the daemon on the old port refuses to stop', async () => {
+    const key = readOrCreateKey()
+    const daemon = await fakeDaemon(key, { version: '1.0.0' }, { stopStatus: 500 })
+    writeDaemonFile({ pid: process.pid, port: daemon.port, version: '1.0.0', startedAt: 1 })
+    const configured = await freePort()
+    usePort(configured)
+    const failure = startDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
+    await expect(failure).rejects.toThrow(`The kurmis daemon 1.0.0 on port ${String(daemon.port)} (pid ${String(process.pid)}) could not ` +
+      `be stopped to move it to port ${String(configured)}`)
+    expect(daemon.requests.filter((request) => request.url === '/_kurmis/stop')).toHaveLength(1)
+  })
+
   it('reports a config.json it cannot read as a DaemonError', async () => {
     writeFileSync(`${kurmisHome()}/config.json`, '{ "version": 1, "port": 80 }')
     await expect(startDaemon({ env: {} })).rejects.toThrow(DaemonError)
   })
+})
+
+describe('starting through launchd', () => {
+  const securityDir = process.env.FAKE_SECURITY_DIR ?? ''
+  const launchctlDir = process.env.FAKE_LAUNCHCTL_DIR ?? ''
+  const ssh = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22' }
+  const launchctlCalls = (): string[] => {
+    const file = join(launchctlDir, 'calls.jsonl')
+    return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').map((line) => (JSON.parse(line) as string[])[0] ?? '') : []
+  }
+  const noBundle = (): string => join(kurmisHome(), 'no-such-bundle.cjs')
+
+  beforeEach(() => {
+    rmSync(launchctlDir, { recursive: true, force: true })
+    mkdirSync(launchctlDir, { recursive: true })
+    rmSync(join(securityDir, 'calls.jsonl'), { force: true })
+  })
+
+  afterEach(() => {
+    rmSync(join(securityDir, 'mode'), { force: true })
+  })
+
+  it('reaches only the stand-ins when it is given an empty environment', async () => {
+    // A test once called startDaemon({ env: {} }) this way, on a machine whose login Keychain
+    // could not be read: the Keychain check ran the real security, and the start loaded a real
+    // launchd job. test/setup.ts fails this test if the guard has to refuse a real program.
+    usePort(await freePort())
+    readOrCreateKey()
+    writeFileSync(join(securityDir, 'mode'), 'locked')
+    const warnings: string[] = []
+    const failure = startDaemon({ env: {}, platform: 'darwin', entry: noBundle(), onWarning: (text) => warnings.push(text) })
+    await expect(failure).rejects.toThrow(/exited at start/)
+    expect(readFileSync(join(securityDir, 'calls.jsonl'), 'utf8')).toContain('show-keychain-info')
+    // The launchctl stand-in ran; it fails here, since the empty environment names no folder for it.
+    expect(warnings.join('\n')).toMatch(/could not be started through launchd .*fake launchctl: FAKE_LAUNCHCTL_DIR is not set/)
+  }, 30_000)
+
+  it('starts the daemon directly, and removes the job, when the job exits with an error', async () => {
+    usePort(await freePort())
+    readOrCreateKey()
+    const warnings: string[] = []
+    const failure = startDaemon({
+      env: { ...process.env, ...ssh, FAKE_LAUNCHCTL_JOB_EXIT: '78' },
+      platform: 'darwin',
+      entry: noBundle(),
+      // Only the exit code can end the wait early here.
+      launchdAnswerTimeoutMs: 60_000,
+      onWarning: (text) => warnings.push(text)
+    })
+    // The direct start runs node on a bundle that does not exist, which exits at once.
+    await expect(failure).rejects.toThrow(/exited at start/)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('could not be started through launchd (its job exited with code 78, which launchd answers when it ' +
+      'cannot start the program, for example one on an external volume)')
+    expect(launchctlCalls()[0]).toBe('bootstrap')
+    expect(launchctlCalls()).toContain('print')
+    expect(launchctlCalls().at(-1)).toBe('bootout')
+    expect(readdirSync(join(kurmisHome(), 'launchd')).filter((name) => name.endsWith('.plist'))).toEqual([])
+  }, 30_000)
+
+  it('starts the daemon directly when no daemon answers soon after the job is loaded', async () => {
+    usePort(await freePort())
+    readOrCreateKey()
+    const warnings: string[] = []
+    // The launchctl stand-in loads the job and runs nothing, like a job that hangs.
+    const failure = startDaemon({ env: { ...process.env, ...ssh }, platform: 'darwin', entry: noBundle(), launchdAnswerTimeoutMs: 1_000,
+      onWarning: (text) => warnings.push(text) })
+    await expect(failure).rejects.toThrow(/exited at start/)
+    expect(warnings[0]).toContain('could not be started through launchd (no daemon answered within 1 second of loading its job)')
+    expect(launchctlCalls().at(-1)).toBe('bootout')
+  }, 30_000)
 })
 
 describe('restartDaemon', () => {
@@ -280,6 +382,23 @@ describe('stopDaemon', () => {
     usePort(daemon.port)
     expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, stopGraceMs: 60_000 })).toBe(true)
     expect(processExists(pid)).toBe(false)
+  })
+
+  it('says it cannot end a daemon that this user may not signal, instead of calling it stopped', async () => {
+    const key = readOrCreateKey()
+    const pid = await lingeringPid()
+    const daemon = await fakeDaemon(key, { pid })
+    usePort(daemon.port)
+    const kill = (): void => {
+      throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+    }
+    await expect(stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, kill }))
+      .rejects.toThrow(`(pid ${String(pid)}) was asked to stop but is still running, and this command may not end it (EPERM)`)
+    expect(processExists(pid)).toBe(true)
+    const gone = (): void => {
+      throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+    }
+    expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, kill: gone })).toBe(true)
   })
 })
 
@@ -351,7 +470,15 @@ describe('daemonEnvironment', () => {
       ANTHROPIC_API_KEY: 'example',
       ANTHROPIC_AUTH_TOKEN: 'example',
       CLAUDE_SECURESTORAGE_CONFIG_DIR: '/tmp/example/claude/work'
-    })).toEqual({ PATH: '/usr/bin', KURMIS_HOME: '/tmp/example' })
+    }, {})).toEqual({ PATH: '/usr/bin', KURMIS_HOME: '/tmp/example' })
+  })
+
+  it("adds this process's stand-ins and guard when the environment it is given has none", () => {
+    expect(daemonEnvironment({ PATH: '/usr/bin' })).toMatchObject({
+      KURMIS_SECURITY_PROGRAM: process.env.KURMIS_SECURITY_PROGRAM,
+      KURMIS_LAUNCHCTL_PROGRAM: process.env.KURMIS_LAUNCHCTL_PROGRAM,
+      KURMIS_REFUSE_SYSTEM_PROGRAMS: '1'
+    })
   })
 
   it('makes a relative KURMIS_HOME absolute, since the daemon runs in the home folder', () => {
@@ -365,9 +492,9 @@ describe('wmiDaemonArguments', () => {
   it('puts the kurmis variables on the command line, KURMIS_HOME as an absolute Windows path', () => {
     expect(wmiDaemonArguments('C:\\Program Files\\nodejs\\node.exe', 'C:\\kurmis\\kurmis.cjs', {
       KURMIS_HOME: 'D:\\kurmis data', KURMIS_CLAUDE_BIN: 'C:\\c.exe', ANTHROPIC_API_KEY: 'sk-ant-api03-fake', Path: 'C:\\Windows'
-    })).toEqual(['C:\\Program Files\\nodejs\\node.exe', 'C:\\kurmis\\kurmis.cjs', 'daemon', 'run',
+    }, {})).toEqual(['C:\\Program Files\\nodejs\\node.exe', 'C:\\kurmis\\kurmis.cjs', 'daemon', 'run',
       '--env', 'KURMIS_HOME=D:\\kurmis data', '--env', 'KURMIS_CLAUDE_BIN=C:\\c.exe'])
-    const relative = wmiDaemonArguments('node.exe', 'kurmis.cjs', { KURMIS_HOME: 'data' })
+    const relative = wmiDaemonArguments('node.exe', 'kurmis.cjs', { KURMIS_HOME: 'data' }, {})
     const home = relative[5]?.slice('KURMIS_HOME='.length) ?? ''
     expect(win32.isAbsolute(home)).toBe(true)
     expect(home.endsWith('\\data')).toBe(true)

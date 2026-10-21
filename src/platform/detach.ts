@@ -19,9 +19,12 @@
 // for tests that run kurmis from the source tree, where there is no bundle to start).
 import { spawn } from 'node:child_process'
 import { realpathSync, statSync } from 'node:fs'
-import { delimiter, join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { posix, win32 } from 'node:path'
+import { posixPathFolders, windowsEnv, windowsPathFolders } from './programs.ts'
 import { runProgram, type RunResult } from './run.ts'
 import { refusedByGuard, withGuard } from './system-program-guard.ts'
+import { systemProgram } from './system-programs.ts'
 
 /** The test hook naming the bundle a daemon is started from. */
 export const ENTRY_VARIABLE = 'KURMIS_ENTRY'
@@ -65,33 +68,67 @@ export interface NodeForJobsOptions {
   execPath?: string
   /** Resolves a path's symlinks; `realpathSync` by default. */
   realpath?: (path: string) => string
+  /** Folders whose contents may be gone by the next login. `temporaryFolders(env, platform)` by default. */
+  temporaryFolders?: readonly string[]
+}
+
+/**
+ * The temporary folders: `os.tmpdir()`, `TMPDIR`, `TEMP` and `TMP`, and on macOS and Linux also
+ * `/tmp` and `/var/folders` (macOS' per-user temporary folders), with their `/private` forms.
+ */
+export function temporaryFolders(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
+  const named = ['TMPDIR', 'TEMP', 'TMP'].map((name) => (platform === 'win32' ? windowsEnv(env, name) : env[name]))
+  const fixed = platform === 'win32' ? [] : ['/tmp', '/private/tmp', '/var/folders', '/private/var/folders']
+  return [...new Set([tmpdir(), ...named, ...fixed].filter((folder): folder is string => folder !== undefined && folder !== ''))]
+}
+
+/**
+ * Whether a Node at `path` may be gone by the next login: it is in one of `folders`, or in a
+ * folder named `fnm_multishells`, where fnm makes a link folder for each shell and deletes it
+ * later.
+ */
+export function isTemporaryPath(path: string, folders: readonly string[], platform: NodeJS.Platform): boolean {
+  const separators = platform === 'win32' ? /[\\/]+/ : /\/+/
+  const fold = (text: string): string => (platform === 'win32' ? text.toLowerCase() : text)
+  if (path.split(separators).some((part) => fold(part) === 'fnm_multishells')) return true
+  const join = platform === 'win32' ? '\\' : '/'
+  const plain = fold(path.split(separators).join(join))
+  return folders.some((folder) => {
+    const root = fold(folder.split(separators).join(join)).replace(/[\\/]+$/, '')
+    return root !== '' && (plain === root || plain.startsWith(root + join))
+  })
 }
 
 /**
  * The Node a launchd job or a logon entry should run. `process.execPath` is the resolved path,
  * which on Homebrew names one versioned folder that an upgrade removes. So the first `node` on
  * PATH is taken instead when it resolves to the same file, since that path survives upgrades;
- * otherwise `process.execPath`.
+ * otherwise `process.execPath`. A `node` on PATH in a temporary folder, or in fnm's per-shell
+ * `fnm_multishells` folder, is passed over, since it may be gone at the next login.
  */
 export function nodeForJobs(options: NodeForJobsOptions = {}): string {
   const env = options.env ?? process.env
   const platform = options.platform ?? process.platform
   const execPath = options.execPath ?? process.execPath
   const realpath = options.realpath ?? realpathSync
+  const temporary = options.temporaryFolders ?? temporaryFolders(env, platform)
   let target: string
   try {
     target = realpath(execPath)
   } catch {
     return execPath
   }
-  const name = platform === 'win32' ? 'node.exe' : 'node'
-  const pathValue = (platform === 'win32' ? env.Path ?? env.PATH : env.PATH) ?? ''
-  const separator = platform === 'win32' ? ';' : delimiter
-  for (const folder of pathValue.split(separator)) {
-    if (folder === '') continue
-    const candidate = platform === 'win32' ? `${folder.replace(/[\\/]+$/, '')}\\${name}` : join(folder, name)
+  const windows = platform === 'win32'
+  const folders = windows ? windowsPathFolders(windowsEnv(env, 'PATH')) : posixPathFolders(env.PATH)
+  for (const folder of folders) {
+    const candidate = windows ? win32.join(folder, 'node.exe') : posix.join(folder, 'node')
     try {
       if (!statSync(candidate).isFile()) continue
+    } catch {
+      continue
+    }
+    if (isTemporaryPath(candidate, temporary, platform)) continue
+    try {
       return realpath(candidate) === target ? candidate : execPath
     } catch {
       continue
@@ -177,32 +214,43 @@ function quoteWindowsArgument(arg: string): string {
   return `${out}${'\\'.repeat(backslashes * 2)}"`
 }
 
-/** A PowerShell single-quoted string: a quote inside is doubled. */
+/**
+ * A PowerShell single-quoted string. PowerShell ends such a string at any of the single quote
+ * characters `'`, `‘`, `’`, `‚` and `‛`, so each of them inside is doubled.
+ */
 export function powerShellQuote(text: string): string {
-  return `'${text.replace(/'/g, "''")}'`
+  return `'${text.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`
 }
 
 /**
  * The PowerShell script that creates `argv` in `cwd` through WMI and prints `pid <n>`. WMI's
  * `ReturnValue` is not 0 when it refused: 2 access denied, 9 path not found, and so on. Every
  * value is in a single-quoted PowerShell string, so nothing in a path is run.
+ *
+ * `Win32_ProcessStartup` with `ShowWindow` 0 (SW_HIDE) keeps a console window from showing for
+ * the new process. The script uses only cmdlets, hashtables and a cast to `[uint16]`, which
+ * PowerShell's Constrained Language Mode allows, and no .NET calls such as `[Console]::`, which
+ * it blocks; output goes through `Write-Output`.
  */
 export function wmiCreateScript(argv: readonly string[], cwd: string): string {
   return [
     "$ProgressPreference='SilentlyContinue'",
     "$ErrorActionPreference='Stop'",
+    "$s=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}",
     `$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${powerShellQuote(windowsCommandLine(argv))};` +
-      `CurrentDirectory=${powerShellQuote(cwd)}}`,
-    'if($r.ReturnValue -ne 0){[Console]::Error.WriteLine("Win32_Process.Create answered $($r.ReturnValue)");exit 1}',
-    "[Console]::Out.WriteLine('pid '+$r.ProcessId)"
+      `CurrentDirectory=${powerShellQuote(cwd)};ProcessStartupInformation=$s}`,
+    'if($r.ReturnValue -ne 0){Write-Output "Win32_Process.Create answered $($r.ReturnValue)";exit 1}',
+    "Write-Output ('pid '+$r.ProcessId)"
   ].join('\n')
 }
 
-/** `powershell.exe` in the Windows folder, and the arguments that run `script` without a profile. */
+/**
+ * `powershell.exe` in the Windows folder (or the stand-in `KURMIS_POWERSHELL_PROGRAM` names), and
+ * the arguments that run `script` without a profile.
+ */
 export function powerShellInvocation(script: string, env: NodeJS.ProcessEnv): { program: string; args: string[] } {
-  const root = env.SystemRoot ?? env.SYSTEMROOT ?? 'C:\\Windows'
   return {
-    program: `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+    program: systemProgram('powershell', env),
     args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]
   }
 }

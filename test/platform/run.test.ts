@@ -61,6 +61,12 @@ test('a program that is not there is an answer, not a thrown error', async () =>
   expect(result.error).toContain('could not be started')
 })
 
+test('an argument spawn refuses at once (a NUL character) is an answer, not a rejected promise', async () => {
+  const result = await runProgram(process.execPath, ['-e', 'a\u0000b'], RUN)
+  expect(result).toMatchObject({ stdout: '', code: null, timedOut: false })
+  expect(result.error).toContain('could not be started')
+})
+
 test.each(['C:\\tools\\claude.cmd', 'C:\\tools\\CLAUDE.CMD', '/tmp/run.bat', 'run.Bat'])('%s is refused, never started', async (program) => {
   expect(invocationFor(program, ['--version'])).toEqual({ refused: expect.stringContaining('batch file') })
   const result = await runProgram(program, ['--version'], RUN)

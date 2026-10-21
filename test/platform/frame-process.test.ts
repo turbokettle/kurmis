@@ -7,6 +7,7 @@ import {
   treeKillCommand,
   type FrameProcessOptions
 } from '../../src/platform/frame-process.ts'
+import { realSystemProgram } from '../../src/platform/system-programs.ts'
 
 const CHILD = resolve('test/platform/frame-child.mjs')
 
@@ -147,11 +148,14 @@ test('sending after the input is closed does nothing', async () => {
 })
 
 test('on Windows the tree is ended with taskkill from System32, found without regard to case', () => {
-  expect(treeKillCommand(4242, 'win32', { SYSTEMROOT: 'D:\\Win' })).toEqual({
-    command: 'D:\\Win\\System32\\taskkill.exe',
+  expect(treeKillCommand(4242, 'win32', { KURMIS_TASKKILL_PROGRAM: '/tmp/taskkill.mjs' })).toEqual({
+    command: '/tmp/taskkill.mjs',
     args: ['/PID', '4242', '/T', '/F']
   })
-  expect(treeKillCommand(7, 'win32', {})?.command).toBe('C:\\Windows\\System32\\taskkill.exe')
+  // Every test has the stand-in, also through an environment that does not name it.
+  expect(treeKillCommand(7, 'win32', {})?.command).toBe(process.env.KURMIS_TASKKILL_PROGRAM)
+  expect(realSystemProgram('taskkill', { SYSTEMROOT: 'D:\\Win' })).toBe('D:\\Win\\System32\\taskkill.exe')
+  expect(realSystemProgram('taskkill', {})).toBe('C:\\Windows\\System32\\taskkill.exe')
   expect(treeKillCommand(7, 'darwin', {})).toBeNull()
   expect(treeKillCommand(7, 'linux', {})).toBeNull()
 })
@@ -163,4 +167,14 @@ test('the line splitter keeps an incomplete line and reports one past the cap', 
   expect(split(Buffer.from('ef\r\n\n'))).toBe(true)
   expect(lines).toEqual(['ab', 'cdef', ''])
   expect(split(Buffer.from('123456789'))).toBe(false)
+})
+
+test('the line splitter refuses a complete line past the cap, also one that arrives in a single chunk', () => {
+  const lines: string[] = []
+  expect(createLineSplitter(8, (line) => lines.push(line))(Buffer.from('ok\n123456789\n'))).toBe(false)
+  expect(lines).toEqual(['ok'])
+  const split = createLineSplitter(8, (line) => lines.push(line))
+  expect(split(Buffer.from('12345'))).toBe(true)
+  expect(split(Buffer.from('6789\n'))).toBe(false)
+  expect(lines).toEqual(['ok'])
 })

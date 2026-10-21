@@ -41,7 +41,7 @@
 import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 import { kurmisEntry } from './detach.ts'
-import { cmdShimInvocation, isAbsoluteWindowsPath, parseCmdShim } from './npm-shim.ts'
+import { cmdShimInvocation, decodeCmdShim, isAbsoluteWindowsPath, parseCmdShim } from './npm-shim.ts'
 import { invocationFor } from './run.ts'
 
 export type ToolName = 'claude' | 'codex'
@@ -69,8 +69,8 @@ export interface ProgramFiles {
   isExecutable(path: string): boolean
   /** The path with every symlink resolved, or null when it cannot be resolved. */
   realPath(path: string): string | null
-  /** The first `maxBytes` bytes of the file as Latin-1 text, or null when it cannot be read. */
-  read(path: string, maxBytes: number): string | null
+  /** The first `maxBytes` bytes of the file, or null when it cannot be read. */
+  read(path: string, maxBytes: number): Uint8Array | null
 }
 
 export interface FindProgramOptions {
@@ -181,8 +181,10 @@ function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string,
 
 /** What a `.cmd`/`.bat` shim on PATH starts, or why kurmis will not start it. */
 function resolveShim(tool: ToolName, shimPath: string, nodePath: string, files: ProgramFiles): ResolvedProgram | { refused: string } {
-  const text = files.read(shimPath, MAX_SHIM_BYTES)
-  if (text === null) return { refused: 'it could not be read' }
+  const bytes = files.read(shimPath, MAX_SHIM_BYTES)
+  if (bytes === null) return { refused: 'it could not be read' }
+  const text = decodeCmdShim(bytes)
+  if (text === null) return { refused: 'it is not a package manager shim kurmis can read (it is not UTF-8 text)' }
   const shim = parseCmdShim(text, shimPath)
   if ('unreadable' in shim) return { refused: `it is not a package manager shim kurmis can read (${shim.unreadable})` }
   if (!files.isFile(shim.target)) return { refused: `it starts ${shim.target}, which does not exist` }
@@ -202,7 +204,8 @@ function resolveShim(tool: ToolName, shimPath: string, nodePath: string, files: 
 }
 
 function startsLikeWindowsProgram(files: ProgramFiles, path: string): boolean {
-  return files.read(path, 2) === 'MZ'
+  const head = files.read(path, 2)
+  return head !== null && head[0] === 0x4d && head[1] === 0x5a // "MZ"
 }
 
 function notFound(tool: ToolName, looked: string[], skipped: string[]): ProgramNotFoundError {
@@ -302,7 +305,7 @@ const realFiles: ProgramFiles = {
     try {
       const buffer = Buffer.alloc(maxBytes)
       const length = readSync(fd, buffer, 0, maxBytes, 0)
-      return buffer.subarray(0, length).toString('latin1')
+      return buffer.subarray(0, length)
     } catch {
       return null
     } finally {

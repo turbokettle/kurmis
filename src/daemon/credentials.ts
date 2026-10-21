@@ -2,9 +2,11 @@
 // `.credentials.json` file the CLI writes on Windows and Linux. Copied from the original router's
 // `src/tools/claude/main/accounts/router/credentials.ts`.
 //
-// The macOS Keychain reader is `KeychainCredentialsReader` in `keychain.ts`. `createTokenSource`
-// in `tokens.ts` puts the two together: on macOS the Keychain item first and this file when the
-// item gives no token, elsewhere this file only.
+// The macOS Keychain reader is `KeychainCredentialsReader` in `keychain.ts`, and the Windows
+// Credential Manager reader `CredentialManagerReader` in `credential-manager.ts`.
+// `createTokenSource` in `tokens.ts` puts them together: on macOS the Keychain item first and
+// this file when the item gives no token, on Windows Credential Manager for a login without
+// this file, on Linux this file only.
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseCredentials, type ClaudeCredentials } from '../core/credentials.ts'

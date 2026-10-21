@@ -9,7 +9,8 @@
 // are refused on every platform rather than run (`docs/architecture.md`, "Windows"). A `.js`,
 // `.cjs` or `.mjs` entry point runs through the Node that runs kurmis (`process.execPath`), so
 // a script works the same on every platform.
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
+import type { Readable } from 'node:stream'
 import { clearTimeout, setTimeout } from 'node:timers'
 import { refusedByGuard, withGuard } from './system-program-guard.ts'
 
@@ -73,16 +74,9 @@ export function runProgram(program: string, args: readonly string[], options: Ru
     return Promise.resolve({ stdout: '', stderr: '', code: null, timedOut: false, outputTooLarge: false, error: guarded })
   }
   const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES
-  return new Promise((resolve) => {
-    const stdout: Buffer[] = []
-    const stderr: Buffer[] = []
-    let stdoutBytes = 0
-    let stderrBytes = 0
-    let timedOut = false
-    let outputTooLarge = false
-    let settled = false
-
-    const child = spawn(invocation.command, invocation.args, {
+  let child: ChildProcessByStdio<null, Readable, Readable>
+  try {
+    child = spawn(invocation.command, invocation.args, {
       // Standard input is closed, so a program that reads it gets end-of-file at once rather
       // than waiting on a terminal until the deadline.
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -91,6 +85,21 @@ export function runProgram(program: string, args: readonly string[], options: Ru
       shell: false,
       windowsHide: true
     })
+  } catch (error) {
+    // spawn throws at once for some arguments, such as one with a NUL character in it, and on
+    // Windows for some program names; that is an answer like any other failure to start.
+    const reason = error instanceof Error ? error.message : String(error)
+    return Promise.resolve({ stdout: '', stderr: '', code: null, timedOut: false, outputTooLarge: false,
+      error: `${program} could not be started: ${reason}` })
+  }
+  return new Promise((resolve) => {
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    let stdoutBytes = 0
+    let stderrBytes = 0
+    let timedOut = false
+    let outputTooLarge = false
+    let settled = false
 
     const finish = (code: number | null, error: string | null): void => {
       if (settled) return

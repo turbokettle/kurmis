@@ -32,8 +32,10 @@
 // Where the daemon is started from:
 // - macOS, from an ssh login or wherever the login Keychain cannot be read: through launchd, in
 //   the user's GUI session (`src/platform/launchd.ts`), since a daemon in the ssh session could
-//   read no Keychain token. When launchd refuses (nobody is logged in at the screen), it is
-//   started directly with a warning.
+//   read no Keychain token. When launchd refuses the job (nobody is logged in at the screen),
+//   when the job's program exits with an error, or when no daemon answers within
+//   `LAUNCHD_ANSWER_TIMEOUT_MS`, the job is removed and the daemon is started directly with a
+//   warning.
 // - Windows, from an ssh login: through WMI, outside the job the ssh server ends with the session.
 // - Everywhere else: directly, detached.
 import { homedir } from 'node:os'
@@ -43,7 +45,7 @@ import { ConfigError, loadConfig } from '../data/config.ts'
 import { readDaemonFile, readKey, readOrCreateKey, removeDaemonFile, type DaemonInfo } from '../data/daemon-file.ts'
 import { configPath, keyPath, logPath } from '../data/paths.ts'
 import { isPlainObject } from '../data/validate.ts'
-import { probeLoginKeychain, SECURITY_PROGRAM } from '../daemon/keychain.ts'
+import { probeLoginKeychain } from '../daemon/keychain.ts'
 import {
   compareVersions,
   controlRequest,
@@ -56,7 +58,8 @@ import {
   type ControlResult
 } from '../daemon/lifecycle.ts'
 import { createThroughWmi, inSshSession, kurmisEntry, nodeForJobs, spawnDetached, type DetachedChild } from '../platform/detach.ts'
-import { startThroughLaunchd } from '../platform/launchd.ts'
+import { startThroughLaunchd, type OneShotJob } from '../platform/launchd.ts'
+import { inheritedTestHooks, systemProgram } from '../platform/system-programs.ts'
 import { windowsAutostartEnvironment } from '../platform/windows-autostart.ts'
 import { kurmisVersion } from '../version.ts'
 
@@ -87,6 +90,8 @@ export interface DaemonClientOptions {
   noLaunchd?: boolean
   /** How long a start may take before it is an error. */
   startTimeoutMs?: number
+  /** How long a start through launchd waits for an answer before it starts the daemon directly. `LAUNCHD_ANSWER_TIMEOUT_MS` by default. */
+  launchdAnswerTimeoutMs?: number
   /**
    * How long `stopDaemon` lets the daemon wait for its open requests (`maxWaitMs`), and waits
    * for it to exit before it signals it.
@@ -96,14 +101,29 @@ export interface DaemonClientOptions {
   stopGraceMs?: number
   /** Told a sentence when something went less well than it should but the command goes on. */
   onWarning?: (text: string) => void
+  /** Sends a signal to a pid; `process.kill` by default. For tests. */
+  kill?: (pid: number, signal: NodeJS.Signals) => void
 }
 
-/** How long a status request may take while looking for the daemon. */
-const FIND_TIMEOUT_MS = 3_000
+/**
+ * How long a status request may take while looking for the daemon. A daemon that is busy, or
+ * runs on a loaded machine, can take seconds to answer, and one that does not answer in time
+ * is reported as not running, so this is generous.
+ */
+const FIND_TIMEOUT_MS = 10_000
 /** How long a direct start may take: Node starting, the bundle loading, and the daemon binding. */
 const DIRECT_START_TIMEOUT_MS = 15_000
 /** A start through launchd or WMI also waits for those to start a program. */
 const OUTSIDE_START_TIMEOUT_MS = 30_000
+/**
+ * How long a start through launchd waits for a daemon to answer before it gives up on the job
+ * and starts the daemon directly. A job launchd cannot start (exit 78, seen when the bundle or
+ * the data folder is on an external volume) or one that hangs would otherwise hold the command
+ * for `OUTSIDE_START_TIMEOUT_MS`.
+ */
+const LAUNCHD_ANSWER_TIMEOUT_MS = 5_000
+/** How often launchd is asked about the job while waiting for it. */
+const LAUNCHD_STATE_POLL_MS = 500
 /**
  * How long `requestProbe` waits. The daemon runs each probe's `claude` with a deadline of its
  * own, and the probes of several logins run side by side, so this is that deadline with room.
@@ -215,10 +235,11 @@ const NOT_FOR_THE_DAEMON = [
 
 /**
  * The environment a daemon started from `env` gets. `KURMIS_HOME` is made absolute, because the
- * daemon runs in another folder (the home folder) than the CLI.
+ * daemon runs in another folder (the home folder) than the CLI. In tests, the stand-ins of this
+ * process are added when `env` lacks them (`inheritedTestHooks`).
  */
-export function daemonEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = { ...env }
+export function daemonEnvironment(env: NodeJS.ProcessEnv, processEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, ...inheritedTestHooks(env, processEnv) }
   for (const name of NOT_FOR_THE_DAEMON) delete out[name]
   if (out.KURMIS_HOME !== undefined && out.KURMIS_HOME !== '') out.KURMIS_HOME = resolve(out.KURMIS_HOME)
   return out
@@ -230,8 +251,8 @@ export function daemonEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
  * as an absolute path, and the test hooks) go on the command line as `--env NAME=VALUE`, which
  * `daemon run` puts into its own environment.
  */
-export function wmiDaemonArguments(node: string, entry: string, env: NodeJS.ProcessEnv): string[] {
-  const assignments = Object.entries(windowsAutostartEnvironment(env)).flatMap(([name, value]) => ['--env', `${name}=${value}`])
+export function wmiDaemonArguments(node: string, entry: string, env: NodeJS.ProcessEnv, processEnv: NodeJS.ProcessEnv = process.env): string[] {
+  const assignments = Object.entries(windowsAutostartEnvironment(env, processEnv)).flatMap(([name, value]) => ['--env', `${name}=${value}`])
   return [node, entry, 'daemon', 'run', ...assignments]
 }
 
@@ -272,7 +293,14 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
           `${String(port)}. Its version is ${order === 1 ? 'newer than' : 'not comparable with'} this kurmis (${version}), so this ` +
           'kurmis does not stop it to move it. Update kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.')
       }
-      await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop })
+      const stopped = await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop })
+      // `refused` means it has already closed its port, which is what a stop does first.
+      if (stopped.kind === 'failed' || (stopped.kind === 'answered' && stopped.status !== 200)) {
+        throw new DaemonError(`The kurmis daemon ${found.version} on port ${String(found.port)} (pid ${String(found.pid)}) could ` +
+          `not be stopped to move it to port ${String(port)}, which ${configPath()} names: ` +
+          `${stopped.kind === 'failed' ? stopped.reason : `it answered HTTP ${String(stopped.status)}`}. ` +
+          'Stop it with "kurmis daemon stop" after setting the old port back, or end that process, and run the command again.')
+      }
     }
   }
   const key = readOrCreateKey()
@@ -280,7 +308,14 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
     const refusing = await keyRefusingDaemon(key)
     if (refusing !== null) throw new DaemonError(keyRefusedMessage(refusing, options.platform ?? process.platform))
     const holder = await portHolder(port, key, FIND_TIMEOUT_MS)
-    if (holder.kind === 'other') throw new DaemonError(portBusyMessage(port, holder.reason))
+    if (holder.kind === 'other') {
+      // daemon.json's daemon that holds the port but did not answer in time is not "another program".
+      const silent = silentDaemon()
+      if (silent !== null && silent.port === port && holder.status === undefined) {
+        throw new DaemonError(notAnsweringMessage(silent, holder.reason, options.platform ?? process.platform))
+      }
+      throw new DaemonError(portBusyMessage(port, holder.reason))
+    }
     if (holder.kind === 'kurmis' && !shouldReplace(holder.status.version, version)) {
       return { connection: connectionOf(holder.status, key), started: false, replaced: null, method: null }
     }
@@ -296,27 +331,45 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
     env: options.env,
     noLaunchd: options.noLaunchd === true,
     keychainReadable: async () => {
-      const program = options.env.KURMIS_SECURITY_PROGRAM || SECURITY_PROGRAM
-      return (await probeLoginKeychain(program)).readable
+      return (await probeLoginKeychain(systemProgram('security', options.env))).readable
     }
   })
   const env = daemonEnvironment(options.env)
   const warn = options.onWarning ?? (() => undefined)
   let child: DetachedChild | null = null
-  let removeJob: (() => Promise<void>) | null = null
   let used: StartMethod = method
   if (method === 'launchd') {
+    const fallBack = (reason: string): void => {
+      warn(`The daemon could not be started through launchd (${reason}), so it is started from this login, where it cannot ` +
+        'read the login Keychain: logins whose token is in the Keychain will not be routed until it is started from a login ' +
+        'at the screen.')
+      used = 'direct'
+    }
+    let job: OneShotJob | null = null
     try {
-      const job = await startThroughLaunchd({
+      job = await startThroughLaunchd({
         programArguments: [nodeForJobs({ env: options.env, platform }), entry, 'daemon', 'start', '--no-launchd'],
         env
       })
-      removeJob = () => job.remove()
     } catch (error) {
-      warn(`The daemon could not be started through launchd (${error instanceof Error ? error.message : String(error)}), so ` +
-        'it is started from this login, where it cannot read the login Keychain: logins whose token is in the Keychain ' +
-        'will not be routed until it is started from a login at the screen.')
-      used = 'direct'
+      fallBack(error instanceof Error ? error.message : String(error))
+    }
+    if (job !== null) {
+      try {
+        const outcome = await waitForLaunchdJob({
+          port,
+          version,
+          job,
+          answerTimeoutMs: options.launchdAnswerTimeoutMs ?? LAUNCHD_ANSWER_TIMEOUT_MS,
+          timeoutMs: options.startTimeoutMs ?? OUTSIDE_START_TIMEOUT_MS
+        })
+        if ('connection' in outcome) return { connection: outcome.connection, started: true, replaced, method: 'launchd' }
+        fallBack(outcome.failure)
+      } finally {
+        // Unloading the job ends what is left in its process group, never a daemon it started,
+        // which is in a session of its own.
+        await job.remove().catch(() => undefined)
+      }
     }
   } else if (method === 'wmi') {
     try {
@@ -334,16 +387,55 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
       throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  try {
-    const connection = await waitForDaemon({
-      port,
-      version,
-      child,
-      timeoutMs: options.startTimeoutMs ?? (used === 'direct' ? DIRECT_START_TIMEOUT_MS : OUTSIDE_START_TIMEOUT_MS)
-    })
-    return { connection, started: true, replaced, method: used }
-  } finally {
-    if (removeJob !== null) await removeJob().catch(() => undefined)
+  const connection = await waitForDaemon({
+    port,
+    version,
+    child,
+    timeoutMs: options.startTimeoutMs ?? (used === 'direct' ? DIRECT_START_TIMEOUT_MS : OUTSIDE_START_TIMEOUT_MS)
+  })
+  return { connection, started: true, replaced, method: used }
+}
+
+interface WaitForLaunchdJob {
+  port: number
+  version: string
+  job: OneShotJob
+  /** How long to wait for an answer while the job has not reported success. */
+  answerTimeoutMs: number
+  /** How long to wait in all once the job's program has exited 0. */
+  timeoutMs: number
+}
+
+/**
+ * Waits for the daemon a one-shot launchd job starts. Gives up, with a reason, when the job's
+ * program exits with a code other than 0, or when no daemon answers within `answerTimeoutMs`.
+ * A job whose program exited 0 has started a daemon that answered it, so then the wait goes on
+ * up to `timeoutMs`.
+ */
+async function waitForLaunchdJob(wait: WaitForLaunchdJob): Promise<{ connection: DaemonConnection } | { failure: string }> {
+  const started = Date.now()
+  let deadline = started + wait.answerTimeoutMs
+  let nextState = started
+  for (;;) {
+    const found = await findDaemon({ env: {} })
+    if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return { connection: found }
+    if (Date.now() >= nextState) {
+      const state = await wait.job.state()
+      nextState = Date.now() + LAUNCHD_STATE_POLL_MS
+      const code = state.lastExitCode
+      if (code !== null && code !== 0) {
+        return {
+          failure: `its job exited with code ${String(code)}` +
+            (code === 78 ? ', which launchd answers when it cannot start the program, for example one on an external volume' : '')
+        }
+      }
+      if (code === 0) deadline = Math.max(deadline, started + wait.timeoutMs)
+    }
+    if (Date.now() >= deadline) {
+      const seconds = wait.answerTimeoutMs / 1000
+      return { failure: `no daemon answered within ${String(seconds)} ${seconds === 1 ? 'second' : 'seconds'} of loading its job` }
+    }
+    await delay(POLL_MS)
   }
 }
 
@@ -460,6 +552,15 @@ async function keyRefusingDaemon(key: string): Promise<DaemonInfo | null> {
   return holder.kind === 'other' && holder.status === 403 ? read.info : null
 }
 
+/** What the CLI says when `daemon.json`'s daemon holds the port but did not answer in time. */
+function notAnsweringMessage(info: { pid: number; port: number }, reason: string, platform: NodeJS.Platform): string {
+  const pid = String(info.pid)
+  const stopIt = platform === 'win32' ? `taskkill /PID ${pid} /F` : `kill ${pid}`
+  return `The kurmis daemon (pid ${pid}, named in daemon.json) holds port ${String(info.port)} but did not answer a status ` +
+    `request (${reason}). It may be busy, or finishing its open requests before it stops. Run the command again in a ` +
+    `moment. If it keeps happening, look in ${logPath()}, and stop it with "${stopIt}".`
+}
+
 /** What the CLI says about a daemon that refuses the key (`keyRefusingDaemon`). */
 function keyRefusedMessage(info: DaemonInfo, platform: NodeJS.Platform): string {
   const pid = String(info.pid)
@@ -501,10 +602,18 @@ export async function stopDaemon(options: DaemonClientOptions): Promise<boolean>
   if (result.kind === 'answered' && result.status !== 200) throw failureOf(result, found, 'the stop request')
   const graceMs = platform === 'win32' ? options.stopGraceMs ?? STOP_GRACE_MS : 0
   if (await waitForExit(found.pid, waitMs + graceMs)) return true
+  const kill = options.kill ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal))
   try {
-    process.kill(found.pid, 'SIGTERM')
-  } catch {
-    return true
+    kill(found.pid, 'SIGTERM')
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return true
+    // EPERM: the daemon runs as another user, or on Windows as administrator while this
+    // command does not.
+    const stopIt = platform === 'win32' ? `taskkill /PID ${String(found.pid)} /F` : `kill ${String(found.pid)}`
+    throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running, and this ` +
+      `command may not end it (${code ?? String(error)}). It probably runs as another user or as administrator; end it from ` +
+      `there with "${stopIt}".`)
   }
   if (await waitForExit(found.pid, KILL_WAIT_MS)) return true
   throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running.`)

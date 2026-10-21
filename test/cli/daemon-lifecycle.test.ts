@@ -258,12 +258,19 @@ describe('kurmis daemon', () => {
     const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
     if (process.platform !== 'darwin') {
       expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 on')
+      if (process.platform === 'win32') {
+        // From ssh on Windows the start goes through WMI. PowerShell is the stand-in of
+        // test/setup.ts, which records the call and fails, so the daemon is started directly.
+        expect(started.stderr).toContain('could not be started outside this ssh session')
+        expect(readFileSync(join(process.env.FAKE_POWERSHELL_DIR ?? '', 'calls.jsonl'), 'utf8')).toContain('Win32_Process')
+      }
       return
     }
     expect(started).toMatchObject({ code: 0, stderr: '' })
     expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 through launchd')
     const calls = readFileSync(join(launchctlDir, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[])
-    expect(calls.map((call) => call[0])).toEqual(['bootstrap', 'bootout'])
+    // The CLI also asks for the job's state (print) while it waits.
+    expect(calls.map((call) => call[0]).filter((name) => name !== 'print')).toEqual(['bootstrap', 'bootout'])
     // The one-shot plist is gone once the daemon answers.
     expect(readdirSync(join(home, 'launchd')).filter((name) => name.endsWith('.plist'))).toEqual([])
     const runs = readFileSync(join(launchctlDir, 'runs.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { program: string[] })

@@ -5,16 +5,19 @@ import { afterAll, describe, expect, it } from 'vitest'
 import {
   createThroughWmi,
   inSshSession,
+  isTemporaryPath,
   kurmisEntry,
   nodeForJobs,
   parseWmiCreateAnswer,
   powerShellInvocation,
   powerShellQuote,
   spawnDetached,
+  temporaryFolders,
   windowsCommandLine,
   wmiCreateScript
 } from '../../src/platform/detach.ts'
 import type { RunResult } from '../../src/platform/run.ts'
+import { realSystemProgram } from '../../src/platform/system-programs.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'kurmis-detach-'))
 afterAll(() => rmSync(scratch, { recursive: true, force: true }))
@@ -49,8 +52,35 @@ describe('nodeForJobs', () => {
     mkdirSync(bin, { recursive: true })
     writeFileSync(join(bin, 'node'), '')
     const realpath = (path: string): string => (path === join(bin, 'node') ? '/cellar/node/22.1.0/bin/node' : path)
-    expect(nodeForJobs({ env: { PATH: bin }, platform: 'darwin', execPath: '/cellar/node/22.1.0/bin/node', realpath }))
+    expect(nodeForJobs({ env: { PATH: bin }, platform: 'darwin', execPath: '/cellar/node/22.1.0/bin/node', realpath, temporaryFolders: [] }))
       .toBe(join(bin, 'node'))
+  })
+
+  it("passes over a node on PATH in fnm's per-shell folder or a temporary folder", () => {
+    const multishell = join(scratch, 'state', 'fnm_multishells', '4242_1700000000000', 'bin')
+    const lasting = join(scratch, 'fnm', 'aliases', 'default', 'bin')
+    for (const folder of [multishell, lasting]) {
+      mkdirSync(folder, { recursive: true })
+      writeFileSync(join(folder, 'node'), '')
+    }
+    const real = '/fnm/node-versions/v22.1.0/installation/bin/node'
+    const realpath = (path: string): string => (path.endsWith('/node') ? real : path)
+    const env = { PATH: `${multishell}:${lasting}` }
+    expect(nodeForJobs({ env, platform: 'darwin', execPath: real, realpath, temporaryFolders: [] })).toBe(join(lasting, 'node'))
+    expect(nodeForJobs({ env: { PATH: multishell }, platform: 'darwin', execPath: real, realpath, temporaryFolders: [] })).toBe(real)
+    // The scratch folder is in the temporary folder, so with the real list every candidate is passed over.
+    expect(nodeForJobs({ env, platform: 'darwin', execPath: real, realpath })).toBe(real)
+  })
+
+  it('tells temporary paths apart, Windows paths without regard to case', () => {
+    expect(isTemporaryPath('/Users/example/.local/state/fnm_multishells/1_2/bin/node', [], 'darwin')).toBe(true)
+    expect(isTemporaryPath('/private/var/folders/ab/T/x/node', ['/private/var/folders'], 'darwin')).toBe(true)
+    expect(isTemporaryPath('/tmpfoo/node', ['/tmp'], 'linux')).toBe(false)
+    expect(isTemporaryPath('/opt/homebrew/bin/node', ['/tmp'], 'darwin')).toBe(false)
+    expect(isTemporaryPath('C:\\Users\\Example\\AppData\\Local\\FNM_MULTISHELLS\\1_2\\node.exe', [], 'win32')).toBe(true)
+    expect(isTemporaryPath('c:\\users\\example\\appdata\\local\\temp\\n\\node.exe', ['C:\\Users\\Example\\AppData\\Local\\Temp\\'], 'win32')).toBe(true)
+    expect(isTemporaryPath('C:\\Program Files\\nodejs\\node.exe', ['C:\\Users\\Example\\AppData\\Local\\Temp'], 'win32')).toBe(false)
+    expect(temporaryFolders({ TMPDIR: '/var/tmp/example' }, 'darwin')).toEqual(expect.arrayContaining(['/var/tmp/example', '/tmp', '/var/folders']))
   })
 
   it('keeps the running node when the one on PATH is another', () => {
@@ -58,7 +88,7 @@ describe('nodeForJobs', () => {
     mkdirSync(bin, { recursive: true })
     writeFileSync(join(bin, 'node'), '')
     const realpath = (path: string): string => path
-    expect(nodeForJobs({ env: { PATH: bin }, platform: 'darwin', execPath: '/usr/local/bin/node22', realpath }))
+    expect(nodeForJobs({ env: { PATH: bin }, platform: 'darwin', execPath: '/usr/local/bin/node22', realpath, temporaryFolders: [] }))
       .toBe('/usr/local/bin/node22')
   })
 
@@ -116,9 +146,24 @@ describe('the WMI start', () => {
     expect(script).toContain("CurrentDirectory='C:\\Users\\o''example'")
   })
 
+  it('doubles every quote character PowerShell ends a single-quoted string at', () => {
+    expect(powerShellQuote('a\u2018b\u2019c\u201ad\u201be')).toBe("'a\u2018\u2018b\u2019\u2019c\u201a\u201ad\u201b\u201be'")
+    expect(powerShellQuote("O\u2019Brien's")).toBe("'O\u2019\u2019Brien''s'")
+  })
+
+  it('creates the process hidden, and uses nothing Constrained Language Mode blocks', () => {
+    const script = wmiCreateScript(['node.exe', 'kurmis.cjs'], 'C:\\Users\\example')
+    expect(script).toContain('New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}')
+    expect(script).toContain(';ProcessStartupInformation=$s}')
+    expect(script).not.toContain('[Console]')
+    expect(script).toContain("Write-Output ('pid '+$r.ProcessId)")
+  })
+
   it('runs powershell from the Windows folder with the script encoded', () => {
     const { program, args } = powerShellInvocation('Write-Output 1', { SystemRoot: 'D:\\Windows' })
-    expect(program).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    // Every test has the stand-in; the real program is in the Windows folder.
+    expect(program).toBe(process.env.KURMIS_POWERSHELL_PROGRAM)
+    expect(realSystemProgram('powershell', { SystemRoot: 'D:\\Windows' })).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
     expect(args.slice(0, 5)).toEqual(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand'])
     expect(Buffer.from(args[5] ?? '', 'base64').toString('utf16le')).toBe('Write-Output 1')
   })
@@ -137,6 +182,6 @@ describe('the WMI start', () => {
         return Promise.resolve(result({ stdout: 'pid 77' }))
       })
     expect(pid).toBe(77)
-    expect(calls[0]?.program).toMatch(/powershell\.exe$/)
+    expect(calls[0]?.program).toBe(process.env.KURMIS_POWERSHELL_PROGRAM)
   })
 })

@@ -5,8 +5,10 @@ import { windowsCommandLine } from '../../src/platform/detach.ts'
 import {
   RUN_ENTRY_DESCRIPTION,
   RUN_KEY,
+  autostartCommandLine,
   autostartScript,
   encodeScript,
+  jscriptString,
   parseRegQuery,
   regAddArgs,
   regDeleteArgs,
@@ -15,9 +17,10 @@ import {
   regQueryArgs,
   registerWindowsAutostart,
   runValueData,
+  sameRunData,
+  scriptHostDisabled,
   systemRoot,
   unregisterWindowsAutostart,
-  vbsString,
   windowsAutostartEnvironment,
   wscriptPath
 } from '../../src/platform/windows-autostart.ts'
@@ -63,7 +66,7 @@ function splitWindowsCommandLine(line: string): string[] {
 
 const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 const ENTRY = 'C:\\Users\\Example User\\AppData\\Roaming\\npm\\node_modules\\kurmis\\dist\\kurmis.cjs'
-const SCRIPT = 'C:\\Users\\Example User\\.kurmis\\autostart.vbs'
+const SCRIPT = 'C:\\Users\\Example User\\.kurmis\\autostart.js'
 const PROGRAM = [NODE, ENTRY, 'daemon', 'start', '--no-launchd']
 
 describe('programs', () => {
@@ -74,17 +77,17 @@ describe('programs', () => {
   })
 
   it('runs reg.exe and wscript.exe from System32, unless the test hook names a reg', () => {
-    expect(regProgram({ SystemRoot: 'C:\\Windows' })).toBe('C:\\Windows\\System32\\reg.exe')
+    expect(regProgram({ SystemRoot: 'C:\\Windows' }, {})).toBe('C:\\Windows\\System32\\reg.exe')
     expect(regProgram({ KURMIS_REG_PROGRAM: '/tmp/reg.mjs' })).toBe('/tmp/reg.mjs')
     expect(regProgram()).toMatch(/fake-reg[\\/]reg\.mjs$/)
-    expect(wscriptPath({ SystemRoot: 'C:\\Windows' })).toBe('C:\\Windows\\System32\\wscript.exe')
+    expect(wscriptPath({ SystemRoot: 'C:\\Windows' }, {})).toBe('C:\\Windows\\System32\\wscript.exe')
   })
 })
 
 describe('the Run value', () => {
   it('runs wscript hidden, without dialogs, on the script', () => {
     expect(runValueData('C:\\Windows\\System32\\wscript.exe', SCRIPT))
-      .toBe('C:\\Windows\\System32\\wscript.exe //B //Nologo "C:\\Users\\Example User\\.kurmis\\autostart.vbs"')
+      .toBe('C:\\Windows\\System32\\wscript.exe //B //Nologo //E:JScript "C:\\Users\\Example User\\.kurmis\\autostart.js"')
   })
 
   it('is a REG_SZ set, queried and deleted under HKCU Run', () => {
@@ -95,12 +98,12 @@ describe('the Run value', () => {
   })
 
   it('keeps its quotes through the command line Node builds for reg.exe', () => {
-    const data = runValueData('C:\\Windows\\System32\\wscript.exe', 'C:\\Users\\Example User\\kurmis data\\autostart.vbs')
+    const data = runValueData('C:\\Windows\\System32\\wscript.exe', 'C:\\Users\\Example User\\kurmis data\\autostart.js')
     const args = regAddArgs(data)
     // Node quotes each argument for CreateProcess with the C runtime's rules, which is what
     // `windowsCommandLine` writes too; reg.exe splits its command line with the same rules.
     const line = windowsCommandLine(['reg.exe', ...args])
-    expect(line).toContain('"C:\\Windows\\System32\\wscript.exe //B //Nologo \\"C:\\Users\\Example User\\kurmis data\\autostart.vbs\\""')
+    expect(line).toContain('"C:\\Windows\\System32\\wscript.exe //B //Nologo //E:JScript \\"C:\\Users\\Example User\\kurmis data\\autostart.js\\""')
     expect(splitWindowsCommandLine(line).slice(1)).toEqual(args)
   })
 
@@ -115,28 +118,46 @@ describe('the Run value', () => {
     expect(parseRegQuery(out, 'missing')).toBeNull()
     expect(parseRegQuery('', 'kurmis')).toBeNull()
   })
+
+  it('matches a value read back in the OEM code page against the one written', () => {
+    const written = 'C:\\Windows\\System32\\wscript.exe //B //Nologo //E:JScript "C:\\Users\\Zoë Ärger\\.kurmis\\autostart.js"'
+    // reg.exe printed ë and Ä in code page 850; read as UTF-8 each became a replacement character.
+    const read = written.replace('ë', '\ufffd').replace('Ä', '\ufffd')
+    expect(sameRunData(read, written)).toBe(true)
+    expect(sameRunData(written, written)).toBe(true)
+    expect(sameRunData(read.replace('Users', 'Usr'), written)).toBe(false)
+    expect(sameRunData('C:\\a\ufffd\ufffdb', 'C:\\aüb')).toBe(true)
+    expect(sameRunData('C:\\ab', 'C:\\aüb')).toBe(false)
+  })
+
+  it('reads whether Windows Script Host is turned off', () => {
+    const answer = (stdout: string, code = 0) => ({ stdout, stderr: '', code, timedOut: false, outputTooLarge: false, error: null })
+    const key = '\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows Script Host\\Settings\r\n'
+    expect(scriptHostDisabled(answer(`${key}    Enabled    REG_DWORD    0x0\r\n`))).toBe(true)
+    expect(scriptHostDisabled(answer(`${key}    Enabled    REG_SZ    0\r\n`))).toBe(true)
+    expect(scriptHostDisabled(answer(`${key}    Enabled    REG_DWORD    0x1\r\n`))).toBe(false)
+    expect(scriptHostDisabled(answer('', 1))).toBe(false)
+  })
 })
 
 describe('the logon script', () => {
-  it('doubles quotes in VBScript strings and refuses line breaks', () => {
-    expect(vbsString('a "b" c')).toBe('"a ""b"" c"')
-    expect(vbsString('')).toBe('""')
-    expect(() => vbsString('a\nb')).toThrow(/line break/)
+  it('escapes backslashes and quotes in JScript strings and refuses line breaks', () => {
+    expect(jscriptString('a "b" C:\\x\\')).toBe('"a \\"b\\" C:\\\\x\\\\"')
+    expect(jscriptString('')).toBe('""')
+    expect(() => jscriptString('a\nb')).toThrow(/line break/)
+    expect(() => jscriptString('a\u2028b')).toThrow(/line break/)
   })
 
-  it('sets the kurmis variables, the folder, and starts node hidden without waiting', () => {
-    const text = autostartScript({
-      programArguments: PROGRAM,
-      environment: { KURMIS_HOME: 'D:\\kurmis data' },
-      cwd: 'C:\\Users\\Example User'
-    })
-    expect(text.split('\r\n')).toEqual([
-      "' Written by kurmis setup: starts the kurmis daemon at logon without a console window.",
-      "' kurmis setup --undo removes it.",
-      'Set shell = CreateObject("WScript.Shell")',
-      'shell.Environment("Process")("KURMIS_HOME") = "D:\\kurmis data"',
-      'shell.CurrentDirectory = "C:\\Users\\Example User"',
-      'shell.Run """C:\\Program Files\\nodejs\\node.exe"" ""C:\\Users\\Example User\\AppData\\Roaming\\npm\\node_modules\\kurmis\\dist\\kurmis.cjs"" daemon start --no-launchd", 0, False',
+  it('sets the folder and starts node hidden without waiting, with the kurmis variables on its command line', () => {
+    const script = { programArguments: PROGRAM, environment: { KURMIS_HOME: 'D:\\kurmis data' }, cwd: 'C:\\Users\\Example User' }
+    const command = autostartCommandLine(script)
+    expect(splitWindowsCommandLine(command)).toEqual([...PROGRAM, '--env', 'KURMIS_HOME=D:\\kurmis data'])
+    expect(autostartScript(script).split('\r\n')).toEqual([
+      '// Written by kurmis setup: starts the kurmis daemon at logon without a console window.',
+      '// kurmis setup --undo removes it.',
+      'var shell = new ActiveXObject("WScript.Shell");',
+      'shell.CurrentDirectory = "C:\\\\Users\\\\Example User";',
+      `shell.Run(${jscriptString(command)}, 0, false);`,
       ''
     ])
   })
@@ -145,7 +166,7 @@ describe('the logon script', () => {
     expect(windowsAutostartEnvironment({
       KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe', KURMIS_ENTRY: '',
       ANTHROPIC_API_KEY: 'sk-ant-api03-fake', Path: 'C:\\Windows', USERPROFILE: 'C:\\Users\\Example User'
-    })).toEqual({ KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe' })
+    }, {})).toEqual({ KURMIS_HOME: 'D:\\k', KURMIS_CLAUDE_BIN: 'C:\\c.exe' })
   })
 
   it('makes a relative KURMIS_HOME absolute, since the daemon starts in the profile folder', () => {
@@ -164,7 +185,7 @@ describe('the logon script', () => {
 
 describe('registering through reg.exe', () => {
   const regDir = (): string => process.env.FAKE_REG_DIR ?? ''
-  const scriptPath = (): string => join(process.env.HOME ?? '', 'win', 'Zoë Example', 'autostart.vbs')
+  const scriptPath = (): string => join(process.env.HOME ?? '', 'win', 'Zoë Example', 'autostart.js')
   const env = (): NodeJS.ProcessEnv => ({ ...process.env, SystemRoot: 'C:\\Windows', USERPROFILE: 'C:\\Users\\Zoë Example', KURMIS_HOME: 'C:\\Users\\Zoë Example\\.kurmis' })
   const regCalls = (): string[][] => {
     const file = join(regDir(), 'calls.jsonl')
@@ -181,14 +202,19 @@ describe('registering through reg.exe', () => {
     const first = await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })
     expect(first).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
     const bytes = readFileSync(scriptPath())
-    expect(bytes.subarray(2).toString('utf16le')).toContain('shell.Environment("Process")("KURMIS_HOME") = "C:\\Users\\Zoë Example\\.kurmis"')
-    expect(bytes.subarray(2).toString('utf16le')).toContain('shell.CurrentDirectory = "C:\\Users\\Zoë Example"')
+    const text = bytes.subarray(2).toString('utf16le')
+    expect(text).toContain(jscriptString(autostartCommandLine({ programArguments: PROGRAM, environment: { KURMIS_HOME: 'C:\\Users\\Zoë Example\\.kurmis' }, cwd: '' }))
+      .slice(1, -1))
+    expect(text).toContain('shell.CurrentDirectory = "C:\\\\Users\\\\Zoë Example";')
     const query = await regFor()(regQueryArgs())
-    expect(parseRegQuery(query.stdout, 'kurmis')).toEqual({ type: 'REG_SZ', data: runValueData('C:\\Windows\\System32\\wscript.exe', scriptPath()) })
+    expect(parseRegQuery(query.stdout, 'kurmis')).toEqual({ type: 'REG_SZ', data: runValueData(wscriptPath(), scriptPath()) })
 
     const second = await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })
     expect(second).toEqual({ changed: false, where: RUN_ENTRY_DESCRIPTION })
-    expect(regCalls().map((call) => call[0])).toEqual(['query', 'add', 'query', 'query'])
+    const runCalls = regCalls().filter((call) => call[1] === RUN_KEY).map((call) => call[0])
+    expect(runCalls).toEqual(['query', 'add', 'query', 'query'])
+    // Each register asks whether Windows Script Host is turned off, for the user and the machine.
+    expect(regCalls().filter((call) => call[1]?.includes('Windows Script Host')).length).toBe(4)
   })
 
   it('rewrites a script or a value that differs', async () => {
@@ -206,6 +232,29 @@ describe('registering through reg.exe', () => {
     expect(existsSync(scriptPath())).toBe(false)
     expect((await regFor()(regQueryArgs())).code).toBe(1)
     expect(await unregisterWindowsAutostart({ env: env(), scriptPath: scriptPath() })).toEqual({ changed: false, where: RUN_ENTRY_DESCRIPTION })
+  })
+
+  it('writes no entry, and says so, when wscript.exe is missing or Windows Script Host is turned off', async () => {
+    const missing = await registerWindowsAutostart({ env: { ...env(), KURMIS_WSCRIPT_PROGRAM: join(process.env.HOME ?? '', 'no-wscript.exe') },
+      programArguments: PROGRAM, scriptPath: scriptPath() })
+    expect(missing.where).toBeNull()
+    expect(missing.warning).toContain('no-wscript.exe does not exist, so Windows Script Host')
+    await regFor()(['add', 'HKCU\\Software\\Microsoft\\Windows Script Host\\Settings', '/v', 'Enabled', '/t', 'REG_SZ', '/d', '0', '/f'])
+    const off = await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })
+    expect(off.warning).toContain('Windows Script Host, which starts the daemon at logon without a console window, is turned off')
+    expect(regCalls().some((call) => call[1] === RUN_KEY && call[0] === 'add')).toBe(false)
+    expect(existsSync(scriptPath())).toBe(false)
+  })
+
+  it('removes the VBScript an older kurmis wrote', async () => {
+    const old = join(join(process.env.HOME ?? '', 'win', 'Zoë Example'), 'autostart.vbs')
+    mkdirSync(join(process.env.HOME ?? '', 'win', 'Zoë Example'), { recursive: true })
+    writeFileSync(old, 'old')
+    expect((await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })).changed).toBe(true)
+    expect(existsSync(old)).toBe(false)
+    writeFileSync(old, 'old')
+    await unregisterWindowsAutostart({ env: env(), scriptPath: scriptPath() })
+    expect(existsSync(old)).toBe(false)
   })
 
   it('answers a warning when reg.exe refuses', async () => {
