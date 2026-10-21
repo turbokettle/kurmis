@@ -68,7 +68,7 @@ function escaped(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-describe.skipIf(process.platform === 'win32')('the kurmis daemon, end to end', () => {
+describe('the kurmis daemon, end to end', () => {
   it('starts, connects a second start to the first, and stops only once its open request has finished', async () => {
     const world = await createWorld()
     world.signInDefaultClaude()

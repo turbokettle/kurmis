@@ -6,6 +6,7 @@ import { backupPathFor } from '../../../src/cli/global-settings.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
 import type { AutostartOptions, AutostartResult } from '../../../src/platform/autostart.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
+import { canCreateSymlinks } from '../../host.ts'
 
 const home = process.env.HOME as string
 const kurmisHome = process.env.KURMIS_HOME as string
@@ -137,7 +138,8 @@ describe('kurmis setup', () => {
     expect(statSync(backupPathFor(settingsPath)).mode & 0o777).toBe(0o600)
   })
 
-  it.skipIf(process.platform === 'win32')('warns that the key goes to the target of a linked settings file', async () => {
+  // A symlink to a file needs Developer Mode or an administrator on Windows.
+  it.runIf(canCreateSymlinks())('warns that the key goes to the target of a linked settings file', async () => {
     const dotfiles = join(home, 'dotfiles')
     mkdirSync(dotfiles, { recursive: true })
     mkdirSync(join(home, '.claude'), { recursive: true })

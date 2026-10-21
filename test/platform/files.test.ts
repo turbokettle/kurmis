@@ -92,6 +92,7 @@ describe('restrictToUserSync', () => {
     expect(userOnlyMode(0o600)).toBe(0o600)
   })
 
+  // Windows has no group and other bits for chmod to clear.
   it.skipIf(process.platform === 'win32')('changes the file and answers its old mode, or null when it was already user-only', () => {
     const file = fileWithMode(0o644)
     try {
@@ -103,11 +104,13 @@ describe('restrictToUserSync', () => {
     }
   })
 
-  it.skipIf(process.platform === 'win32')('does nothing on Windows', () => {
+  it('does nothing on Windows', () => {
     const file = fileWithMode(0o644)
     try {
+      // Read back rather than 0o644, since Windows reports 0o666 for any file that is not read-only.
+      const before = statSync(file.path).mode
       expect(restrictToUserSync(file.path, 'win32')).toBeNull()
-      expect(statSync(file.path).mode & 0o777).toBe(0o644)
+      expect(statSync(file.path).mode).toBe(before)
     } finally {
       file.done()
     }

@@ -4,6 +4,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { normaliseLinkTarget } from '../../src/platform/links.ts'
 import { writeCodexAuth, writeCodexScenario, type FakeCodexRecord } from '../fakes/index.ts'
 import { createWorld, waitUntil, type World } from './harness.ts'
 
@@ -39,7 +40,7 @@ function sessionStarts(world: World): Array<Extract<FakeCodexRecord, { event: 's
   return world.codexRecord().filter((line): line is Extract<FakeCodexRecord, { event: 'start' }> => line.event === 'start' && line.mode === 'other')
 }
 
-describe.skipIf(process.platform === 'win32')('kurmis codex', () => {
+describe('kurmis codex', () => {
   it('prepares the home of --login codex:work from ~/.codex and starts codex with it', async () => {
     const world = await createWorld({ config: { logins: [{ id: 'codex:work' }] } })
     const codexHome = writeDefaultCodexHome(world)
@@ -55,11 +56,12 @@ describe.skipIf(process.platform === 'win32')('kurmis codex', () => {
     expect(starts[0]!.envNames).toContain('CODEX_HOME')
     expect(starts[0]!.envNames.filter((name) => name.startsWith('ANTHROPIC_'))).toEqual([])
 
-    expect(statSync(home).mode & 0o777).toBe(0o700)
+    // Windows has no mode bits.
+    if (process.platform !== 'win32') expect(statSync(home).mode & 0o777).toBe(0o700)
     // The real folders are linked, except scratch folders and a name that says it holds secrets.
     for (const folder of ['sessions', 'skills', 'log']) {
       expect(lstatSync(join(home, folder)).isSymbolicLink(), folder).toBe(true)
-      expect(readlinkSync(join(home, folder))).toBe(join(codexHome, folder))
+      expect(normaliseLinkTarget(readlinkSync(join(home, folder)), process.platform)).toBe(join(codexHome, folder))
     }
     for (const name of ['tmp', '.tmp', 'secrets', 'auth.json', 'history.jsonl', 'fake-codex-scenario.json']) {
       expect(existsSync(join(home, name)), name).toBe(false)
@@ -70,7 +72,7 @@ describe.skipIf(process.platform === 'win32')('kurmis codex', () => {
     expect(lstatSync(join(home, 'AGENTS.md')).isFile()).toBe(true)
     expect(readFileSync(join(home, 'AGENTS.md'), 'utf8')).toBe('# Shared instructions\n')
     const merged = readFileSync(join(home, 'config.toml'), 'utf8')
-    expect(statSync(join(home, 'config.toml')).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect(statSync(join(home, 'config.toml')).mode & 0o777).toBe(0o600)
     expect(merged).toContain('model = "gpt-5"')
     expect(merged).toContain('approval_policy = "on-request"')
     expect(merged).toContain('command = "docs-server"')

@@ -4,6 +4,7 @@
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { normaliseLinkTarget } from '../../src/platform/links.ts'
 import { readClaudeCredentials, writeCodexAuth } from '../fakes/index.ts'
 import { createWorld, type World } from './harness.ts'
 
@@ -16,7 +17,7 @@ function loginIds(world: World): unknown[] {
   return world.readConfig().logins.map((login) => login.id)
 }
 
-describe.skipIf(process.platform === 'win32')('kurmis login, set, list and logout', () => {
+describe('kurmis login, set, list and logout', () => {
   it('adds a Claude login with its own folder and config entry, without the email', async () => {
     const world = await createWorld()
     const added = await world.kurmis(['login', 'claude', '--name', 'work', '--label', 'Work'], { env: { FAKE_CLAUDE_EMAIL: 'work@example.com' } })
@@ -26,7 +27,8 @@ describe.skipIf(process.platform === 'win32')('kurmis login, set, list and logou
 
     // The fake signed in with the login's folder as its config folder.
     const folder = world.loginFolder('claude:work')
-    expect(statSync(folder).mode & 0o777).toBe(0o700)
+    // Windows has no mode bits.
+    if (process.platform !== 'win32') expect(statSync(folder).mode & 0o777).toBe(0o700)
     expect(readClaudeCredentials(folder)?.accessToken).toMatch(/^sk-ant-oat01-fake-/)
     expect(world.claudeRecord().filter((line) => line.kind === 'login')).toEqual([expect.objectContaining({ credentialsDir: folder })])
     // ~/.claude stays the machine's own.
@@ -249,7 +251,7 @@ function filesBelow(folder: string): Record<string, string> {
   return files
 }
 
-describe.skipIf(process.platform === 'win32')('Codex logins and the folders they link to', () => {
+describe('Codex logins and the folders they link to', () => {
   it('logs a Codex login out without deleting what its links point to', async () => {
     const world = await createWorld()
     const codexHome = writeDefaultCodexHome(world)
@@ -267,7 +269,7 @@ describe.skipIf(process.platform === 'win32')('Codex logins and the folders they
     expect(loginRun).toMatchObject({ codexHome: folder, authFile: true })
     // The home was prepared before the sign-in.
     expect(lstatSync(join(folder, 'sessions')).isSymbolicLink()).toBe(true)
-    expect(readlinkSync(join(folder, 'sessions'))).toBe(join(codexHome, 'sessions'))
+    expect(normaliseLinkTarget(readlinkSync(join(folder, 'sessions')), process.platform)).toBe(join(codexHome, 'sessions'))
     expect(lstatSync(join(folder, 'skills')).isSymbolicLink()).toBe(true)
 
     // A session on the login writes its rollout into the shared folder.

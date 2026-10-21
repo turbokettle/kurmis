@@ -94,13 +94,20 @@ test('a refused rate-limit read is an error with a fixed sentence, on a signed-i
   expectFixedError(result)
 })
 
+/**
+ * The deadline of a probe whose CLI stops answering part-way. The fake CLI has to start and answer
+ * the first requests before it, so the probe knows the login is signed in, and Node starts more
+ * slowly on Windows.
+ */
+const HANG_DEADLINE_MS = process.platform === 'win32' ? 6_000 : 1_500
+
 test('a rate-limit read that never answers is killed at the deadline', async () => {
   const { id, home, record, env } = login({ rateLimitsHang: true })
   writeCodexAuth(home)
   const started = Date.now()
-  const result = await probeCodexUsage(id, { env, timeoutMs: 1_500 })
-  expect(Date.now() - started).toBeLessThan(8_000)
-  expect(result).toEqual({ ok: false, signedIn: true, reason: 'timeout', error: 'The usage probe timed out after 1.5 s.' })
+  const result = await probeCodexUsage(id, { env, timeoutMs: HANG_DEADLINE_MS })
+  expect(Date.now() - started).toBeLessThan(HANG_DEADLINE_MS + 6_500)
+  expect(result).toEqual({ ok: false, signedIn: true, reason: 'timeout', error: `The usage probe timed out after ${String(HANG_DEADLINE_MS / 1000)} s.` })
   expect(isRunning(start(record)?.pid ?? 0)).toBe(false)
 })
 
