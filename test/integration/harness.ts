@@ -12,8 +12,8 @@
 // passes one.
 //
 // Every daemon a world's commands start is stopped when the test ends (`kurmis daemon stop`),
-// and any pid that a `daemon.json` of the world named and that still runs this world's bundle is
-// killed after that.
+// and any pid that a `daemon.json` of the world named and that still runs a bundle the world's
+// commands ran (its own, or one passed in `RunOptions.bundle`) is killed after that.
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -210,6 +210,8 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
 
   /** Every daemon pid a `daemon.json` of this world has named. */
   const daemonPids = new Set<number>()
+  /** Every bundle this world's commands ran, so a daemon of an older bundle is stopped too. */
+  const bundlesRun = new Set<string>([bundle])
   const noteDaemon = (): void => {
     const info = readDaemonInfo()
     if (info !== null) daemonPids.add(info.pid)
@@ -229,6 +231,7 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
       else childEnv[name] = value
     }
     return new Promise((resolve, reject) => {
+      bundlesRun.add(runOptions.bundle ?? bundle)
       const child = spawn(process.execPath, [runOptions.bundle ?? bundle, ...args], {
         env: childEnv,
         cwd: runOptions.cwd ?? work,
@@ -305,7 +308,7 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
         noteDaemon()
       }
       for (const pid of daemonPids) {
-        if (runsBundle(pid, bundle)) {
+        if ([...bundlesRun].some((ran) => runsBundle(pid, ran))) {
           try {
             process.kill(pid, 'SIGKILL')
           } catch { /* Gone already. */ }
@@ -329,12 +332,17 @@ function processAlive(pid: number): boolean {
   }
 }
 
-/** Whether `pid` is alive and its command line names `bundle`, so a reused pid is never killed. */
+/**
+ * Whether `pid` is alive and its command line names `bundle`, so a reused pid is never killed.
+ * Kurmis starts the daemon from the bundle's path with symlinks resolved (`/private/tmp/…` for
+ * `/tmp/…` on macOS), so both forms count.
+ */
 function runsBundle(pid: number, bundle: string): boolean {
   if (!processAlive(pid)) return false
   if (process.platform === 'win32') return true
   try {
-    return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).includes(bundle)
+    const command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+    return command.includes(bundle) || command.includes(realpathSync(bundle))
   } catch {
     return false
   }
