@@ -1,20 +1,19 @@
-// Plan usage of one subscription: the one model the whole app reads, the table of
-// windows a Claude plan reports, and the two rules for choosing between snapshots.
+// Plan usage of one subscription login: the shape it is kept in, the table of windows a Claude
+// plan reports, and the rule for choosing between two snapshots. Copied from the original router's
+// `src/shared/claude-usage.ts`.
 //
-// `AccountUsage` is the only shape a login's usage is kept in. A running session's
-// `rate_limit_event` folds into its account's snapshot in main, and a session view reads
-// that snapshot back with `usageForSession`.
+// `AccountUsage` is the only shape a login's usage is kept in.
 //
-// Claude has two sources. A usage probe (a headless `claude` run that answers the
-// `get_usage` control request) gives every window in percent with ISO reset times. A
-// running session's `rate_limit_event` frames give the same windows as fractions with
-// unix-second reset times, plus the window that event's status is about; main converts
-// both to the shape below before merging.
+// Claude has two sources. A usage probe (a short-lived `claude` that answers the `get_usage`
+// control request) gives every window in percent with ISO reset times. The
+// `anthropic-ratelimit-unified-*` headers on every answer the proxy forwards give the same
+// windows as fractions with unix-second reset times, plus the window the answer's status is
+// about. Both are converted to the shape below before they are merged.
 //
-// Codex has the same two: `account/rateLimits/read` on a connection bound to the
-// account, and `account/rateLimits/updated` from a running session. Its windows are
-// not a fixed set, so they land in `windows` rather than in the named fields.
-import { accountKey, defaultAccountIdFor, type AccountProvider } from './accounts.ts'
+// Codex has one source here: `account/rateLimits/read` on a `codex app-server` started on the
+// login. Its windows are not a fixed set, so they land in `windows` rather than in the named
+// fields.
+import type { AccountProvider } from './accounts.ts'
 
 /** One rate-limit window. `utilization` is a percentage, 0-100 (it can exceed 100). */
 export type UsageWindow = {
@@ -95,7 +94,10 @@ export type AccountUsage = {
   provider: AccountProvider
   /** When this snapshot was taken (ms since epoch). */
   fetchedAt: number
-  /** `probe` = a `get_usage` answer; `session` = the latest `rate_limit_event` of a live session. */
+  /**
+   * `probe` = a `get_usage` or `account/rateLimits/read` answer; `session` = the rate-limit
+   * headers of an answer the proxy forwarded.
+   */
   source: 'probe' | 'session'
   /** Raw plan name from the CLI: `max`, `pro`, `team`, `enterprise`. */
   subscriptionType: string | null
@@ -128,15 +130,9 @@ export type AccountUsage = {
   limited: LimitedWindow | null
   /** Set when the last probe failed; the window fields then hold the previous snapshot. */
   error: string | null
-  /** Which machine the account lives on. Stamped by the shell, never stored. */
-  backendId?: string
 }
 
-/**
- * Every account's usage, keyed by `accountKey(backendId, accountId)`: the bare id
- * for a local account, `<backendId>#<id>` for one on another machine.
- * Missing key = never fetched.
- */
+/** Every login's usage, keyed by login id. A missing key means it was never fetched. */
 export type AccountUsageMap = Record<string, AccountUsage>
 
 
@@ -159,26 +155,22 @@ interface ClaudeWindowSpec {
   /** The key the CLI writes, in `unifiedWindows` and in `get_usage`'s `rate_limits`. */
   key: string
   field: ClaudeWindowField
-  /** The name a card writes beside the bar. */
+  /** The window's name in a status line, such as `5 hour`. */
   label: string
-  /** The abbreviation a compact display writes instead. */
+  /** A shorter name for a narrow display, such as `5h`. */
   short: string
   windowDurationMins: number
   /**
-   * Whether running out of this window stops every turn. A window that meters one
-   * model stops only that model's turns, so it is drawn but is not what the plan
-   * runs out of.
+   * Whether running out of this window stops every request. A window that meters one model
+   * stops only that model's requests, so it is not what the plan runs out of.
    */
   plan: boolean
-  /** What the limit behind the window is, for a hover. */
-  title?: string
 }
 
 /**
- * Every window a Claude plan reports, in the order they are drawn. A Claude window's
- * length is not in the wire data, because the set is fixed: the five-hour window is
- * five hours and every other one is a week. Writing it out here is what lets a caller
- * tell the weekly windows apart from the rest.
+ * Every window a Claude plan reports, in display order. A Claude window's length is not in the
+ * wire data, because the set is fixed: the five-hour window is five hours and every other one
+ * is a week. Writing it out here is what lets a caller tell the weekly windows apart.
  */
 export const CLAUDE_WINDOWS: readonly ClaudeWindowSpec[] = [
   {
@@ -203,10 +195,7 @@ export const CLAUDE_WINDOWS: readonly ClaudeWindowSpec[] = [
     label: '7 day (extra usage)',
     short: '7d+',
     windowDurationMins: SEVEN_DAY_MINS,
-    plan: true,
-    title:
-      'The seven-day window with pay-as-you-go extra usage counted in. It shares its reset ' +
-      'with the plain seven-day window and is the higher of the two.'
+    plan: true
   },
   {
     key: 'seven_day_opus',
@@ -249,9 +238,8 @@ export function isoFromSeconds(value: unknown): string | null {
 
 
 /**
- * Which of two snapshots of the same row to keep: the newer one. A fresh snapshot
- * with the same timestamp replaces the one held, so a late cache reply cannot undo a
- * live sample and a re-read of the same moment still lands.
+ * Which of two snapshots of the same login to keep: the newer one. A snapshot with the same
+ * timestamp replaces the one held, so a re-read of the same moment still lands.
  */
 export function newerUsage(current: AccountUsage | undefined, incoming: AccountUsage): AccountUsage {
   return current === undefined || incoming.fetchedAt >= current.fetchedAt ? incoming : current
@@ -265,77 +253,4 @@ export function mergeUsageMaps(
   const next = { ...current }
   for (const [key, value] of Object.entries(incoming)) next[key] = newerUsage(next[key], value)
   return next
-}
-
-/**
- * Which of two machines' snapshots of one login to show. The limits belong to the
- * account and are the same from every machine, so a machine whose probe found no
- * login — or failed — is only shown when no machine has numbers at all; between two
- * that have them, the newest wins.
- */
-export function preferredUsage(
-  current: AccountUsage | undefined,
-  candidate: AccountUsage | undefined
-): AccountUsage | undefined {
-  if (candidate === undefined) return current
-  if (current === undefined) return candidate
-  if (candidate.rateLimitsAvailable !== current.rateLimitsAvailable) {
-    return candidate.rateLimitsAvailable ? candidate : current
-  }
-  return candidate.fetchedAt > current.fetchedAt ? candidate : current
-}
-
-/** One machine's row for a login: which machine, and the account id there. */
-interface UsageRowAddress {
-  backendId?: string | null
-  accountId: string
-}
-
-/**
- * The snapshot of one login, taken from the machines that have a row for it. This is
- * the one join from the account map to a login; the session view, the account card
- * and the sidebar all read the same answer through it.
- */
-export function usageForAccount(
-  usage: AccountUsageMap,
-  rows: readonly UsageRowAddress[]
-): AccountUsage | undefined {
-  let best: AccountUsage | undefined
-  for (const row of rows) best = preferredUsage(best, usage[accountKey(row.backendId ?? undefined, row.accountId)])
-  return best
-}
-
-/** What the join needs to know about a session: which machine and which login. */
-interface UsageSessionAddress {
-  runner?: AccountProvider | null
-  /** Null selects Auto for Claude and the default login for Codex. */
-  accountId?: string | null
-  servingAccountId?: string | null
-  backendId?: string | null
-}
-
-/**
- * The snapshot the session view draws: the login the session is set to, or for a Claude
- * session on Auto the login that served its last request. Auto has no account usage to
- * show until an account has answered.
- *
- * On Auto, that login's refusal is dropped from the snapshot (`status` null), and the
- * windows are kept. The login can be refused after the session's last turn, by other
- * sessions' requests, and the router sends this session's next request to a login that
- * still has room. The status line and the end-of-turn line read `status: 'rejected'` as
- * "this session's next turn is refused", which is then false. When the whole pool is out,
- * the session's own turn is refused and its result and wait row say so.
- */
-export function usageForSession(
-  usage: AccountUsageMap,
-  session: UsageSessionAddress
-): AccountUsage | undefined {
-  const auto = session.runner !== 'codex' && session.accountId == null
-  const accountId = session.runner === 'codex'
-    ? session.accountId ?? defaultAccountIdFor('codex')
-    : session.servingAccountId ?? session.accountId
-  if (accountId == null) return undefined
-  const found = usageForAccount(usage, [{ backendId: session.backendId ?? undefined, accountId }])
-  if (!auto || found?.status !== 'rejected') return found
-  return { ...found, status: null }
 }

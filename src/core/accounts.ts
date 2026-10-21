@@ -1,61 +1,98 @@
-/**
- * One id space covers Claude and Codex logins, so no second field is needed to tell
- * them apart. A Codex id is `codex:<local>`. A Claude id is `default` or a short random
- * string. Only the local half names the account's directory, because a colon is not
- * allowed in a Windows path.
- */
-const LOCAL_BACKEND_ID = 'local'
+// Login ids and the per-login routing settings. Adapted from the original router's `src/shared/accounts.ts`
+// and the limit rules of `src/tools/claude/core/account-rows.ts`.
+//
+// A login id carries its provider: `claude:<name>` or `codex:<name>`. Only `<name>` names the
+// login's folder on disk (`claude/<name>/`, `codex/<name>/` under the data folder), because a
+// colon is not allowed in a Windows path. The machine's own logins are `claude:default` and
+// `codex:default`.
 
 export type AccountProvider = 'claude' | 'codex'
 
 export const ACCOUNT_PROVIDERS: readonly AccountProvider[] = ['claude', 'codex']
 
+/** The name part of the machine's own login, for either provider. */
+export const DEFAULT_LOGIN_NAME = 'default'
+
+/** The machine's own `~/.claude` login. Always listed and never removable. */
+export const CLAUDE_DEFAULT_ACCOUNT_ID = 'claude:default'
+
+/** The machine's own `~/.codex` login. Always listed and never removable. */
+export const CODEX_DEFAULT_ACCOUNT_ID = 'codex:default'
+
+/** The five-hour routing limit a login has until one is set, in percent. */
+export const DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100
+
+/** The weekly routing limit a login has until one is set, in percent. */
+export const DEFAULT_WEEKLY_LIMIT_PERCENT = 100
+
+/** Whether a newly added login is opted in to routing. */
+export const DEFAULT_AUTO_ROUTE = true
+
 /**
- * The id of the machine's own `~/.claude` login. Always in the account list and
- * never removable. An explicit id pins a Claude session; null selects Auto.
+ * A login name: lower-case letters, digits, `-` and `_`, starting with a letter or digit, at
+ * most 32 characters. Lower case only, because the folder it names must not collide with
+ * another on a case-insensitive file system.
  */
-export const DEFAULT_ACCOUNT_ID = 'default'
+const LOGIN_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
-const CODEX_ACCOUNT_PREFIX = 'codex:'
+/** Names Windows reserves for devices, which cannot be folder names there. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/
 
-/** The id of the machine's own `~/.codex` login. */
-export const CODEX_DEFAULT_ACCOUNT_ID = `${CODEX_ACCOUNT_PREFIX}${DEFAULT_ACCOUNT_ID}`
-
-export function isCodexAccountId(id: string | null | undefined): boolean {
-  return typeof id === 'string' && id.startsWith(CODEX_ACCOUNT_PREFIX)
+/** Whether `name` can be the name part of a login id, and so a folder name on every platform. */
+export function isLoginName(name: string): boolean {
+  return LOGIN_NAME.test(name) && !WINDOWS_RESERVED.test(name)
 }
 
-/** An id with no prefix is a Claude login. */
-export function accountProviderOf(id: string | null | undefined): AccountProvider {
-  return isCodexAccountId(id) ? 'codex' : 'claude'
+/** `('codex', 'work')` -> `codex:work`. */
+export function accountId(provider: AccountProvider, name: string): string {
+  return `${provider}:${name}`
 }
 
-/** `a1b2c3d4` -> `codex:a1b2c3d4`. Already-prefixed ids are left alone. */
-export function codexAccountId(localId: string): string {
-  return isCodexAccountId(localId) ? localId : `${CODEX_ACCOUNT_PREFIX}${localId}`
+/**
+ * The provider and name of a login id, or null when it is not one: no known provider prefix, or
+ * a name `isLoginName` refuses.
+ */
+export function parseAccountId(id: string): { provider: AccountProvider; name: string } | null {
+  const colon = id.indexOf(':')
+  if (colon < 0) return null
+  const provider = id.slice(0, colon)
+  const name = id.slice(colon + 1)
+  if (provider !== 'claude' && provider !== 'codex') return null
+  return isLoginName(name) ? { provider, name } : null
 }
 
-/** `codex:a1b2c3d4` -> `a1b2c3d4`, the name of the account's directory on disk. */
-export function codexLocalAccountId(id: string): string {
-  return isCodexAccountId(id) ? id.slice(CODEX_ACCOUNT_PREFIX.length) : id
+/** The provider of a login id, or null when it is not a login id. */
+export function accountProviderOf(id: string | null | undefined): AccountProvider | null {
+  return typeof id === 'string' ? parseAccountId(id)?.provider ?? null : null
+}
+
+/** `codex:work` -> `work`, the name of the login's folder. Null when it is not a login id. */
+export function loginNameOf(id: string): string | null {
+  return parseAccountId(id)?.name ?? null
 }
 
 export function defaultAccountIdFor(provider: AccountProvider): string {
-  return provider === 'codex' ? CODEX_DEFAULT_ACCOUNT_ID : DEFAULT_ACCOUNT_ID
+  return provider === 'codex' ? CODEX_DEFAULT_ACCOUNT_ID : CLAUDE_DEFAULT_ACCOUNT_ID
 }
 
-/** True for the provider's own machine-wide login, which cannot be removed. */
+/** True for either provider's machine-wide login, which cannot be removed. */
 export function isDefaultAccountId(id: string | null | undefined): boolean {
-  return id === DEFAULT_ACCOUNT_ID || id === CODEX_DEFAULT_ACCOUNT_ID
+  return id === CLAUDE_DEFAULT_ACCOUNT_ID || id === CODEX_DEFAULT_ACCOUNT_ID
 }
 
-/**
- * The usage map key. An account id is unique only on its own machine, since every
- * machine has a `default`, so a remote id is prefixed with its backend. A local account
- * keeps its bare id.
- */
-export function accountKey(backendId: string | null | undefined, accountId: string): string {
-  return backendId === null || backendId === undefined || backendId === LOCAL_BACKEND_ID
-    ? accountId
-    : `${backendId}#${accountId}`
+/** A stored routing limit held to the whole 1..100 it may be, or null when it is not a number. */
+export function asRoutingLimit(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  return Math.min(100, Math.max(1, Math.round(value)))
+}
+
+/** A login's two routing limits as stored, with a missing or broken one at its default. */
+export function routingLimitsOf(row: { fiveHourLimitPercent?: unknown; weeklyLimitPercent?: unknown }): {
+  fiveHourLimitPercent: number
+  weeklyLimitPercent: number
+} {
+  return {
+    fiveHourLimitPercent: asRoutingLimit(row.fiveHourLimitPercent) ?? DEFAULT_FIVE_HOUR_LIMIT_PERCENT,
+    weeklyLimitPercent: asRoutingLimit(row.weeklyLimitPercent) ?? DEFAULT_WEEKLY_LIMIT_PERCENT
+  }
 }
