@@ -289,8 +289,9 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   on your `PATH` is a script or alias that runs kurmis again. Take it off `PATH`, or set
   `KURMIS_CLAUDE_BIN` (or `KURMIS_CODEX_BIN`) to the full path of the real program.
 - **"The daemon could not be started through launchd (its job exited with code 78 …)" or "(no
-  daemon answered within 5 seconds …)".** A launchd job may be unable to reach a program or a
-  folder on an external volume: launchd then answers exit 78, or the job hangs. This happens when
+  daemon answered within 5 seconds …)" (30 seconds when the job exited with code 0).** A
+  launchd job may be unable to reach a program or a folder on an external volume: launchd then
+  answers exit 78, or the job hangs. This happens when
   Node, the kurmis install or the kurmis data folder (`KURMIS_HOME`) is on such a volume. Kurmis
   then starts the daemon directly from the command you ran (an ssh session, or another session
   where the login Keychain could not be read), and such a daemon cannot read the Keychain either,
