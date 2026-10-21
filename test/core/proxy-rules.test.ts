@@ -90,12 +90,12 @@ describe('the request sent upstream', () => {
   })
 })
 
-test('the answer passed back has no hop-by-hop, encoding or length headers', () => {
+test('the answer passed back has no hop-by-hop or length headers, and keeps its encoding', () => {
   expect(downstreamResponseHeaders([
     ['Content-Type', 'text/event-stream'], ['content-encoding', 'gzip'], ['content-length', '12'],
     ['connection', 'x-private'], ['x-private', 'drop'], ['transfer-encoding', 'chunked'],
     ['anthropic-ratelimit-unified-status', 'allowed']
-  ])).toEqual([['content-type', 'text/event-stream'], ['anthropic-ratelimit-unified-status', 'allowed']])
+  ])).toEqual([['content-type', 'text/event-stream'], ['content-encoding', 'gzip'], ['anthropic-ratelimit-unified-status', 'allowed']])
 })
 
 describe('the answer when no login can serve', () => {

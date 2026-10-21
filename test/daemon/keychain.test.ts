@@ -12,7 +12,8 @@ import {
   keychainHoldsSecret,
   probeLoginKeychain,
   readKeychainItem,
-  type KeychainReaderOptions
+  type KeychainReaderOptions,
+  type KeychainReadFailure
 } from '../../src/daemon/keychain.ts'
 import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
 
@@ -58,7 +59,7 @@ test('reads a login token through security and asks for that login item', async 
   const credentials = reader()
   expect(credentials.read(WORK)).toBeNull()
   await credentials.prime([WORK])
-  expect(credentials.read(WORK)).toEqual({ accessToken: 'fake-token', expiresAt: 4_100_000_000_000 })
+  expect(credentials.read(WORK)).toEqual({ accessToken: 'fake-token', expiresAt: 4_100_000_000_000, hasRefreshToken: false })
   expect(keychain.calls()).toEqual([['find-generic-password', '-w', '-s', workService]])
 })
 
@@ -156,11 +157,78 @@ test('a failed read is logged once per login with the exit code, and again after
   now += 61_000
   await credentials.prime([DEFAULT])
   expect(lines).toHaveLength(2)
-  keychain.removeItem(PLAIN)
+  keychain.setItem(PLAIN, 'not json')
   now += 61_000
   await credentials.prime([DEFAULT])
   expect(lines).toHaveLength(3)
-  expect(lines[2]).toContain('(exit 44: security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.)')
+  expect(lines[2]).toContain('(the item holds no OAuth token)')
+})
+
+// On macOS a login whose CLI keeps its record in `.credentials.json`, or that is signed out, has
+// no item, so exit 44 is an answer rather than a failure. It also counts as a read that worked.
+test('an item that is not there is not reported, and counts as a read that worked', async () => {
+  let now = 1_000_000
+  const lines: string[] = []
+  const failures: KeychainReadFailure[] = []
+  const credentials = reader({ now: () => now, log: (line) => lines.push(line), onFailure: (failure) => failures.push(failure) })
+  await credentials.prime([DEFAULT, WORK])
+  expect(credentials.read(DEFAULT)).toBeNull()
+  expect(lines).toEqual([])
+  expect(failures).toEqual([])
+
+  keychain.setMode('locked')
+  now += 61_000
+  await credentials.prime([DEFAULT])
+  keychain.setMode(null)
+  now += 61_000
+  await credentials.prime([DEFAULT])
+  keychain.setMode('locked')
+  now += 61_000
+  await credentials.prime([DEFAULT])
+  expect(failures).toEqual([{ id: DEFAULT, kind: 'not_allowed', code: 36 }, { id: DEFAULT, kind: 'not_allowed', code: 36 }])
+  expect(lines).toHaveLength(2)
+})
+
+test('onFailure gets each kind of failure as fixed values, once per login', async () => {
+  const failures: KeychainReadFailure[] = []
+  const onFailure = (failure: KeychainReadFailure): void => { failures.push(failure) }
+
+  keychain.setItem(PLAIN, '')
+  keychain.setItem(workService, 'not json')
+  const first = reader({ onFailure })
+  await first.prime([DEFAULT, WORK])
+  first.invalidate(DEFAULT)
+  first.invalidate(WORK)
+  await first.prime([DEFAULT, WORK])
+  expect(failures).toHaveLength(2)
+  expect(failures).toContainEqual({ id: DEFAULT, kind: 'empty', code: null })
+  expect(failures).toContainEqual({ id: WORK, kind: 'not_credentials', code: null })
+
+  failures.length = 0
+  keychain.setMode('oversize')
+  await reader({ onFailure }).prime([DEFAULT])
+  keychain.setMode(null)
+  await reader({ onFailure, securityProgram: join(dir, 'no-such-security') }).prime([DEFAULT])
+  await reader({ onFailure, run: () => Promise.reject(new Error('no security here')) }).prime([DEFAULT])
+  await reader({ onFailure, run: () => Promise.reject(new KeychainReadError('exit 51', 51)) }).prime([DEFAULT])
+  expect(failures).toEqual([
+    { id: DEFAULT, kind: 'too_large', code: null },
+    { id: DEFAULT, kind: 'not_run', code: null },
+    { id: DEFAULT, kind: 'failed', code: null },
+    { id: DEFAULT, kind: 'failed', code: 51 }
+  ])
+})
+
+test('onFailure hears of a read that did not answer once, as a timeout', async () => {
+  keychain.setItem(PLAIN, SECRET)
+  keychain.setMode('prompt')
+  let now = 1_000_000
+  const failures: KeychainReadFailure[] = []
+  const credentials = reader({ now: () => now, onFailure: (failure) => failures.push(failure) })
+  await credentials.prime([DEFAULT])
+  now += 61_000
+  await credentials.prime([DEFAULT])
+  expect(failures).toEqual([{ id: DEFAULT, kind: 'timeout', code: null }])
 })
 
 test('no log line holds the token', async () => {

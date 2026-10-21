@@ -101,27 +101,96 @@ OS hands out for outgoing connections (32768 and up on Linux, 49152 and up on ma
 and no common tool uses it. Starting it again replaces a daemon of an
 older version, after that daemon finishes the requests it has open.
 
-- **The control API** is on paths under `/_kurmis/`. It lets the CLI read status, ask for a
-  usage probe, reload config and stop the daemon. The paths and their answers are in
-  `src/core/control-api.ts`. Every request needs the secret from
-  `key`, in the header `x-kurmis-key`.
-- **The proxy** is every other path. A request needs the header `x-kurmis-key: <secret>`, which
-  reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`. A request may also carry
-  `x-kurmis-login: claude:<name>`, which pins it to that login. Neither header is forwarded
-  upstream.
+- **What the daemon answers itself.** `HEAD` and `GET /api/hello` get a 200 without the key,
+  because the CLI checks the base URL with it before its first request and without its custom
+  headers. A path that is neither the control API nor one of the routed Anthropic paths
+  (`ROUTE_PATHS` in `src/core/proxy-rules.ts`) is a 404. The code is `src/daemon/app.ts`.
+- **The control API** is on paths under `/_kurmis/` (`src/daemon/control.ts`). It lets the CLI
+  read status, ask for a usage probe, reload config and stop the daemon. The paths and their
+  answers are in `src/core/control-api.ts`. Every request needs the secret from `key`, in the
+  header `x-kurmis-key`; without it the answer is 403 with no body. `status` also gives each
+  Claude login's email from its profile file (`src/data/identity.ts`), for `kurmis status` and
+  `list` on the person's own terminal; the email is never logged.
+- **The proxy** is every other routed path (`src/daemon/proxy.ts`). A request needs the header
+  `x-kurmis-key: <secret>`, which reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`, else it gets
+  403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
+  login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on. Either one
+  naming no Claude login is a 400. None of them is forwarded upstream. The body is read whole
+  (at most 64 MB), because a request may have to be sent more than once.
+- **Choosing a login** follows the order in the header of `src/core/proxy-rules.ts`. Logins
+  whose usage reading belongs to a window that has ended are probed first. A login whose token
+  is about to expire is chosen as if it were fresh and then renewed by a usage probe; on Auto,
+  when another login could take the request, the request waits at most 5 s
+  (`RENEWAL_WAIT_MS`) for that and then goes to the other login. A login whose record has no
+  refresh token is never renewed: it just becomes unusable when its token is about to expire.
+- **Signing.** The proxy signs with `Bearer <token>` for the token it read for the chosen login.
+  When the chosen login is the one the CLI was started on and no token was read for it, the
+  CLI's own `authorization` header is forwarded instead. No other login is ever signed with the
+  CLI's header. A 401 on a token the proxy read makes it read the token again, renew it once
+  through a probe when the record has a refresh token, and send the request again.
 - **Sessions** are told apart by the `X-Claude-Code-Session-Id` header the CLI sends. That is
   what a session stays on its login by. The CLI's subagents and small-model requests share it.
+  Requests without one share a single placement, stored under the key `:no-session`. A session
+  is placed on a login only once an answer under 400 from it is passed on.
+- **Usage limits.** A usage-limit 429 starts the login's cooldown until the reset it names. On
+  Auto the request is then sent on the next login before the CLI sees anything. When no login is
+  left, the CLI gets the real 429 of the login that is back first, so it behaves exactly as with
+  one exhausted account. The proxy answers its own 429 (`poolLimitAnswer`) instead when it holds
+  no real one (logins skipped for limits it already knew about), or when a login it did not try
+  is back earlier than every one that refused. A pinned session gets its login's 429 as it is.
+- **No capacity.** A 529, or a 429 without usage-limit headers, puts that login into the
+  session's backoff (`CapacityCooling` in `src/core/capacity-hold.ts`) and the request goes to
+  another login at once when the session may use one that is not cooling. Otherwise it waits for
+  the first login to come out of its backoff, for any change in the logins (usage, cooldown,
+  config), or for the client to close the request. After `CAPACITY_HOLD_MS` (two minutes) the
+  proxy answers 529 itself, and the CLI sends the request again.
 - **Moving a session back.** When an Auto session has just moved to another login and that login
   answers 400, the request is sent again on the login that served the session before, and the
   session stays on that login from then on. Some conversations cannot be continued on another
-  login.
-- **Usage** is probed every 15 minutes for each signed-in login, and on demand. The daemon also
-  updates it from the rate-limit headers of every answer it forwards.
-- **Tokens** come from the Keychain (`/usr/bin/security`, with stdin closed and a deadline) or
-  from `.credentials.json`. A Keychain answer is kept for a minute; the file is read again when
-  its size or modification time changes. Tokens are never written anywhere. A token
-  that is about to expire is renewed by running a usage probe on that login, because the probe's
-  CLI renews it.
+  login. "From then on" lasts until the daemon restarts: `state.json` keeps only the login each
+  session was last on.
+- **No login can sign** (none signed in, no token readable and no header of the CLI's own for
+  the login it was started on): the proxy's own 599 (`noSignerAnswer`), which the CLI retries.
+- **The upstream connection** (`src/daemon/upstream.ts`) uses `node:https`, not `fetch`, because
+  `fetch` gives up after 300 s waiting for headers or between two chunks, which a long thinking
+  turn can exceed. There is no limit on the whole request: the CLI aborts its request when it
+  gives up, and that aborts the upstream request at once. A connection that carries no data in
+  either direction for 20 minutes fails; a new connection must be ready within 30 s; TCP
+  keep-alive probes start after 30 s of silence; idle connections are kept for reuse for 30 s,
+  and a request that meets a reset on a reused connection before any answer is sent once more.
+  Answers are passed on byte for byte as they arrive, with backpressure: a CLI that reads slowly
+  pauses the upstream connection. The daemon's HTTP client decodes nothing, so
+  `content-encoding` is passed on with the body.
+- **Usage** is probed every 15 minutes for each signed-in login (and each login not probed
+  yet), and on demand: the control API's `probe`, a stale reading, a token renewal, and a login
+  added to `config.json`. One probe per login runs at a time; a second request waits for it. A
+  failed probe keeps the previous windows and records the error on the snapshot. The daemon also
+  updates usage from the rate-limit headers of every answer it forwards. The code is
+  `src/daemon/usage-poller.ts`, with the probes in `claude-probe.ts` and `codex-probe.ts`.
+  A Claude probe is `claude -p` in stream-json mode, sending `initialize` and `get_usage`, with
+  `claudeProbeEnv`, `--setting-sources=` (no settings file, so no `env` block or hook of the
+  person's reaches it), no MCP servers, no saved session, `DISABLE_AUTOUPDATER=1`, and the empty
+  folder `probe/cwd` as its working folder. A Codex probe is `codex app-server` with
+  `codexLoginEnv`, sending `initialize`, `account/read` and `account/rateLimits/read`. Each probe
+  has 30 s from start to exit and is killed with its child processes after that, or when the
+  daemon closes (`src/platform/frame-process.ts`). After its answer the probe closes the CLI's
+  input and waits for it to exit, so a token the CLI renewed is on disk when the probe ends.
+- **Tokens** (`src/daemon/tokens.ts`). On macOS the login's Keychain item comes first
+  (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read
+  when the Keychain gives no token: the CLI falls back to the file when it cannot use the
+  Keychain, for example in an ssh session. On Windows and Linux only the file is read. An extra
+  login's file is in its folder, the default login's is `~/.claude/.credentials.json`. A
+  Keychain answer is kept for a minute; the file is read again when its size or modification
+  time changes. Tokens are never written anywhere. Only whether a record has a refresh token is
+  kept, never the refresh token itself.
+- **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when
+  a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
+  does not read leaves the config the daemon has.
+- **Test hooks.** `KURMIS_UPSTREAM_URL` replaces the Anthropic API origin
+  (`https://api.anthropic.com`) and `KURMIS_SECURITY_PROGRAM` the `security` program
+  (`/usr/bin/security`). They exist so the tests can use the fakes in `test/fakes/` and
+  `test/daemon/fake-security/`. `createDaemonApp`'s `tuning` option shortens the daemon's
+  timings for tests in the same way.
 - **Starting.** The CLI starts the daemon when it is not running, detached from the terminal. On
   macOS a daemon started from an ssh login cannot read the login Keychain, so where that matters
   it is started through launchd. On Windows the daemon must survive the terminal closing even
@@ -299,9 +368,12 @@ set, because Node finds a package's dependencies from its real folder.
   what `daemon start` launches in the background.
 - `src/version.ts` holds the version, which the build takes from `package.json`.
 - `src/platform/` holds what differs per OS: finding programs and reading npm shims (`programs.ts`,
-  `npm-shim.ts`), folder links (`links.ts`), detaching, autostart,
-  and the file rename retry and file modes (`files.ts`). Every program kurmis starts goes
-  through `runProgram` in `run.ts`: no shell, stdin closed, a deadline and a cap on the output.
+  `npm-shim.ts`), folder links (`links.ts`), detaching, autostart, and the file rename retry and
+  file modes (`files.ts`). Every short-lived program kurmis starts goes through `runProgram` in
+  `run.ts`: no shell, stdin closed, a deadline and a cap on the output. The usage probes, whose
+  stdin carries JSON frames, go through `startFrameProcess` in `frame-process.ts`: no shell, a
+  deadline, a cap on each frame and on all output, and a kill that takes the program's child
+  processes with it (its process group on macOS and Linux, `taskkill /T /F` on Windows).
 - `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude`, `codex app-server` and
   Anthropic's API. `test/daemon/fake-security/` stands in for macOS's `security` program, with
   its Keychain items in a temporary folder. No test reaches the network or the user's real

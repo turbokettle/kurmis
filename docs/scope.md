@@ -51,8 +51,8 @@ signs the request with that login's token.
 
 ## Tokens and usage
 
-- **Tokens** are read from the macOS Keychain or from `.credentials.json` on Windows. They are
-  never stored anywhere else. When a token is about to expire, kurmis starts a short-lived
+- **Tokens** are read from the macOS Keychain, or from the login's `.credentials.json` on
+  Windows and on a Mac whose Keychain has none for it. They are never stored anywhere else. When a token is about to expire, kurmis starts a short-lived
   `claude` on that login and lets the CLI renew it, rather than calling the OAuth endpoint
   itself.
 - **Claude usage** comes from a `get_usage` request to a short-lived `claude`, and from the

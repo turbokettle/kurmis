@@ -98,13 +98,15 @@ export function upstreamRequest(incoming: IncomingHeaders, body: unknown, author
 
 /**
  * The answer's headers to pass back to the CLI: all but the hop-by-hop ones and those its
- * `connection` header names, and without `content-encoding` and `content-length`, because
- * `fetch` has already decoded the body.
+ * `connection` header names, and without `content-length`, because the proxy sends the body on
+ * in chunks as it arrives. `content-encoding` is kept: the daemon's HTTP client decodes nothing
+ * and the body goes on as raw bytes, so a body Anthropic encoded despite `accept-encoding:
+ * identity` reaches the CLI encoded, with the header that says so.
  */
 export function downstreamResponseHeaders(upstream: Iterable<[string, string]>): Array<[string, string]> {
   const entries = [...upstream].map(([name, value]): [string, string] => [name.toLowerCase(), value])
   const drop = droppedHeaders(entries.find(([name]) => name === 'connection')?.[1])
-  return entries.filter(([name]) => !drop.has(name) && name !== 'content-encoding' && name !== 'content-length')
+  return entries.filter(([name]) => !drop.has(name) && name !== 'content-length')
 }
 
 /**
