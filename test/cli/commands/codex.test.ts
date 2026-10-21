@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { codexHomePatch, createCodexCommand, settleWithin, type CodexDeps } from '../../../src/cli/commands/codex.ts'
+import { codexHomePatch, createCodexCommand, type CodexDeps } from '../../../src/cli/commands/codex.ts'
+import { settleWithin } from '../../../src/cli/command-deps.ts'
 import type { ChildRunner } from '../../../src/cli/command-deps.ts'
 import type { PrepareCodexHomeOptions, PreparedCodexHome } from '../../../src/cli/codex-home-files.ts'
 import type { ChildEnd, ChildSpec, FinishOptions } from '../../../src/cli/wrapper.ts'
@@ -219,14 +220,14 @@ describe('kurmis codex and CODEX_HOME', () => {
 })
 
 describe('kurmis codex failures', () => {
-  test('codex not found: a message and exit 1, before the daemon is asked', async () => {
+  test('codex not found: a message and exit 127, before the daemon is asked', async () => {
     const h = harness({}, {
       findProgram: () => {
         throw new ProgramNotFoundError('codex', 'codex was not found on PATH')
       }
     })
     const out = collect()
-    expect(await createCodexCommand(h.deps).run([], out.context)).toBe(1)
+    expect(await createCodexCommand(h.deps).run([], out.context)).toBe(127)
     expect(out.stderr()).toBe('kurmis codex: codex was not found on PATH\n')
     expect(h.daemon.calls).toEqual([])
   })

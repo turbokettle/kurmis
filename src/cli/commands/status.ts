@@ -2,9 +2,8 @@
 // daemon sees it. The daemon is started first when it is not running.
 import type { StatusAnswer } from '../../core/control-api.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, writeLine, type CliContext, type Command } from '../command.ts'
-import { realDaemonClient, type DaemonClient } from '../command-deps.ts'
+import { realDaemonClient, settleWithin, type DaemonClient } from '../command-deps.ts'
 import { formatStatus, statusJson } from '../status-format.ts'
-import { settleWithin } from './codex.ts'
 
 /**
  * How long `kurmis status` waits for the first usage probe of a daemon that has read no usage

@@ -68,3 +68,29 @@ export function reloadText(result: ReloadResult): string | null {
     case 'failed': return `The daemon could not be told about the change (${result.message}); it reads config.json again once it notices the change.`
   }
 }
+
+export type Settled<T> =
+  | { kind: 'done'; value: T }
+  | { kind: 'failed'; error: unknown }
+  | { kind: 'timeout' }
+
+/**
+ * How `promise` settles within `ms` milliseconds. Never rejects. The timer does not keep the
+ * process running. On a timeout the promise goes on, and a later rejection of it is ignored.
+ */
+export async function settleWithin<T>(promise: Promise<T>, ms: number): Promise<Settled<T>> {
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<Settled<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ kind: 'timeout' }), ms)
+    timer.unref()
+  })
+  const settled = promise.then(
+    (value): Settled<T> => ({ kind: 'done', value }),
+    (error: unknown): Settled<T> => ({ kind: 'failed', error })
+  )
+  try {
+    return await Promise.race([settled, timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}

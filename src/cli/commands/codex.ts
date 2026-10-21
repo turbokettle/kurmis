@@ -14,11 +14,13 @@ import {
   realDaemonClient,
   realFindProgram,
   realPrepareCodexHome,
+  settleWithin,
   type ChildRunner,
   type DaemonClient
 } from '../command-deps.ts'
 import type { PreparedCodexHome } from '../codex-home-files.ts'
-import type { ResolvedProgram } from '../../platform/programs.ts'
+import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
+import { notStartedExitCode } from '../wrapper.ts'
 import { parseWrapperArgs } from '../wrapper-args.ts'
 
 /**
@@ -89,7 +91,8 @@ async function runCodex(args: string[], context: CliContext, deps: CodexDeps): P
     program = deps.findProgram('codex', { env: context.env, platform: deps.platform })
   } catch (error) {
     writeLine(context.stderr, `kurmis codex: ${messageOf(error)}`)
-    return EXIT_FAILURE
+    // The code a shell gives for a program it cannot find, as `kurmis claude` does.
+    return error instanceof ProgramNotFoundError ? notStartedExitCode('ENOENT') : EXIT_FAILURE
   }
 
   let login: string
@@ -180,32 +183,6 @@ async function chooseLogin(context: CliContext, deps: CodexDeps): Promise<string
     writeLine(context.stderr, `kurmis codex: starting on ${choice.login}.`)
   }
   return choice.login
-}
-
-export type Settled<T> =
-  | { kind: 'done'; value: T }
-  | { kind: 'failed'; error: unknown }
-  | { kind: 'timeout' }
-
-/**
- * How `promise` settles within `ms` milliseconds. Never rejects. The timer does not keep the
- * process running. On a timeout the promise goes on, and a later rejection of it is ignored.
- */
-export async function settleWithin<T>(promise: Promise<T>, ms: number): Promise<Settled<T>> {
-  let timer: NodeJS.Timeout | undefined
-  const timeout = new Promise<Settled<T>>((resolve) => {
-    timer = setTimeout(() => resolve({ kind: 'timeout' }), ms)
-    timer.unref()
-  })
-  const settled = promise.then(
-    (value): Settled<T> => ({ kind: 'done', value }),
-    (error: unknown): Settled<T> => ({ kind: 'failed', error })
-  )
-  try {
-    return await Promise.race([settled, timeout])
-  } finally {
-    clearTimeout(timer)
-  }
 }
 
 function messageOf(error: unknown): string {

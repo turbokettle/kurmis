@@ -24,13 +24,13 @@
 // Setup refuses an `ANTHROPIC_BASE_URL` that is not kurmis', because replacing it would silently
 // cut off whatever the user pointed Claude Code at.
 import { chmodSync, copyFileSync, constants, readFileSync, realpathSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { KURMIS_HEADERS, KEY_HEADER, parseCustomHeaders } from '../core/route-headers.ts'
 import { ROUTING_VARIABLES, routedClaudeEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { kurmisHome } from '../data/paths.ts'
 import { PRIVATE_FILE_MODE } from '../platform/files.ts'
+import { claudeUserSettingsPath } from './settings-arg.ts'
 
 const BASE_URL = 'ANTHROPIC_BASE_URL'
 const CUSTOM_HEADERS = 'ANTHROPIC_CUSTOM_HEADERS'
@@ -553,7 +553,7 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
  */
 export function claudeSettingsPath(env: NodeJS.ProcessEnv): string {
   const configDir = env.CLAUDE_CONFIG_DIR
-  if (configDir === undefined || configDir === '') return join(homedir(), '.claude', 'settings.json')
+  if (configDir === undefined || configDir === '') return claudeUserSettingsPath(env)
   const dir = resolve(configDir)
   const inside = relative(kurmisHome(), dir)
   if (inside === '' || (!inside.startsWith('..') && !isAbsolute(inside))) {
