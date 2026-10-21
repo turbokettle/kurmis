@@ -130,6 +130,47 @@ describe('a rate-limits read', () => {
     expect(usage.status).toBe('rejected')
   })
 
+  // A limit on one model stops that model only, so the login can still be used.
+  test('a reached limit on one model alone does not read as rejected', () => {
+    const usage = usageFromCodexRateLimits(
+      'codex:work',
+      { rateLimits: snapshot(), rateLimitsByLimitId: { codex: snapshot(), codex_bengalfox: { ...SPARK, rateLimitReachedType: 'rate_limit_reached' } } },
+      NOW
+    )
+
+    expect(usage.status).toBeNull()
+  })
+
+  test('a reached general limit reads as rejected beside a model limit with room', () => {
+    const usage = usageFromCodexRateLimits(
+      'codex:work',
+      { rateLimitsByLimitId: { codex: snapshot({ rateLimitReachedType: 'rate_limit_reached' }), codex_bengalfox: SPARK } },
+      NOW
+    )
+
+    expect(usage.status).toBe('rejected')
+  })
+
+  test('a reached limit counts from any bucket when none is the general limit', () => {
+    const usage = usageFromCodexRateLimits(
+      'codex:work',
+      { rateLimitsByLimitId: { codex_other: snapshot({ limitId: 'codex_other', rateLimitReachedType: 'rate_limit_reached' }) } },
+      NOW
+    )
+
+    expect(usage.status).toBe('rejected')
+  })
+
+  test('a spending control reached on a model bucket reads as rejected', () => {
+    const usage = usageFromCodexRateLimits(
+      'codex:work',
+      { rateLimitsByLimitId: { codex: snapshot(), codex_bengalfox: { ...SPARK, spendControlReached: true } } },
+      NOW
+    )
+
+    expect(usage.status).toBe('rejected')
+  })
+
   test('a reached spending control reads as rejected', () => {
     const usage = usageFromCodexRateLimits('codex:work', { rateLimits: snapshot({ spendControlReached: true }) }, NOW)
 

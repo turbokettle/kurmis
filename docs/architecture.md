@@ -543,7 +543,10 @@ starts the daemon when it is not running, reads its status, and ranks the Codex 
 `chooseAccount`, as Claude's Auto ranks a new session. The rows come from the status: routing,
 limits and use-first from the login, signed in unless the daemon says it is not (an unknown state
 counts as signed in), no token expiry. A login the server refused (its usage says `rejected`)
-is passed over until the reset it named, even when no window reads 100%.
+is passed over until the reset it named, even when no window reads 100%. The usage says
+`rejected` when the plan's general limit (limit id `codex`) or the workspace's spending control
+has been reached. A limit that meters one model apart only stops that model, so reaching it does
+not make the login refused (`statusOf` in `src/core/codex-usage.ts`).
 
 - When at least two Codex logins could be chosen and one of them has usage that is missing or
   older than 20 minutes (the daemon's 15-minute probe interval plus 5), the wrapper asks the
