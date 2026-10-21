@@ -22,7 +22,7 @@ export interface DaemonClient {
   findDaemon(options: DaemonClientOptions): Promise<DaemonConnection | null>
   ensureDaemon(options: DaemonClientOptions): Promise<DaemonConnection>
   readStatus(connection: DaemonConnection): Promise<StatusAnswer>
-  requestProbe(connection: DaemonConnection, logins?: string[]): Promise<StatusAnswer>
+  requestProbe(connection: DaemonConnection, logins?: string[], signal?: AbortSignal): Promise<StatusAnswer>
   requestReload(connection: DaemonConnection): Promise<void>
 }
 
@@ -75,21 +75,32 @@ export type Settled<T> =
   | { kind: 'timeout' }
 
 /**
- * How `promise` settles within `ms` milliseconds. Never rejects. The timer does not keep the
- * process running. On a timeout the promise goes on, and a later rejection of it is ignored.
+ * How the work `start` begins settles within `ms` milliseconds. Never rejects. `start` gets a
+ * signal that is aborted when the time is up, so the work can close what it holds open (a
+ * request and its connection): a timer or socket left behind would keep the CLI running after
+ * it has printed its answer. A later rejection of the work is ignored.
  */
-export async function settleWithin<T>(promise: Promise<T>, ms: number): Promise<Settled<T>> {
+export async function settleWithin<T>(start: (signal: AbortSignal) => Promise<T>, ms: number): Promise<Settled<T>> {
+  const controller = new AbortController()
   let timer: NodeJS.Timeout | undefined
   const timeout = new Promise<Settled<T>>((resolve) => {
     timer = setTimeout(() => resolve({ kind: 'timeout' }), ms)
-    timer.unref()
   })
+  let promise: Promise<T>
+  try {
+    promise = start(controller.signal)
+  } catch (error) {
+    clearTimeout(timer)
+    return { kind: 'failed', error }
+  }
   const settled = promise.then(
     (value): Settled<T> => ({ kind: 'done', value }),
     (error: unknown): Settled<T> => ({ kind: 'failed', error })
   )
   try {
-    return await Promise.race([settled, timeout])
+    const result = await Promise.race([settled, timeout])
+    if (result.kind === 'timeout') controller.abort()
+    return result
   } finally {
     clearTimeout(timer)
   }

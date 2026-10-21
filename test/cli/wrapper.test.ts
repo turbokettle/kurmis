@@ -8,11 +8,14 @@ import {
   finishLikeChild,
   forwardedSignals,
   ignoredSignals,
+  MAX_WRAPPER_DEPTH,
   notStartedExitCode,
   runInteractive,
   signalExitCode,
   type ChildEnd,
-  type SignalProcess
+  type SignalProcess,
+  withWrapperPid,
+  wrapperLoop
 } from '../../src/cli/wrapper.ts'
 
 const CHILD = resolve('test/cli/wrapper-child.mjs')
@@ -63,8 +66,12 @@ async function waitForFile(path: string): Promise<void> {
 // Sending SIGTERM or SIGHUP to a child only works on macOS and Linux.
 const posixTest = test.skipIf(process.platform === 'win32')
 
-const env = (extra: Record<string, string> = {}): Record<string, string> =>
-  ({ ...(process.env as Record<string, string>), ...extra })
+const env = (extra: Record<string, string> = {}): Record<string, string> => {
+  const out: Record<string, string> = { ...(process.env as Record<string, string>), ...extra }
+  // The tests may themselves run under a kurmis wrapper.
+  if (extra.KURMIS_WRAPPER_PIDS === undefined) delete out.KURMIS_WRAPPER_PIDS
+  return out
+}
 
 test('the child gets its arguments as they are, the environment it is given and the folder', async () => {
   const out = join(dir, 'out.json')
@@ -78,8 +85,27 @@ test('the child gets its arguments as they are, the environment it is given and 
   expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({
     args: ['two words', '--flag=a b', '"quoted"', ''],
     one: 'one',
+    wrappers: '99999',
     cwd: realpathSync(dir)
   })
+})
+
+test('a wrapper whose parent is a wrapper, or that is nested too deep, does not start its child', async () => {
+  expect(wrapperLoop({}, 10)).toBeNull()
+  expect(wrapperLoop({ KURMIS_WRAPPER_PIDS: '7,8' }, 10)).toBeNull()
+  expect(wrapperLoop({ KURMIS_WRAPPER_PIDS: '7,10' }, 10)).toContain('its parent is a kurmis wrapper')
+  const deep = Array.from({ length: MAX_WRAPPER_DEPTH }, (_, index) => String(index + 100)).join(',')
+  expect(wrapperLoop({ KURMIS_WRAPPER_PIDS: deep }, 10)).toContain(`${String(MAX_WRAPPER_DEPTH)} kurmis wrappers run inside each other`)
+  expect(withWrapperPid({ KURMIS_WRAPPER_PIDS: '7,junk' }, 9)).toEqual({ KURMIS_WRAPPER_PIDS: '7,9' })
+
+  const out = join(dir, 'never.json')
+  const proc = new FakeProcess()
+  const end = await runInteractive({ command: process.execPath, args: [CHILD, 'write', out], env: env({ KURMIS_WRAPPER_PIDS: '4242' }) },
+    { process: proc, parentPid: 4242 })
+  expect(end).toMatchObject({ kind: 'not-started', code: 'ELOOP' })
+  expect((end as { message: string }).message).toContain('KURMIS_CLAUDE_BIN')
+  expect(existsSync(out)).toBe(false)
+  expect(proc.signalCount()).toBe(0)
 })
 
 test('the child\'s exit code is the answer', async () => {
@@ -87,11 +113,11 @@ test('the child\'s exit code is the answer', async () => {
   expect(end).toEqual({ kind: 'exit', code: 7 })
 })
 
-posixTest('while the child runs, SIGINT and SIGQUIT are ignored and SIGTERM and SIGHUP have handlers; all are removed after', async () => {
+posixTest('in a terminal, while the child runs, SIGINT and SIGQUIT are ignored and SIGTERM and SIGHUP have handlers; all are removed after', async () => {
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
   const running = runInteractive({ command: process.execPath, args: [CHILD, 'hold', ready], env: env() },
-    { process: proc, platform: 'darwin' })
+    { process: proc, platform: 'darwin', stdinIsTerminal: true })
   await waitForFile(ready)
   expect(proc.listenerCount('SIGINT')).toBe(1)
   expect(proc.listenerCount('SIGQUIT')).toBe(1)
@@ -117,6 +143,41 @@ posixTest('SIGTERM is forwarded to the child, and a child it ends is reported as
   expect(await running).toEqual({ kind: 'signal', signal: 'SIGTERM' })
 })
 
+posixTest('without a terminal on stdin, SIGINT sent to the wrapper alone is forwarded to the child', async () => {
+  const proc = new FakeProcess()
+  const ready = join(dir, 'ready')
+  const running = runInteractive({ command: process.execPath, args: [CHILD, 'hold-default', ready], env: env() },
+    { process: proc, platform: 'linux', stdinIsTerminal: false })
+  await waitForFile(ready)
+  proc.emit('SIGINT')
+  expect(await running).toEqual({ kind: 'signal', signal: 'SIGINT' })
+  expect(proc.signalCount()).toBe(0)
+})
+
+posixTest('a kill that fails more than once after the start does not end the wrapper', async () => {
+  const proc = new FakeProcess()
+  const ready = join(dir, 'ready')
+  let failKills = (): void => {}
+  const running = runInteractive({ command: process.execPath, args: [CHILD, 'hold', ready], env: env() }, {
+    process: proc,
+    platform: 'linux',
+    stdinIsTerminal: true,
+    spawn: (command, args, options) => {
+      const real = realSpawn(command, args, options)
+      failKills = () => {
+        real.emit('error', Object.assign(new Error('kill EPERM'), { code: 'EPERM' }))
+        real.emit('error', Object.assign(new Error('kill EPERM'), { code: 'EPERM' }))
+      }
+      return real
+    }
+  })
+  await waitForFile(ready)
+  // With a one-time handler the second 'error' would be unhandled and throw.
+  failKills()
+  proc.emit('SIGTERM')
+  expect(await running).toEqual({ kind: 'exit', code: 143 })
+})
+
 posixTest('SIGHUP is forwarded to the child', async () => {
   const proc = new FakeProcess()
   const ready = join(dir, 'ready')
@@ -132,6 +193,10 @@ posixTest('on Windows nothing is forwarded: Ctrl-C, Ctrl-Break and closing the c
   expect(forwardedSignals('win32')).toEqual([])
   expect(ignoredSignals('darwin')).toEqual(['SIGINT', 'SIGQUIT'])
   expect(forwardedSignals('linux')).toEqual(['SIGTERM', 'SIGHUP'])
+  expect(ignoredSignals('darwin', false)).toEqual([])
+  expect(forwardedSignals('linux', false)).toEqual(['SIGTERM', 'SIGHUP', 'SIGINT', 'SIGQUIT'])
+  expect(ignoredSignals('win32', false)).toEqual(['SIGINT', 'SIGBREAK', 'SIGHUP'])
+  expect(forwardedSignals('win32', false)).toEqual([])
 
   // Run with the Windows rules here: SIGHUP must not end the child; it ends by itself (SIGTERM
   // from the test, which stands in for the child's own reaction). This part needs signals, so it

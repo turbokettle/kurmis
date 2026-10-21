@@ -25,19 +25,29 @@
 //
 // The merged settings go to claude as a file path, not as inline JSON, because they hold the
 // daemon's key and a command line is visible to every user of the machine in the process list.
-// The file is in the data folder (`wrapperSettingsFolder`), mode 0600, and named after a hash of
-// its contents, so every start with the same settings uses the same file. It is not deleted when
-// claude exits: claude passes its `--settings` value on to processes it starts itself (such as
-// sessions it runs in the background), which may run longer than the wrapper. Files that no start
-// has used for `SETTINGS_FILE_MAX_AGE_MS` are removed.
-import { createHash } from 'node:crypto'
+// The file is in the data folder (`wrapperSettingsFolder`), mode 0600. There are two kinds:
+//
+// - Without a `--settings` of the person's, the file holds only kurmis' variables. It is named
+//   after a hash of its contents (`<hash>.json`), so every start with the same settings uses
+//   the same file, and it is kept: claude passes its `--settings` value on to processes it
+//   starts itself (such as sessions it runs in the background), which may run longer than the
+//   wrapper. Files that no start has used for `SETTINGS_FILE_MAX_AGE_MS` are removed.
+// - With one, the file is a copy of the person's settings, which may hold secrets of theirs, so
+//   it is the wrapper's own (`run-<pid>-<random>.json`) and deleted when the wrapper ends. A
+//   process claude starts with it after that cannot start: Claude Code stops with "Settings file
+//   not found". A file whose wrapper was killed is removed by the next start, which tells it
+//   apart from the file of a wrapper still running by the pid in its name: a pid that no longer
+//   runs, or a file older than `SETTINGS_FILE_MAX_AGE_MS` (the pid may have been reused).
+import { createHash, randomBytes } from 'node:crypto'
 import { readdirSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import { ROUTING_VARIABLES, type RoutedEnv } from '../core/routed-env.ts'
+import { ROUTING_VARIABLES, USER_OWNED_ROUTING_VARIABLES, type RoutedEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
+import { isProcessAlive } from '../data/lock.ts'
 import { wrapperSettingsFolder } from '../data/paths.ts'
 import { PRIVATE_FILE_MODE } from '../platform/files.ts'
+import { notJsonText } from './json-error.ts'
 
 const FLAG = '--settings'
 
@@ -110,8 +120,9 @@ function parseSettings(text: string, what: string): { value: Record<string, unkn
   let value: unknown
   try {
     value = JSON.parse(withoutBom(text))
-  } catch (error) {
-    return { error: `${FLAG}: ${what} is not valid JSON (${error instanceof Error ? error.message : String(error)})` }
+  } catch {
+    // Never `JSON.parse`'s message: it quotes the text, which may hold a secret.
+    return { error: `${FLAG}: ${what} is ${notJsonText(withoutBom(text))}` }
   }
   if (!isPlainObject(value)) return { error: `${FLAG}: ${what} is not a JSON object` }
   if (value.env !== undefined && !isPlainObject(value.env)) {
@@ -149,25 +160,61 @@ export function mergeRoutingSettings(user: Record<string, unknown> | null, routi
   return { ...(user ?? {}), env: { ...userEnv, ...routing } }
 }
 
+/** A settings file written for one start, and how to remove it when the wrapper is done. */
+export interface StoredSettings {
+  path: string
+  /** Deletes the file if it is the wrapper's own; does nothing for a shared one. Never throws. */
+  remove(): void
+}
+
+/** Writes the merged settings; `holdsUserSettings` says whether they hold a copy of the person's own. */
+export type SettingsStore = (text: string, holdsUserSettings: boolean) => StoredSettings
+
 /**
  * The arguments to start claude with: one `--settings` naming the file with the merged settings,
  * first, then the person's arguments without their own `--settings`. `user` is what
- * `readUserSettingsArg` answered; `store` writes the settings and answers the file's path.
+ * `readUserSettingsArg` answered; `store` writes the settings. `remove` deletes the file again
+ * when it holds a copy of the person's settings, and is to be called once claude has ended.
  */
 export function claudeArgsWithSettings(user: UserSettingsArg, routing: Record<string, string>,
-  store: (text: string) => string = storeSettingsFile): string[] {
-  return [FLAG, store(JSON.stringify(mergeRoutingSettings(user.settings, routing))), ...user.rest]
+  store: SettingsStore = storeSettings): { args: string[]; remove: () => void } {
+  const stored = store(JSON.stringify(mergeRoutingSettings(user.settings, routing)), user.settings !== null)
+  return { args: [FLAG, stored.path, ...user.rest], remove: () => stored.remove() }
 }
 
 /** How long a settings file that no start has used is kept: longer than any session runs. */
 export const SETTINGS_FILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
 const SETTINGS_FILE_NAME = /^[0-9a-f]{32}\.json$/
+const RUN_SETTINGS_FILE_NAME = /^run-(\d+)-[0-9a-f]{16}\.json$/
+
+/**
+ * Writes the settings for one start (see the top of this file): to the shared file named after
+ * their hash, or, when they hold a copy of the person's settings, to a file of this wrapper's
+ * own that `remove` deletes. Either way, files that are no longer used are removed first.
+ */
+export function storeSettings(text: string, holdsUserSettings: boolean, folder: string = wrapperSettingsFolder(),
+  now: number = Date.now(), pid: number = process.pid): StoredSettings {
+  if (!holdsUserSettings) return { path: storeSettingsFile(text, folder, now), remove: () => undefined }
+  pruneSettingsFiles(folder, now, null)
+  const path = join(folder, `run-${String(pid)}-${randomBytes(8).toString('hex')}.json`)
+  writeFileAtomicSync(path, text, { mode: PRIVATE_FILE_MODE })
+  return {
+    path,
+    remove: () => {
+      try {
+        rmSync(path, { force: true })
+      } catch {
+        // Held open on Windows; the next start removes it once this pid has ended.
+      }
+    }
+  }
+}
 
 /**
  * Writes `text` to a file in `folder` named after its SHA-256, readable by the user only, and
  * answers the file's path. A file of that name that already holds the text is only marked as
- * used now. Files in the folder unused for `SETTINGS_FILE_MAX_AGE_MS` are removed.
+ * used now. Files in the folder that are no longer used are removed (`pruneSettingsFiles`).
  */
 export function storeSettingsFile(text: string, folder: string = wrapperSettingsFolder(), now: number = Date.now()): string {
   const path = join(folder, `${createHash('sha256').update(text).digest('hex').slice(0, 32)}.json`)
@@ -190,7 +237,12 @@ export function storeSettingsFile(text: string, folder: string = wrapperSettings
   return path
 }
 
-function pruneSettingsFiles(folder: string, now: number, keep: string): void {
+/**
+ * Removes the shared files no start has used for `SETTINGS_FILE_MAX_AGE_MS`, except `keep`, and
+ * the files of wrappers that have ended: their pid no longer runs, or the file is older than
+ * `SETTINGS_FILE_MAX_AGE_MS` (a reused pid).
+ */
+function pruneSettingsFiles(folder: string, now: number, keep: string | null): void {
   let names: string[]
   try {
     names = readdirSync(folder)
@@ -199,11 +251,13 @@ function pruneSettingsFiles(folder: string, now: number, keep: string): void {
   }
   for (const name of names) {
     const file = join(folder, name)
-    if (!SETTINGS_FILE_NAME.test(name) || file === keep) continue
+    const run = RUN_SETTINGS_FILE_NAME.exec(name)
+    if ((!SETTINGS_FILE_NAME.test(name) && run === null) || file === keep) continue
     try {
-      if (now - statSync(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS) rmSync(file, { force: true })
+      const old = now - statSync(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS
+      if (old || (run !== null && !isProcessAlive(Number(run[1])))) rmSync(file, { force: true })
     } catch {
-      // Removed by another start at the same moment.
+      // Removed by another start at the same moment, or held open on Windows.
     }
   }
 }
@@ -242,7 +296,7 @@ export function readUserSettingsEnv(path: string, readFile: (path: string) => st
   try {
     value = JSON.parse(withoutBom(text))
   } catch {
-    return { env: null, warning: `${path} is not valid JSON, so custom headers set there are not kept` }
+    return { env: null, warning: `${path} is ${notJsonText(withoutBom(text))}, so custom headers set there are not kept` }
   }
   if (!isPlainObject(value) || !isPlainObject(value.env)) return { env: null, warning: null }
   return { env: value.env, warning: null }
@@ -263,19 +317,41 @@ export interface CustomHeaderLayers {
 const CUSTOM_HEADERS = 'ANTHROPIC_CUSTOM_HEADERS'
 
 /**
- * The `ANTHROPIC_CUSTOM_HEADERS` claude would see without kurmis: the value of the highest layer
- * that sets it (`--settings` beats the user settings file, which beats the process environment).
- * Kurmis keeps the person's own headers from it and adds its own. Null when no layer sets it.
+ * The value of `variable` claude would see without kurmis: the value of the highest layer that
+ * sets it to a string (`--settings` beats the user settings file, which beats the process
+ * environment). Null when no layer sets it.
  */
-export function inheritedCustomHeaders(layers: CustomHeaderLayers): string | null {
+export function inheritedVariable(layers: CustomHeaderLayers, variable: string): string | null {
   for (const env of [layers.flagEnv, layers.userSettingsEnv]) {
-    if (env === null || !(CUSTOM_HEADERS in env)) continue
-    const value = env[CUSTOM_HEADERS]
+    if (env === null || !(variable in env)) continue
+    const value = env[variable]
     if (typeof value === 'string') return value
   }
   for (const [name, value] of Object.entries(layers.processEnv)) {
-    const same = layers.windows === true ? name.toUpperCase() === CUSTOM_HEADERS : name === CUSTOM_HEADERS
+    const same = layers.windows === true ? name.toUpperCase() === variable.toUpperCase() : name === variable
     if (same && value !== undefined) return value
   }
   return null
+}
+
+/**
+ * The `ANTHROPIC_CUSTOM_HEADERS` claude would see without kurmis (`inheritedVariable`). Kurmis
+ * keeps the person's own headers from it and adds its own.
+ */
+export function inheritedCustomHeaders(layers: CustomHeaderLayers): string | null {
+  return inheritedVariable(layers, CUSTOM_HEADERS)
+}
+
+/**
+ * The routing variables of `USER_OWNED_ROUTING_VARIABLES` that a layer sets to a value that is
+ * not empty, so the wrapper leaves them as the person has them.
+ */
+export function userOwnedRoutingVariables(layers: CustomHeaderLayers): string[] {
+  return USER_OWNED_ROUTING_VARIABLES.filter((name) => {
+    for (const env of [layers.flagEnv, layers.userSettingsEnv]) {
+      if (env !== null && env[name] !== undefined && env[name] !== null && env[name] !== '') return true
+    }
+    const value = inheritedVariable({ flagEnv: null, userSettingsEnv: null, processEnv: layers.processEnv, windows: layers.windows }, name)
+    return value !== null && value !== ''
+  })
 }

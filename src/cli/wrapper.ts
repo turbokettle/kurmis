@@ -7,6 +7,11 @@
 //   process in its foreground process group, which holds the wrapper and the child. The child
 //   decides what they do (Claude Code uses Ctrl-C itself), so the wrapper ignores them and keeps
 //   waiting. This is what `system(3)` does in a parent while its child runs.
+//   That holds only when the wrapper runs in a terminal. When its stdin is not a terminal (a
+//   script, a pipe, a program that runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
+//   sent to the wrapper's pid alone, so the wrapper sends them on to the child like SIGTERM. A
+//   child in a terminal's process group whose input is piped then gets Ctrl-C twice, once from
+//   the terminal and once from the wrapper; a CLI that is not interactive ends at the first.
 // - SIGTERM and SIGHUP on macOS and Linux: these are usually sent to the wrapper alone (`kill
 //   <pid>`, a closed terminal reaching the shell's jobs), so the wrapper sends them on to the
 //   child and keeps waiting for it to end.
@@ -15,6 +20,15 @@
 //   SIGHUP. The child gets each of them itself, so the wrapper ignores them all and waits.
 //   Forwarding would be wrong there: `child.kill()` on Windows ends the child at once with
 //   TerminateProcess, so it could not save anything. Node never reports SIGTERM on Windows.
+//
+// Starting itself again. A `claude` or `codex` on PATH can be a script of the person's that runs
+// `kurmis claude` (or `kurmis codex`), so kurmis would start that script, which starts kurmis,
+// without end. The wrapper puts its pid in `KURMIS_WRAPPER_PIDS` in the child's environment and
+// refuses to start a child (`wrapperLoop`) when its own parent is one of those pids, which is
+// what a script that `exec`s kurmis gives, or when the list is already `MAX_WRAPPER_DEPTH` long,
+// which catches a script that starts kurmis without `exec` a few rounds later. A `kurmis claude`
+// run inside a session, from the CLI's shell, has the CLI or a shell as its parent, never the
+// wrapper, so it is not refused.
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { constants } from 'node:os'
 import { refusedByGuard, withGuard } from '../platform/system-program-guard.ts'
@@ -57,27 +71,63 @@ export interface RunInteractiveOptions {
   process?: SignalProcess
   /** Defaults to `child_process.spawn`. */
   spawn?: SpawnFunction
+  /** Whether stdin is a terminal, which decides what happens to SIGINT and SIGQUIT. Defaults to `process.stdin.isTTY`. */
+  stdinIsTerminal?: boolean
+  /** This process's parent, for `wrapperLoop`. Defaults to `process.ppid`. */
+  parentPid?: number
+}
+
+/** The pids of the wrappers a process was started under, outermost first (see the top of this file). */
+export const WRAPPER_PIDS_VARIABLE = 'KURMIS_WRAPPER_PIDS'
+
+/** How many wrappers may be nested before the next one refuses to start its child. */
+export const MAX_WRAPPER_DEPTH = 8
+
+function wrapperPids(env: Readonly<Record<string, string | undefined>>): number[] {
+  return (env[WRAPPER_PIDS_VARIABLE] ?? '').split(',').map((text) => Number(text)).filter((pid) => Number.isInteger(pid) && pid > 0)
+}
+
+/**
+ * Why a wrapper whose environment is `env` and whose parent is `parentPid` must not start its
+ * child, or null: its parent is a wrapper (a program on PATH that `exec`s kurmis), or there are
+ * already `MAX_WRAPPER_DEPTH` wrappers above it.
+ */
+export function wrapperLoop(env: Readonly<Record<string, string | undefined>>, parentPid: number): string | null {
+  const pids = wrapperPids(env)
+  if (!pids.includes(parentPid) && pids.length < MAX_WRAPPER_DEPTH) return null
+  return 'kurmis was started by the program it started, so that program runs kurmis again instead of being the real one ' +
+    `(${pids.includes(parentPid) ? 'its parent is a kurmis wrapper' : `${String(pids.length)} kurmis wrappers run inside each other`}). ` +
+    'Take that program off PATH, or set KURMIS_CLAUDE_BIN or KURMIS_CODEX_BIN to the real program'
+}
+
+/** `env` with `pid` added to `KURMIS_WRAPPER_PIDS`. */
+export function withWrapperPid(env: NodeJS.ProcessEnv, pid: number): NodeJS.ProcessEnv {
+  return { ...env, [WRAPPER_PIDS_VARIABLE]: [...wrapperPids(env), pid].join(',') }
 }
 
 /** The signals the wrapper ignores while the child runs, because the child gets them itself. */
-export function ignoredSignals(platform: NodeJS.Platform): NodeJS.Signals[] {
-  return platform === 'win32' ? ['SIGINT', 'SIGBREAK', 'SIGHUP'] : ['SIGINT', 'SIGQUIT']
+export function ignoredSignals(platform: NodeJS.Platform, stdinIsTerminal = true): NodeJS.Signals[] {
+  if (platform === 'win32') return ['SIGINT', 'SIGBREAK', 'SIGHUP']
+  return stdinIsTerminal ? ['SIGINT', 'SIGQUIT'] : []
 }
 
 /** The signals the wrapper sends on to the child. None on Windows (see the top of this file). */
-export function forwardedSignals(platform: NodeJS.Platform): NodeJS.Signals[] {
-  return platform === 'win32' ? [] : ['SIGTERM', 'SIGHUP']
+export function forwardedSignals(platform: NodeJS.Platform, stdinIsTerminal = true): NodeJS.Signals[] {
+  if (platform === 'win32') return []
+  return stdinIsTerminal ? ['SIGTERM', 'SIGHUP'] : ['SIGTERM', 'SIGHUP', 'SIGINT', 'SIGQUIT']
 }
 
 /**
  * Starts the child with `stdio: 'inherit'` and no shell. While it runs, this process ignores
- * SIGINT (Ctrl-C reaches the child through the terminal) and forwards SIGTERM and SIGHUP to it.
- * Resolves when the child has ended; the handlers are removed again by then. Never rejects.
+ * SIGINT and SIGQUIT when stdin is a terminal (Ctrl-C reaches the child through the terminal),
+ * forwards them otherwise, and forwards SIGTERM and SIGHUP to it. Resolves when the child has
+ * ended; the handlers are removed again by then. Never rejects.
  */
 export async function runInteractive(spec: ChildSpec, options: RunInteractiveOptions = {}): Promise<ChildEnd> {
   const platform = options.platform ?? process.platform
   const proc = options.process ?? process
   const spawn = options.spawn ?? nodeSpawn
+  const stdinIsTerminal = options.stdinIsTerminal ?? process.stdin.isTTY === true
 
   return await new Promise<ChildEnd>((resolve) => {
     const installed: Array<[NodeJS.Signals, () => void]> = []
@@ -102,12 +152,12 @@ export async function runInteractive(spec: ChildSpec, options: RunInteractiveOpt
         // The child has just ended; its exit event follows.
       }
     }
-    for (const signal of ignoredSignals(platform)) {
+    for (const signal of ignoredSignals(platform, stdinIsTerminal)) {
       const listener = (): void => {}
       installed.push([signal, listener])
       proc.on(signal, listener)
     }
-    for (const signal of forwardedSignals(platform)) {
+    for (const signal of forwardedSignals(platform, stdinIsTerminal)) {
       const listener = (): void => forward(signal)
       installed.push([signal, listener])
       proc.on(signal, listener)
@@ -118,10 +168,15 @@ export async function runInteractive(spec: ChildSpec, options: RunInteractiveOpt
       finish(notStarted(spec.command, Object.assign(new Error(guarded), { code: 'EACCES' })))
       return
     }
+    const loop = wrapperLoop(spec.env, options.parentPid ?? process.ppid)
+    if (loop !== null) {
+      finish(notStarted(spec.command, Object.assign(new Error(loop), { code: 'ELOOP' })))
+      return
+    }
     try {
       child = spawn(spec.command, spec.args, {
         stdio: 'inherit',
-        env: withGuard(spec.env),
+        env: withWrapperPid(withGuard(spec.env) ?? spec.env, proc.pid),
         cwd: spec.cwd,
         shell: false,
         // Interactive programs need their console window on Windows, so it is not hidden.
@@ -136,9 +191,10 @@ export async function runInteractive(spec: ChildSpec, options: RunInteractiveOpt
     child.once('spawn', () => {
       started = true
     })
-    child.once('error', (error) => {
-      // After a successful start, 'error' only reports a failed kill; the exit event still
-      // comes. Before it, the child never ran.
+    child.on('error', (error) => {
+      // After a successful start, 'error' only reports a failed kill, which can happen more
+      // than once (every forwarded signal is a kill); the exit event still comes. Before it, the
+      // child never ran.
       if (!started) finish(notStarted(spec.command, error))
     })
     child.once('exit', (code, signal) => {

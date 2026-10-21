@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createLogoutCommand, type LogoutDeps } from '../../../src/cli/commands/logout.ts'
 import { keychainService } from '../../../src/core/keychain-service.ts'
 import { addLogin, defaultConfig, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
-import { kurmisHome, loginFolder } from '../../../src/data/paths.ts'
+import { kurmisHome, loginFolder, loginLockPath } from '../../../src/data/paths.ts'
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram, type RunResult } from '../../../src/platform/run.ts'
 import { FAKE_CLAUDE_SCRIPT, readFakeClaudeRecord, writeClaudeCredentials } from '../../fakes/index.ts'
@@ -46,6 +46,20 @@ beforeEach(() => {
 })
 
 describe('kurmis logout', () => {
+  it('stops at once, changing nothing, while a kurmis login of the same login runs', async () => {
+    const folder = addWithFolder('claude:work')
+    mkdirSync(join(kurmisHome(), 'locks'), { recursive: true })
+    writeFileSync(loginLockPath('claude:work'), JSON.stringify({ pid: process.ppid, createdAt: Date.now(), token: 'a-login' }))
+    const run = fakeRun()
+    const out = collect()
+    const logout = createLogoutCommand({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: run.runProgram, platform: 'linux' })
+    expect(await logout.run(['claude:work'], out.context)).toBe(1)
+    expect(out.stderr()).toContain('another "kurmis login" or "kurmis logout" of claude:work is running now')
+    expect(existsSync(folder)).toBe(true)
+    expect(findLogin(loadConfig(), 'claude:work')).toBeDefined()
+    expect(run.runs).toEqual([])
+  })
+
   it('removes a Claude login: config first, then the daemon, then its logout and its folder', async () => {
     const folder = addWithFolder('claude:work')
     writeClaudeCredentials(folder)

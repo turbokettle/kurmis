@@ -253,8 +253,24 @@ describe('kurmis codex failures', () => {
 
 describe('waiting for a promise at most so long', () => {
   test('answers the value, the error, or a timeout', async () => {
-    expect(await settleWithin(Promise.resolve(5), 1000)).toEqual({ kind: 'done', value: 5 })
-    expect(await settleWithin(Promise.reject(new Error('no')), 1000)).toMatchObject({ kind: 'failed' })
-    expect(await settleWithin(new Promise(() => undefined), 10)).toEqual({ kind: 'timeout' })
+    expect(await settleWithin(() => Promise.resolve(5), 1000)).toEqual({ kind: 'done', value: 5 })
+    expect(await settleWithin(() => Promise.reject(new Error('no')), 1000)).toMatchObject({ kind: 'failed' })
+    expect(await settleWithin(() => { throw new Error('at once') }, 1000)).toMatchObject({ kind: 'failed' })
+    expect(await settleWithin(() => new Promise(() => undefined), 10)).toEqual({ kind: 'timeout' })
+  })
+
+  test('aborts the signal it gave the work when the time is up, and only then', async () => {
+    let given: AbortSignal | null = null
+    expect(await settleWithin((signal) => {
+      given = signal
+      return new Promise(() => undefined)
+    }, 10)).toEqual({ kind: 'timeout' })
+    expect(given!.aborted).toBe(true)
+    let kept: AbortSignal | null = null
+    await settleWithin((signal) => {
+      kept = signal
+      return Promise.resolve(1)
+    }, 1000)
+    expect(kept!.aborted).toBe(false)
   })
 })

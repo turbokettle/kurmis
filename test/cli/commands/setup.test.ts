@@ -19,7 +19,7 @@ interface FakeAutostart {
 }
 
 /** Autostart that keeps its entry in memory, or fails with `warning` / `throws`. */
-function fakeAutostart(options: { warning?: string; throws?: string } = {}): FakeAutostart {
+function fakeAutostart(options: { warning?: string; throws?: string; loadsAtNextLogin?: boolean } = {}): FakeAutostart {
   let registered = false
   const calls: string[] = []
   const where = '/example/LaunchAgents/kurmis.plist'
@@ -28,6 +28,7 @@ function fakeAutostart(options: { warning?: string; throws?: string } = {}): Fak
     async registerAutostart(given) {
       calls.push(`register:${String(given.platform)}`)
       if (options.throws !== undefined) throw new Error(options.throws)
+      if (options.loadsAtNextLogin === true) return { changed: true, where, warning: options.warning ?? '', loadsAtNextLogin: true }
       if (options.warning !== undefined) return { changed: false, where: null, warning: options.warning }
       const changed = !registered
       registered = true
@@ -44,9 +45,9 @@ function fakeAutostart(options: { warning?: string; throws?: string } = {}): Fak
   }
 }
 
-function setup(daemon: FakeDaemonOptions = {}, autostart = fakeAutostart()) {
+function setup(daemon: FakeDaemonOptions = {}, autostart = fakeAutostart(), platform: NodeJS.Platform = 'darwin') {
   const client = fakeDaemonClient(daemon)
-  const command = createSetupCommand({ daemon: client, ...autostart, platform: 'darwin' })
+  const command = createSetupCommand({ daemon: client, ...autostart, platform })
   return { client, autostart, command }
 }
 
@@ -77,8 +78,9 @@ describe('kurmis setup', () => {
     const result = await run(command, [])
     expect(result.code).toBe(0)
     expect(result.stderr).toBe('')
-    const key = readKey()
-    expect(key).not.toBeNull()
+    // The key the daemon answered with, which is the key file's.
+    const key: string | null = FAKE_CONNECTION.key
+    expect(readKey()).not.toBeNull()
     expect(settings()).toEqual({
       env: {
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(PORT)}`,
@@ -193,21 +195,53 @@ describe('kurmis setup', () => {
     expect(result.stderr).toContain('Could not make the daemon start at login: not implemented yet')
   })
 
-  it('keeps the settings change when the daemon cannot start, and exits 1', async () => {
-    const { command } = setup({ ensureFails: 'port 40123 is busy' })
-    const result = await run(command, [])
-    expect(result.code).toBe(1)
+  it('starts the daemon before it writes the settings file', async () => {
+    const { client, command } = setup()
+    const ensure = client.ensureDaemon.bind(client)
+    let fileAtStart: boolean | null = null
+    client.ensureDaemon = async (options) => {
+      fileAtStart = existsSync(settingsPath)
+      return await ensure(options)
+    }
+    expect((await run(command, [])).code).toBe(0)
+    expect(fileAtStart).toBe(false)
     expect(existsSync(settingsPath)).toBe(true)
-    expect(result.stderr).toContain('The daemon could not be started: port 40123 is busy')
   })
 
-  it('says so when the daemon runs on another port than config.json names', async () => {
+  it('writes nothing and registers nothing when the daemon cannot start, and exits 1', async () => {
+    const { autostart, command } = setup({ ensureFails: 'port 40123 is busy' })
+    const result = await run(command, [])
+    expect(result.code).toBe(1)
+    expect(existsSync(settingsPath)).toBe(false)
+    expect(autostart.calls).toEqual([])
+    expect(result.stderr).toContain('The daemon could not be started: port 40123 is busy')
+    expect(result.stderr).toContain(`${settingsPath} was not changed, so Claude Code does not use kurmis yet.`)
+  })
+
+  it('writes nothing when the daemon runs on another port than config.json names', async () => {
     writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 1, port: 30003 }))
     const { command } = setup()
     const result = await run(command, [])
     expect(result.code).toBe(1)
-    expect((settings().env as Record<string, string>).ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:30003')
-    expect(result.stderr).toContain(`The daemon runs on port ${String(PORT)}, but config.json and the settings file name port 30003.`)
+    expect(existsSync(settingsPath)).toBe(false)
+    expect(result.stderr).toContain(`The daemon runs on port ${String(PORT)}, but config.json names port 30003.`)
+  })
+
+  it('counts a login item that loads only at the next login as done, with a warning', async () => {
+    const { command } = setup({}, fakeAutostart({ loadsAtNextLogin: true, warning: 'The login item is written and starts the daemon at your next login, but it could not be loaded now: no GUI session' }))
+    const result = await run(command, [])
+    expect(result.code).toBe(0)
+    expect(result.stderr).toBe('Warning: The login item is written and starts the daemon at your next login, but it could not be loaded now: no GUI session\n')
+    expect(existsSync(settingsPath)).toBe(true)
+  })
+
+  it('counts a platform without autostart as done, with a warning', async () => {
+    const unsupported = 'Starting the daemon at login is not supported on this platform; the next kurmis command starts it.'
+    const { command } = setup({}, fakeAutostart({ warning: unsupported }), 'linux')
+    const result = await run(command, [])
+    expect(result.code).toBe(0)
+    expect(result.stderr).toBe(`Warning: ${unsupported}\n`)
+    expect(existsSync(settingsPath)).toBe(true)
   })
 
   it('fails on a broken config.json before changing anything', async () => {

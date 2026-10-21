@@ -81,7 +81,9 @@ The second form signs an existing login in again, for example after it was signe
 `kurmis login claude:work`, or `kurmis login claude:default` for the machine's own.
 
 Kurmis prints the email the login signed in with. It keeps no email itself: the label shown in
-lists is the name unless you give `--label`. If the sign-in fails, nothing is added.
+lists is the name unless you give `--label`. If the sign-in fails, nothing is added. Only one
+`kurmis login` or `kurmis logout` of the same login runs at a time; a second one stops and says
+so.
 
 ### `kurmis claude`
 
@@ -102,6 +104,13 @@ kurmis' own options goes to `claude` unchanged, so `kurmis claude --resume` or
   means `claude:work`.
 
 If you pass your own `--settings`, kurmis adds its settings to yours; your file is not changed.
+The combined copy is kept in kurmis' data folder, readable only by you, and deleted when
+`kurmis claude` ends, so a background session Claude Code starts after that cannot read it. Your
+own `ENABLE_TOOL_SEARCH` or `CLAUDE_CODE_MAX_RETRIES`, wherever you set it, is left as it is.
+
+A `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) in your shell would make claude sign its
+requests with that token instead of a kurmis login, so `kurmis claude` starts claude without it
+and says so.
 
 ### `kurmis codex`
 
@@ -177,14 +186,16 @@ kurmis setup --undo
 Without setup, only Claude Code started through `kurmis claude` is routed. `kurmis setup` makes
 a plain `claude`, and the Claude Code extensions in your editor, use kurmis too:
 
+- it starts the daemon, and changes nothing when it cannot;
 - it adds kurmis' four settings (`ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`,
   `ENABLE_TOOL_SEARCH`, `CLAUDE_CODE_MAX_RETRIES`) to the `env` block of
   `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json` when you set that variable),
   leaving everything else in the file as it was. Because the file then holds kurmis' key, setup
   makes it readable only by you (on macOS and Linux);
-- it saves a copy of the file as `settings.json.kurmis-backup` before its first change;
-- it makes the daemon start when you log in (a launch agent on macOS, a logon entry on Windows)
-  and starts it now.
+- it saves a copy of the file as `settings.json.kurmis-backup` before it adds kurmis' settings
+  (a later setup that only updates them keeps that copy);
+- it makes the daemon start when you log in (a launch agent on macOS, a logon entry on
+  Windows). On Linux there is no start at login; the next kurmis command starts the daemon.
 
 A plain `claude` then runs on Auto. Restart Claude Code sessions and editors that were already
 open. If the file already points `ANTHROPIC_BASE_URL` at another proxy, setup stops and changes
@@ -242,6 +253,9 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   which works while you are logged in at the Mac. If nobody is logged
   in at the Mac, start the daemon there once, or run `kurmis setup` there so it starts at login;
   `kurmis claude` over ssh then uses that daemon.
+- **"kurmis was started by the program it started".** The `claude` or `codex` that kurmis found
+  on your `PATH` is a script or alias that runs kurmis again. Take it off `PATH`, or set
+  `KURMIS_CLAUDE_BIN` (or `KURMIS_CODEX_BIN`) to the full path of the real program.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
   now; try again. If no kurmis command is running, delete `~/.kurmis/config.json.lock`.
 - **A command says the daemon could not be reached.** Look at the end of `daemon.log`, or run

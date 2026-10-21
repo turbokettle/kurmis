@@ -40,9 +40,15 @@ describe('kurmis status', () => {
 
   test('shows what the daemon has when the first probe takes too long', async () => {
     const daemon = fakeDaemonClient({ status: statusAnswer([loginStatus('claude:default')]) })
-    daemon.requestProbe = () => new Promise(() => undefined)
+    let probeSignal: AbortSignal | undefined
+    daemon.requestProbe = (_connection, _logins, signal) => {
+      probeSignal = signal
+      return new Promise(() => undefined)
+    }
     const out = collect()
     expect(await createStatusCommand({ daemon, now: () => NOW, platform: 'linux', probeWaitMs: 20 }).run([], out.context)).toBe(0)
+    // The probe request is ended, so its connection does not keep the CLI running.
+    expect(probeSignal?.aborted).toBe(true)
     expect(out.stderr()).toContain('the first usage probe did not finish within 0.02 s')
     expect(out.stdout()).toContain('usage not read yet')
   })

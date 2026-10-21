@@ -33,13 +33,21 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   happens, so two waiters never remove each other's new lock. A lock is released only by the
   process whose token it holds.
 - `settings/` holds the settings files `kurmis claude` passes to claude with `--settings`
-  (below). Each is named after a hash of its contents, mode 0600, and removed once no start has
-  used it for 30 days.
+  (below), mode 0600. One that holds only kurmis' variables is named after a hash of its
+  contents and removed once no start has used it for 30 days. One that holds a copy of the
+  person's own `--settings` is `run-<pid>-<random>.json`, deleted when that wrapper ends; one a
+  killed wrapper left is removed by the next start once its pid no longer runs (or after 30
+  days, in case the pid was reused).
 - `claude/<name>/` is the config folder of the extra Claude login `claude:<name>`. On Windows
   it holds the login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain,
   under a name derived from this folder's path (`keychainService` in
   `src/core/keychain-service.ts`).
 - `codex/<name>/` is the `CODEX_HOME` of the extra Codex login `codex:<name>`.
+- `locks/<provider>-<name>.lock` (`locks/claude-work.lock`) exists while a `kurmis login` or
+  `kurmis logout` of that login runs (`src/cli/login-lock.ts`). It is the lock file of
+  `src/data/lock.ts`, held for the whole command, because a sign-in can take minutes. A second
+  run for the same login stops at once with a message naming the pid that holds it. A lock whose
+  pid no longer runs, or that is older than 24 hours, is taken over.
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
   names its own pid, so a replaced daemon never removes its successor's file. The CLI removes a
@@ -402,7 +410,8 @@ since `process.execPath` names a versioned folder that a Homebrew upgrade remove
   absolute path, and the test hooks that are set) and the start folder and
   starts node hidden without waiting (`WScript.Shell.Run "<command line>", 0, False`). `//B`
   stops error dialogs at logon.
-- **Other platforms:** a warning; the next kurmis command starts the daemon.
+- **Other platforms:** a warning (setup still exits 0); the next kurmis command starts the
+  daemon.
 
 ## How a Claude CLI reaches the daemon
 
@@ -412,11 +421,19 @@ since `process.execPath` names a versioned folder that a Homebrew upgrade remove
 - `ANTHROPIC_CUSTOM_HEADERS` carrying the key, and the login when one was named;
 - `ENABLE_TOOL_SEARCH=true`, because the CLI turns tool search off for any base URL that is not
   Anthropic's, and the proxy passes it through;
-- `CLAUDE_CODE_MAX_RETRIES=15`, so a request outlasts a daemon restart;
+- `CLAUDE_CODE_MAX_RETRIES=15`, so a request outlasts a daemon restart. These two are left out
+  when the person sets either themselves, in their `--settings`, the user settings file or the
+  environment, to a value that is not empty: routing works without them, so their value stays,
+  as `kurmis setup` keeps it in `settings.json`;
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the login's folder when a login other than the
   default was named;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
-  itself and no subscription would be billed.
+  itself and no subscription would be billed;
+- `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` removed, because a CLI
+  with a token of its own sends that token instead of the credentials of the login it was
+  started on, and the proxy forwards the started-on login's header when it has read no token
+  for that login, so the request would be billed to whatever account the token belongs to. The
+  wrapper prints one line on stderr when either was set.
 
 **Kurmis' own options come first.** `kurmis claude` and `kurmis codex` read their options
 (`--login <id>`, `--help`) from the front of the argument list and stop at the first argument
@@ -456,13 +473,23 @@ So the wrapper passes exactly one `--settings`, first, ahead of the person's arg
 - When the person's arguments carry `--settings` before claude's `--`, the last one is read
   (inline JSON, or the file, relative to the current folder), kurmis' variables are merged into
   its `env`, and every `--settings` of theirs is taken out. Their other keys and variables are
-  kept; for the four routing variables kurmis' values win. Their file is never changed.
+  kept; for the base URL and the custom headers kurmis' values win, and their own
+  `ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_MAX_RETRIES` stay (above). Their file is never changed.
   Settings that cannot be read, are not a JSON object, or have an `env` that is not an object
   stop the start with a message.
-- The merged settings go to claude as a file in the data folder's `settings/`, not inline,
-  because they hold the key and a command line is visible to other users in the process list.
-  The file is not deleted when claude exits, because claude passes its `--settings` value on to
-  processes it starts itself, such as background sessions, which can outlive the wrapper.
+- The merged settings go to claude as a file in the data folder's `settings/`, mode 0600, not
+  inline, because they hold the key and a command line is visible to other users in the process
+  list. Claude passes its `--settings` value on to processes it starts itself, such as
+  background sessions, which can outlive the wrapper. So a file with only kurmis' variables is
+  shared by every start with the same values (named after their hash) and kept. A file with a
+  copy of the person's own settings, which may hold secrets of theirs, belongs to one wrapper
+  (`run-<pid>-<random>.json`, so several wrappers at once each have their own) and is deleted
+  when claude has ended. A process claude starts with it after that cannot start: Claude Code
+  2.1.306 stops with "Error: Settings file not found: <path>". So a background session that
+  claude starts after the wrapper has ended fails when the person passed their own
+  `--settings`; one that is already running has read the file. The next start removes a file a
+  killed wrapper left, by the pid in its name: when that pid no longer runs, or when the file is
+  older than 30 days, in case the pid was reused by another program.
 - `ANTHROPIC_CUSTOM_HEADERS` keeps the person's own header lines. They are taken from the
   highest layer that sets the variable, as the CLI would: their `--settings`, then the user
   settings file (`$CLAUDE_CONFIG_DIR/settings.json` when that is set, else
@@ -475,16 +502,31 @@ the IDE extensions are routed too. The values are those of an Auto CLI with no s
 header, so a plain `claude` runs on `claude:default`. It also registers the daemon to start at
 login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon.
 
+The daemon is started first. Once the file names the daemon, every Claude Code on the machine
+sends its requests there, so the file is written only after a daemon answers on the port
+`config.json` names, with the key that daemon accepted. Setup checks first that it could edit
+the file, so a file it would refuse starts no daemon. Autostart is registered last.
+
 - The file is `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set and not empty, as the
   CLI reads it, else `~/.claude/settings.json`; the path used is printed. A `CLAUDE_CONFIG_DIR`
   inside kurmis' data folder is refused.
 - The file is edited as text: only the members of `env` change, and key order, indent, line
   endings and a byte order mark stay as they were. A file that is not plain JSON (comments,
   trailing commas), or whose top level or `env` is not an object, is refused and not written.
+  The message names the line and column where it stops being JSON and never quotes the file,
+  since it may hold a secret (`src/cli/json-error.ts`); the same goes for a `--settings` file of
+  the wrapper's and the user settings file it reads for custom headers.
   A symlinked file is written through the link: the link stays, its target gets the change, and
-  setup warns that the key is written to that target and names it.
-- Before the first change to an existing file, it is copied to `settings.json.kurmis-backup`
-  (mode 0600), which is never overwritten.
+  setup warns that the key is written to that target and names it. A link whose target does
+  not exist yet gets that target created, so the link is not replaced by a plain file.
+- On Windows a read-only file (its read-only attribute set) is refused with the `attrib -R`
+  command that clears it, because a rename over a read-only file fails there. A write that
+  fails because another program holds the file open is reported as a sentence, not a stack.
+- When setup changes an existing file that holds none of kurmis' settings, it first copies it
+  to `settings.json.kurmis-backup` (mode 0600), replacing an older backup: after a setup, an
+  undo and months of edits, the file as it is now is what "before kurmis" means. When the file
+  already holds kurmis' settings (setup run again after the port or the key changed), the
+  backup is left as it is.
 - The file holds the key after setup, so setup makes it readable by the user only: a new file
   gets mode 0600, and an existing one has its group and other bits cleared (0644 becomes 0600),
   also when setup finds kurmis' settings already there and writes nothing. An existing backup
@@ -495,13 +537,20 @@ login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon
 - An `ANTHROPIC_BASE_URL` that is not kurmis' (`http://127.0.0.1:<port>` with the port of
   `config.json`, or with an `x-kurmis-key` in the same `env`'s headers) is refused, so another
   proxy is not cut off silently. A value of the person's own for `ENABLE_TOOL_SEARCH` or
-  `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept.
-- When autostart or the daemon fails, the settings change stands and setup exits 1; running it
-  again is safe.
+  `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept exactly
+  as written, ahead of kurmis' lines.
+- When the daemon cannot be started, or runs on another port than `config.json` names, nothing
+  is written and setup exits 1. When autostart then fails, the settings change stands and setup
+  exits 1; running it again is safe. A launchd agent that is written but can be loaded only at
+  the next login, and a platform without autostart (Linux), are warnings with exit 0: the
+  daemon runs now, and the next kurmis command starts it after a restart.
 
 `kurmis setup --undo` removes only the values that are still kurmis': a key the person changed is
-left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. An `env`
-that undo empties is removed. It unregisters autostart and leaves the daemon running, because
+left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the
+lines left are the ones the backup has, the backup's value comes back as it was (with its line
+endings and blank lines); otherwise the lines left are joined by newlines. A value the backup
+already had (read with or without a byte order mark) is left. An `env` that undo empties is
+removed, unless the backup shows the file had an `env` before kurmis. It unregisters autostart and leaves the daemon running, because
 `kurmis claude` still uses it. Both directions can be run again without changing anything more.
 Claude Code sessions that are already open keep the settings they started with.
 
@@ -515,8 +564,12 @@ headers. The proxy answers that path itself.
 
 - **macOS and Linux.** Ctrl-C (SIGINT) and Ctrl-\ (SIGQUIT) reach every process in the
   terminal's foreground process group, so the child gets them itself; the wrapper ignores them
-  while the child runs, as `system(3)` does. SIGTERM and SIGHUP are usually sent to the wrapper
-  alone, so it forwards them to the child and keeps waiting.
+  while the child runs, as `system(3)` does. That is so only when stdin is a terminal. When it
+  is not (a script or a program runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
+  sent to the wrapper's pid alone, so the wrapper forwards them like SIGTERM. A child whose input
+  is piped but that runs in a terminal's foreground process group then gets Ctrl-C twice, which
+  a CLI that is not interactive does not mind: it ends at the first. SIGTERM and SIGHUP are
+  usually sent to the wrapper alone, so it forwards them to the child and keeps waiting.
 - **Windows.** Ctrl-C, Ctrl-Break and closing the console reach every process on the console
   (Node reports closing as SIGHUP). The wrapper ignores all three and forwards nothing, because
   `child.kill()` there ends the child at once with TerminateProcess.
@@ -526,6 +579,16 @@ headers. The proxy answers that path itself.
   128 + the signal number instead. A child that cannot be started gives a message and the code a
   shell would give: 127 when there is no such program (also when `findProgram` finds none), 126
   when it cannot be run (EACCES, EPERM, ENOEXEC, EISDIR), 1 otherwise.
+
+- **Starting itself again.** A `claude` or `codex` on PATH may be a script of the person's that
+  runs `kurmis claude` or `kurmis codex`, and kurmis would start it, which starts kurmis, without
+  end. The wrapper adds its pid to `KURMIS_WRAPPER_PIDS` in the child's environment, and refuses
+  to start its child (exit 1, with a message that says to take the program off PATH or to set
+  `KURMIS_CLAUDE_BIN` or `KURMIS_CODEX_BIN`) when its own parent is one of those pids, which is
+  what a script that `exec`s kurmis gives, or when eight wrappers already run inside each other,
+  which catches a script that starts kurmis without `exec`. A `kurmis claude` run from the shell
+  of a session has the CLI or a shell as its parent, never a wrapper, so it is not refused. A
+  PATH hit that is kurmis' own bundle is skipped when the program is looked up (below).
 
 `test/cli/wrapper-pty.test.ts` checks this under a pseudo-terminal: `test/cli/pty-driver.py`
 (run with `python3 -I`) starts a bundled wrapper on the fake claude, sends Ctrl-C and SIGTERM, and
@@ -626,7 +689,8 @@ directly. A `.cmd` or `.bat` is read as a package manager's shim and its target 
 where its native installer puts it: `%USERPROFILE%\.local\bin\claude.exe`
 (`~/.local/bin/claude` on macOS and Linux). On macOS and Linux a PATH hit that is a symlink to a
 `.js` file (Homebrew's `codex`) runs that file through Node, so a PATH without `node` on it
-still works.
+still works. A PATH hit that resolves to kurmis' own bundle (a link to it, or a shim that starts
+it) is skipped and named in the not-found message, because it is not the real program.
 
 **Reading npm, pnpm and yarn shims** (`src/platform/npm-shim.ts`). Each generator writes a line
 that ends in the quoted target path, relative to `%~dp0` or `%dp0%` (the shim's own folder),
@@ -761,7 +825,9 @@ These are known and left as they are.
   unit tests run without a daemon or a real CLI. The commands are:
   - `claude` and `codex` (above).
   - `status [--json]`: starts the daemon when needed and shows its status. When no signed-in
-    login has been read yet it asks for one probe and waits up to 15 seconds. The text shows
+    login has been read yet it asks for one probe and waits up to 15 seconds; then it ends the
+    request and closes its connection, so the command exits at once while the daemon finishes
+    the probe. `kurmis codex` does the same with its 5-second wait. The text shows
     per login the label, the email the daemon read from the login's own profile (on the
     terminal only), sign-in, routing, limits, use-first, sessions, each usage window with its
     reset, and why routing passes the login over (`routeBlockText`), and last which login
@@ -776,15 +842,23 @@ These are known and left as they are.
     `credentials: boolean` added.
   - `login claude|codex [--name <name>] [--label <text>]` adds a new login; without `--name` it
     takes the first free name of `2`, `3`, ... (`claude:2`). `login <id> [--label <text>]` signs
-    an existing login in again, the default ones included (and adds an id that is new). The
-    login's folder is created first (mode 0700), and for Codex prepared with `prepareCodexHome`,
+    an existing login in again, the default ones included (and adds an id that is new). First
+    it takes the login's lock (`locks/`, above) and reads `config.json` again under it; without
+    `--name` a number whose lock another run holds is passed over, so two `kurmis login claude`
+    at once get `claude:2` and `claude:3`. The lock is held until the command ends, so a failed
+    run can never delete the folder of a run that signed in, and a logout cannot delete a
+    folder a sign-in writes into. The
+    login's folder is created next (mode 0700), and for Codex prepared with `prepareCodexHome`,
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
     wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
     local credentials are there; otherwise a folder this run created is removed and nothing is
     added. The email is printed and never stored; the label defaults to the name. A running
-    daemon is told to reload; none is started for this.
-  - `logout <id>`: refuses the default logins. It removes the login from `config.json`, tells a
+    daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
+    it may still hold the login as signed out from before and Auto would pass it over until
+    its next poll; none is started for this.
+  - `logout <id>`: refuses the default logins. It holds the login's lock while it runs, and
+    stops at once when a `kurmis login` of the login holds it. It removes the login from `config.json`, tells a
     running daemon to reload (so it stops probing the login), runs `claude auth logout` or
     `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
     item that may be left on macOS, and the removal goes on), and deletes the folder with

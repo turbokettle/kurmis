@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -12,7 +12,9 @@ import {
   readUserSettingsEnv,
   routingVariables,
   SETTINGS_FILE_MAX_AGE_MS,
+  storeSettings,
   storeSettingsFile,
+  userOwnedRoutingVariables,
   type UserSettingsArg
 } from '../../src/cli/settings-arg.ts'
 
@@ -115,15 +117,76 @@ describe('merging', () => {
   })
 
   test('the arguments start with the one --settings, naming the stored file, ahead of the person\'s arguments', () => {
-    const stored: string[] = []
-    const store = (text: string): string => {
-      stored.push(text)
-      return '/data/settings/x.json'
+    const stored: Array<[string, boolean]> = []
+    const removed: string[] = []
+    const store = (text: string, holdsUserSettings: boolean) => {
+      stored.push([text, holdsUserSettings])
+      return { path: '/data/settings/x.json', remove: () => void removed.push(text) }
     }
-    expect(claudeArgsWithSettings(ok(['mcp', '--settings', '{"model":"opus"}', 'list']), ROUTING, store))
-      .toEqual(['--settings', '/data/settings/x.json', 'mcp', 'list'])
-    expect(claudeArgsWithSettings(ok([]), ROUTING, store)).toEqual(['--settings', '/data/settings/x.json'])
-    expect(stored).toEqual([JSON.stringify({ model: 'opus', env: ROUTING }), JSON.stringify({ env: ROUTING })])
+    const withTheirs = claudeArgsWithSettings(ok(['mcp', '--settings', '{"model":"opus"}', 'list']), ROUTING, store)
+    expect(withTheirs.args).toEqual(['--settings', '/data/settings/x.json', 'mcp', 'list'])
+    expect(claudeArgsWithSettings(ok([]), ROUTING, store).args).toEqual(['--settings', '/data/settings/x.json'])
+    expect(stored).toEqual([[JSON.stringify({ model: 'opus', env: ROUTING }), true], [JSON.stringify({ env: ROUTING }), false]])
+    withTheirs.remove()
+    expect(removed).toEqual([JSON.stringify({ model: 'opus', env: ROUTING })])
+  })
+
+  test('a copy of the person\'s settings is the wrapper\'s own file, private, and removed when it is done', () => {
+    const folder = mkdtempSync(join(tmpdir(), 'kurmis-settings-run-'))
+    try {
+      const first = storeSettings('{"env":{"SECRET":"x"}}', true, folder)
+      const second = storeSettings('{"env":{"SECRET":"x"}}', true, folder)
+      // Two wrappers with the same settings each have their own file.
+      expect(second.path).not.toBe(first.path)
+      expect(basename(first.path)).toMatch(new RegExp(`^run-${String(process.pid)}-[0-9a-f]{16}\\.json$`))
+      expect(readFileSync(first.path, 'utf8')).toBe('{"env":{"SECRET":"x"}}')
+      if (process.platform !== 'win32') expect(statSync(first.path).mode & 0o777).toBe(0o600)
+      first.remove()
+      first.remove()
+      expect(existsSync(first.path)).toBe(false)
+      expect(existsSync(second.path)).toBe(true)
+      // The shared file of kurmis' own variables is kept.
+      const shared = storeSettings('{"env":{"A":"1"}}', false, folder)
+      shared.remove()
+      expect(existsSync(shared.path)).toBe(true)
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test('a file left by a killed wrapper is removed by the next start; a running wrapper\'s file is kept', () => {
+    const folder = mkdtempSync(join(tmpdir(), 'kurmis-settings-left-'))
+    try {
+      const now = Date.now()
+      const dead = join(folder, `run-${String(2 ** 30)}-${'a'.repeat(16)}.json`)
+      const running = join(folder, `run-${String(process.ppid)}-${'b'.repeat(16)}.json`)
+      const reused = join(folder, `run-${String(process.ppid)}-${'c'.repeat(16)}.json`)
+      for (const file of [dead, running, reused]) writeFileSync(file, '{}')
+      const longAgo = (now - SETTINGS_FILE_MAX_AGE_MS - 60_000) / 1000
+      utimesSync(reused, longAgo, longAgo)
+      storeSettings('{"env":{"A":"1"}}', false, folder, now)
+      expect(existsSync(dead)).toBe(false)
+      expect(existsSync(reused)).toBe(false)
+      expect(existsSync(running)).toBe(true)
+      writeFileSync(dead, '{}')
+      storeSettings('{"env":{"B":"1"}}', true, folder, now).remove()
+      expect(existsSync(dead)).toBe(false)
+      expect(existsSync(running)).toBe(true)
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test('the person\'s own ENABLE_TOOL_SEARCH and CLAUDE_CODE_MAX_RETRIES, from any layer, are theirs', () => {
+    const layers = (flagEnv: Record<string, unknown> | null, userSettingsEnv: Record<string, unknown> | null,
+      processEnv: Record<string, string>, windows = false) => ({ flagEnv, userSettingsEnv, processEnv, windows })
+    expect(userOwnedRoutingVariables(layers(null, null, {}))).toEqual([])
+    expect(userOwnedRoutingVariables(layers({ ENABLE_TOOL_SEARCH: 'false' }, null, {}))).toEqual(['ENABLE_TOOL_SEARCH'])
+    expect(userOwnedRoutingVariables(layers(null, { CLAUDE_CODE_MAX_RETRIES: 3 }, {}))).toEqual(['CLAUDE_CODE_MAX_RETRIES'])
+    expect(userOwnedRoutingVariables(layers(null, null, { ENABLE_TOOL_SEARCH: 'auto', CLAUDE_CODE_MAX_RETRIES: '' })))
+      .toEqual(['ENABLE_TOOL_SEARCH'])
+    expect(userOwnedRoutingVariables(layers(null, null, { enable_tool_search: 'false' }, true))).toEqual(['ENABLE_TOOL_SEARCH'])
+    expect(userOwnedRoutingVariables(layers(null, null, { enable_tool_search: 'false' }, false))).toEqual([])
   })
 
   test('storeSettingsFile writes one private file per content and removes files unused for 30 days', () => {
@@ -162,6 +225,18 @@ describe('the user settings file and custom headers', () => {
     expect(claudeUserSettingsPath({ CLAUDE_CONFIG_DIR: '/conf' }, '/home/someone')).toBe(join('/conf', 'settings.json'))
   })
 
+  test('a broken settings file or --settings value is reported by line and column, never quoting its text', () => {
+    const secret = 'sk-ant-oat01-fake-secret-value'
+    const file = join(dir, 'secret.json')
+    writeFileSync(file, `{\n  "env": {\n    "TOKEN": ${secret}\n  }\n}`)
+    expect(readUserSettingsEnv(file).warning).toBe(`${file} is not valid JSON (line 3, column 14), so custom headers set there are not kept`)
+    const read = readUserSettingsArg(['--settings', file], { cwd: dir })
+    expect(read).toEqual({ error: `--settings: the settings file ${file} is not valid JSON (line 3, column 14)` })
+    const inline = readUserSettingsArg(['--settings', `{"env": {"TOKEN": ${secret}}}`], { cwd: dir })
+    expect('error' in inline && inline.error).toBe('--settings: the JSON given to --settings is not valid JSON (line 1, column 19)')
+    expect(JSON.stringify([read, inline])).not.toContain('sk-ant')
+  })
+
   test('reads the env block; a missing file or one without env is no env; a broken file is a warning', () => {
     const file = join(dir, 'settings.json')
     expect(readUserSettingsEnv(file)).toEqual({ env: null, warning: null })
@@ -170,7 +245,7 @@ describe('the user settings file and custom headers', () => {
     writeFileSync(file, '{"env":{"ANTHROPIC_CUSTOM_HEADERS":"x-team: a"}}')
     expect(readUserSettingsEnv(file)).toEqual({ env: { ANTHROPIC_CUSTOM_HEADERS: 'x-team: a' }, warning: null })
     writeFileSync(file, '{"env":')
-    expect(readUserSettingsEnv(file)).toEqual({ env: null, warning: `${file} is not valid JSON, so custom headers set there are not kept` })
+    expect(readUserSettingsEnv(file)).toEqual({ env: null, warning: `${file} is not valid JSON (line 1, column 8), so custom headers set there are not kept` })
     expect(readUserSettingsEnv(dir).warning).toContain(`could not read ${dir}`)
   })
 

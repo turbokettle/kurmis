@@ -11,6 +11,10 @@
 //    a package manager's shim (`npm-shim.ts`) and its target is started instead. A shim kurmis
 //    cannot read is skipped and the search goes on. `.ps1` files and files without an extension
 //    (the PowerShell and Git Bash shims) are never used. The current folder is not searched.
+//    On every OS a PATH hit that is kurmis itself (a link to kurmis' bundle, or a shim that runs
+//    it) is skipped: started as `claude`, it would not be Claude Code. A script on PATH that runs
+//    `kurmis claude` cannot be told apart this way; the wrapper refuses to start itself again
+//    instead (`wrapperLoop` in `src/cli/wrapper.ts`).
 // 3. For Claude Code, where its native installer puts it: `~/.local/bin/claude` on macOS and
 //    Linux, `%USERPROFILE%\.local\bin\claude.exe` on Windows. The installer does not always put
 //    that folder on PATH.
@@ -36,6 +40,7 @@
 // Windows paths on any OS.
 import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
+import { kurmisEntry } from './detach.ts'
 import { cmdShimInvocation, isAbsoluteWindowsPath, parseCmdShim } from './npm-shim.ts'
 import { invocationFor } from './run.ts'
 
@@ -75,6 +80,11 @@ export interface FindProgramOptions {
   nodePath?: string
   /** The file checks. Defaults to the real file system. */
   files?: ProgramFiles
+  /**
+   * Kurmis' own bundle, whose PATH hits are skipped. Defaults to `kurmisEntry`, the running
+   * bundle with its links resolved; null skips nothing.
+   */
+  ownEntry?: string | null
 }
 
 /** The variables that name each tool's program explicitly. */
@@ -108,33 +118,46 @@ export function findProgram(tool: ToolName, options: FindProgramOptions = {}): R
     if ('refused' in invocation) throw new ProgramNotFoundError(tool, `${variable}: ${invocation.refused}`)
     return { command: invocation.command, args: invocation.args, source: 'env' }
   }
+  const ownEntry = options.ownEntry === undefined ? kurmisEntry({ env }) : options.ownEntry
+  const own = ownEntry === null ? null : files.realPath(ownEntry) ?? ownEntry
   return platform === 'win32'
-    ? findOnWindows(tool, env, nodePath, files)
-    : findOnPosix(tool, env, nodePath, files)
+    ? findOnWindows(tool, env, nodePath, files, own)
+    : findOnPosix(tool, env, nodePath, files, own)
 }
 
-function findOnPosix(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles): ResolvedProgram {
+const OWN_BUNDLE = 'it is kurmis itself, not the real program'
+
+function findOnPosix(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles, own: string | null): ResolvedProgram {
   const folders = posixPathFolders(env.PATH)
+  const skipped: string[] = []
   for (const folder of folders) {
     const candidate = posix.join(folder, tool)
     if (!files.isExecutable(candidate)) continue
     const real = files.realPath(candidate)
+    if (own !== null && real === own) {
+      skipped.push(`${candidate}: ${OWN_BUNDLE}`)
+      continue
+    }
     if (real !== null && /\.(js|cjs|mjs)$/i.test(real)) return { command: nodePath, args: [real], source: 'path' }
     return { command: candidate, args: [], source: 'path' }
   }
   const looked = [`the ${countFolders(folders.length)} on PATH`]
   if (tool === 'claude' && env.HOME !== undefined && posix.isAbsolute(env.HOME)) {
     const native = posix.join(env.HOME, '.local', 'bin', 'claude')
-    if (files.isExecutable(native)) return { command: native, args: [], source: 'native-installer' }
+    if (files.isExecutable(native) && (own === null || files.realPath(native) !== own)) {
+      return { command: native, args: [], source: 'native-installer' }
+    }
     looked.push(native)
   }
-  throw notFound(tool, looked, [])
+  throw notFound(tool, looked, skipped)
 }
 
-function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles): ResolvedProgram {
+function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles, own: string | null): ResolvedProgram {
   const folders = windowsPathFolders(windowsEnv(env, 'PATH'))
   const extensions = pathExtensions(windowsEnv(env, 'PATHEXT'))
   const skipped: string[] = []
+  const isOwn = (path: string | undefined): boolean => own !== null && path !== undefined &&
+    (files.realPath(path) ?? path).toLowerCase() === own.toLowerCase()
   for (const folder of folders) {
     for (const extension of extensions) {
       const candidate = win32.join(folder, tool + extension)
@@ -142,6 +165,7 @@ function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string,
       if (extension === '.exe' || extension === '.com') return { command: candidate, args: [], source: 'path' }
       const resolved = resolveShim(tool, candidate, nodePath, files)
       if ('refused' in resolved) skipped.push(`${candidate}: ${resolved.refused}`)
+      else if (isOwn(resolved.args[0])) skipped.push(`${candidate}: ${OWN_BUNDLE}`)
       else return resolved
     }
   }

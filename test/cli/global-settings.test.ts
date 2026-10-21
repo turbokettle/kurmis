@@ -252,11 +252,12 @@ describe('undoSetupInText', () => {
     expect(undoSetupInText(set, { port: null }).text).toBe(original)
   })
 
-  it('removes only kurmis\' header lines and keeps the user\'s', () => {
+  it('removes only kurmis\' header lines and keeps the user\'s as they wrote them', () => {
     const theirs = JSON.stringify({ env: { ANTHROPIC_CUSTOM_HEADERS: 'X-Team:blue\nX-Trace: on' } }, null, 2)
     const set = applySetupToText(theirs, VALUES).text
+    expect(envOf(set)?.ANTHROPIC_CUSTOM_HEADERS).toBe(`X-Team:blue\nX-Trace: on\n${HEADERS}`)
     const undone = undoSetupInText(set, { port: PORT })
-    expect(envOf(undone.text)).toEqual({ ANTHROPIC_CUSTOM_HEADERS: 'X-Team: blue\nX-Trace: on' })
+    expect(envOf(undone.text)).toEqual({ ANTHROPIC_CUSTOM_HEADERS: 'X-Team:blue\nX-Trace: on' })
     expect(undone.changes.find((change) => change.name === 'ANTHROPIC_CUSTOM_HEADERS')?.action).toBe('updated')
   })
 
@@ -286,6 +287,16 @@ describe('undoSetupInText', () => {
 
   it('refuses a file that is not valid JSON', () => {
     expect(() => undoSetupInText('{ "env": { ', { port: PORT })).toThrow(SettingsFileError)
+  })
+
+  it('says where a file stops being JSON without quoting it, since it may hold a secret', () => {
+    const text = '{\n  "env": {\n    "ANTHROPIC_AUTH_TOKEN": sk-ant-fake-secret\n  }\n}\n'
+    expect(() => applySetupToText(text, { port: PORT, key: 'k' })).toThrow('it is not valid JSON (line 3, column 29)')
+    try {
+      undoSetupInText(text, { port: PORT })
+    } catch (error) {
+      expect((error as Error).message).not.toContain('sk-ant')
+    }
   })
 })
 
@@ -442,6 +453,83 @@ describe('the settings file', () => {
     expect(result.linkTarget).toBe(realpathSync(target))
     expect(result.modeBefore).toBe(0o644)
     expect(statSync(target).mode & 0o777).toBe(0o600)
+  })
+
+  it('undo reads a backup that starts with a byte order mark, and keeps the values it had', () => {
+    const path = join(freshDir(), 'settings.json')
+    const original = '\uFEFF{\n  "env": {\n    "ENABLE_TOOL_SEARCH": "true",\n    "CLAUDE_CODE_MAX_RETRIES": "15"\n  }\n}\n'
+    writeFileSync(path, original)
+    setupSettingsFile(path, VALUES)
+    expect(readFileSync(backupPathFor(path), 'utf8')).toBe(original)
+    undoSettingsFile(path, { port: PORT })
+    expect(readFileSync(path, 'utf8')).toBe(original)
+  })
+
+  it('undo keeps an empty env the file had before setup, and removes one setup added', () => {
+    const path = join(freshDir(), 'settings.json')
+    const original = '{\n  "model": "opus",\n  "env": {}\n}\n'
+    writeFileSync(path, original)
+    setupSettingsFile(path, VALUES)
+    const undone = undoSettingsFile(path, { port: PORT })
+    expect(undone.envRemoved).toBe(false)
+    expect(envOf(readFileSync(path, 'utf8'))).toEqual({})
+
+    const other = join(freshDir(), 'settings.json')
+    writeFileSync(other, '{\n  "model": "opus"\n}\n')
+    setupSettingsFile(other, VALUES)
+    expect(undoSettingsFile(other, { port: PORT }).envRemoved).toBe(true)
+    expect(readFileSync(other, 'utf8')).toBe('{\n  "model": "opus"\n}\n')
+  })
+
+  it('setup keeps the user\'s own header lines as written, and undo gives back their value', () => {
+    const path = join(freshDir(), 'settings.json')
+    const theirs = 'X-Team:blue\r\n\r\nX-Trace:  on'
+    const original = `${JSON.stringify({ env: { ANTHROPIC_CUSTOM_HEADERS: theirs } }, null, 2)}\n`
+    writeFileSync(path, original)
+    setupSettingsFile(path, VALUES)
+    expect(envOf(readFileSync(path, 'utf8'))?.ANTHROPIC_CUSTOM_HEADERS).toBe(`X-Team:blue\nX-Trace:  on\n${HEADERS}`)
+    undoSettingsFile(path, { port: PORT })
+    expect(readFileSync(path, 'utf8')).toBe(original)
+  })
+
+  it('a setup after an undo backs up the file as it is then, not as it was at the first setup', () => {
+    const path = join(freshDir(), 'settings.json')
+    writeFileSync(path, '{\n  "model": "opus"\n}\n')
+    setupSettingsFile(path, VALUES)
+    undoSettingsFile(path, { port: PORT })
+    const later = '{\n  "model": "sonnet",\n  "env": {\n    "ENABLE_TOOL_SEARCH": "true"\n  }\n}\n'
+    writeFileSync(path, later)
+    const result = setupSettingsFile(path, VALUES)
+    expect(result.backupWritten).toBe(backupPathFor(path))
+    expect(readFileSync(backupPathFor(path), 'utf8')).toBe(later)
+    if (posix) expect(statSync(backupPathFor(path)).mode & 0o777).toBe(0o600)
+    undoSettingsFile(path, { port: PORT })
+    expect(readFileSync(path, 'utf8')).toBe(later)
+  })
+
+  it.skipIf(!posix)('writes through a link whose target does not exist yet, and keeps the link', () => {
+    const dir = freshDir()
+    mkdirSync(join(dir, 'dotfiles'))
+    const link = join(dir, 'settings.json')
+    symlinkSync('dotfiles/claude-settings.json', link)
+    const result = setupSettingsFile(link, VALUES)
+    expect(result.existed).toBe(false)
+    expect(lstatSync(link).isSymbolicLink()).toBe(true)
+    expect(envOf(readFileSync(join(dir, 'dotfiles', 'claude-settings.json'), 'utf8'))).toEqual(KURMIS_ENV)
+    expect(result.linkTarget).toBe(realpathSync(join(dir, 'dotfiles', 'claude-settings.json')))
+  })
+
+  it('on Windows a read-only file is refused with what to do, and not changed', () => {
+    const path = join(freshDir(), 'settings.json')
+    writeFileSync(path, '{}\n')
+    chmodSync(path, 0o444)
+    try {
+      expect(() => setupSettingsFile(path, VALUES, 'win32')).toThrow(/was not changed: it is read-only\. Clear that with "attrib -R /)
+      expect(readFileSync(path, 'utf8')).toBe('{}\n')
+      expect(existsSync(backupPathFor(path))).toBe(false)
+    } finally {
+      chmodSync(path, 0o644)
+    }
   })
 
   it('names no link target for a plain file', () => {

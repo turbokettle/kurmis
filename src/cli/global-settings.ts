@@ -23,13 +23,24 @@
 //
 // Setup refuses an `ANTHROPIC_BASE_URL` that is not kurmis', because replacing it would silently
 // cut off whatever the user pointed Claude Code at.
-import { chmodSync, copyFileSync, constants, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+//
+// The user's own header lines are kept exactly as written: setup puts kurmis' lines after them,
+// and undo gives back the value the backup had when the backup's lines are the ones left, else
+// the lines left joined by newlines. An `env` that undo empties is removed only when the backup
+// shows the file had none before kurmis.
+//
+// The backup is the file as it was before kurmis changed it. Setup writes it when it changes a
+// file that holds none of kurmis' settings, replacing an older backup (the file may have changed
+// a lot since an earlier setup and undo), and leaves it when the file already holds kurmis'
+// settings (a setup run again after the port or the key changed).
+import { chmodSync, copyFileSync, constants, lstatSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { KURMIS_HEADERS, KEY_HEADER, parseCustomHeaders } from '../core/route-headers.ts'
 import { ROUTING_VARIABLES, routedClaudeEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { kurmisHome } from '../data/paths.ts'
-import { PRIVATE_FILE_MODE, restrictToUserSync, userOnlyMode } from '../platform/files.ts'
+import { PRIVATE_FILE_MODE, replaceFileSync, restrictToUserSync, userOnlyMode } from '../platform/files.ts'
+import { notJsonText } from './json-error.ts'
 import { claudeUserSettingsPath } from './settings-arg.ts'
 
 const BASE_URL = 'ANTHROPIC_BASE_URL'
@@ -77,6 +88,8 @@ export interface SettingsEdit {
   envCreated: boolean
   /** Undo removed the `env` object because nothing was left in it. */
   envRemoved: boolean
+  /** Setup: the file held kurmis' settings already, so it is not a record of the file before kurmis. */
+  hadKurmis: boolean
   /** Things the person should know that kurmis does not change, e.g. an API key in `env`. */
   warnings: string[]
 }
@@ -210,8 +223,9 @@ function parseSettings(text: string): ParsedSettings {
   let value: unknown
   try {
     value = JSON.parse(text)
-  } catch (error) {
-    throw new SettingsFileError(`it is not valid JSON (${error instanceof Error ? error.message : String(error)})`)
+  } catch {
+    // Never `JSON.parse`'s message: it quotes the text, which may hold a secret.
+    throw new SettingsFileError(`it is ${notJsonText(text)}`)
   }
   if (!isPlainObject(value)) throw new SettingsFileError('its top level is not a JSON object')
   const scanner = new Scanner(text)
@@ -327,7 +341,11 @@ function newEnvJson(values: Record<string, string>, outerIndent: string, layout:
 // ---------------------------------------------------------------------------------------------
 // Which values are kurmis'.
 
-/** The values setup writes: `ROUTING_VARIABLES` from `routedClaudeEnv` on Auto, started on the default login. */
+/**
+ * The values setup writes: `ROUTING_VARIABLES` from `routedClaudeEnv` on Auto, started on the
+ * default login. The user's own lines of `existingHeaders` come first, exactly as written, then
+ * kurmis' lines.
+ */
 export function kurmisEnvValues(values: SetupValues, existingHeaders: string | null): Record<string, string> {
   const routed = routedClaudeEnv({
     port: values.port,
@@ -335,13 +353,15 @@ export function kurmisEnvValues(values: SetupValues, existingHeaders: string | n
     login: null,
     startedOn: null,
     secureStorageDir: null,
-    inheritedCustomHeaders: existingHeaders
+    inheritedCustomHeaders: null
   })
   const out: Record<string, string> = {}
   for (const name of ROUTING_VARIABLES) {
     const value = routed.set[name]
     if (value !== undefined) out[name] = value
   }
+  const theirs = othersHeaderLines(existingHeaders ?? '')
+  if (theirs.length > 0) out[CUSTOM_HEADERS] = [...theirs, out[CUSTOM_HEADERS]!].join('\n')
   return out
 }
 
@@ -376,27 +396,37 @@ function keyVariableWarnings(env: Record<string, unknown> | undefined): string[]
     `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`)
 }
 
-/** The `env` values of the backup when it is from before kurmis changed the file, else null. */
-function backupEnv(backupText: string | null | undefined): Record<string, unknown> | null {
+/**
+ * What the backup says about the file before kurmis changed it: its `env` (null when it had
+ * none). Null for the whole answer when there is no backup that can say: none, one that is not
+ * a JSON object, or one that already holds kurmis' settings.
+ */
+function backupBefore(backupText: string | null | undefined): { env: Record<string, unknown> | null } | null {
   if (backupText === null || backupText === undefined) return null
   let value: unknown
   try {
-    value = JSON.parse(backupText)
+    value = JSON.parse(withoutBom(backupText))
   } catch {
     return null
   }
-  if (!isPlainObject(value) || !isPlainObject(value.env)) return null
+  if (!isPlainObject(value)) return null
+  if (value.env === undefined) return { env: null }
+  if (!isPlainObject(value.env)) return null
   const env = value.env
   // A backup that already holds kurmis' settings is not a record of what the user had.
   if (hasKurmisHeader(env[CUSTOM_HEADERS])) return null
-  return env
+  return { env }
+}
+
+function withoutBom(text: string): string {
+  return text.startsWith(BOM) ? text.slice(BOM.length) : text
 }
 
 // ---------------------------------------------------------------------------------------------
 // Setup and undo on the text.
 
 function emptyEdit(text: string): SettingsEdit {
-  return { text, changed: false, changes: [], envCreated: false, envRemoved: false, warnings: [] }
+  return { text, changed: false, changes: [], envCreated: false, envRemoved: false, hadKurmis: false, warnings: [] }
 }
 
 /**
@@ -415,6 +445,7 @@ export function applySetupToText(text: string | null, values: SetupValues): Sett
       changes: Object.keys(env).map((name) => ({ name, action: 'added' })),
       envCreated: true,
       envRemoved: false,
+      hadKurmis: false,
       warnings: []
     }
   }
@@ -437,6 +468,7 @@ export function applySetupToText(text: string | null, values: SetupValues): Sett
     throw new SettingsFileError(`its "env" sets ${CUSTOM_HEADERS} to something other than a string`)
   }
   const wanted = kurmisEnvValues(values, headers ?? null)
+  result.hadKurmis = (baseUrl !== undefined && isKurmisBaseUrl(baseUrl, env, values.port)) || hasKurmisHeader(headers)
 
   if (parsed.env === null) {
     const outer = parsed.top.members.length > 0
@@ -491,7 +523,8 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
   const result = emptyEdit(text)
   if (parsed.env === null) return result
   const env = parsed.env.value
-  const before = backupEnv(values.backupText)
+  const backup = backupBefore(values.backupText)
+  const before = backup?.env ?? null
   // The plain values kurmis sets; the port and key do not matter for these.
   const plain = kurmisEnvValues({ port: values.port ?? 1, key: 'unused' }, null)
   const baseUrlIsKurmis = isKurmisBaseUrl(env[BASE_URL], env, values.port)
@@ -517,7 +550,11 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
         body = removeMember(body, parsed.env!.node, index)
         result.changes.push({ name, action: 'removed' })
       } else {
-        body = replaceValue(body, member, JSON.stringify(theirs.join('\n')))
+        // The value as the backup had it, when its lines are the ones left: setup may have
+        // dropped blank lines or line endings from it.
+        const original = before?.[name]
+        const restored = typeof original === 'string' && sameLines(othersHeaderLines(original), theirs) ? original : theirs.join('\n')
+        body = replaceValue(body, member, JSON.stringify(restored))
         result.changes.push({ name, action: 'updated', note: 'kurmis\' header lines were removed and yours were kept' })
       }
     } else if (current !== plain[name]) {
@@ -532,7 +569,10 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
     }
     parsed = parseSettings(body)
   }
-  if (parsed.env !== null && parsed.env.node.members.length === 0 && result.changes.some((change) => change.action === 'removed')) {
+  // An `env` the file had before kurmis stays, even empty.
+  const envWasThere = backup !== null && backup.env !== null
+  if (parsed.env !== null && parsed.env.node.members.length === 0 && !envWasThere &&
+    result.changes.some((change) => change.action === 'removed')) {
     const index = parsed.top.members.findIndex((member) => member.name === 'env')
     body = removeMember(body, parsed.top, index)
     result.envRemoved = true
@@ -540,6 +580,10 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
   result.text = `${bom}${body}`
   result.changed = result.text !== text
   return result
+}
+
+function sameLines(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((line, index) => line === b[index])
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -595,17 +639,34 @@ function readText(path: string): string | null {
   }
 }
 
-/** The file a write must go to: the target of a symbolic link, so a linked file stays linked. */
+/**
+ * The file a write must go to: the target of a symbolic link, so a linked file stays linked.
+ * For a link whose target does not exist yet, the place it points to, so the link is not
+ * replaced by a plain file.
+ */
 function writeTarget(path: string): string {
   try {
     return realpathSync(path)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path
-    throw error
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+  let current = path
+  // A chain of links, as the system follows it; 40 is the limit macOS and Linux use too.
+  for (let hop = 0; hop < 40; hop++) {
+    let stats
+    try {
+      stats = lstatSync(current)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return current
+      throw error
+    }
+    if (!stats.isSymbolicLink()) return current
+    current = resolve(dirname(current), readlinkSync(current))
+  }
+  throw new SettingsFileError(`${path} is a chain of more than 40 symbolic links`)
 }
 
-/** Where a symbolic link at `path` points, or null when `path` is not a link. */
+/** Where a symbolic link at `path` points (as `writeTarget` follows it), or null when `path` is not a link. */
 function linkTargetOf(path: string): string | null {
   try {
     if (!lstatSync(path).isSymbolicLink()) return null
@@ -626,17 +687,39 @@ function restrictIfPresent(path: string): number | null {
   }
 }
 
-/** Copies the file to its backup unless a backup is already there. Returns the backup's path, or null. */
-function backUpOnce(path: string): string | null {
+/**
+ * Copies the file to its backup. With `replace` an older backup is replaced (the file holds none
+ * of kurmis' settings, so it is the file before kurmis now); without it an existing backup is
+ * kept. Returns the backup's path when one was written, or null.
+ */
+function backUp(path: string, replace: boolean, platform: NodeJS.Platform): string | null {
   const backup = backupPathFor(path)
+  if (!replace) {
+    try {
+      copyFileSync(path, backup, constants.COPYFILE_EXCL)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return null
+      throw error
+    }
+    if (platform !== 'win32') chmodSync(backup, PRIVATE_FILE_MODE)
+    return backup
+  }
+  // Through a temporary file, so a backup is never half written.
+  const temp = `${backup}.${String(process.pid)}.tmp`
   try {
-    copyFileSync(path, backup, constants.COPYFILE_EXCL)
+    copyFileSync(path, temp)
+    if (platform !== 'win32') chmodSync(temp, PRIVATE_FILE_MODE)
+    replaceFileSync(temp, backup)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return null
+    rmSync(temp, { force: true })
     throw error
   }
-  if (process.platform !== 'win32') chmodSync(backup, PRIVATE_FILE_MODE)
   return backup
+}
+
+/** Whether a file mode has no write bit for its owner: on Windows, the read-only attribute. */
+function isReadOnly(mode: number): boolean {
+  return (mode & 0o200) === 0
 }
 
 /**
@@ -650,16 +733,30 @@ function writeEdit(
   path: string,
   edit: SettingsEdit,
   existed: boolean,
-  userOnly: boolean
+  userOnly: boolean,
+  platform: NodeJS.Platform
 ): { backup: string | null; modeBefore: number | null } {
   const target = writeTarget(path)
-  if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target) : null }
-  const backup = existed ? backUpOnce(path) : null
+  if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target, platform) : null }
   const before = existed ? statSync(target).mode & 0o777 : PRIVATE_FILE_MODE
+  if (platform === 'win32' && existed && isReadOnly(before)) {
+    // Windows cannot rename a file over a read-only one, and the new file would be read-only too.
+    throw new SettingsFileError(`it is read-only. Clear that with "attrib -R ${target}" and run the command again`)
+  }
+  const backup = existed ? backUp(path, userOnly && !edit.hadKurmis, platform) : null
   const mode = userOnly ? userOnlyMode(before) : before
-  // The mode given to the write is reduced by the umask, so it is set again afterwards.
-  writeFileAtomicSync(target, edit.text, { mode })
-  if (process.platform === 'win32') return { backup, modeBefore: null }
+  try {
+    // The mode given to the write is reduced by the umask, so it is set again afterwards.
+    writeFileAtomicSync(target, edit.text, { mode })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY') {
+      throw new SettingsFileError(`it could not be written (${code}): another program may hold it open, or the file or its folder ` +
+        'may not be writable by you')
+    }
+    throw error
+  }
+  if (platform === 'win32') return { backup, modeBefore: null }
   chmodSync(target, mode)
   return { backup, modeBefore: existed && mode !== before ? before : null }
 }
@@ -671,16 +768,17 @@ function failWith(path: string, error: unknown): never {
   throw error
 }
 
-/** Puts kurmis' routing variables in the settings file. Backs it up before the first change. */
-export function setupSettingsFile(path: string, values: SetupValues): SettingsFileResult {
+/** Puts kurmis' routing variables in the settings file. Backs it up before the change (see the top of this file). */
+export function setupSettingsFile(path: string, values: SetupValues, platform: NodeJS.Platform = process.platform): SettingsFileResult {
   const text = readText(path)
   let edit: SettingsEdit
+  let written: { backup: string | null; modeBefore: number | null }
   try {
     edit = applySetupToText(text, values)
+    written = writeEdit(path, edit, text !== null, true, platform)
   } catch (error) {
     failWith(path, error)
   }
-  const written = writeEdit(path, edit, text !== null, true)
   // The backup of a file from before kurmis may hold other secrets of the user's; a backup an
   // older kurmis wrote, or one copied by hand, may not be user-only yet.
   const backupModeBefore = written.backup === null ? restrictIfPresent(backupPathFor(path)) : null
@@ -695,18 +793,36 @@ export function setupSettingsFile(path: string, values: SetupValues): SettingsFi
   }
 }
 
+/**
+ * Throws the `SettingsFileError` `setupSettingsFile` would throw for the file as it is now, and
+ * writes nothing. Setup asks this before it starts the daemon.
+ */
+export function checkSetupSettingsFile(path: string, values: SetupValues, platform: NodeJS.Platform = process.platform): void {
+  try {
+    const text = readText(path)
+    applySetupToText(text, values)
+    if (platform === 'win32' && text !== null && isReadOnly(statSync(writeTarget(path)).mode)) {
+      throw new SettingsFileError(`it is read-only. Clear that with "attrib -R ${writeTarget(path)}" and run the command again`)
+    }
+  } catch (error) {
+    failWith(path, error)
+  }
+}
+
 /** Takes kurmis' routing variables out of the settings file again. A missing file is left missing. */
-export function undoSettingsFile(path: string, values: Omit<UndoValues, 'backupText'>): SettingsFileResult {
+export function undoSettingsFile(path: string, values: Omit<UndoValues, 'backupText'>,
+  platform: NodeJS.Platform = process.platform): SettingsFileResult {
   const text = readText(path)
   if (text === null) {
     return { ...emptyEdit(''), path, existed: false, backupWritten: null, linkTarget: null, modeBefore: null, backupModeBefore: null }
   }
   let edit: SettingsEdit
+  let written: { backup: string | null; modeBefore: number | null }
   try {
     edit = undoSetupInText(text, { ...values, backupText: readText(backupPathFor(path)) })
+    written = writeEdit(path, edit, true, false, platform)
   } catch (error) {
     failWith(path, error)
   }
-  const written = writeEdit(path, edit, true, false)
   return { ...edit, path, existed: true, backupWritten: written.backup, linkTarget: linkTargetOf(path), modeBefore: null, backupModeBefore: null }
 }

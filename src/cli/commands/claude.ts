@@ -14,7 +14,7 @@ import { homedir } from 'node:os'
 import { autoStartLogin, type StartableLogin } from '../../core/account-router.ts'
 import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../../core/accounts.ts'
 import type { StatusAnswer } from '../../core/control-api.ts'
-import { applyRoutedEnv, routedClaudeEnv } from '../../core/routed-env.ts'
+import { applyRoutedEnv, inheritedOAuthTokenVariables, routedClaudeEnv, withoutRoutedVariables } from '../../core/routed-env.ts'
 import { ConfigError, findLogin, loadConfig, type KurmisConfig } from '../../data/config.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
@@ -28,7 +28,10 @@ import {
   readUserSettingsArg,
   readUserSettingsEnv,
   routingVariables,
-  storeSettingsFile,
+  storeSettings,
+  userOwnedRoutingVariables,
+  type CustomHeaderLayers,
+  type SettingsStore,
   type UserSettingsArg
 } from '../settings-arg.ts'
 import { notStartedExitCode } from '../wrapper.ts'
@@ -48,8 +51,8 @@ export interface ClaudeDeps {
   readFile?: (path: string) => string
   /** Whether a login's folder is there. */
   folderExists: (path: string) => boolean
-  /** Writes the merged `--settings` and answers the file's path (`storeSettingsFile`). */
-  storeSettings: (text: string) => string
+  /** Writes the merged `--settings` (`storeSettings` in `settings-arg.ts`). */
+  storeSettings: SettingsStore
 }
 
 const USAGE = `Usage: kurmis claude [--login <id>] [--] [claude arguments...]
@@ -79,7 +82,7 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
     cwd: () => process.cwd(),
     homeDir: () => homedir(),
     folderExists: (path) => existsSync(path) && statSync(path).isDirectory(),
-    storeSettings: (text) => storeSettingsFile(text),
+    storeSettings: (text, holdsUserSettings) => storeSettings(text, holdsUserSettings),
     ...overrides
   }
   return {
@@ -162,28 +165,41 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     }
   }
 
-  const headers = customHeaders(userSettings, context.env, deps)
-  if (headers.warning !== null) writeLine(context.stderr, `kurmis claude: ${headers.warning}`)
-  const routed = routedClaudeEnv({
+  const layers = settingsLayers(userSettings, context.env, deps)
+  if (layers.warning !== null) writeLine(context.stderr, `kurmis claude: ${layers.warning}`)
+  // A value of the person's own for ENABLE_TOOL_SEARCH or CLAUDE_CODE_MAX_RETRIES is left as it is.
+  const routed = withoutRoutedVariables(routedClaudeEnv({
     port: connection.port,
     key: connection.key,
     login: parsed.login,
     startedOn,
     secureStorageDir,
-    inheritedCustomHeaders: headers.value
-  })
+    inheritedCustomHeaders: inheritedCustomHeaders(layers.layers)
+  }), userOwnedRoutingVariables(layers.layers))
+  const tokenVariables = inheritedOAuthTokenVariables(context.env, deps.platform === 'win32')
+  if (tokenVariables.length > 0) {
+    writeLine(context.stderr, `kurmis claude: ${tokenVariables.join(' and ')} ${tokenVariables.length === 1 ? 'is' : 'are'} set, ` +
+      'so claude would sign its requests with that token instead of a kurmis login. Kurmis starts claude without ' +
+      `${tokenVariables.length === 1 ? 'it' : 'them'}; unset ${tokenVariables.length === 1 ? 'it' : 'them'} to stop this note.`)
+  }
   const env = applyRoutedEnv(context.env, routed, deps.platform === 'win32')
-  let claudeArgs: string[]
+  let claudeArgs: { args: string[]; remove: () => void }
   try {
     claudeArgs = claudeArgsWithSettings(userSettings, routingVariables(routed), deps.storeSettings)
   } catch (error) {
     return fail(`could not write the settings file for claude: ${error instanceof Error ? error.message : String(error)}`)
   }
 
-  const end = await deps.child.runInteractive(
-    { command: program.command, args: [...program.args, ...claudeArgs], env },
-    { platform: deps.platform }
-  )
+  let end
+  try {
+    end = await deps.child.runInteractive(
+      { command: program.command, args: [...program.args, ...claudeArgs.args], env },
+      { platform: deps.platform }
+    )
+  } finally {
+    // Before `finishLikeChild`, which may raise the child's signal on this process.
+    claudeArgs.remove()
+  }
   return deps.child.finishLikeChild(end, { stderr: context.stderr, name: 'claude', platform: deps.platform })
 }
 
@@ -204,21 +220,24 @@ export function startableLogins(status: StatusAnswer): StartableLogin[] {
 }
 
 /**
- * The person's own `ANTHROPIC_CUSTOM_HEADERS`, from the highest layer that sets it: their
- * `--settings`, then the user settings file, then the process environment. A user settings file
- * that cannot be read is skipped with a warning.
+ * The layers claude reads its environment from, highest last in effect: the person's
+ * `--settings`, the user settings file and the process environment. They give the person's own
+ * `ANTHROPIC_CUSTOM_HEADERS` and their own values for `USER_OWNED_ROUTING_VARIABLES`. A user
+ * settings file that cannot be read is skipped with a warning.
  */
-function customHeaders(userSettings: UserSettingsArg, env: NodeJS.ProcessEnv,
-  deps: ClaudeDeps): { value: string | null; warning: string | null } {
+function settingsLayers(userSettings: UserSettingsArg, env: NodeJS.ProcessEnv,
+  deps: ClaudeDeps): { layers: CustomHeaderLayers; warning: string | null } {
   const flagEnv = userSettings.settings?.env
   const fromFile = readUserSettingsEnv(claudeUserSettingsPath(env, deps.homeDir()), deps.readFile)
-  const value = inheritedCustomHeaders({
-    flagEnv: typeof flagEnv === 'object' && flagEnv !== null && !Array.isArray(flagEnv) ? flagEnv as Record<string, unknown> : null,
-    userSettingsEnv: fromFile.env,
-    processEnv: env,
-    windows: deps.platform === 'win32'
-  })
-  return { value, warning: fromFile.warning }
+  return {
+    layers: {
+      flagEnv: typeof flagEnv === 'object' && flagEnv !== null && !Array.isArray(flagEnv) ? flagEnv as Record<string, unknown> : null,
+      userSettingsEnv: fromFile.env,
+      processEnv: env,
+      windows: deps.platform === 'win32'
+    },
+    warning: fromFile.warning
+  }
 }
 
 function daemonUnreachable(error: unknown): string {

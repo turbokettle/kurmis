@@ -161,7 +161,7 @@ async function chooseLogin(context: CliContext, deps: CodexDeps): Promise<string
     status = await deps.daemon.readStatus(connection)
     const stale = codexLoginsToProbe(status, deps.now())
     if (stale.length > 0) {
-      const probed = await settleWithin(deps.daemon.requestProbe(connection, stale), deps.probeWaitMs)
+      const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, stale, signal), deps.probeWaitMs)
       if (probed.kind === 'done') {
         status = probed.value
       } else {

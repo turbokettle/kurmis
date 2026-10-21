@@ -5,11 +5,11 @@ import { realPrepareCodexHome, type ChildRunner } from '../../../src/cli/command
 import { createLoginCommand, freeLoginName, loginTarget, type LoginDeps } from '../../../src/cli/commands/login.ts'
 import type { ChildEnd, ChildSpec } from '../../../src/cli/wrapper.ts'
 import { addLogin, defaultConfig, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
-import { configPath, kurmisHome, loginFolder } from '../../../src/data/paths.ts'
+import { configPath, kurmisHome, loginFolder, loginLockPath } from '../../../src/data/paths.ts'
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram } from '../../../src/platform/run.ts'
 import { FAKE_CLAUDE_SCRIPT, writeClaudeIdentity, writeCodexAuth } from '../../fakes/index.ts'
-import { collect, fakeDaemonClient } from '../helpers.ts'
+import { collect, fakeDaemonClient, loginStatus, statusAnswer } from '../helpers.ts'
 
 const home = process.env.HOME!
 
@@ -50,6 +50,15 @@ function claudeSignsIn(email = 'second@example.com'): (spec: ChildSpec) => Child
 }
 
 const exitWith = (code: number) => (): ChildEnd => ({ kind: 'exit', code })
+
+/** A pid that no process has: the highest pid macOS, Linux and Windows hand out is far lower. */
+const DEAD_PID = 2 ** 30
+
+/** The lock file another `kurmis login` of `id` would hold, with `pid` as its owner (this test's parent, which runs). */
+function holdLock(id: string, pid = process.ppid): void {
+  mkdirSync(join(kurmisHome(), 'locks'), { recursive: true })
+  writeFileSync(loginLockPath(id), JSON.stringify({ pid, createdAt: Date.now(), token: 'another-run' }))
+}
 
 const fakeProgram: LoginDeps['findProgram'] = (tool) => ({ command: `/fake/bin/${tool}`, args: ['--fake'], source: 'env' })
 
@@ -127,7 +136,9 @@ describe('kurmis login claude', () => {
     expect(out.stdout()).toContain('Added claude:2 with the label "2"')
     expect(out.stdout()).toContain('The running daemon has read the change.')
     expect(readFileSync(configPath(), 'utf8')).not.toContain('example.com')
-    expect(daemon.calls).toEqual(['findDaemon', 'requestReload'])
+    expect(daemon.calls).toEqual(['findDaemon', 'requestReload', 'requestProbe:claude:2'])
+    // The lock is released once the command is done.
+    expect(existsSync(loginLockPath('claude:2'))).toBe(false)
   })
 
   it('takes --name and --label, and the next login gets the next number', async () => {
@@ -204,6 +215,63 @@ describe('kurmis login claude', () => {
     expect(out.stdout()).toContain('Signed in claude:work as again@example.com.')
     expect(out.stdout()).not.toContain('Added')
     expect(findLogin(loadConfig(), 'claude:work')?.label).toBe('Work')
+  })
+
+  it('asks the daemon to probe a login signed in again, and says when it still finds it signed out', async () => {
+    saveConfig(addLogin(defaultConfig(), 'claude:work'))
+    const daemon = fakeDaemonClient({ probed: statusAnswer([loginStatus('claude:work', { signedIn: false })]) })
+    const { login } = command(fakeRunner(claudeSignsIn('again@example.com')), { daemon })
+    const out = collect()
+    expect(await login.run(['claude:work'], out.context)).toBe(0)
+    expect(daemon.calls).toEqual(['findDaemon', 'requestReload', 'requestProbe:claude:work'])
+    expect(out.stdout()).toContain('The daemon still finds claude:work signed out')
+  })
+
+  it('stops waiting for the daemon\'s probe after a while, and ends the probe request', async () => {
+    saveConfig(addLogin(defaultConfig(), 'codex:work'))
+    const daemon = fakeDaemonClient()
+    let probeSignal: AbortSignal | undefined
+    daemon.requestProbe = (_connection, _logins, signal) => {
+      probeSignal = signal
+      return new Promise(() => undefined)
+    }
+    const { login } = command(fakeRunner((spec) => {
+      writeCodexAuth(spec.env.CODEX_HOME!)
+      return { kind: 'exit', code: 0 }
+    }), { daemon, probeWaitMs: 20 })
+    const out = collect()
+    expect(await login.run(['codex:work'], out.context)).toBe(0)
+    expect(out.stdout()).toContain("The daemon's check of codex:work did not finish within 0.02 s")
+    expect(probeSignal?.aborted).toBe(true)
+  })
+
+  it('stops at once, starting nothing, while another run holds the login', async () => {
+    holdLock('claude:work')
+    const runner = fakeRunner(claudeSignsIn())
+    const { login } = command(runner)
+    const out = collect()
+    expect(await login.run(['claude', '--name', 'work'], out.context)).toBe(1)
+    expect(out.stderr()).toContain(`another "kurmis login" or "kurmis logout" of claude:work is running now (pid ${String(process.ppid)})`)
+    expect(runner.specs).toEqual([])
+    expect(existsSync(loginFolder('claude:work'))).toBe(false)
+    expect(existsSync(loginLockPath('claude:work'))).toBe(true)
+  })
+
+  it('takes the next number when another run is signing in the first free one', async () => {
+    holdLock('claude:2')
+    const runner = fakeRunner(claudeSignsIn())
+    const { login } = command(runner)
+    expect(await login.run(['claude'], collect().context)).toBe(0)
+    expect(runner.specs[0]?.env.CLAUDE_CONFIG_DIR).toBe(loginFolder('claude:3'))
+    expect(findLogin(loadConfig(), 'claude:3')).toBeDefined()
+    expect(findLogin(loadConfig(), 'claude:2')).toBeUndefined()
+  })
+
+  it('takes over the lock of a run that was killed', async () => {
+    holdLock('claude:work', DEAD_PID)
+    const { login } = command(fakeRunner(claudeSignsIn()))
+    expect(await login.run(['claude:work'], collect().context)).toBe(0)
+    expect(findLogin(loadConfig(), 'claude:work')).toBeDefined()
   })
 
   it('signs claude:default in on the machine\'s own folders', async () => {
