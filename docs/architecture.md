@@ -601,6 +601,13 @@ needs them.
 bundle built with an older version, so no variable is needed to fake one. In-process tests pass
 `runDaemon` a fake app, an EventEmitter in place of `process`, and a `version`.
 
+**Integration tests.** `test/integration/` runs the real bundle as `node <bundle> …` processes,
+end to end, against the fake claude, codex and Anthropic API. `createWorld` in
+`test/integration/harness.ts` gives each test its own temporary HOME, data folder, free port,
+fake API, and fake Keychain, launchctl and registry folders. It builds the children's
+environment from nothing, so only the fakes and the stand-ins of `test/setup.ts` can be reached.
+After each test it stops every daemon the test's commands started.
+
 ## Code layout
 
 - `src/data/` holds the data folder: its paths, login ids, the JSON file helpers, the stores for

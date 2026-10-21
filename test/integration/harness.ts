@@ -11,10 +11,11 @@
 // `SSH_*`, `ANTHROPIC_*`, `CLAUDE_*` or `CODEX_HOME` variable reaches a child unless a test
 // passes one.
 //
-// Every daemon a world's commands start is stopped when the test ends (`kurmis daemon stop`),
-// and any pid that a `daemon.json` of the world named and that still runs a bundle the world's
-// commands ran (its own, or one passed in `RunOptions.bundle`) is killed after that.
-import { execFileSync, spawn } from 'node:child_process'
+// When the test ends, the world's kurmis commands that still run are killed, and every daemon
+// they started is stopped (`kurmis daemon stop`). After that, any pid that a `daemon.json` of the
+// world named and that still runs a bundle the world's commands ran (its own, or one passed in
+// `RunOptions.bundle`) is killed, and so is any other `daemon run` of those bundles.
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
@@ -212,6 +213,8 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
   const daemonPids = new Set<number>()
   /** Every bundle this world's commands ran, so a daemon of an older bundle is stopped too. */
   const bundlesRun = new Set<string>([bundle])
+  /** The kurmis processes that have not ended yet. */
+  const running = new Set<ChildProcess>()
   const noteDaemon = (): void => {
     const info = readDaemonInfo()
     if (info !== null) daemonPids.add(info.pid)
@@ -237,6 +240,7 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
         cwd: runOptions.cwd ?? work,
         stdio: ['pipe', 'pipe', 'pipe']
       })
+      running.add(child)
       let stdout = ''
       let stderr = ''
       child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
@@ -249,6 +253,7 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
       child.on('error', (error) => { clearTimeout(timer); reject(error) })
       child.on('close', (code, signal) => {
         clearTimeout(timer)
+        running.delete(child)
         noteDaemon()
         resolve({ code, signal, stdout, stderr })
       })
@@ -302,6 +307,8 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
       if (disposed) return
       disposed = true
       worlds.delete(world)
+      // A command a failed test left running could still start a daemon.
+      for (const child of running) child.kill('SIGKILL')
       noteDaemon()
       if (daemonPids.size > 0) {
         await run(['daemon', 'stop'], { timeoutMs: 45_000 }).catch(() => undefined)
@@ -314,6 +321,15 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
           } catch { /* Gone already. */ }
           await waitUntil(() => !processAlive(pid), 5_000, `daemon ${String(pid)} to exit`).catch(() => undefined)
         }
+      }
+      // A daemon that lost the port to another one started at the same moment exits once it finds
+      // the port taken; one that was still starting when the stop freed the port would bind it
+      // and outlive the test. Each test file has bundles of its own and runs its tests one after
+      // another, so every `daemon run` of these bundles still running is this world's.
+      for (const pid of daemonRunPids([...bundlesRun])) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch { /* Gone already. */ }
       }
       await api.close()
       rmSync(root, { recursive: true, force: true })
@@ -330,6 +346,16 @@ function processAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
+}
+
+/** The pids of the `daemon run` processes of these bundles. Empty on Windows, which has no `ps`. */
+function daemonRunPids(bundles: string[]): number[] {
+  if (process.platform === 'win32') return []
+  const names = bundles.flatMap((bundle) => [bundle, realpathSync(bundle)])
+  const listed = spawnSync('ps', ['-ax', '-ww', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout
+  return listed.split('\n')
+    .filter((line) => names.some((name) => line.includes(`${name} daemon run`)))
+    .map((line) => Number(line.trim().split(/\s+/)[0]))
 }
 
 /**
