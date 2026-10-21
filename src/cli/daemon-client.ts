@@ -176,7 +176,11 @@ export async function findDaemon(options: DaemonClientOptions, timeoutMs?: numbe
   } else if (read.status === 'ok') {
     const { pid, port } = read.info
     if (!processExists(pid)) {
-      removeDaemonFile(pid)
+      try {
+        removeDaemonFile(pid)
+      } catch {
+        // It could not be moved aside (on Windows, held open); the next command tries again.
+      }
     } else {
       triedPort = port
       const holder = await portHolder(port, key, requestTimeout())

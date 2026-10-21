@@ -54,8 +54,10 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   it once it has its port and removes it as the last step of stopping, only while the file still
   names its own pid, so a replaced daemon never removes its successor's file. The file is renamed
   aside and checked again there before it is deleted, and one that names another pid by then is
-  linked back, so a file written between the check and the removal is kept. The CLI removes a
-  `daemon.json` whose pid no longer exists, and one that is damaged.
+  linked back, so a file written between the check and the removal is kept. Where no hard link
+  can be made (exFAT) it is renamed back, and when that fails too it is left under its
+  `.removing` name rather than deleted. The CLI removes a `daemon.json` whose pid no longer
+  exists, and one that is damaged.
 - `launchd/` holds the plists of the short-lived launchd jobs that start the daemon on macOS
   from an ssh login or wherever the login Keychain cannot be read. Each is removed once its job
   has run.
@@ -64,7 +66,9 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   logon entry names `autostart.js`.
 - `key` holds the secret every proxied and control request carries. It is created once and
   kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
-  of it and must keep working after the daemon restarts. Only the user can read it.
+  of it and must keep working after the daemon restarts. Only the user can read it. It is
+  created by a hard link from a temporary file, or, where no hard link can be made (exFAT), by
+  an exclusive create, so two processes that create it at the same moment get the same key.
 - `state.json` holds the daemon's usage snapshots, cooldowns and which login each session is on,
   so a daemon restart keeps them.
 - `daemon.log` is the daemon's log. It never holds a token, a request body or an email. At 5 MB
