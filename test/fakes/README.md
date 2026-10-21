@@ -55,7 +55,8 @@ also be a function of the recorded request.
 **`/api/hello`** is always answered 200, with no body for `HEAD`, and does not take a reply from
 any queue. Any path outside `/v1/` is answered 404.
 
-**Replies** (`reply.*`, every one also takes `delayMs` and extra `headers`):
+**Replies** (`reply.*`, every one also takes `delayMs`, extra `headers`, and `hold`, a promise the
+answer waits for, so a test decides when it is sent):
 
 - `ok({ text, model, unified, usage, eventDelayMs })`: 200. A streaming `/v1/messages` request
   gets the real event order: `message_start`, `content_block_start`, `ping`, one

@@ -37,6 +37,8 @@ export interface UnifiedHeaders {
 export interface ReplyBase {
   /** Waits this long before sending anything. */
   delayMs?: number
+  /** Waits for this promise too (after `delayMs`), so a test decides when the answer is sent. */
+  hold?: Promise<unknown>
   /** Extra response headers, sent after (and so over) the ones the reply builds. */
   headers?: Record<string, string>
 }
@@ -196,6 +198,7 @@ export async function startFakeAnthropic(): Promise<FakeAnthropic> {
     record.answeredWith = { kind: chosen.kind, status: statusOf(chosen) }
     notify()
     if (chosen.delayMs !== undefined && chosen.delayMs > 0) await sleep(chosen.delayMs)
+    if (chosen.hold !== undefined) await chosen.hold
     await answer(chosen, record, res)
   }
 

@@ -75,6 +75,18 @@ it('answers a token from its own queue before the shared one', async () => {
   expect((await messages('sk-ant-oat01-fake-a')).status).toBe(200)
 })
 
+it('holds an answer back until its hold promise resolves', async () => {
+  let release = (): void => undefined
+  api.script(reply.ok({ text: 'held', hold: new Promise<void>((resolve) => { release = resolve }) }))
+  let done = false
+  const answer = messages('sk-ant-oat01-fake-a').finally(() => { done = true })
+  await api.waitForRequests(1)
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  expect(done).toBe(false)
+  release()
+  expect((await answer).body).toContain('held')
+})
+
 it('refuses a usage limit with the headers that make it final', async () => {
   const resetsAt = Date.now() + 2 * 3_600_000
   api.script(reply.quota({ claim: 'five_hour', resetsAt }))
