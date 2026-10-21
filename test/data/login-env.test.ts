@@ -1,8 +1,11 @@
 // The environment kurmis runs a CLI with on one login for itself.
-import { join } from 'node:path'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, sep } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, codexLoginEnv } from '../../src/data/login-env.ts'
+import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, codexLoginEnv, namesDefaultClaudeFolder } from '../../src/data/login-env.ts'
 import { claudeDefaultProbeFolder, kurmisHome } from '../../src/data/paths.ts'
+import { linkFolder } from '../host.ts'
 
 const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
 
@@ -67,5 +70,30 @@ describe('whether CLAUDE_CONFIG_DIR gives a CLI credentials of its own', () => {
   test('on Linux only a folder other than ~/.claude does', () => {
     expect(configDirHasOwnCredentials({ CLAUDE_CONFIG_DIR: '/home/example/.claude/' }, 'linux', '/home/example')).toBe(false)
     expect(configDirHasOwnCredentials({ CLAUDE_CONFIG_DIR: '/home/example/work' }, 'linux', '/home/example')).toBe(true)
+  })
+})
+
+describe('whether CLAUDE_CONFIG_DIR names ~/.claude itself', () => {
+  test('compares the paths made absolute, with links resolved, and without regard to case on macOS and Windows', () => {
+    const home = mkdtempSync(join(tmpdir(), 'kurmis-login-env-'))
+    try {
+      const folder = join(home, '.claude')
+      mkdirSync(folder)
+      linkFolder(folder, join(home, 'link'))
+      expect(namesDefaultClaudeFolder(folder, 'darwin', home)).toBe(true)
+      expect(namesDefaultClaudeFolder(`${folder}${sep}`, 'darwin', home)).toBe(true)
+      expect(namesDefaultClaudeFolder(join(home, 'link'), 'darwin', home)).toBe(true)
+      expect(namesDefaultClaudeFolder(join(home, 'x', '..', '.claude'), 'linux', home)).toBe(true)
+      expect(namesDefaultClaudeFolder(join(home, '.CLAUDE'), 'darwin', home)).toBe(true)
+      expect(namesDefaultClaudeFolder(join(home, '.CLAUDE'), 'win32', home)).toBe(true)
+      expect(namesDefaultClaudeFolder(join(home, 'work'), 'darwin', home)).toBe(false)
+      expect(namesDefaultClaudeFolder('', 'darwin', home)).toBe(false)
+    } finally {
+      rmSync(home, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+
+  test('on Linux case counts', () => {
+    expect(namesDefaultClaudeFolder('/home/example/.CLAUDE', 'linux', '/home/example')).toBe(false)
   })
 })

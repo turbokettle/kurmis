@@ -26,7 +26,7 @@ import { errorCodeOf, openDaemonLog, type DaemonLog, type LogReason } from '../d
 import { configPath } from '../data/paths.ts'
 import { kurmisVersion } from '../version.ts'
 import { createDaemonApp, type DaemonApp, type DaemonAppOptions } from './app.ts'
-import { controlRequest, DAEMON_HOST, delay, portHolder, shouldReplace } from './lifecycle.ts'
+import { controlRequest, DAEMON_HOST, delay, portHolder, shouldReplace, type PortHolder } from './lifecycle.ts'
 
 /** The part of `process` the daemon listens on: signals and uncaught errors. Tests pass an EventEmitter. */
 export interface ProcessEvents {
@@ -297,6 +297,8 @@ async function bindPort(server: Server, options: ServeOptions): Promise<number |
   let deadline = Date.now() + options.bindDeadlineMs
   /** The older daemon this one asked to stop, once it has. */
   let askedToStop: StatusAnswer | null = null
+  /** Who answered on the port at the last try. */
+  let lastHolder: PortHolder | undefined
   for (;;) {
     if (stop.requested) return stop.exitCode
     const error = await listenOnce(server, port)
@@ -309,6 +311,7 @@ async function bindPort(server: Server, options: ServeOptions): Promise<number |
       return 1
     }
     const holder = await portHolder(port, key)
+    lastHolder = holder
     // A daemon that was asked to stop may answer nothing, or something else, while it closes;
     // that is not another program, and the bind is tried again until the deadline.
     if (holder.kind === 'other' && askedToStop === null) {
@@ -334,13 +337,30 @@ async function bindPort(server: Server, options: ServeOptions): Promise<number |
     if (Date.now() >= deadline) {
       log.write('port_in_use', { port, reason: 'timeout' })
       const seconds = String(Math.round(options.bindDeadlineMs / 1000))
-      complain(askedToStop !== null
-        ? `the kurmis daemon ${askedToStop.version} (pid ${String(askedToStop.pid)}) did not give up port ${String(port)} within ${seconds} s`
-        : `port ${String(port)} on ${DAEMON_HOST} stayed busy for ${seconds} s with nothing answering on it`)
+      complain(bindTimeoutText(port, seconds, askedToStop, lastHolder ?? null))
       return 1
     }
     await delay(BIND_RETRY_MS)
   }
+}
+
+/**
+ * Why the bind gave up at its deadline. The older daemon is named only while it is still the
+ * one answering on the port: once it has been asked to stop, something else may answer there,
+ * a program that took the port after it, or the old daemon itself while it closes.
+ */
+function bindTimeoutText(port: number, seconds: string, askedToStop: StatusAnswer | null,
+  lastHolder: PortHolder | null): string {
+  const where = `port ${String(port)} on ${DAEMON_HOST}`
+  if (askedToStop === null) return `${where} stayed busy for ${seconds} s with nothing answering on it`
+  const old = `the kurmis daemon ${askedToStop.version} (pid ${String(askedToStop.pid)})`
+  if (lastHolder?.kind === 'kurmis' && lastHolder.status.pid === askedToStop.pid) {
+    return `${old} did not give up port ${String(port)} within ${seconds} s`
+  }
+  const answer = lastHolder?.kind === 'other' ? ` (${lastHolder.reason})` : ''
+  return `${old} was asked to stop, but ${where} stayed busy for ${seconds} s, and what holds it now does not answer as ` +
+    `that daemon${answer}. Another program may have taken the port. To use another port, set "port" in ${configPath()} ` +
+    `to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)}.`
 }
 
 /**

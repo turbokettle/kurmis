@@ -677,3 +677,88 @@ describe('settings held back by a secret', () => {
     expect(result.heldBack).toEqual(['mcp_servers.m.command'])
   })
 })
+
+describe("a setting of the default home that gains a secret", () => {
+  it("keeps the login's list of tables and names it, after the last merged copy had it", () => {
+    const first = merge('[[agents]]\nname = "a"\n', '')
+    const result = mergeAccountConfig('[[agents]]\nname = "a"\nenv = { K = "DEFAULT_CANARY" }\n', first.content, first.merged)
+    expect(tomlValue(result.content)).toEqual({ agents: [{ name: 'a' }] })
+    expect(result.heldBack).toEqual(['agents'])
+    expect(JSON.stringify(result)).not.toContain('DEFAULT_CANARY')
+  })
+
+  it("keeps the login's list of tables on the first merge as well", () => {
+    const result = merge('[[agents]]\nname = "a"\nenv = { K = "DEFAULT_CANARY" }\n', '[[agents]]\nname = "a"\n')
+    expect(tomlValue(result.content)).toEqual({ agents: [{ name: 'a' }] })
+    expect(result.heldBack).toEqual(['agents'])
+  })
+
+  it("keeps the login's plain value where the default home's now holds a password", () => {
+    const first = merge('[model_providers.p]\nname = "P"\nbase_url = "https://p.invalid"\n', '')
+    const result = mergeAccountConfig('[model_providers.p]\nname = "P"\nbase_url = "https://user:DEFAULT_CANARY@p.invalid"\n', first.content, first.merged)
+    expect(tomlValue(result.content)).toEqual({ model_providers: { p: { name: 'P', base_url: 'https://p.invalid' } } })
+    expect(result.heldBack).toEqual(['model_providers.p.base_url'])
+    expect(JSON.stringify(result)).not.toContain('DEFAULT_CANARY')
+  })
+})
+
+describe('an MCP server or model provider as one setting', () => {
+  function refresh(firstSource: string, login: (merged: string) => string, nextSource: string): ReturnType<typeof mergeAccountConfig> {
+    const first = merge(firstSource, '')
+    return mergeAccountConfig(nextSource, login(first.content), first.merged)
+  }
+
+  it("removes an MCP server the default home dropped, with the login's own keys in it", () => {
+    const source = 'model = "a"\n[mcp_servers.demo]\ncommand = "demo"\nargs = ["--fast"]\n'
+    const result = refresh(source, (content) => `${content}[mcp_servers.demo.tools.search]\napproval_mode = "approve"\n`, 'model = "a"\n')
+    expect(tomlValue(result.content)).toEqual({ model: 'a' })
+    const disabled = refresh(source, (content) => content.replace('args =', 'enabled = false\nargs ='), 'model = "a"\n')
+    expect(tomlValue(disabled.content)).toEqual({ model: 'a' })
+  })
+
+  it("removes a model provider the default home dropped, with the login's own keys in it", () => {
+    const source = 'model = "a"\n[model_providers.p]\nname = "P"\nbase_url = "https://p.invalid"\n'
+    const result = refresh(source, (content) => `${content}request_max_retries = 2\n`, 'model = "a"\n')
+    expect(tomlValue(result.content)).toEqual({ model: 'a' })
+  })
+
+  it("keeps the login's own MCP server, which the default home never had", () => {
+    const own = '[mcp_servers.mine]\ncommand = "mine"\nenabled = false\n'
+    const result = refresh('model = "a"\n', (content) => content + own, 'model = "b"\n')
+    expect(tomlValue(result.content)).toEqual({ model: 'b', mcp_servers: { mine: { command: 'mine', enabled: false } } })
+  })
+})
+
+describe("a setting deleted from the login's file", () => {
+  function refresh(firstSource: string, login: (merged: string) => string, nextSource: string): ReturnType<typeof mergeAccountConfig> {
+    const first = merge(firstSource, '')
+    return mergeAccountConfig(nextSource, login(first.content), first.merged)
+  }
+
+  it('stays out until the default home changes it', () => {
+    const source = 'model = "a"\nmodel_reasoning_effort = "high"\n'
+    const kept = refresh(source, (content) => content.replace('model_reasoning_effort = "high"\n', ''), source)
+    expect(tomlValue(kept.content)).toEqual({ model: 'a' })
+    const changed = mergeAccountConfig('model = "a"\nmodel_reasoning_effort = "low"\n', kept.content, kept.merged)
+    expect(tomlValue(changed.content)).toEqual({ model: 'a', model_reasoning_effort: 'low' })
+  })
+
+  it('keeps a whole MCP server out, and brings it back whole once the default home changes any of it', () => {
+    const source = 'model = "a"\n[mcp_servers.demo]\ncommand = "demo"\nargs = ["--fast"]\n'
+    const kept = refresh(source, () => 'model = "a"\n', source)
+    expect(tomlValue(kept.content)).toEqual({ model: 'a' })
+    const changed = mergeAccountConfig(source.replace('--fast', '--slow'), kept.content, kept.merged)
+    expect(tomlValue(changed.content)).toEqual({ model: 'a', mcp_servers: { demo: { command: 'demo', args: ['--slow'] } } })
+  })
+
+  it('stays out when it was a trust field', () => {
+    const source = "[projects.'/w/a']\ntrust_level = \"trusted\"\n[notice]\nseen = true\n"
+    const kept = refresh(source, (content) => content.replace(/\[projects[^\n]*\ntrust_level[^\n]*\n/, ''), source)
+    expect(tomlValue(kept.content)).toEqual({ notice: { seen: true } })
+  })
+
+  it("keeps the login's table where the default home's value is the one last merged in", () => {
+    const kept = refresh('tools = "all"\n', () => '[tools]\nweb_search = true\n', 'tools = "all"\n')
+    expect(tomlValue(kept.content)).toEqual({ tools: { web_search: true } })
+  })
+})

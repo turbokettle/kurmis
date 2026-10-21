@@ -8,8 +8,9 @@
  * Before every start its `config.toml` is merged again from `~/.codex/config.toml` with
  * `mergeAccountConfig` (`codex-home.ts` says when). Layout, comments and TOML types (integer
  * or float, the kind of date) of the login's file are kept. A value copied from the default
- * home keeps the way it was written there (a multi-line string stays multi-line), and comments
- * of the default home are not copied.
+ * home keeps the way it was written there (a multi-line string stays multi-line), except inside
+ * an array of tables and inside an inline table of the login's file that changes, which are
+ * written anew in one plain form. Comments of the default home are not copied.
  *
  * **Three-way merge.** Codex writes to the `config.toml` of the home it runs with: a `/model`
  * choice, a notice the user has seen (`[notice]`), a plugin switched on, trust. So the merge
@@ -19,13 +20,17 @@
  * array) at a time:
  *
  * - a setting the default home has is taken from it, unless the default home's value is the
- *   one last merged in and the login's file has another: then the login changed it, and the
- *   login's value stays until the default home changes it;
+ *   one last merged in and the login's file has another value or lacks the setting: then the
+ *   login changed or deleted it, and that stays until the default home's value changes;
  * - a setting the login's file has and the default home no longer has is removed when it was
- *   in the last merged copy, and kept when it never was (the login's own);
+ *   in the last merged copy, and kept when it never was (the login's own). When the default
+ *   home still has it with a value that holds a secret, the login's stays (`heldBack`);
  * - a table that loses its last setting that is not a secret goes as a whole, the login's
  *   own secrets in it included. Codex refuses a file with an MCP server that has only an `env`
- *   table left, for example.
+ *   table left, for example;
+ * - an MCP server and a model provider are each one unit (`UNIT_TABLES`): one the default home
+ *   dropped goes whole, and one the login's file lacks as a whole stays out until the default
+ *   home changes any of it, then comes in whole.
  *
  * With no last merged copy (the first merge after kurmis was updated to keep one), every
  * setting of the login's file that is not a secret or trust counts as merged in before, as
@@ -39,9 +44,9 @@
  * the login's in more than its secrets, the login's stays and `heldBack` names the setting.
  *
  * **Trust.** Codex keeps trust in `hooks.state."<hook key>"` for a hook (`trusted_hash`,
- * `trusted_content_hash`, `enabled`) and `projects."<folder>"` for a folder (`trust_level`). A trust field the login
- * has a value of its own for (one that is not the last merged one) is combined with the
- * default home's (`mergedTrust`):
+ * `trusted_content_hash`, `enabled`) and `projects."<folder>"` for a folder (`trust_level`).
+ * A trust field the login has a value of its own for (one that is not the last merged one)
+ * is combined with the default home's (`mergedTrust`):
  *
  * - `enabled`: `false` wins, so a hook switched off in either home stays off;
  * - `trust_level`: `"untrusted"` wins over any other value;
@@ -1014,9 +1019,10 @@ export function mergeAccountConfig(source: string, target: string, lastMerged: s
 
   const desired = copyTables(targetValues) as Dict
   const heldBack: string[] = []
-  // The login's settings the default home no longer has.
+  // The login's settings the default home no longer has. Where the default home still has a
+  // value that holds a secret, the login's stays, and the last loop names it.
   for (const { path, value } of settingsOf(targetValues)) {
-    if (secretSetting(path, value) || at(fromSource, path) !== undefined) continue
+    if (secretSetting(path, value) || at(sourceValues, path) !== undefined) continue
     const trust = trustValue(path)
     if (base === null) {
       if (!trust) removeAt(desired, path)
@@ -1038,6 +1044,16 @@ export function mergeAccountConfig(source: string, target: string, lastMerged: s
       continue
     }
     const own = at(targetValues, path)
+    if (base !== null && (own === undefined || isTable(own))) {
+      // The login's file lacks the setting, or has a table there: when the default home's
+      // value is the one last merged in, the login (or Codex in a session on it) deleted or
+      // changed it, and that stands. A unit (`unitOf`) the login lacks as a whole counts as
+      // deleted until the default home changes anything in it.
+      const unit = unitOf(path)
+      const whole = unit !== null && at(targetValues, unit) === undefined ? unit : path
+      const lastWhole = at(base, whole)
+      if (lastWhole !== undefined && same(at(fromSource, whole), lastWhole)) continue
+    }
     const ownValue = own !== undefined && !isTable(own) ? own : undefined
     const last = base === null ? undefined : at(base, path)
     let next = value
@@ -1047,6 +1063,13 @@ export function mergeAccountConfig(source: string, target: string, lastMerged: s
       next = ownValue
     }
     setAt(desired, path, next)
+  }
+  // A unit the default home dropped since the last merge goes as a whole, the login's own
+  // keys and secrets in it included.
+  if (base !== null) {
+    for (const unit of unitPaths(targetValues)) {
+      if (at(base, unit) !== undefined && at(sourceValues, unit) === undefined) removeAt(desired, unit)
+    }
   }
   // A table that lost its last setting that is not a secret goes as a whole.
   for (const path of tablePaths(targetValues)) {
@@ -1070,6 +1093,25 @@ export function mergeAccountConfig(source: string, target: string, lastMerged: s
     missingSecrets,
     heldBack: [...new Set(heldBack)]
   }
+}
+
+/**
+ * Tables Codex reads as one thing each, every key below them a part of it: an MCP server
+ * (`mcp_servers.<name>`), which Codex refuses without its `command` or `url`, and a model
+ * provider (`model_providers.<name>`), which it refuses without its `name`.
+ */
+const UNIT_TABLES = new Set(['mcp_servers', 'model_providers'])
+
+/** The path of the unit a setting is part of, or null when it is part of none. */
+function unitOf(path: readonly string[]): string[] | null {
+  return path.length >= 3 && UNIT_TABLES.has(path[0]!) ? path.slice(0, 2) : null
+}
+
+/** The path of every unit in a file. */
+function unitPaths(values: Dict): string[][] {
+  return [...UNIT_TABLES].flatMap((key) => Object.entries(record(own(values, key)))
+    .filter(([, child]) => isTable(child))
+    .map(([name]) => [key, name]))
 }
 
 /** Whether every setting in a table is not a secret. */

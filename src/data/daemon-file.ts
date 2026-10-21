@@ -12,7 +12,7 @@
 // they inherit from `%USERPROFILE%`, which grants the user, SYSTEM and Administrators only. A
 // `KURMIS_HOME` outside the profile gets that folder's access list instead.
 import { randomBytes } from 'node:crypto'
-import { linkSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, linkSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { makePrivateDirSync, PRIVATE_FILE_MODE } from '../platform/files.ts'
 import { readJsonFileSync, writeFileAtomicSync, writeJsonFileSync } from './json-file.ts'
@@ -119,8 +119,11 @@ export function writeDaemonFile(info: DaemonInfo, path = daemonFilePath()): void
  *
  * Another daemon may write its own file between the check and the removal. So the file is first
  * renamed aside, which is atomic, and checked again there; a file that turns out to name another
- * pid is linked back, unless a newer one has been written in the meantime. `afterCheck` runs
- * between the first check and the rename; tests use it to write a file there.
+ * pid is linked back, unless a newer one has been written in the meantime. Where a hard link
+ * cannot be made (a file system without them, such as exFAT), it is renamed back instead when
+ * no file has taken its place; a file written in the short time between that check and the
+ * rename would be replaced. `afterCheck` runs between the first check and the rename; tests use
+ * it to write a file there.
  */
 export function removeDaemonFile(pid: number, path = daemonFilePath(), afterCheck?: () => void): boolean {
   const read = readDaemonFile(path)
@@ -141,7 +144,7 @@ export function removeDaemonFile(pid: number, path = daemonFilePath(), afterChec
         linkSync(aside, path)
       } catch (error) {
         // EEXIST: a newer daemon has written its file since, which stays.
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && !existsSync(path)) renameSync(aside, path)
       }
       return false
     }

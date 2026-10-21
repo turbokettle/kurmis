@@ -95,6 +95,9 @@ function passedSettings(spec: ChildSpec | undefined): Record<string, unknown> {
 
 const routedHeaders = (...lines: string[]): string => [...lines].join('\n')
 
+/** What kurmis' --settings sets the variables that hand claude a token of its own to. */
+const NO_TOKEN = { CLAUDE_CODE_OAUTH_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '' }
+
 describe('kurmis claude on Auto', () => {
   test('starts claude on the default login, routed through the daemon, with the routing variables in --settings too', async () => {
     const h = harness()
@@ -116,7 +119,8 @@ describe('kurmis claude on Auto', () => {
       args: ['--from-find', '--settings', '/kurmis-settings/0.json', '-p', 'hi', '--login', 'x'],
       env: { PATH: '/usr/bin', ...routing, CLAUDE_SECURESTORAGE_CONFIG_DIR: '' }
     }])
-    expect(storedSettings.get('/kurmis-settings/0.json')).toBe(JSON.stringify({ env: routing }))
+    // A subscription token set in a settings file is overridden with an empty value, which claude reads as unset.
+    expect(storedSettings.get('/kurmis-settings/0.json')).toBe(JSON.stringify({ env: { ...routing, ...NO_TOKEN } }))
     // The key is in the settings file, never on claude's command line.
     expect(h.specs[0]?.args.some((arg) => arg.includes(KEY))).toBe(false)
     expect(h.runOptions).toEqual([{ platform: 'darwin' }])
@@ -134,6 +138,45 @@ describe('kurmis claude on Auto', () => {
         'requests with that token instead of a kurmis login. Kurmis starts claude without them; unset them to stop this note.'
     ])
     expect(out.stderr()).not.toContain('fake-token')
+  })
+
+  test('a subscription token in the person\'s --settings or settings.json is set to an empty value, with a note for each', async () => {
+    mkdirSync(join(home, '.claude'))
+    const userFile = join(home, '.claude', 'settings.json')
+    writeFileSync(userFile, JSON.stringify({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'fake-file-token' } }))
+    writeFileSync(join(cwd, 'mine.json'), JSON.stringify({ env: { MINE: 'yes', CLAUDE_CODE_OAUTH_TOKEN: 'fake-flag-token',
+      CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '3' } }))
+    const h = harness()
+    const out = collect()
+    await createClaudeCommand(h.deps).run(['--settings', 'mine.json'], out.context)
+    expect(passedSettings(h.specs[0]).env).toMatchObject({ MINE: 'yes', ...NO_TOKEN })
+    expect(out.stderr().trim().split('\n')).toEqual([
+      `kurmis claude: CLAUDE_CODE_OAUTH_TOKEN is set in the "env" of ${userFile}, so claude would sign its requests with ` +
+        'that token instead of a kurmis login. Kurmis sets it to an empty value for this claude, which Claude Code reads as ' +
+        'unset; remove it there to stop this note.',
+      `kurmis claude: CLAUDE_CODE_OAUTH_TOKEN and CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR are set in the "env" of ${join(cwd, 'mine.json')}, ` +
+        'so claude would sign its requests with that token instead of a kurmis login. Kurmis sets them to an empty value ' +
+        'for this claude, which Claude Code reads as unset; remove them there to stop this note.'
+    ])
+    expect(out.stderr()).not.toContain('fake-')
+  })
+
+  test('an empty token variable in a settings file gives no note', async () => {
+    const h = harness()
+    const out = collect()
+    await createClaudeCommand(h.deps).run(['--settings', '{"env":{"CLAUDE_CODE_OAUTH_TOKEN":""}}'], out.context)
+    expect(out.stderr()).toBe('')
+    expect(passedSettings(h.specs[0]).env).toMatchObject(NO_TOKEN)
+  })
+
+  test('with CLAUDE_CONFIG_DIR naming ~/.claude itself, claude starts on the default login\'s credentials, with a note that says so', async () => {
+    const h = harness()
+    const out = collect({ CLAUDE_CONFIG_DIR: join(home, '.claude') })
+    await createClaudeCommand(h.deps).run([], out.context)
+    expect(h.specs[0]?.env).toMatchObject({ CLAUDE_CONFIG_DIR: join(home, '.claude'), CLAUDE_SECURESTORAGE_CONFIG_DIR: '' })
+    expect(out.stderr()).toBe('kurmis claude: CLAUDE_CONFIG_DIR names ~/.claude, the folder of claude:default, but a claude ' +
+      'started with it set keeps its credentials in a Keychain item of its own, which may hold another account. Kurmis starts ' +
+      'claude with claude:default\'s credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.\n')
   })
 
   test('with CLAUDE_CONFIG_DIR set, claude starts on the default login\'s own credentials, with a note', async () => {
@@ -229,7 +272,8 @@ describe('kurmis claude --login', () => {
     // The subcommand comes after kurmis' --settings, where claude's parser accepts a root option.
     expect(spec?.args.slice(3)).toEqual(['mcp', 'list'])
     expect(passedSettings(spec)).toEqual({ env: {
-      ANTHROPIC_BASE_URL: BASE_URL, ANTHROPIC_CUSTOM_HEADERS: headers, ENABLE_TOOL_SEARCH: 'true', CLAUDE_CODE_MAX_RETRIES: '15'
+      ANTHROPIC_BASE_URL: BASE_URL, ANTHROPIC_CUSTOM_HEADERS: headers, ENABLE_TOOL_SEARCH: 'true', CLAUDE_CODE_MAX_RETRIES: '15',
+      ...NO_TOKEN
     } })
   })
 

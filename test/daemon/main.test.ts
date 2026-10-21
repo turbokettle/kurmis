@@ -395,6 +395,38 @@ describe('runDaemon', () => {
     }
   })
 
+  it('does not blame the older daemon when something else answers on the port after it was asked to stop', async () => {
+    const fakeKey = key()
+    let stopped = false
+    const older = createServer((incoming, response) => {
+      incoming.resume()
+      if (stopped || incoming.headers[KEY_HEADER] !== fakeKey) {
+        // After the stop, another program answers on the port.
+        response.writeHead(404)
+        response.end()
+        return
+      }
+      if (incoming.url === CONTROL_PATHS.stop) stopped = true
+      const body: StatusAnswer | { ok: true } = incoming.url === CONTROL_PATHS.status
+        ? { ok: true, apiVersion: CONTROL_API_VERSION, version: '0.1.0', pid: 4242, port, startedAt: 1, logins: [] }
+        : { ok: true }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(body))
+    })
+    await listen(older)
+    try {
+      const daemon = start({ version: '0.2.0', bindDeadlineMs: 400 })
+      expect(await daemon.exit).toBe(1)
+      expect(stopped).toBe(true)
+      expect(daemon.stderr.text()).not.toContain('did not give up')
+      expect(daemon.stderr.text()).toContain(`the kurmis daemon 0.1.0 (pid 4242) was asked to stop, but port ${String(port)} on 127.0.0.1 stayed busy`)
+      expect(daemon.stderr.text()).toContain('it answered 404 to a kurmis status request')
+      expect(daemon.stderr.text()).toContain('Another program may have taken the port.')
+    } finally {
+      await closeServer(older)
+    }
+  })
+
   it('says how to find the reserved port ranges and how to change the port when the system refuses the port', () => {
     const text = unusablePortText(28411, 'EACCES', '/home/example/.kurmis/config.json')
     expect(text).toContain('127.0.0.1:28411 (EACCES)')

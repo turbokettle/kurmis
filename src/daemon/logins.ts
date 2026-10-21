@@ -171,8 +171,8 @@ export class LoginTable {
    * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
    * credentials are no kurmis login's (`STARTED_ON_NONE`): no login is signed with its header,
    * and `claude:default`, whose token belongs to another account than the CLI's, is left out of
-   * the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that header for
-   * the started-on login when it holds no token for it (decision 5), so such a login counts as
+   * the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
+   * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
    *
    * A login whose token Anthropic refused (`markRefused`) counts as signed out, except the

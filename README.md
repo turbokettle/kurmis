@@ -110,7 +110,8 @@ own `ENABLE_TOOL_SEARCH` or `CLAUDE_CODE_MAX_RETRIES`, wherever you set it, is l
 
 A `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) in your shell would make claude sign its
 requests with that token instead of a kurmis login, so `kurmis claude` starts claude without it
-and says so.
+and says so. One in the `env` of your `--settings` or of `~/.claude/settings.json` is set to an
+empty value for that claude, which Claude Code reads as unset, also with a note.
 
 ### `kurmis codex`
 
@@ -127,8 +128,10 @@ says when. Each extra Codex login has its own Codex home folder, which kurmis fi
 copied, and the Windows sandbox's `.sandbox` folders stay separate for each login.
 
 What Codex writes into a login's own `config.toml`, such as a `/model` choice, a dismissed
-notice or a folder you trusted, stays there. A setting you change or remove in
-`~/.codex/config.toml` is changed or removed in every login at its next start. Secrets
+notice or a folder you trusted, stays there, and so does a setting removed from it: it stays
+removed until `~/.codex/config.toml` changes that setting. A setting you change or remove in
+`~/.codex/config.toml` is changed or removed in every login at its next start, and an MCP server
+you remove there goes from every login whole, with what the login added to it. Secrets
 (environment and header tables, tokens, passwords, API keys) are never copied; a login that
 needs one keeps its own in its `config.toml`, and kurmis says when the default home has one the
 login lacks.
@@ -215,6 +218,15 @@ signs in with the login in that folder instead, which kurmis does not know, so k
 signs its requests as `claude:default`: they go to your extra logins only. `kurmis claude` is
 not affected; it always starts claude on the login it names, `claude:default` included.
 
+On macOS and Windows, setup stops when `CLAUDE_CONFIG_DIR` names `~/.claude` itself: Claude
+Code keeps separate credentials for a `claude` started with the variable set, even to that
+folder, and both kinds of `claude` read `~/.claude/settings.json`. Unset the variable and run
+setup again.
+
+Setup also warns when the file's `env` sets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, which make a plain
+`claude` sign with that key or token, and leaves them.
+
 `kurmis setup --undo` removes kurmis' settings again (a value you changed yourself is left and
 reported) and the start at login. The daemon keeps running until you stop it, because
 `kurmis claude` still uses it.
@@ -291,8 +303,8 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   programs installed with npm.
 - **Windows: setup says the logon entry was not written because of Windows Script Host.** The
   logon entry starts the daemon without a console window through `wscript.exe`. When Windows
-  Script Host is missing or turned off, setup writes no entry; the next kurmis command starts the
-  daemon anyway.
+  Script Host is missing or turned off, setup writes no entry, warns and still exits 0; the next
+  kurmis command starts the daemon anyway.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
   now; try again. If no kurmis command is running, delete `~/.kurmis/config.json.lock`.
 - **A command says the daemon could not be reached.** Look at the end of `daemon.log`, or run

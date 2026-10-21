@@ -22,10 +22,10 @@
 // the CLI hashes the value of `CLAUDE_CONFIG_DIR` the same way instead (checked again in the
 // bundled JavaScript of 2.1.306), and reads `.credentials.json` from that folder. So a CLI with
 // `CLAUDE_CONFIG_DIR` set has credentials of its own; see "`claude:default` and
-// `CLAUDE_CONFIG_DIR`" in `docs/architecture.md`. Kurmis runs `claude auth login` and the usage probes of an extra
-// login that way (`claudeLoginEnv` in `src/data/login-env.ts`), with `CLAUDE_CONFIG_DIR` set to
-// the same string a routed CLI gets as `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so both name the same
-// item.
+// `CLAUDE_CONFIG_DIR`" in `docs/architecture.md`. Kurmis runs `claude auth login` and the usage
+// probes of an extra login that way (`claudeLoginEnv` in `src/data/login-env.ts`), with
+// `CLAUDE_CONFIG_DIR` set to the same string a routed CLI gets as
+// `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so both name the same item.
 import { createHash } from 'node:crypto'
 
 /** The plain item name, which the machine's own Claude login uses. */

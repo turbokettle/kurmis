@@ -12,6 +12,8 @@ import {
   codexLinkAction,
   codexPrivateName,
   codexStaleLink,
+  type CodexHomeLink,
+  type CodexLinkEnd,
   type CodexConfigRefresh
 } from '../../src/core/codex-home.ts'
 
@@ -146,22 +148,34 @@ describe("the login's AGENTS.md and AGENTS.override.md", () => {
 
 describe('a stale link in the login home', () => {
   const source = '/home/someone/.codex'
+  const link = (name: string, target: string, end: CodexLinkEnd, recorded: string | null = null): CodexHomeLink => ({ name, target, end, recorded })
 
-  test('is one kurmis made to a folder no longer shared, or one that leads nowhere', () => {
-    expect(codexStaleLink('memories', '/home/someone/.codex/memories', source, false, false, 'darwin')).toBe(true)
-    expect(codexStaleLink('memories', '/home/someone/.codex/memories', source, true, false, 'darwin')).toBe(false)
-    // A link into a default home used before, which is gone.
-    expect(codexStaleLink('memories', '/old/codex/memories', source, true, true, 'darwin')).toBe(true)
+  test('is one to a folder of the default home no longer shared, or to its place that leads nowhere', () => {
+    expect(codexStaleLink(link('memories', '/home/someone/.codex/memories', 'folder'), source, false, 'darwin')).toBe(true)
+    expect(codexStaleLink(link('memories', '/home/someone/.codex/memories', 'nothing'), source, false, 'darwin')).toBe(true)
+    expect(codexStaleLink(link('memories', '/home/someone/.codex/memories', 'folder'), source, true, 'darwin')).toBe(false)
   })
 
-  test('is never a link of the user\'s own to somewhere else', () => {
-    expect(codexStaleLink('memories', '/elsewhere/notes', source, true, true, 'darwin')).toBe(false)
-    expect(codexStaleLink('memories', '/old/codex/memories', source, true, false, 'darwin')).toBe(false)
+  test('is one kurmis recorded that leads nowhere: a link into a default home used before', () => {
+    expect(codexStaleLink(link('memories', '/old/codex/memories', 'nothing', '/old/codex/memories'), source, true, 'darwin')).toBe(true)
+    expect(codexStaleLink(link('memories', '/old/codex/memories', 'folder', '/old/codex/memories'), source, true, 'darwin')).toBe(false)
+  })
+
+  test("is never a link of the user's own: to a file of the default home, or one that leads nowhere", () => {
+    expect(codexStaleLink(link('hooks.json', '/home/someone/.codex/hooks.json', 'other'), source, false, 'darwin')).toBe(false)
+    expect(codexStaleLink(link('memories', '/elsewhere/notes', 'nothing'), source, true, 'darwin')).toBe(false)
+    // Its target has the link's own name, but kurmis did not record it.
+    expect(codexStaleLink(link('memories', '/unmounted/memories', 'nothing'), source, true, 'darwin')).toBe(false)
+    expect(codexStaleLink(link('memories', '/unmounted/memories', 'nothing', '/old/codex/memories'), source, true, 'darwin')).toBe(false)
+  })
+
+  test('is one to a file of the default home when kurmis recorded it, from when that place was a folder', () => {
+    expect(codexStaleLink(link('memories', '/home/someone/.codex/memories', 'other', '/home/someone/.codex/memories'), source, false, 'darwin')).toBe(true)
   })
 
   test('compares Windows paths ignoring case', () => {
-    expect(codexStaleLink('Memories', 'C:\\Users\\Someone\\.codex\\memories', 'c:\\users\\someone\\.codex', false, false, 'win32')).toBe(true)
-    expect(codexStaleLink('memories', 'D:\\old\\MEMORIES', 'c:\\users\\someone\\.codex', true, true, 'win32')).toBe(true)
+    expect(codexStaleLink(link('Memories', 'C:\\Users\\Someone\\.codex\\memories', 'folder'), 'c:\\users\\someone\\.codex', false, 'win32')).toBe(true)
+    expect(codexStaleLink(link('memories', 'D:\\old\\MEMORIES', 'nothing', 'd:\\old\\memories'), 'c:\\users\\someone\\.codex', true, 'win32')).toBe(true)
   })
 })
 
@@ -204,8 +218,22 @@ describe("the login's config.toml", () => {
   // The login's own trust is kept, so with nothing to merge in the file is not touched.
   test('is left as it is, trust included, when the default home has no config.toml', () => {
     const own = `model = "gpt-old"\n${hook}[projects.'e:\\a']\ntrust_level = "trusted"\n`
-    expect(codexConfigRefresh(null, own, null)).toEqual({ action: 'keep', content: null, merged: null, missingSecrets: false, heldBack: [], mergeFailure: null })
-    expect(codexConfigRefresh(null, null, null)).toEqual({ action: 'keep', content: null, merged: null, missingSecrets: false, heldBack: [], mergeFailure: null })
+    expect(codexConfigRefresh(null, own, 'model = "gpt-old"\n')).toEqual({ action: 'keep', content: null, merged: null, missingSecrets: false, heldBack: [], mergeFailure: null })
+    expect(codexConfigRefresh(null, own, null)).toMatchObject({ action: 'keep', content: null })
+  })
+
+  // A new login made before the user had a config.toml: Codex writes the login's own settings
+  // into its file, and none of them may count as merged in once the default home's file appears.
+  test('records an empty merged copy when the default home has no config.toml and none was recorded yet', () => {
+    expect(codexConfigRefresh(null, null, null)).toEqual({ action: 'keep', content: null, merged: '', missingSecrets: false, heldBack: [], mergeFailure: null })
+    const own = 'model = "own"\n[mcp_servers.mine]\ncommand = "mine"\n[mcp_servers.mine.env]\nK = "LOGIN_CANARY"\n'
+    const first = codexConfigRefresh(null, own, null)
+    expect(first.merged).toBe('')
+    expect(written(codexConfigRefresh('approval_policy = "never"\n', own, first.merged))).toEqual({
+      model: 'own',
+      approval_policy: 'never',
+      mcp_servers: { mine: { command: 'mine', env: { K: 'LOGIN_CANARY' } } }
+    })
   })
 
   test("keeps the login's own hook trust when the default home has a file", () => {

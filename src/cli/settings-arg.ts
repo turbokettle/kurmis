@@ -1,11 +1,13 @@
-// The `--settings` argument `kurmis claude` starts claude with (decision 9 in docs/architecture.md,
-// "How a Claude CLI reaches the daemon").
+// The `--settings` argument `kurmis claude` starts claude with (docs/architecture.md, "How a
+// Claude CLI reaches the daemon").
 //
 // Claude Code reads its environment from three layers, each beating the one before: the process
 // environment, the `env` block of the user's `settings.json`, and the `env` block of
 // `--settings`. In global mode `settings.json` names the daemon too, so a routing variable the
 // wrapper put only in the process environment would be ignored. The wrapper therefore passes the
-// routing variables (`ROUTING_VARIABLES`) in the `env` of a `--settings` file as well.
+// routing variables (`ROUTING_VARIABLES`) in the `env` of a `--settings` file as well, and sets
+// the variables that hand claude a token of its own (`OAUTH_TOKEN_VARIABLES`) to the empty string
+// there, which Claude Code reads as unset, so a value in a settings file does not apply either.
 //
 // How Claude Code 2.1.301 reads `--settings`, from its bundled source:
 //
@@ -42,7 +44,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readdirSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import { ROUTING_VARIABLES, USER_OWNED_ROUTING_VARIABLES, type RoutedEnv } from '../core/routed-env.ts'
+import { OAUTH_TOKEN_VARIABLES, ROUTING_VARIABLES, USER_OWNED_ROUTING_VARIABLES, type RoutedEnv } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { isProcessAlive } from '../data/lock.ts'
 import { wrapperSettingsFolder } from '../data/paths.ts'
@@ -147,6 +149,20 @@ export function routingVariables(routed: RoutedEnv): Record<string, string> {
     const value = routed.set[name]
     if (value !== undefined) out[name] = value
   }
+  return out
+}
+
+/**
+ * The `env` the wrapper's `--settings` gives claude: the routing variables of `routed`, and every
+ * one of `OAUTH_TOKEN_VARIABLES` set to the empty string. The routed environment has those
+ * removed, but a value in the person's `--settings` or in the user settings file would beat that.
+ * Claude Code 2.1.306 reads an empty value as unset (read from its bundled source): it tests
+ * `CLAUDE_CODE_OAUTH_TOKEN` for a value that is not empty wherever it reads it, and takes the
+ * same path for an empty `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` as for an unset one.
+ */
+export function settingsEnv(routed: RoutedEnv): Record<string, string> {
+  const out = routingVariables(routed)
+  for (const name of OAUTH_TOKEN_VARIABLES) out[name] = ''
   return out
 }
 

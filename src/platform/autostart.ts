@@ -59,6 +59,12 @@ export interface AutostartResult {
    * (macOS with nobody at the screen). `warning` says why. Setup counts this as done.
    */
   loadsAtNextLogin?: boolean
+  /**
+   * No entry can be written on this machine as it is (Windows without a usable Windows Script
+   * Host), so running setup again does not help until that changes. `warning` says why. Setup
+   * counts this as done: the daemon runs, and the next kurmis command starts it after a restart.
+   */
+  noEntryPossible?: boolean
 }
 
 const UNSUPPORTED = 'Starting the daemon at login is not supported on this platform; the next kurmis command starts it.'
