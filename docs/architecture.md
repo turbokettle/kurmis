@@ -1224,7 +1224,10 @@ These are known and left as they are.
     login's folder is created next (mode 0700), and for Codex prepared with `prepareCodexHome`,
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
-    wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
+    wrapper. On Windows a Claude login whose record is already in Credential Manager (one
+    PowerShell read, `holdsStoredRecord`) signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`,
+    so the new token replaces the record instead of going to a file the record hides. The
+    login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
     local credentials are there; otherwise a folder this run created is removed (for Codex with
     its `codex-merged/` record) and nothing is added. The email is printed and never stored; the label defaults to the name. A running
     daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
@@ -1233,8 +1236,10 @@ These are known and left as they are.
   - `logout <id>`: refuses the default logins. It holds the login's lock while it runs, and
     stops at once when a `kurmis login` of the login holds it. It removes the login from `config.json`, tells a
     running daemon to reload (so it stops probing the login), runs `claude auth logout` or
-    `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
-    item that may be left on macOS, and the removal goes on), and deletes the folder with
+    `codex logout` on it with a 30-second deadline (on Windows `claude auth logout` gets
+    `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, without which the CLI deletes only the file and leaves
+    the record in Credential Manager; a failure is a warning, naming the Keychain item or the
+    Windows credentials that may be left, and the removal goes on), and deletes the folder with
     `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
     without following them. For a Codex login it also deletes `codex-merged/<name>.json`, and
     when that record is all that is left of the login, deleting it is all logout does.

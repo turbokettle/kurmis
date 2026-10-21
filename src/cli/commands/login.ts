@@ -9,7 +9,8 @@
 // The CLI gets the terminal, as in `kurmis claude`. A new login is added to config.json only after
 // its CLI has exited 0 and its credentials are there; otherwise a folder this command created is
 // removed again. The email the CLI reports is shown on the terminal and written nowhere: the
-// label defaults to the login's name.
+// label defaults to the login's name. On Windows a Claude login whose record is in Credential
+// Manager signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new token replaces it.
 //
 // The run holds the login's lock (`login-lock.ts`) from before it creates the folder until it is
 // done, so a second `kurmis login` or a `kurmis logout` of the same login stops at once instead
@@ -28,6 +29,7 @@ import { applyEnvPatch, claudeLoginEnv, codexLoginEnv } from '../../data/login-e
 import { isDefaultLoginId, isLoginProvider, isValidLoginName, parseLoginId, type LoginId, type LoginProvider } from '../../data/login-id.ts'
 import { claudeDefaultProbeFolder, codexMergedRecordPath, loginFolder } from '../../data/paths.ts'
 import { makePrivateDirSync } from '../../platform/files.ts'
+import { holdsStoredRecord } from '../../platform/windows-credentials.ts'
 import { ProgramNotFoundError, type findProgram, type ResolvedProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
@@ -50,6 +52,12 @@ export interface LoginDeps {
   prepareCodexHome: typeof realPrepareCodexHome
   /** How long to wait for the daemon's probe after a sign-in. `LOGIN_PROBE_WAIT_MS` by default. */
   probeWaitMs: number
+  /**
+   * Whether Windows Credential Manager holds a record of the Claude login whose folder this is
+   * (null for `claude:default`); such a login signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`
+   * (`claudeLoginEnv`), so the new token replaces the record. `holdsStoredRecord` by default.
+   */
+  inCredentialManager: (folder: string | null, env: NodeJS.ProcessEnv) => Promise<boolean>
 }
 
 /** How long a login waits for the daemon's probe of the login it signed in. */
@@ -223,7 +231,8 @@ async function signIn(run: SignInRun): Promise<number> {
 
   const cliName = provider === 'claude' ? 'claude auth login' : 'codex login'
   writeLine(context.stdout, `Signing in ${id}${isNew ? ' (a new login)' : ''} with "${cliName}". Follow its steps.`)
-  const env = applyEnvPatch(context.env, provider === 'claude' ? claudeLoginEnv(id) : codexLoginEnv(id, context.env))
+  const credentialManager = provider === 'claude' && await run.deps.inCredentialManager(folder, context.env)
+  const env = applyEnvPatch(context.env, provider === 'claude' ? claudeLoginEnv(id, credentialManager) : codexLoginEnv(id, context.env))
   const cliArgs = provider === 'claude' ? ['auth', 'login', '--claudeai'] : ['login']
   const end = await run.deps.runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env })
 
@@ -279,7 +288,8 @@ export function createLoginCommand(deps: Partial<LoginDeps> = {}): Command {
     findProgram: deps.findProgram ?? realFindProgram,
     home: deps.home ?? homedir,
     prepareCodexHome: deps.prepareCodexHome ?? realPrepareCodexHome,
-    probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS
+    probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
+    inCredentialManager: deps.inCredentialManager ?? ((folder, env) => holdsStoredRecord(folder, env))
   }
   return {
     name: 'login',

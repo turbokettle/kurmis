@@ -34,6 +34,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ClaudeCredentials } from '../core/credentials.ts'
 import type { DaemonLog, LogReason } from '../data/log.ts'
+import { FORCE_CREDENTIAL_MANAGER_VARIABLE } from '../data/login-env.ts'
 import { isDefaultLoginId, parseLoginId } from '../data/login-id.ts'
 import { loginFolder } from '../data/paths.ts'
 import { CREDENTIALS_FILE_NAME, CredentialsFileReader, type CredentialsSource } from './credentials.ts'
@@ -70,9 +71,6 @@ export interface TokenSource extends CredentialsSource {
   /** Whether the last Credential Manager read of the login that worked found its record there. */
   inCredentialManager(id: string): boolean
 }
-
-/** The variable that makes Claude Code on Windows keep its record in Credential Manager. */
-export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CREDMAN'
 
 /**
  * The environment a usage probe of `id` gets: `env`, with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`

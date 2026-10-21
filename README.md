@@ -181,7 +181,8 @@ kurmis logout <id>
 ```
 
 Removes a login: it signs the login out with `claude auth logout` or `codex logout` (on macOS
-this is what removes its Keychain item; kurmis warns when it could not), removes it from
+this is what removes its Keychain item, on Windows its Windows Credential Manager record;
+kurmis warns when it could not), removes it from
 kurmis' settings and deletes its folder. Links
 in a Codex login's folder are removed, never what they point to, and so is kurmis' record of
 what it merged into that folder. The machine's own

@@ -7,6 +7,7 @@ import {
   credEnumScript,
   credentialBatches,
   credentialFilter,
+  holdsStoredRecord,
   MAX_ENCODED_COMMAND_CHARS,
   parseCredEnumOutput,
   powerShellCredentialRead,
@@ -189,5 +190,16 @@ describe('powerShellCredentialRead', () => {
 
   it('reaches only the PowerShell stand-in in tests, which fails', async () => {
     await expect(powerShellCredentialRead({})(['a/*'])).rejects.toThrow(/PowerShell exited with code 1/)
+  })
+})
+
+describe('holdsStoredRecord', () => {
+  it('finds a login\'s record on Windows only, and answers false when it cannot read', async () => {
+    const held = store({ [`${SERVICE}/claude-code-user`]: RECORD })
+    expect(await holdsStoredRecord(null, {}, 'win32', held.read)).toBe(true)
+    expect(await holdsStoredRecord('C:\\kurmis\\claude\\other', {}, 'win32', held.read)).toBe(false)
+    expect(await holdsStoredRecord(null, {}, 'darwin', held.read)).toBe(false)
+    expect(held.calls).toHaveLength(2)
+    expect(await holdsStoredRecord(null, {}, 'win32', () => Promise.reject(new Error('PowerShell exited with code 1')))).toBe(false)
   })
 })
