@@ -10,14 +10,14 @@
 // its CLI has exited 0 and its credentials are there; otherwise a folder this command created is
 // removed again. The email the CLI reports is shown on the terminal and written nowhere: the
 // label defaults to the login's name.
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { addLogin, changeConfig, ConfigError, findLogin, loadConfig, updateLogin, type KurmisConfig, type LoginSettingsPatch } from '../../data/config.ts'
 import { CLAUDE_PROFILE_FILE, parseClaudeIdentity, readClaudeIdentity, type ClaudeIdentity } from '../../data/identity.ts'
 import { applyEnvPatch, claudeLoginEnv, codexLoginEnv } from '../../data/login-env.ts'
 import { isDefaultLoginId, isLoginProvider, isValidLoginName, parseLoginId, type LoginId, type LoginProvider } from '../../data/login-id.ts'
-import { loginFolder } from '../../data/paths.ts'
+import { claudeDefaultProbeFolder, loginFolder } from '../../data/paths.ts'
 import { makePrivateDirSync } from '../../platform/files.ts'
 import { ProgramNotFoundError, type findProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
@@ -182,6 +182,12 @@ Options:
         return fail(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`)
       }
 
+      if (provider === 'claude' && isDefault) {
+        // The probe folder's profile names the account the default login had before; without it
+        // the daemon reads ~/.claude.json, which this sign-in just wrote, until the next probe
+        // writes the probe folder's file again.
+        rmSync(join(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), { force: true })
+      }
       const identity = provider === 'claude' ? (isDefault ? homeIdentity(home()) : readClaudeIdentity(id, home())) : null
       if (identity === null && !hasLocalCredentials(id, context.env, home())) {
         cleanUp()
