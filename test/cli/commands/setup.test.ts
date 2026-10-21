@@ -1,10 +1,18 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createLoginLogout } from '../../../src/cli/commands/logout.ts'
 import { createSetupCommand } from '../../../src/cli/commands/setup.ts'
+import { DaemonError } from '../../../src/cli/daemon-client.ts'
+import { globalRoutingState } from '../../../src/cli/global-routing.ts'
 import { backupPathFor } from '../../../src/cli/global-settings.ts'
+import { keychainService } from '../../../src/core/keychain-service.ts'
+import { addLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
+import type { LoginRef } from '../../../src/data/login-id.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
+import { loginFolder, pausedFilePath } from '../../../src/data/paths.ts'
 import { registerAutostart, unregisterAutostart, type AutostartOptions, type AutostartResult } from '../../../src/platform/autostart.ts'
+import { claudeRef, codexRef, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
 import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
@@ -153,8 +161,8 @@ describe('kurmis setup', () => {
       expect(result.code).toBe(0)
       expect(result.stderr).toContain(
         `Warning: ${settingsPath} is a symbolic link, so kurmis' key is written to the file it points to, ${realpathSync(target)}.`)
-      const undone = await run(command, ['--undo'])
-      expect(undone.stderr).not.toContain('symbolic link')
+      const paused = await run(command, ['--pause'])
+      expect(paused.stderr).not.toContain('symbolic link')
     } finally {
       rmSync(dotfiles, { recursive: true, force: true, maxRetries: 10 })
     }
@@ -301,8 +309,8 @@ describe('kurmis setup', () => {
     const env = (JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')) as { env: Record<string, string> }).env
     expect(env['ANTHROPIC_CUSTOM_HEADERS']).toMatch(/\nx-kurmis-started-on: none$/)
     expect(result.stdout).toContain('CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder')
-    // Undo takes the line out with the other kurmis headers.
-    expect((await run(command, ['--undo'], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+    // A pause takes the line out with the other kurmis headers.
+    expect((await run(command, ['--pause'], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
     expect(readFileSync(join(dir, 'settings.json'), 'utf8')).not.toContain('x-kurmis')
     rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
   })
@@ -376,9 +384,9 @@ describe('kurmis setup', () => {
     expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis-started-on')
   })
 
-  it('still undoes with a CLAUDE_CONFIG_DIR that names ~/.claude', async () => {
+  it('still pauses with a CLAUDE_CONFIG_DIR that names ~/.claude', async () => {
     expect((await run(setup().command, [])).code).toBe(0)
-    const result = await run(setup().command, ['--undo'], { CLAUDE_CONFIG_DIR: join(home, '.claude') })
+    const result = await run(setup().command, ['--pause'], { CLAUDE_CONFIG_DIR: join(home, '.claude') })
     expect(result.code).toBe(0)
     expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis')
   })
@@ -393,38 +401,82 @@ describe('kurmis setup', () => {
     const { command } = setup()
     expect((await run(command, ['--force'])).code).toBe(2)
     expect((await run(command, ['now'])).code).toBe(2)
+    expect((await run(command, ['--undo'])).code).toBe(2)
+    const yes = await run(command, ['--yes'])
+    expect(yes.code).toBe(2)
+    expect(yes.stderr).toContain('--yes goes with --uninstall-and-logout')
+    expect((await run(command, ['--pause', '--uninstall-and-logout'])).code).toBe(2)
+    expect(existsSync(settingsPath)).toBe(false)
   })
 
-  it('mentions --undo in its help', () => {
-    expect(setup().command.usage).toContain('--undo')
+  it('names its three modes in its help', () => {
+    const { usage } = setup().command
+    expect(usage).toContain('Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]')
+    expect(usage).toContain('Your own Claude Code\n                          and Codex sign-ins are not signed out')
+    expect(usage).toContain('npm uninstall -g kurmis')
   })
 })
 
-describe('kurmis setup --undo', () => {
-  it('gives back the file as it was, unregisters autostart and leaves the daemon running', async () => {
+describe('kurmis setup --pause', () => {
+  it('gives back the file as it was, keeps autostart and the daemon, and shows as paused', async () => {
     mkdirSync(join(home, '.claude'), { recursive: true })
     const original = '{\n\t"model": "opus"\n}\n'
     writeFileSync(settingsPath, original)
     const { client, autostart, command } = setup()
     expect((await run(command, [])).code).toBe(0)
+    expect(globalRoutingState({})).toBe('on')
     client.calls.length = 0
 
-    const result = await run(command, ['--undo'])
+    const result = await run(command, ['--pause'])
     expect(result.code).toBe(0)
     expect(result.stderr).toBe('')
     expect(readFileSync(settingsPath, 'utf8')).toBe(original)
-    expect(autostart.calls).toEqual(['register:darwin', 'unregister:darwin'])
+    expect(autostart.calls).toEqual(['register:darwin'])
     expect(client.calls).toEqual(['findDaemon'])
+    expect(existsSync(backupPathFor(settingsPath))).toBe(true)
+    expect(existsSync(pausedFilePath())).toBe(true)
+    expect(globalRoutingState({})).toBe('paused')
     expect(result.stdout).toContain('Removed ANTHROPIC_BASE_URL.')
     expect(result.stdout).toContain('Removed the "env" block, which had nothing else in it.')
-    expect(result.stdout).toContain('The daemon no longer starts at login')
-    expect(result.stdout).toContain('The daemon keeps running')
+    expect(result.stdout).toContain('Paused global routing')
+    expect(result.stdout).toContain('"kurmis setup" turns global routing on again.')
+    expect(result.stdout).toContain('Claude Code sessions that are already open keep the settings they started with')
 
-    const again = await run(command, ['--undo'])
+    const again = await run(command, ['--pause'])
     expect(again.code).toBe(0)
-    expect(again.stdout).toContain('The file has none of kurmis\' settings; nothing to take out.')
-    expect(again.stdout).toContain('The daemon was not set to start at login.')
+    expect(again.stdout).toContain('Global routing is already paused.')
     expect(readFileSync(settingsPath, 'utf8')).toBe(original)
+  })
+
+  it('is undone by kurmis setup, which replaces the backup with the file as it is then', async () => {
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    writeFileSync(settingsPath, '{\n  "model": "opus"\n}\n')
+    const { autostart, command } = setup()
+    await run(command, [])
+    await run(command, ['--pause'])
+    // A change made while paused is part of the file before kurmis from now on.
+    const changed = '{\n  "model": "sonnet"\n}\n'
+    writeFileSync(settingsPath, changed)
+
+    const result = await run(command, [])
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('Global routing was paused; it is on again.')
+    expect(readFileSync(backupPathFor(settingsPath), 'utf8')).toBe(changed)
+    expect(existsSync(pausedFilePath())).toBe(false)
+    expect(globalRoutingState({})).toBe('on')
+    expect(autostart.calls).toEqual(['register:darwin', 'register:darwin'])
+    expect((await run(command, ['--pause'])).code).toBe(0)
+    expect(readFileSync(settingsPath, 'utf8')).toBe(changed)
+  })
+
+  it('pauses nothing when global routing is not on', async () => {
+    const { command } = setup({ running: false })
+    const result = await run(command, ['--pause'])
+    expect(result.code).toBe(0)
+    expect(existsSync(settingsPath)).toBe(false)
+    expect(existsSync(pausedFilePath())).toBe(false)
+    expect(globalRoutingState({})).toBe('off')
+    expect(result.stdout).toContain('Global routing is not on, so there is nothing to pause.')
   })
 
   it('leaves a value the user changed and says so', async () => {
@@ -432,36 +484,280 @@ describe('kurmis setup --undo', () => {
     await run(command, [])
     const text = readFileSync(settingsPath, 'utf8').replace('"CLAUDE_CODE_MAX_RETRIES": "15"', '"CLAUDE_CODE_MAX_RETRIES": "6"')
     writeFileSync(settingsPath, text)
-    const result = await run(command, ['--undo'])
+    const result = await run(command, ['--pause'])
     expect(result.code).toBe(0)
     expect(settings()).toEqual({ env: { CLAUDE_CODE_MAX_RETRIES: '6' } })
     expect(result.stdout).toContain('Left CLAUDE_CODE_MAX_RETRIES as it is: its value (6) is not the one kurmis sets.')
   })
 
-  it('works when there is no settings file and no daemon', async () => {
-    const { command } = setup({ running: false })
-    const result = await run(command, ['--undo'])
-    expect(result.code).toBe(0)
-    expect(existsSync(settingsPath)).toBe(false)
-    expect(result.stdout).not.toContain('The daemon keeps running')
-  })
-
-  it('still undoes with a broken config.json, by the key header', async () => {
+  it('still pauses with a broken config.json, by the key header', async () => {
     const { command } = setup()
     await run(command, [])
     writeFileSync(join(kurmisHome, 'config.json'), '{')
-    const result = await run(command, ['--undo'])
+    expect(globalRoutingState({})).toBe('on')
+    const result = await run(command, ['--pause'])
     expect(result.code).toBe(0)
     expect(settings()).toEqual({})
-  })
-
-  it('exits 1 when autostart cannot be removed, keeping the settings change', async () => {
-    const { command } = setup()
-    await run(command, [])
-    const failing = createSetupCommand({ daemon: fakeDaemonClient(), ...fakeAutostart({ warning: 'the entry is locked' }), platform: 'win32' })
-    const result = await run(failing, ['--undo'])
-    expect(result.code).toBe(1)
-    expect(settings()).toEqual({})
-    expect(result.stderr).toContain('Could not remove the daemon\'s start at login: the entry is locked')
+    expect(globalRoutingState({})).toBe('paused')
   })
 })
+
+describe('globalRoutingState', () => {
+  it('reads the file a CLAUDE_CONFIG_DIR names, and the default file for one inside the data folder', async () => {
+    const dir = join(home, 'other-claude')
+    try {
+      expect((await run(setup().command, [], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+      expect(globalRoutingState({ CLAUDE_CONFIG_DIR: dir })).toBe('on')
+      expect(globalRoutingState({})).toBe('off')
+      expect(globalRoutingState({ CLAUDE_CONFIG_DIR: join(kurmisHome, 'probe', 'claude-default') })).toBe('off')
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      writeFileSync(settingsPath, 'not json')
+      expect(globalRoutingState({})).toBe('off')
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+})
+
+describe('kurmis setup --uninstall-and-logout', () => {
+  interface UninstallWorld {
+    command: ReturnType<typeof createSetupCommand>
+    autostart: FakeAutostart
+    /** Every logout CLI run, as `<program> <args>` with the folder it ran on. */
+    signOuts: string[]
+    stops: number
+    questions: string[]
+  }
+
+  function uninstaller(options: {
+    terminal?: boolean
+    answer?: string | null
+    running?: boolean
+    stopFails?: string
+    failSignOutOf?: LoginRef
+    platform?: NodeJS.Platform
+    autostart?: FakeAutostart
+  } = {}): UninstallWorld {
+    const daemon = fakeDaemonClient({ running: options.running ?? true })
+    const world: UninstallWorld = {
+      command: null as unknown as ReturnType<typeof createSetupCommand>,
+      autostart: options.autostart ?? fakeAutostart(),
+      signOuts: [],
+      stops: 0,
+      questions: []
+    }
+    const platform = options.platform ?? 'darwin'
+    const logOutLogin = createLoginLogout({
+      daemon,
+      platform,
+      findProgram: (tool) => ({ command: `/fake/bin/${tool}`, args: [], source: 'env' }),
+      async runProgram(program, args, run) {
+        const folder = run.env?.['CLAUDE_CONFIG_DIR'] ?? run.env?.['CODEX_HOME'] ?? ''
+        world.signOuts.push(`${program} ${args.join(' ')} ${folder}`)
+        const failing = options.failSignOutOf !== undefined && folder === loginFolder(options.failSignOutOf)
+        return { stdout: '', stderr: '', code: failing ? 1 : 0, timedOut: false, outputTooLarge: false, error: null }
+      }
+    })
+    world.command = createSetupCommand({
+      daemon,
+      ...world.autostart,
+      platform,
+      logOutLogin,
+      async stopDaemon() {
+        world.stops++
+        if (options.stopFails !== undefined) throw new DaemonError(options.stopFails)
+        return options.running ?? true
+      },
+      stdinIsTerminal: () => options.terminal ?? false,
+      async ask(question) {
+        world.questions.push(question)
+        return options.answer === undefined ? 'y' : options.answer
+      }
+    })
+    return world
+  }
+
+  const WORK = claudeRef('workclaude')
+  const SPARE = codexRef('sparecodex')
+
+  function addLoginWithFolder(login: LoginRef, alias: string): string {
+    saveConfig(addLogin(loadConfig(), login, { alias }))
+    const folder = loginFolder(login)
+    mkdirSync(folder, { recursive: true })
+    return folder
+  }
+
+  /** Turns global routing on with the original file given, and adds two logins. */
+  async function installed(original: string | null = '{\n  "model": "opus"\n}\n'): Promise<void> {
+    if (original !== null) {
+      mkdirSync(join(home, '.claude'), { recursive: true })
+      writeFileSync(settingsPath, original)
+    }
+    expect((await run(setup().command, [])).code).toBe(0)
+    addLoginWithFolder(WORK, 'work-example')
+    addLoginWithFolder(SPARE, 'spare-example')
+  }
+
+  it('lists what it removes, asks, and removes it all, leaving the machine\'s own sign-ins alone', async () => {
+    const original = '{\n  "model": "opus"\n}\n'
+    await installed(original)
+    const world = uninstaller({ terminal: true, answer: 'yes' })
+    const result = await run(world.command, ['--uninstall-and-logout'])
+    expect(result.stderr).toBe('')
+    expect(result.code).toBe(0)
+    expect(world.questions).toEqual(['Remove all of this? [y/N] '])
+    expect(result.stdout).toContain(`  - kurmis' settings in ${settingsPath}`)
+    expect(result.stdout).toContain(`  - ${backupPathFor(settingsPath)}, the copy of that file kurmis made`)
+    expect(result.stdout).toContain('  - the logins added to kurmis, each signed out first: work-example, spare-example')
+    expect(result.stdout).toContain(`  - the running daemon (pid ${String(FAKE_CONNECTION.pid)}), which is stopped`)
+    expect(result.stdout).toContain(`  - the kurmis data folder ${kurmisHome}`)
+    expect(result.stdout).toContain('Your own Claude Code and Codex sign-ins are not signed out')
+
+    expect(readFileSync(settingsPath, 'utf8')).toBe(original)
+    expect(existsSync(backupPathFor(settingsPath))).toBe(false)
+    expect(world.autostart.calls).toEqual(['unregister:darwin'])
+    expect(world.stops).toBe(1)
+    // One logout CLI per added login, on its own folder; none on the machine's own logins.
+    expect(world.signOuts).toEqual([
+      `/fake/bin/claude auth logout ${loginFolder(WORK)}`,
+      `/fake/bin/codex logout ${loginFolder(SPARE)}`
+    ])
+    expect(existsSync(kurmisHome)).toBe(false)
+    expect(globalRoutingState({})).toBe('off')
+    expect(result.stdout).toContain('Removed work-example (id workclaude).')
+    expect(result.stdout).toContain(`Deleted the kurmis data folder ${kurmisHome}.`)
+    expect(result.stdout.trimEnd().split('\n').at(-1)).toBe('Last step: remove the kurmis program with "npm uninstall -g kurmis".')
+  })
+
+  it('signs out a folder a login left behind by its id, and never the login plain claude uses', async () => {
+    writeTestConfig({ port: PORT })
+    await installed()
+    const leftover = claudeRef('leftover01')
+    mkdirSync(loginFolder(leftover), { recursive: true })
+    // A folder named by the id of plain claude's login is not a login kurmis added.
+    mkdirSync(join(kurmisHome, 'claude', OWN_CLAUDE_REF.id), { recursive: true })
+    const world = uninstaller()
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.stderr).toBe('')
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('  - the logins added to kurmis, each signed out first: work-example, spare-example, leftover01')
+    expect(result.stdout).toContain('Deleted the folder that leftover01 left behind.')
+    expect(world.signOuts).toEqual([
+      `/fake/bin/claude auth logout ${loginFolder(WORK)}`,
+      `/fake/bin/codex logout ${loginFolder(SPARE)}`,
+      `/fake/bin/claude auth logout ${loginFolder(leftover)}`
+    ])
+    expect(existsSync(kurmisHome)).toBe(false)
+  })
+
+  it('refuses without a terminal and without --yes, and removes nothing', async () => {
+    await installed()
+    const world = uninstaller({ terminal: false })
+    const result = await run(world.command, ['--uninstall-and-logout'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('there is no terminal to ask at. Run it again with --yes')
+    expect(world.questions).toEqual([])
+    expect(world.signOuts).toEqual([])
+    expect(world.stops).toBe(0)
+    expect(globalRoutingState({})).toBe('on')
+    expect(existsSync(loginFolder(WORK))).toBe(true)
+  })
+
+  it('removes nothing when the answer is not yes', async () => {
+    await installed()
+    for (const answer of ['', 'n', null]) {
+      const world = uninstaller({ terminal: true, answer })
+      const result = await run(world.command, ['--uninstall-and-logout'])
+      expect(result.code).toBe(1)
+      expect(result.stdout).toContain('Nothing was removed.')
+      expect(world.signOuts).toEqual([])
+      expect(globalRoutingState({})).toBe('on')
+    }
+  })
+
+  it('does not ask with --yes', async () => {
+    await installed(null)
+    const world = uninstaller({ terminal: true })
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(0)
+    expect(world.questions).toEqual([])
+    // Setup created the file, so undo leaves an empty object and there is no backup.
+    expect(settings()).toEqual({})
+    expect(existsSync(kurmisHome)).toBe(false)
+  })
+
+  it('keeps the data folder and the login\'s folder when a login cannot be signed out, and a second run finishes', async () => {
+    await installed()
+    const first = uninstaller({ failSignOutOf: WORK })
+    const result = await run(first.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('"claude auth logout" did not finish (exit code 1).')
+    expect(result.stderr).toContain(`Its Keychain item "${keychainService(loginFolder(WORK))}" may be left`)
+    expect(result.stderr).toContain(`so that "kurmis setup --uninstall-and-logout" runs it again`)
+    expect(result.stderr).toContain('Could not remove work-example; see above.')
+    expect(result.stderr).toContain(`Kept the kurmis data folder ${kurmisHome}`)
+    expect(result.stdout).not.toContain('npm uninstall')
+    expect(existsSync(loginFolder(WORK))).toBe(true)
+    expect(existsSync(loginFolder(SPARE))).toBe(false)
+    expect(globalRoutingState({})).toBe('off')
+
+    // The login is out of config.json, and its folder is what the second run finds.
+    const second = uninstaller({ running: false })
+    const again = await run(second.command, ['--uninstall-and-logout', '--yes'])
+    expect(again.code).toBe(0)
+    expect(second.signOuts).toEqual([`/fake/bin/claude auth logout ${loginFolder(WORK)}`])
+    expect(again.stdout).toContain('The daemon was not running.')
+    expect(existsSync(kurmisHome)).toBe(false)
+  })
+
+  it('keeps the data folder when the daemon cannot be stopped', async () => {
+    await installed()
+    const world = uninstaller({ stopFails: 'the daemon runs as another user' })
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('Could not stop the daemon: the daemon runs as another user')
+    expect(existsSync(kurmisHome)).toBe(true)
+    expect(world.signOuts).toHaveLength(2)
+  })
+
+  it('goes on when the start at login cannot be removed, and exits 1', async () => {
+    await installed()
+    const world = uninstaller({ autostart: fakeAutostart({ warning: 'the entry is locked' }), platform: 'win32' })
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('Could not remove the daemon\'s start at login: the entry is locked')
+    expect(existsSync(kurmisHome)).toBe(false)
+  })
+
+  it('removes nothing when the settings file cannot be changed', async () => {
+    await installed()
+    writeFileSync(settingsPath, '{ "env": ')
+    const world = uninstaller()
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(`${settingsPath} cannot be changed`)
+    expect(result.stderr).toContain('Nothing was removed.')
+    expect(world.signOuts).toEqual([])
+    expect(existsSync(loginFolder(WORK))).toBe(true)
+  })
+
+  it('leaves files in the data folder that kurmis did not write, and what links in it point to', async () => {
+    await installed()
+    const codexHome = join(home, '.codex')
+    mkdirSync(join(codexHome, 'skills'), { recursive: true })
+    writeFileSync(join(codexHome, 'skills', 'one.md'), 'kept')
+    linkFolder(join(codexHome, 'skills'), join(loginFolder(SPARE), 'skills'))
+    writeFileSync(join(kurmisHome, 'notes.txt'), 'mine')
+    try {
+      const world = uninstaller()
+      const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+      expect(result.code).toBe(0)
+      expect(result.stdout).toContain('The folder is left, because it also holds files kurmis did not write: notes.txt.')
+      expect(readdirSync(kurmisHome)).toEqual(['notes.txt'])
+      expect(readFileSync(join(codexHome, 'skills', 'one.md'), 'utf8')).toBe('kept')
+    } finally {
+      rmSync(codexHome, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+})
+

@@ -81,8 +81,11 @@ signs the request with that login's token.
 - `kurmis login`, `logout` and `list` manage logins, and `kurmis set` changes a login's routing
   opt-in, limits, use-first and alias. Every command takes a login by its alias or its id.
 - `kurmis setup` routes every Claude Code on the machine through kurmis by editing the user's
-  `settings.json`, and `kurmis setup --undo` takes that back.
+  `settings.json`. `kurmis setup --pause` takes kurmis' settings out of that file and keeps the
+  rest. `kurmis setup --uninstall-and-logout` removes everything kurmis set up, signs out every
+  login added to kurmis and leaves the machine's own Claude and Codex sign-ins alone.
 - There are also commands to start and stop the background process and show its state.
+  `kurmis daemon stop --now` stops it without waiting for its open requests.
 
 ## Not in kurmis
 

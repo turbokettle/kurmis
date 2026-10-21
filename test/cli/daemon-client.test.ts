@@ -323,6 +323,19 @@ describe('stopDaemon', () => {
     expect(JSON.parse(stop?.body ?? '')).toEqual({ maxWaitMs: 300 })
   })
 
+  it('with now, asks the daemon to cut its open requests and, on Windows, ends the process at its deadline without a grace period', async () => {
+    const key = readOrCreateKey()
+    const pid = await lingeringPid()
+    const daemon = await fakeDaemon(key, { pid })
+    usePort(daemon.port)
+    const startedAt = Date.now()
+    expect(await stopDaemon({ env: {}, platform: 'win32', now: true, stopTimeoutMs: 300, stopGraceMs: 60_000 })).toBe(true)
+    expect(Date.now() - startedAt).toBeLessThan(10_000)
+    expect(processExists(pid)).toBe(false)
+    const stop = daemon.requests.find((request) => request.url === '/_kurmis/stop')
+    expect(JSON.parse(stop?.body ?? '')).toEqual({ maxWaitMs: 0 })
+  })
+
   it('sends SIGTERM at the deadline on macOS and Linux', async () => {
     const key = readOrCreateKey()
     const pid = await lingeringPid()

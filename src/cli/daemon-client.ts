@@ -28,7 +28,9 @@
 // `maxWaitMs` ignores it, so after the deadline the CLI sends SIGTERM on macOS and Linux, which
 // the daemon takes as a second stop signal. On Windows `process.kill` ends the process at once
 // (TerminateProcess), so there the CLI first waits `STOP_GRACE_MS` more for the daemon to write
-// `state.json` and exit by itself.
+// `state.json` and exit by itself. A stop with `now` sends `maxWaitMs` 0, so the daemon cuts its
+// open requests at once; the CLI then waits `NOW_STOP_TIMEOUT_MS` for the daemon to kill its
+// probes, write `state.json` and exit.
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import { CONTROL_PATHS, type StatusAnswer, type StopRequest } from '../core/control-api.ts'
@@ -81,6 +83,11 @@ export interface DaemonClientOptions {
    * for it to exit before it signals it.
    */
   stopTimeoutMs?: number
+  /**
+   * `stopDaemon` asks the daemon to cut its open requests instead of waiting for them, and
+   * waits `stopTimeoutMs` (`NOW_STOP_TIMEOUT_MS` by default) for it to exit.
+   */
+  now?: boolean
   /** Windows: how much longer `stopDaemon` waits before it ends the process. `STOP_GRACE_MS` by default. */
   stopGraceMs?: number
   /** Sends a signal to a pid; `process.kill` by default. For tests. */
@@ -102,6 +109,11 @@ const START_TIMEOUT_MS = 15_000
 export const PROBE_TIMEOUT_MS = 90_000
 /** `stopDaemon` waits this long for the daemon to finish its open requests and exit. */
 const STOP_TIMEOUT_MS = 30_000
+/**
+ * How long `stopDaemon` with `now` waits for the daemon to exit. The daemon gives its last step
+ * (killing the probes that still run and writing `state.json`) at most 10 seconds.
+ */
+const NOW_STOP_TIMEOUT_MS = 15_000
 /**
  * Windows: how long after its deadline `stopDaemon` waits for a daemon that ended its wait by
  * itself to write `state.json` and exit, before it ends the process.
@@ -430,11 +442,11 @@ export async function keyRefusedProblem(options: DaemonClientOptions): Promise<s
 
 /**
  * Stops the running daemon and waits for it to exit. False when none was running. The daemon
- * finishes its open requests first, for at most `stopTimeoutMs` (sent as `maxWaitMs`). When
- * it has not exited by then it gets SIGTERM on macOS and Linux, which makes a daemon that
- * ignored `maxWaitMs` stop waiting; on Windows, where that ends the process at once, the CLI
- * first waits `stopGraceMs` more. Only a pid that answered the keyed status request as the
- * daemon's own is ever signalled.
+ * finishes its open requests first, for at most `stopTimeoutMs` (sent as `maxWaitMs`), or cuts
+ * them at once with `now`. When it has not exited by then it gets SIGTERM on macOS and Linux,
+ * which makes a daemon that ignored `maxWaitMs` stop waiting; on Windows, where that ends the
+ * process at once, the CLI first waits `stopGraceMs` more (not with `now`). Only a pid that
+ * answered the keyed status request as the daemon's own is ever signalled.
  */
 export async function stopDaemon(options: DaemonClientOptions): Promise<boolean> {
   const platform = options.platform ?? process.platform
@@ -444,11 +456,13 @@ export async function stopDaemon(options: DaemonClientOptions): Promise<boolean>
     if (problem !== null) throw new DaemonError(problem)
     return false
   }
-  const waitMs = options.stopTimeoutMs ?? STOP_TIMEOUT_MS
-  const body: StopRequest = { maxWaitMs: waitMs }
+  const now = options.now === true
+  const waitMs = options.stopTimeoutMs ?? (now ? NOW_STOP_TIMEOUT_MS : STOP_TIMEOUT_MS)
+  const body: StopRequest = { maxWaitMs: now ? 0 : waitMs }
   const result = await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop, body })
   if (result.kind === 'answered' && result.status !== 200) throw failureOf(result, found, 'the stop request')
-  const graceMs = platform === 'win32' ? options.stopGraceMs ?? STOP_GRACE_MS : 0
+  // With `now` the wait above is already the time the daemon needs to exit after its requests.
+  const graceMs = platform === 'win32' && !now ? options.stopGraceMs ?? STOP_GRACE_MS : 0
   if (await waitForExit(found.pid, waitMs + graceMs)) return true
   const kill = options.kill ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal))
   try {

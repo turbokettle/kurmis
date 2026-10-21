@@ -19,9 +19,13 @@
 //
 // The whole removal holds the login's lock (`login-lock.ts`), so it never runs while a
 // `kurmis login` of the same login writes into the folder.
+//
+// `kurmis setup --uninstall-and-logout` removes each login through `createLoginLogout` too. It
+// asks for the folder to be kept when the logout CLI fails, so that running it again finds the
+// folder and runs the logout CLI again: the folder's path is what names the Keychain item.
 import { lstatSync, rmSync } from 'node:fs'
 import { changeConfig, ConfigError, findLogin, loadConfig, removeLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
-import { isLoginId, isLoginProvider, LOGIN_PROVIDERS, type LoginId, type LoginProvider, type LoginRef } from '../../data/login-id.ts'
+import { isLoginId, isLoginProvider, LOGIN_PROVIDERS, type LoginRef } from '../../data/login-id.ts'
 import { codexMergedRecordPath, loginFolder } from '../../data/paths.ts'
 import { type findProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
@@ -41,6 +45,24 @@ export interface LogoutDeps {
   platform: NodeJS.Platform
 }
 
+export interface LogoutOptions {
+  /**
+   * When the logout CLI does not finish, keep the login's folder and answer `EXIT_FAILURE`, so
+   * that running the command again runs the logout CLI again. Without it the folder is deleted
+   * anyway and the removal counts as done.
+   */
+  keepFolderWhenSignOutFails?: boolean
+  /** The command that tries again, named in the messages. `kurmis logout <id>` by default. */
+  again?: string
+}
+
+/**
+ * Removes the extra login `login` while holding its lock, and says what it did: the login in
+ * config.json with that id and provider, or the folder of that id that is left without one.
+ * Answers the exit code.
+ */
+export type LoginLogout = (login: LoginRef, context: CliContext, options?: LogoutOptions) => Promise<number>
+
 function exists(path: string): boolean {
   try {
     lstatSync(path)
@@ -55,12 +77,106 @@ function fail(context: CliContext, message: string): number {
   return EXIT_FAILURE
 }
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
+  const daemon = deps.daemon ?? realDaemonClient
+  const signOutDeps = {
+    findProgram: deps.findProgram ?? realFindProgram,
+    runProgram: deps.runProgram ?? runProgram,
+    platform: deps.platform ?? process.platform
+  }
+
+  async function removeNow(login: LoginRef, context: CliContext, options: LogoutOptions): Promise<number> {
+    const { id } = login
+    const again = options.again ?? `kurmis logout ${id}`
+    const folder = loginFolder(login)
+    let name: string = id
+    let listed = false
+    try {
+      // Read again under the login's lock: another run may have removed it in the meantime.
+      const found = findLogin(loadConfig(), id)
+      if (found?.machineOwn === true) return fail(context, `${found.alias} is ${machineOwnText(found.provider)} and cannot be removed.`)
+      if (found !== undefined && found.provider === login.provider) {
+        listed = true
+        name = found.alias
+        changeConfig((config) => removeLogin(config, id))
+      }
+    } catch (error) {
+      if (error instanceof ConfigError) return fail(context, error.message)
+      throw error
+    }
+    const hasFolder = exists(folder)
+    if (!listed && !hasFolder) {
+      // A sign-in of a new Codex login that stopped half-way can leave only the record of what
+      // was merged into its home.
+      const record = login.provider === 'codex' ? codexMergedRecordPath(login) : null
+      if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis list" shows the logins`)
+      rmSync(record, { force: true })
+      writeLine(context.stdout, `Deleted the record of what was merged into the Codex home of ${id}, which ${id} left behind.`)
+      return EXIT_OK
+    }
+    const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null
+
+    // Claude on macOS keeps the secret in the Keychain, so the logout of a listed Claude login
+    // runs even when its folder is gone.
+    if (hasFolder || login.provider === 'claude') {
+      const problem = await signOutLogin(login, context.env, signOutDeps)
+      if (problem !== null) {
+        const left = leftBehindText(login, signOutDeps.platform)
+        if (options.keepFolderWhenSignOutFails === true && hasFolder) {
+          if (reload !== null) writeLine(context.stdout, reload)
+          const kept = listed ? ` ${name} is removed from kurmis, but its folder` : ' Its folder'
+          return fail(context, `${problem}.${left}${kept} ${folder} is kept, so that "${again}" runs it again.`)
+        }
+        writeLine(context.stderr, `kurmis logout: ${problem}; ${name} is removed anyway.${left}`)
+      }
+    }
+    try {
+      removeTreeSync(folder)
+      if (login.provider === 'codex') rmSync(codexMergedRecordPath(login), { force: true })
+    } catch (error) {
+      const problem = `its folder ${folder} could not be deleted (${errorText(error)})`
+      // The id still names the folder; the alias is gone with the login.
+      return fail(context, listed
+        ? `${name} is removed from kurmis, but ${problem}. Close what uses it and run "${again}".`
+        : `${id} left a folder behind, but ${problem}. Close what uses it and run "${again}" again.`)
+    }
+    writeLine(context.stdout, listed ? `Removed ${name} (id ${id}).` : `Deleted the folder that ${id} left behind.`)
+    if (reload !== null) writeLine(context.stdout, reload)
+    return EXIT_OK
+  }
+
+  return async (login, context, options = {}) => {
+    if (login.machineOwn) return fail(context, `${login.id} is ${machineOwnText(login.provider)} and cannot be removed.`)
+    let name: string
+    try {
+      name = findLogin(loadConfig(), login.id)?.alias ?? login.id
+    } catch (error) {
+      if (error instanceof ConfigError) return fail(context, error.message)
+      throw error
+    }
+    let lock
+    try {
+      lock = lockLogin(login.id, name)
+    } catch (error) {
+      if (error instanceof LoginBusyError) return fail(context, error.message)
+      throw error
+    }
+    try {
+      return await removeNow(login, context, options)
+    } finally {
+      lock.release()
+    }
+  }
+}
+
 /** What `kurmis logout` was asked to remove. */
 type LogoutTarget =
-  /** A login in config.json. */
-  | { kind: 'listed'; login: LoginRef; name: string }
-  /** The folders an id left that is in config.json no more. */
-  | { kind: 'left-behind'; id: LoginId; providers: LoginProvider[]; recordOnly: boolean }
+  /** A login in config.json, or the folders of an id that is in config.json no more. */
+  | { kind: 'logins'; logins: LoginRef[] }
   | { kind: 'error'; message: string; usage: boolean }
 
 /**
@@ -79,30 +195,24 @@ function logoutTarget(config: KurmisConfig, text: string): LogoutTarget {
         message: `${login.alias} is ${machineOwnText(login.provider)} and cannot be removed. To sign it out, run "${cli}" yourself.`
       }
     }
-    return { kind: 'listed', login, name: login.alias }
+    return { kind: 'logins', logins: [{ id: login.id, provider: login.provider, machineOwn: false }] }
   }
   const colon = text.indexOf(':')
   const prefix = colon < 0 ? null : text.slice(0, colon)
   const id = colon < 0 ? text : text.slice(colon + 1)
   const providers = prefix === null ? LOGIN_PROVIDERS : isLoginProvider(prefix) ? [prefix] : []
   if (isLoginId(id) && findLogin(config, id) === undefined) {
-    const withFolder = providers.filter((provider) => exists(loginFolder({ id, provider, machineOwn: false })))
-    if (withFolder.length > 0) return { kind: 'left-behind', id, providers: withFolder, recordOnly: false }
-    if (providers.includes('codex') && exists(codexMergedRecordPath({ id, provider: 'codex', machineOwn: false }))) {
-      return { kind: 'left-behind', id, providers: ['codex'], recordOnly: true }
-    }
+    const refs = providers.map((provider): LoginRef => ({ id, provider, machineOwn: false }))
+    const withFolder = refs.filter((login) => exists(loginFolder(login)))
+    if (withFolder.length > 0) return { kind: 'logins', logins: withFolder }
+    const recordOnly = refs.filter((login) => login.provider === 'codex' && exists(codexMergedRecordPath(login)))
+    if (recordOnly.length > 0) return { kind: 'logins', logins: recordOnly }
   }
   return { kind: 'error', usage: false, message: `${resolved.error}; "kurmis list" shows the logins` }
 }
 
 export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
-  const daemon = deps.daemon ?? realDaemonClient
-  const signOutDeps = {
-    findProgram: deps.findProgram ?? realFindProgram,
-    runProgram: deps.runProgram ?? runProgram,
-    platform: deps.platform ?? process.platform
-  }
-
+  const logOut = createLoginLogout(deps)
   return {
     name: 'logout',
     summary: 'Remove a login and its credentials',
@@ -136,77 +246,12 @@ Options:
         throw error
       }
       if (target.kind === 'error') return target.usage ? usageError('logout', target.message, context) : fail(context, target.message)
-
-      const id = target.kind === 'listed' ? target.login.id : target.id
-      let lock
-      try {
-        lock = lockLogin(id, target.kind === 'listed' ? target.name : id)
-      } catch (error) {
-        if (error instanceof LoginBusyError) return fail(context, error.message)
-        throw error
+      for (const login of target.logins) {
+        const code = await logOut(login, context)
+        if (code !== EXIT_OK) return code
       }
-      try {
-        return target.kind === 'listed' ? await removeListed(target, context) : await removeLeftBehind(target, context)
-      } finally {
-        lock.release()
-      }
-    }
-  }
-
-  /** Signs `login` out and deletes its folder. Answers the problem with the folder, or null. */
-  async function removeFolders(login: LoginRef, name: string, context: CliContext, alwaysSignOut: boolean): Promise<string | null> {
-    const folder = loginFolder(login)
-    // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the
-    // folder is gone.
-    if (alwaysSignOut || exists(folder)) {
-      const problem = await signOutLogin(login, context.env, signOutDeps)
-      if (problem !== null) {
-        writeLine(context.stderr, `kurmis logout: ${problem}; ${name} is removed anyway.${leftBehindText(login, signOutDeps.platform)}`)
-      }
-    }
-    try {
-      removeTreeSync(folder)
-      if (login.provider === 'codex') rmSync(codexMergedRecordPath(login), { force: true })
-      return null
-    } catch (error) {
-      return `its folder ${folder} could not be deleted (${error instanceof Error ? error.message : String(error)})`
-    }
-  }
-
-  async function removeListed(target: Extract<LogoutTarget, { kind: 'listed' }>, context: CliContext): Promise<number> {
-    const { login, name } = target
-    try {
-      // Read again under the login's lock: another run may have removed it in the meantime.
-      if (findLogin(loadConfig(), login.id) === undefined) return fail(context, `${name} was removed by another kurmis command just now`)
-      changeConfig((config) => removeLogin(config, login.id))
-    } catch (error) {
-      if (error instanceof ConfigError) return fail(context, error.message)
-      throw error
-    }
-    const reload = reloadText(await reloadIfRunning(daemon, context.env))
-    const problem = await removeFolders(login, name, context, login.provider === 'claude')
-    if (problem !== null) {
-      // The id still names the folder; the alias is gone with the login.
-      return fail(context, `${name} is removed from kurmis, but ${problem}. Close what uses it and run "kurmis logout ${login.id}".`)
-    }
-    writeLine(context.stdout, `Removed ${name} (id ${login.id}).`)
-    if (reload !== null) writeLine(context.stdout, reload)
-    return EXIT_OK
-  }
-
-  async function removeLeftBehind(target: Extract<LogoutTarget, { kind: 'left-behind' }>, context: CliContext): Promise<number> {
-    const { id } = target
-    if (target.recordOnly) {
-      rmSync(codexMergedRecordPath({ id, provider: 'codex', machineOwn: false }), { force: true })
-      writeLine(context.stdout, `Deleted the record of what was merged into the Codex home of ${id}, which ${id} left behind.`)
       return EXIT_OK
     }
-    for (const provider of target.providers) {
-      const problem = await removeFolders({ id, provider, machineOwn: false }, id, context, false)
-      if (problem !== null) return fail(context, `${id} left a folder behind, but ${problem}. Close what uses it and run "kurmis logout ${id}" again.`)
-    }
-    writeLine(context.stdout, `Deleted the folder that ${id} left behind.`)
-    return EXIT_OK
   }
 }
 

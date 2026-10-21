@@ -1,8 +1,8 @@
-// `kurmis setup` and `kurmis setup --undo` end to end, against the world's temporary HOME: the
-// real bundle edits `~/.claude/settings.json`, registers the login item through the fake
-// launchctl and starts the daemon, and a plain fake `claude -p`, started with the world's
-// environment and no routing variable of its own, reaches the fake Anthropic API through the
-// daemon because of that settings file alone.
+// `kurmis setup`, `--pause` and `--uninstall-and-logout` end to end, against the world's
+// temporary HOME: the real bundle edits `~/.claude/settings.json`, registers the login item
+// through the fake launchctl and starts the daemon, and a plain fake `claude -p`, started with
+// the world's environment and no routing variable of its own, reaches the fake Anthropic API
+// through the daemon because of that settings file alone.
 //
 // The login item is the host's: on macOS a launchd agent, which the fake launchctl stands in
 // for, and on Windows a Run value in the registry, which the fake reg.exe stands in for, and a
@@ -126,7 +126,7 @@ function messageRequests(world: World): ReturnType<World['api']['apiRequests']> 
 }
 
 describe.skipIf(process.platform !== 'darwin')('kurmis setup on macOS', () => {
-  it('routes a plain claude through the daemon, and --undo puts the file and the login item back', async () => {
+  it('routes a plain claude through the daemon, pauses, turns on again, and uninstalls', async () => {
     const world = await createWorld()
     world.signInDefaultClaude()
     mkdirSync(join(world.home, '.claude'), { recursive: true })
@@ -195,35 +195,61 @@ describe.skipIf(process.platform !== 'darwin')('kurmis setup on macOS', () => {
     expect(readFileSync(backup, 'utf8')).toBe(ORIGINAL)
     expect(launchctlCalls(world).filter((call) => call[0] === 'bootstrap')).toHaveLength(1)
 
-    // Undo: the file is byte for byte what it was, the login item is unloaded and deleted, and
-    // the daemon keeps running for `kurmis claude`.
-    const undo = await world.kurmis(['setup', '--undo'])
-    expect(undo, JSON.stringify(undo)).toMatchObject({ code: 0, stderr: '' })
-    expect(undo.stdout).toContain(`The daemon no longer starts at login (${plistPath(world)}).`)
-    expect(undo.stdout).toContain('The daemon keeps running')
+    // A pause: the file is byte for byte what it was, and the login item, the backup and the
+    // daemon stay.
+    const pause = await world.kurmis(['setup', '--pause'])
+    expect(pause, JSON.stringify(pause)).toMatchObject({ code: 0, stderr: '' })
+    expect(pause.stdout).toContain('Paused global routing')
     expect(readFileSync(settingsPath(world), 'utf8')).toBe(ORIGINAL)
-    // Undo keeps the mode setup left.
+    // A pause keeps the mode setup left.
     expect(fileMode(settingsPath(world))).toBe(0o600)
-    expect(existsSync(plistPath(world))).toBe(false)
-    expect(launchctlCalls(world)).toContainEqual(['bootout', `gui/${String(uid)}/${LABEL}`])
-    expect(launchctlJobs(world)).toEqual({})
+    expect(existsSync(plistPath(world))).toBe(true)
+    expect(Object.keys(launchctlJobs(world))).toEqual([LABEL])
+    expect(readFileSync(backup, 'utf8')).toBe(ORIGINAL)
+    expect(existsSync(join(world.data, 'paused.json'))).toBe(true)
     expect(world.daemonInfo()?.pid).toBe(info!.pid)
-    expect((await world.kurmis(['daemon', 'status'])).code).toBe(0)
 
     // A plain claude is no longer routed: with no base URL the fake refuses to start.
     const unrouted = await plainClaude(world, ['-p', 'hi'])
     expect(unrouted.code).toBe(2)
     expect(messageRequests(world)).toHaveLength(1)
 
-    // Undo again changes nothing.
-    const undoAgain = await world.kurmis(['setup', '--undo'])
-    expect(undoAgain, JSON.stringify(undoAgain)).toMatchObject({ code: 0, stderr: '' })
-    expect(undoAgain.stdout).toContain('The file has none of kurmis\' settings; nothing to take out.')
-    expect(undoAgain.stdout).toContain('The daemon was not set to start at login.')
+    // A pause again changes nothing.
+    const pauseAgain = await world.kurmis(['setup', '--pause'])
+    expect(pauseAgain, JSON.stringify(pauseAgain)).toMatchObject({ code: 0, stderr: '' })
+    expect(pauseAgain.stdout).toContain('Global routing is already paused.')
     expect(readFileSync(settingsPath(world), 'utf8')).toBe(ORIGINAL)
+
+    // Setup turns it on again.
+    const resumed = await world.kurmis(['setup'])
+    expect(resumed, JSON.stringify(resumed)).toMatchObject({ code: 0, stderr: '' })
+    expect(resumed.stdout).toContain('Global routing was paused; it is on again.')
+    expect(readFileSync(settingsPath(world), 'utf8')).toBe(expectedAfterSetup(world.port, key))
+    expect(existsSync(join(world.data, 'paused.json'))).toBe(false)
+    expect((await plainClaude(world, ['-p', 'hi'])).code).toBe(0)
+
+    // Without a terminal, the uninstall needs --yes.
+    const refused = await world.kurmis(['setup', '--uninstall-and-logout'])
+    expect(refused.code).toBe(1)
+    expect(refused.stderr).toContain('Run it again with --yes')
+    expect(readFileSync(settingsPath(world), 'utf8')).toBe(expectedAfterSetup(world.port, key))
+
+    // The uninstall: the file as it was, no backup, no login item, no daemon, no data folder.
+    const { folder } = await world.addClaudeLogin('work@example.com')
+    const uninstall = await world.kurmis(['setup', '--uninstall-and-logout', '--yes'])
+    expect(uninstall, JSON.stringify(uninstall)).toMatchObject({ code: 0, stderr: '' })
+    expect(readFileSync(settingsPath(world), 'utf8')).toBe(ORIGINAL)
+    expect(existsSync(backup)).toBe(false)
+    expect(existsSync(plistPath(world))).toBe(false)
+    expect(launchctlCalls(world)).toContainEqual(['bootout', `gui/${String(uid)}/${LABEL}`])
+    expect(launchctlJobs(world)).toEqual({})
+    expect(world.claudeRecord().filter((line) => line.kind === 'logout')).toEqual([expect.objectContaining({ credentialsDir: folder })])
+    await waitUntil(() => daemonProcesses(world).length === 0, 15_000, 'the daemon to stop')
+    expect(existsSync(world.data)).toBe(false)
+    expect(uninstall.stdout.trimEnd().split('\n').at(-1)).toBe('Last step: remove the kurmis program with "npm uninstall -g kurmis".')
   }, 180_000)
 
-  it('creates a settings file readable only by the person when there is none, and undo empties it', async () => {
+  it('creates a settings file readable only by the person when there is none, and a pause empties it', async () => {
     const world = await createWorld()
     world.signInDefaultClaude()
 
@@ -246,11 +272,11 @@ describe.skipIf(process.platform !== 'darwin')('kurmis setup on macOS', () => {
     expect(routed, JSON.stringify(routed)).toMatchObject({ code: 0 })
     expect(messageRequests(world).map((request) => request.bearer)).toEqual([fakeToken('default')])
 
-    const undo = await world.kurmis(['setup', '--undo'])
-    expect(undo, JSON.stringify(undo)).toMatchObject({ code: 0, stderr: '' })
-    expect(undo.stdout).toContain('Removed the "env" block, which had nothing else in it.')
+    const pause = await world.kurmis(['setup', '--pause'])
+    expect(pause, JSON.stringify(pause)).toMatchObject({ code: 0, stderr: '' })
+    expect(pause.stdout).toContain('Removed the "env" block, which had nothing else in it.')
     expect(JSON.parse(readFileSync(settingsPath(world), 'utf8'))).toEqual({})
-    expect(existsSync(plistPath(world))).toBe(false)
+    expect(existsSync(plistPath(world))).toBe(true)
   }, 180_000)
 
   it('refuses a settings file whose base URL points elsewhere, and changes nothing', async () => {
@@ -276,7 +302,7 @@ describe.runIf(process.platform === 'win32')('kurmis setup on Windows', () => {
     return parseRegQuery((await regFor(world.env)(regQueryArgs())).stdout, RUN_VALUE_NAME)?.data ?? null
   }
 
-  it('routes a plain claude through the daemon, and --undo puts the file back and removes the logon entry', async () => {
+  it('routes a plain claude through the daemon, and --uninstall-and-logout puts the file back and removes the logon entry', async () => {
     const world = await createWorld()
     world.signInDefaultClaude()
     mkdirSync(join(world.home, '.claude'), { recursive: true })
@@ -310,12 +336,18 @@ describe.runIf(process.platform === 'win32')('kurmis setup on Windows', () => {
     expect(again, JSON.stringify(again)).toMatchObject({ code: 0 })
     expect(again.stdout).toContain(`The daemon already starts at login (${RUN_ENTRY_DESCRIPTION}).`)
 
-    const undo = await world.kurmis(['setup', '--undo'])
-    expect(undo, JSON.stringify(undo)).toMatchObject({ code: 0 })
-    expect(undo.stdout).toContain(`The daemon no longer starts at login (${RUN_ENTRY_DESCRIPTION}).`)
+    const pause = await world.kurmis(['setup', '--pause'])
+    expect(pause, JSON.stringify(pause)).toMatchObject({ code: 0 })
     expect(readFileSync(settingsPath(world), 'utf8')).toBe(ORIGINAL)
-    expect(await runValue(world)).toBeNull()
-    expect(existsSync(script)).toBe(false)
+    expect(await runValue(world)).toBe(value)
     expect((await world.kurmis(['daemon', 'status'])).code).toBe(0)
+
+    const uninstall = await world.kurmis(['setup', '--uninstall-and-logout', '--yes'])
+    expect(uninstall, JSON.stringify(uninstall)).toMatchObject({ code: 0 })
+    expect(uninstall.stdout).toContain(`Removed the daemon's start at login (${RUN_ENTRY_DESCRIPTION}).`)
+    expect(readFileSync(settingsPath(world), 'utf8')).toBe(ORIGINAL)
+    expect(existsSync(`${settingsPath(world)}.kurmis-backup`)).toBe(false)
+    expect(await runValue(world)).toBeNull()
+    expect(existsSync(world.data)).toBe(false)
   }, 180_000)
 })

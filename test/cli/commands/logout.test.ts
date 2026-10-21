@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { createLogoutCommand, type LogoutDeps } from '../../../src/cli/commands/logout.ts'
+import { createLoginLogout, createLogoutCommand, type LogoutDeps } from '../../../src/cli/commands/logout.ts'
 import { keychainService } from '../../../src/core/keychain-service.ts'
 import { addLogin, changeConfig, findLogin, loadConfig } from '../../../src/data/config.ts'
 import type { LoginId, LoginProvider, LoginRef } from '../../../src/data/login-id.ts'
@@ -9,7 +9,7 @@ import { codexMergedRecordPath, kurmisHome, loginFolder, loginLockPath } from '.
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram, type RunResult } from '../../../src/platform/run.ts'
 import { FAKE_CLAUDE_SCRIPT, readFakeClaudeRecord, writeClaudeCredentials } from '../../fakes/index.ts'
-import { claudeRef, codexRef, OWN_CLAUDE, OWN_CODEX, writeTestConfig } from '../../logins.ts'
+import { claudeRef, codexRef, OWN_CLAUDE, OWN_CLAUDE_REF, OWN_CODEX, OWN_CODEX_REF, writeTestConfig } from '../../logins.ts'
 import { collect, fakeDaemonClient } from '../helpers.ts'
 import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
@@ -207,6 +207,39 @@ describe('kurmis logout', () => {
     }
     expect(run.runs).toEqual([])
     expect(daemon.calls).toEqual([])
+  })
+
+  it('as a function, refuses the logins of plain claude and plain codex without running anything', async () => {
+    const run = fakeRun()
+    const logOut = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: run.runProgram, platform: 'darwin' })
+    for (const login of [OWN_CLAUDE_REF, OWN_CODEX_REF, claudeRef(OWN_CLAUDE)]) {
+      const out = collect()
+      expect(await logOut(login, out.context)).toBe(1)
+      expect(out.stderr()).toContain('cannot be removed')
+    }
+    expect(run.runs).toEqual([])
+    expect(findLogin(loadConfig(), OWN_CLAUDE)).toBeDefined()
+    expect(findLogin(loadConfig(), OWN_CODEX)).toBeDefined()
+  })
+
+  it('keeps the folder when asked and the logout CLI fails, naming the command that tries again', async () => {
+    const folder = addWithFolder(WORK.id, 'claude', 'work-example')
+    const logOut = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: fakeRun({ code: 1 }).runProgram, platform: 'darwin' })
+    const out = collect()
+    expect(await logOut(WORK, out.context, { keepFolderWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout' })).toBe(1)
+    expect(out.stderr()).toContain(`work-example is removed from kurmis, but its folder ${folder} is kept, so that ` +
+      '"kurmis setup --uninstall-and-logout" runs it again.')
+    expect(existsSync(folder)).toBe(true)
+    expect(findLogin(loadConfig(), WORK.id)).toBeUndefined()
+
+    // The second run finds only the folder, and removes it once the logout CLI finishes.
+    const second = collect()
+    const run = fakeRun()
+    const again = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: run.runProgram, platform: 'darwin' })
+    expect(await again(WORK, second.context, { keepFolderWhenSignOutFails: true })).toBe(0)
+    expect(second.stdout()).toContain('Deleted the folder that workclaude left behind.')
+    expect(run.runs).toHaveLength(1)
+    expect(existsSync(folder)).toBe(false)
   })
 
   it('answers a login that does not exist', async () => {

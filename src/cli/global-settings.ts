@@ -1,8 +1,9 @@
-// Editing the user's Claude Code `settings.json` for `kurmis setup` and `kurmis setup --undo`.
+// Editing the user's Claude Code `settings.json` for `kurmis setup`.
 //
 // Setup puts the routing variables (`ROUTING_VARIABLES` in `routed-env.ts`) in the file's `env`
-// object, so a plain `claude` and the IDE extensions reach the daemon. Undo takes them out again.
-// Nothing else in the file is touched.
+// object, so a plain `claude` and the IDE extensions reach the daemon. Undo, which
+// `setup --pause` and `setup --uninstall-and-logout` run, takes them out again. Nothing else in
+// the file is touched.
 //
 // The file is edited as text. The members of `env` are added, replaced or removed where they
 // are, so the order of the keys, the indent, the line endings and everything outside `env` stay
@@ -395,6 +396,23 @@ function isKurmisBaseUrl(value: unknown, env: Record<string, unknown>, port: num
   const match = LOOPBACK_URL.exec(value)
   if (match === null) return false
   return (port !== null && Number(match[1]) === port) || hasKurmisHeader(env[CUSTOM_HEADERS])
+}
+
+/**
+ * Whether a settings file's text points Claude Code at kurmis: its `env` sets kurmis'
+ * `ANTHROPIC_BASE_URL`, recognised as undo recognises it. Null text (no file) and text that
+ * Claude Code cannot read as a JSON object answer false.
+ */
+export function routesThroughKurmis(text: string | null, port: number | null): boolean {
+  if (text === null) return false
+  let value: unknown
+  try {
+    value = JSON.parse(withoutBom(text))
+  } catch {
+    return false
+  }
+  if (!isPlainObject(value) || !isPlainObject(value.env)) return false
+  return isKurmisBaseUrl(value.env[BASE_URL], value.env, port)
 }
 
 function displayValue(value: unknown): string {

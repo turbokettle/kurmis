@@ -2,8 +2,8 @@
 // per-user logon entry on Windows (`windows-autostart.ts`). Other platforms answer a warning.
 //
 // Both run `<node> <kurmis bundle> daemon start`, which starts the daemon detached and exits,
-// the same way every other start does. So `setup --undo`, which unloads the launchd job, does
-// not end a daemon that is running.
+// the same way every other start does. So `unregisterAutostart`, which unloads the launchd job,
+// does not end a daemon that is running.
 //
 // - **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist` (`daemonJobPlist` in `launchd.ts`:
 //   RunAtLoad, AbandonProcessGroup, no KeepAlive, output thrown away, the environment from

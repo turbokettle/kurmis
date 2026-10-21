@@ -61,8 +61,10 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   `.removing` name rather than deleted. The CLI removes a `daemon.json` whose pid no longer
   exists, and one that is damaged.
 - `autostart.js` is the script the Windows logon entry runs (see "Starting at login"). An
-  `autostart.vbs` an older kurmis wrote is removed by `setup --undo`, and by `setup` once the
-  logon entry names `autostart.js`.
+  `autostart.vbs` an older kurmis wrote is removed by `setup --uninstall-and-logout`, and by
+  `setup` once the logon entry names `autostart.js`.
+- `paused.json` exists while global routing is paused (`kurmis setup --pause`, see "Pausing and
+  removing global routing"). It holds the time of the pause.
 - `key` holds the secret every proxied and control request carries. It is created once and
   kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
   of it and must keep working after the daemon restarts. Only the user can read it. It is
@@ -506,6 +508,12 @@ When the signal is refused with EPERM (a daemon of another user, or on Windows o
 administrator while this command is not), the stop is an error that names the pid and says to
 end it from there; only ESRCH (no such process) counts as stopped.
 
+`kurmis daemon stop --now` sends `{ "maxWaitMs": 0 }`, so the daemon skips step 3 and closes the
+connections of its open requests in step 4. A Claude CLI whose request was cut sees a dropped
+connection and retries it. The CLI waits up to 15 seconds for the pid to exit, since step 4
+gives the probes and `state.json` at most 10 seconds, and then signals it as above, on Windows
+without the extra 10 seconds.
+
 Only a pid that answered the keyed status request as the daemon's own is ever signalled.
 `kurmis daemon restart` sends `stop` without a body, waits until the port is free, and starts a
 new daemon at once, so the old one finishes its requests in the background. It refuses to
@@ -513,7 +521,8 @@ replace a daemon of a newer version.
 
 ### Starting at login
 
-`kurmis setup` registers `<node> <bundle> daemon start` to run when the user logs in, and `setup --undo` removes it. That command starts the daemon detached and exits, so
+`kurmis setup` registers `<node> <bundle> daemon start` to run when the user logs in, and
+`setup --uninstall-and-logout` removes it. That command starts the daemon detached and exits, so
 removing the entry never ends a running daemon. Both are idempotent: what is already there is
 compared first. The Node is the first `node` on PATH when it is the same file as the running one,
 since `process.execPath` names a versioned folder that a Homebrew upgrade removes. A `node` on
@@ -535,7 +544,7 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
   it once; one loaded with old content is unloaded first, since launchd keeps what it read at
   load time. The GUI domain exists only while the user is logged in at the screen (or through
   Screen Sharing). When loading fails (nobody at the screen), the plist stays and a warning says
-  it starts at the next login. `setup --undo` runs `bootout`, ignoring "not loaded", and deletes
+  it starts at the next login. Removing it runs `bootout`, ignoring "not loaded", and deletes
   the plist. launchd may fail to start the job (exit 78, EX_CONFIG) when Node, the bundle or the
   data folder is on an external volume that a launchd job may not read; then no daemon starts at
   login, and the next kurmis command starts one.
@@ -706,15 +715,15 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   command that clears it, because a rename over a read-only file fails there. A write that fails
   because another program holds the file open is reported as a sentence, not a stack.
 - When setup changes an existing file that holds none of kurmis' settings, it first copies it
-  to `settings.json.kurmis-backup` (mode 0600), replacing an older backup: after a setup, an
-  undo and months of edits, the file as it is now is what "before kurmis" means. When the file
+  to `settings.json.kurmis-backup` (mode 0600), replacing an older backup: after a setup, a
+  pause and months of edits, the file as it is now is what "before kurmis" means. When the file
   already holds kurmis' settings (setup run again after the port or the key changed), the
   backup is left as it is.
 - The file holds the key after setup, so setup makes it readable by the user only: a new file
   gets mode 0600, and an existing one has its group and other bits cleared (0644 becomes 0600),
   also when setup finds kurmis' settings already there and writes nothing. An existing backup
-  has its group and other bits cleared too. Setup says when it changed a mode. Undo keeps the
-  mode the file has. On Windows node ignores modes, so nothing is changed there; the file is
+  has its group and other bits cleared too. Setup says when it changed a mode. Taking the
+  settings out keeps the mode the file has. On Windows node ignores modes, so nothing is changed there; the file is
   protected by the access list it inherits from its folder (`PRIVATE_FILE_MODE` in
   `src/platform/files.ts`).
 - An `ANTHROPIC_BASE_URL` that is not kurmis' (`http://127.0.0.1:<port>` with the port of
@@ -736,15 +745,68 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   settings from an earlier setup, setup says so rather than that Claude Code does not use
   kurmis yet.
 
-`kurmis setup --undo` removes only the values that are still kurmis': a key the person changed is
-left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the
-lines left are the ones the backup has, the backup's value comes back as it was (with its line
-endings and blank lines); otherwise the lines left are joined by newlines. A value the backup
-already had (read with or without a byte order mark) is left. An `env` that undo empties is
-removed, unless the backup shows the file had an `env` before kurmis. It unregisters autostart and
-leaves the daemon running, because `kurmis claude` still uses it. Both directions can be run again
-without changing anything more. Claude Code sessions that are already open keep the settings they
-started with.
+Taking kurmis' settings out (`undoSettingsFile`, which `--pause` and `--uninstall-and-logout`
+run) removes only the values that are still kurmis': a key the person changed is left and
+reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the lines
+left are the ones the backup has, the backup's value comes back as it was (with its line endings
+and blank lines); otherwise the lines left are joined by newlines. A value the backup already had
+(read with or without a byte order mark) is left. An `env` that this empties is removed, unless
+the backup shows the file had an `env` before kurmis. The file keeps its mode. Putting the
+settings in and taking them out can each be run again without changing anything more. Claude
+Code sessions that are already open keep the settings they started with, so every command that
+changes the file says to start them again.
+
+**Pausing and removing global routing.** `src/cli/global-routing.ts` answers whether global
+routing is on, paused or off from the files alone, without the daemon (`globalRoutingState`):
+
+- **on:** the settings file setup edits, for the environment it is asked with, sets kurmis'
+  `ANTHROPIC_BASE_URL` (`routesThroughKurmis` in `src/cli/global-settings.ts`);
+- **paused:** it does not, and `paused.json` is in the data folder;
+- **off:** neither.
+
+The start at login is not part of the answer, because Linux has none and a pause leaves it in
+place. A settings file that is missing or not JSON counts as not on, and so does a
+`CLAUDE_CONFIG_DIR` inside the data folder, for which the default file is read instead.
+
+`kurmis setup --pause` takes kurmis' settings out of the file and writes `paused.json`. The
+daemon, its start at login, the logins and the backup stay, so `kurmis claude` keeps working. A
+pause when the file holds none of kurmis' settings and nothing is paused writes nothing and says
+global routing is not on. `kurmis setup` deletes `paused.json` once the settings are back in the
+file. That setup finds a file without kurmis' settings, so it replaces the backup with the file
+as it is then, which includes what the person changed while routing was paused.
+
+`kurmis setup --uninstall-and-logout` first lists what it will remove: kurmis' settings in the
+file (when it has any), the backup, the start at login (on macOS when the plist is there, on
+Windows always), the logins kurmis added, the running daemon and the data folder. It says that
+the machine's own Claude and Codex sign-ins are not signed out. At a terminal it then asks, and
+anything but `y` or `yes` removes nothing. `--yes` skips the question. Without a terminal on
+stdin and without `--yes` it refuses. A `config.json` it cannot read, or a settings file it
+cannot change, stops it before the list, with nothing removed. Then, in this order:
+
+1. Kurmis' settings come out of the file, and the backup is deleted. When the file cannot be
+   written, nothing else is removed, since the Claude Code that reads it still needs the daemon.
+2. The start at login is removed (`unregisterAutostart`). On Windows that also deletes
+   `autostart.js` and an old `autostart.vbs`.
+3. The daemon is stopped as `kurmis daemon stop` stops it, so it uses no login and probes none
+   while they are signed out.
+4. Each login kurmis added is removed through the code of `kurmis logout` (`createLoginLogout` in
+   `src/cli/commands/logout.ts`). The logins are the extra ones in `config.json` and every
+   folder under `claude/` and `codex/` whose name is a login id, so a second run finds the
+   logins a first run removed from `config.json` but could not finish. A folder named by the id
+   of the machine's own Claude or Codex login is left out, and those logins are never signed
+   out. Here a logout CLI that fails keeps the login's folder,
+   since the folder's path names the Keychain item and Credential Manager record that a second
+   run's logout CLI removes.
+5. The data folder is deleted (`removeDataFolder` in `src/data/remove-data-folder.ts`). Only the
+   names kurmis writes are deleted, with their temporary, lock and rotated forms, each through
+   `removeTreeSync`, so a link or junction inside is removed and its target is left. When the
+   folder then holds anything else, it is left and the names are printed. A data folder that is
+   itself a link is emptied through it, the folder it points to is removed, and then the link.
+
+A failed step is reported and the later steps still run, except that the data folder is kept
+when the daemon could not be stopped or a login could not be removed. The command then exits 1
+and says to run it again. When every step worked, its last line says to run
+`npm uninstall -g kurmis`.
 
 Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
 headers. The proxy answers that path itself.
@@ -781,7 +843,8 @@ makes sure no request is signed as that login for a CLI on other credentials:
   `x-kurmis-started-on` in that file is right for both. For the same reason setup refuses, on
   every platform, a `CLAUDE_CONFIG_DIR` naming another folder whose `settings.json` is a link to
   `~/.claude/settings.json`, compared with every link resolved, one whose target does not exist
-  yet included (`sharesDefaultSettingsFile`). `kurmis setup --undo` still runs.
+  yet included (`sharesDefaultSettingsFile`). `kurmis setup --pause` and
+  `--uninstall-and-logout` still run.
 - `kurmis claude` with `CLAUDE_CONFIG_DIR` naming `~/.claude` starts claude on the machine's
   own Claude login's credentials as above, which are the ones a `claude` without the variable
   uses, and its note says that the variable would otherwise give claude a Keychain item (or
@@ -1030,7 +1093,10 @@ would delete the folder of `~/.codex` it points to.
 - **Deleting a folder** (`src/platform/remove-tree.ts`) never goes into a reparse point. Links
   and junctions are removed as links, and a folder whose real path (`realpathSync.native`)
   is outside the folder being removed, such as a volume mounted into it, which libuv reports as
-  a plain folder, is removed with `rmdir` without recursion.
+  a plain folder, is removed with `rmdir` without recursion. `setup --uninstall-and-logout`
+  deletes the data folder this way, so the junctions in a Codex home leave `%USERPROFILE%\.codex`
+  as it was. It removes the logon entry with `reg.exe` and each Claude login's Credential Manager
+  record through `claude auth logout`, as `kurmis logout` does.
 
 **Finding `claude` and `codex`** (`src/platform/programs.ts`). `KURMIS_CLAUDE_BIN` /
 `KURMIS_CODEX_BIN` name the program explicitly (a `.js` path runs through Node). Otherwise
@@ -1247,8 +1313,9 @@ These are known and left as they are.
 
 - `src/data/` holds the data folder: its paths, login ids (`login-id.ts`), the JSON file
   helpers, the stores for `config.json`, `state.json` and `daemon.json`, the lock file around
-  `config.json` changes (`lock.ts`), the Claude profile reader (`identity.ts`) and the log
-  writer. Both the CLI and the daemon use it.
+  `config.json` changes (`lock.ts`), the Claude profile reader (`identity.ts`), the log writer,
+  and the removal of the whole folder (`remove-data-folder.ts`). Both the CLI and the daemon use
+  it.
 - `src/core/` holds pure logic with no I/O: routing, usage parsing, limits, the TOML merge.
   - `accounts.ts`: the rule a login id is checked against, and the defaults for a new login
     (both limits 100%, opted in).
@@ -1277,7 +1344,7 @@ These are known and left as they are.
   picks the command and handles `--help`, `--version` and `help <command>`. `wrapper.ts` runs an
   interactive child, `wrapper-args.ts` splits the wrappers' arguments, `settings-arg.ts` builds
   claude's `--settings`, `global-settings.ts` edits the user settings file for `setup`,
-  `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon,
+  `global-routing.ts` answers whether global routing is on, paused or off, `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon,
   `codex-home-files.ts` prepares a Codex home, `login-names.ts` names a login to the person and
   `sign-out.ts` signs an extra login out with its provider's CLI. Each command is one module in
   `src/cli/commands/` exporting a `Command`: its name, a one-line summary, its help text and
@@ -1357,12 +1424,13 @@ These are known and left as they are.
     `codex-merged/<id>.json`. A bare id that names no login in `config.json` but has a folder in
     `claude/` or `codex/` (a removal or a sign-in that stopped half-way) is cleaned up the same
     way, and when only a Codex id's `codex-merged/` record is left, deleting it is all logout
-    does.
+    does. The removal itself is `createLoginLogout`, which `setup --uninstall-and-logout` calls
+    for each login.
   - `set <login> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>] [--use-first on|off]
     [--alias <alias>]`: needs at least one option, changes `config.json` under the lock, tells a
     running daemon to reload and prints the login's settings, with where its alias comes from.
     `--alias` sets a user alias.
-  - `setup [--undo]` (above).
+  - `setup [--pause | --uninstall-and-logout [--yes]]` (above).
   - `daemon start|stop|restart|status|run`, where `daemon run` runs the daemon in the foreground
     and is what `daemon start` launches in the background. `daemon status` exits 1 when no daemon
     runs.

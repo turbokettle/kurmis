@@ -2979,34 +2979,6 @@ function parseCommandArgs(command, args, options, context, allowPositionals = fa
 var import_node_fs12 = require("node:fs");
 var import_node_os8 = require("node:os");
 
-// src/core/accounts.ts
-var ACCOUNT_PROVIDERS = ["claude", "codex"];
-var DEFAULT_LOGIN_NAME = "default";
-var CLAUDE_DEFAULT_ACCOUNT_ID = "claude:default";
-var CODEX_DEFAULT_ACCOUNT_ID = "codex:default";
-var DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100;
-var DEFAULT_WEEKLY_LIMIT_PERCENT = 100;
-var DEFAULT_AUTO_ROUTE = true;
-var LOGIN_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-var WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/;
-function isLoginName(name) {
-  return LOGIN_NAME.test(name) && !WINDOWS_RESERVED.test(name);
-}
-function parseAccountId(id) {
-  const colon = id.indexOf(":");
-  if (colon < 0) return null;
-  const provider = id.slice(0, colon);
-  const name = id.slice(colon + 1);
-  if (provider !== "claude" && provider !== "codex") return null;
-  return isLoginName(name) ? { provider, name } : null;
-}
-function accountProviderOf(id) {
-  return typeof id === "string" ? parseAccountId(id)?.provider ?? null : null;
-}
-function defaultAccountIdFor(provider) {
-  return provider === "codex" ? CODEX_DEFAULT_ACCOUNT_ID : CLAUDE_DEFAULT_ACCOUNT_ID;
-}
-
 // src/core/claude-usage.ts
 var FIVE_HOUR_MINS = 5 * 60;
 var SEVEN_DAY_MINS = 7 * 24 * 60;
@@ -3706,15 +3678,16 @@ function sevenDayResetTime(account) {
 function effectivePin(session, accounts) {
   if (session.pinnedAccountId != null) return session.pinnedAccountId;
   if (accounts.some((account) => account.autoRoute)) return null;
-  return defaultAccountIdFor(accountProviderOf(session.homeAccountId) ?? "claude");
+  return session.homeAccountId;
 }
 function autoStartLogin(accounts, preferred) {
-  const own2 = accounts.find((account) => account.id === CLAUDE_DEFAULT_ACCOUNT_ID);
-  if (own2 === void 0 || own2.loggedIn) return CLAUDE_DEFAULT_ACCOUNT_ID;
+  const own2 = accounts.find((account) => account.machineOwn);
+  if (own2 === void 0) throw new Error("autoStartLogin: the list has no login of the machine's own sign-in");
+  if (own2.loggedIn) return own2.id;
   const pool = accounts.filter((account) => account.autoRoute);
   const signedIn = pool.filter((account) => account.loggedIn);
   const from = signedIn.length > 0 ? signedIn : pool;
-  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? CLAUDE_DEFAULT_ACCOUNT_ID;
+  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? own2.id;
 }
 function rankAccounts(session, accounts, now, exclude) {
   return accounts.filter((account) => !exclude.has(account.id) && eligible(account, now)).sort((a, b) => {
@@ -3749,7 +3722,7 @@ function accountsInScope(session, accounts) {
   const pinned = effectivePin(session, accounts);
   return accounts.filter((account) => account.loggedIn && account.credentialsReadable && (pinned === null ? account.autoRoute : account.id === pinned));
 }
-function poolReadyAt(accounts, now, pinnedAccountId, homeAccountId = CLAUDE_DEFAULT_ACCOUNT_ID) {
+function poolReadyAt(accounts, now, pinnedAccountId, homeAccountId) {
   const session = { homeAccountId, currentAccountId: null, pinnedAccountId };
   const pinned = effectivePin(session, accounts);
   let earliest = Infinity;
@@ -3785,6 +3758,19 @@ function windowName(value) {
 
 // src/core/route-headers.ts
 var import_node_crypto = require("node:crypto");
+
+// src/core/accounts.ts
+var ACCOUNT_PROVIDERS = ["claude", "codex"];
+var DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100;
+var DEFAULT_WEEKLY_LIMIT_PERCENT = 100;
+var DEFAULT_AUTO_ROUTE = true;
+var LOGIN_ID = /^[a-z0-9]{1,32}$/;
+var RESERVED_IDS = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|none|invalid|claude|codex)$/;
+function isLoginIdText(text2) {
+  return LOGIN_ID.test(text2) && !RESERVED_IDS.test(text2);
+}
+
+// src/core/route-headers.ts
 var KEY_HEADER = "x-kurmis-key";
 var LOGIN_HEADER = "x-kurmis-login";
 var STARTED_ON_HEADER = "x-kurmis-started-on";
@@ -3812,19 +3798,19 @@ function withRouteHeaders(existing, key, login, startedOn = null) {
   if (startedOn !== null) added.push({ name: STARTED_ON_HEADER, value: startedOn });
   return formatCustomHeaders([...own2, ...added]);
 }
-function readRouteRequest(get) {
+function readRouteRequest(get, ownClaude) {
   const key = nonEmpty(get(KEY_HEADER));
   const named = nonEmpty(get(LOGIN_HEADER));
   const startedOn = nonEmpty(get(STARTED_ON_HEADER));
   return {
     key,
-    login: named === null ? null : claudeLoginOrInvalid(named),
-    startedOn: startedOn === null ? CLAUDE_DEFAULT_ACCOUNT_ID : startedOn.toLowerCase() === STARTED_ON_NONE ? null : claudeLoginOrInvalid(startedOn),
+    login: named === null ? null : loginIdOrInvalid(named),
+    startedOn: startedOn === null ? ownClaude : startedOn.toLowerCase() === STARTED_ON_NONE ? null : loginIdOrInvalid(startedOn),
     sessionId: nonEmpty(get(SESSION_HEADER))
   };
 }
-function claudeLoginOrInvalid(value) {
-  return parseAccountId(value)?.provider === "claude" ? value : "invalid";
+function loginIdOrInvalid(value) {
+  return isLoginIdText(value) ? value : "invalid";
 }
 function routeKeyMatches(given, secret) {
   if (given === null || secret.length === 0) return false;
@@ -3866,15 +3852,10 @@ function routedClaudeEnv(input) {
     CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES)
   };
   const unset = [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES];
-  const credentialsOf = startedOn ?? input.login ?? CLAUDE_DEFAULT_ACCOUNT_ID;
-  if (credentialsOf === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    set["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = DEFAULT_SECURE_STORAGE_DIR;
-  } else {
-    if (input.secureStorageDir === null || input.secureStorageDir.length === 0) {
-      throw new Error(`routedClaudeEnv: login ${credentialsOf} needs its folder`);
-    }
-    set["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = input.secureStorageDir;
+  if (input.secureStorageDir !== null && input.secureStorageDir.length === 0) {
+    throw new Error("routedClaudeEnv: the folder of an extra login cannot be the empty string");
   }
+  set["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = input.secureStorageDir ?? DEFAULT_SECURE_STORAGE_DIR;
   return { set, unset };
 }
 function applyRoutedEnv(env, routed, windows = false) {
@@ -3892,8 +3873,47 @@ function inheritedOAuthTokenVariables(env, windows = false) {
 }
 
 // src/data/config.ts
-var import_node_crypto4 = require("node:crypto");
+var import_node_crypto5 = require("node:crypto");
 var import_node_fs4 = require("node:fs");
+
+// src/core/login-alias.ts
+var RESERVED_ALIASES = /* @__PURE__ */ new Set(["claude", "codex"]);
+var ALIAS = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+var MAX_ALIAS_LENGTH = 32;
+var ALIAS_RULE = '1 to 32 lowercase letters, digits, "-" or "_", starting with a letter or digit, and not "claude" or "codex"';
+function isAliasText(text2) {
+  return ALIAS.test(text2) && !RESERVED_ALIASES.has(text2);
+}
+function aliasFromEmail(email) {
+  const text2 = email.trim().toLowerCase();
+  const at2 = text2.lastIndexOf("@");
+  const domainDot = at2 < 0 ? -1 : text2.lastIndexOf(".");
+  const withoutTld = domainDot > at2 ? text2.slice(0, domainDot) : text2;
+  return trimDashes(trimDashes(withoutTld.replace(/[^a-z0-9]+/g, "-")).slice(0, MAX_ALIAS_LENGTH));
+}
+function trimDashes(text2) {
+  return text2.replace(/^-+|-+$/g, "");
+}
+function automaticAlias(email, id, current, neighbours) {
+  const base = email === null ? "" : aliasFromEmail(email);
+  if (base === "") return id;
+  const taken = /* @__PURE__ */ new Set([...neighbours.aliases, ...neighbours.ids]);
+  const free = (alias) => !taken.has(alias) && !RESERVED_ALIASES.has(alias);
+  if (current !== null && free(current) && isNumbered(current, base)) return current;
+  if (free(base)) return base;
+  for (let number = 2; ; number++) {
+    const suffix = `-${String(number)}`;
+    const candidate = trimDashes(base.slice(0, MAX_ALIAS_LENGTH - suffix.length)) + suffix;
+    if (free(candidate)) return candidate;
+  }
+}
+function isNumbered(alias, base) {
+  if (alias === base) return true;
+  const match = /^(.*)-([2-9]|[1-9][0-9]+)$/.exec(alias);
+  if (match === null) return false;
+  const suffix = `-${match[2]}`;
+  return match[1] === trimDashes(base.slice(0, MAX_ALIAS_LENGTH - suffix.length));
+}
 
 // src/data/json-file.ts
 var import_node_crypto2 = require("node:crypto");
@@ -4065,51 +4085,33 @@ async function readJsonFile(path) {
 }
 
 // src/data/login-id.ts
+var import_node_crypto3 = require("node:crypto");
 var LOGIN_PROVIDERS = ACCOUNT_PROVIDERS;
-var isValidLoginName = isLoginName;
+var NEW_LOGIN_ID_LENGTH = 10;
+var ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 function isLoginProvider(value) {
   return value === "claude" || value === "codex";
 }
-function parseLoginId(text2) {
-  if (typeof text2 !== "string") return null;
-  const colon = text2.indexOf(":");
-  if (colon < 0) return null;
-  const provider = text2.slice(0, colon);
-  const name = text2.slice(colon + 1);
-  if (!isLoginProvider(provider) || !isValidLoginName(name)) return null;
-  return { id: text2, provider, name };
-}
 function isLoginId(text2) {
-  return parseLoginId(text2) !== null;
+  return typeof text2 === "string" && isLoginIdText(text2);
 }
 function toLoginId(text2) {
-  const parsed = parseLoginId(text2);
-  if (parsed === null) {
-    throw new Error(
-      `"${text2}" is not a login id. A login id is claude:<name> or codex:<name>, where the name is 1 to 32 lowercase letters, digits, "-" or "_".`
-    );
+  if (!isLoginId(text2)) {
+    throw new Error(`"${text2}" is not a login id. A login id is 1 to 32 lowercase letters and digits.`);
   }
-  return parsed.id;
+  return text2;
 }
-function loginId(provider, name) {
-  return toLoginId(`${provider}:${name}`);
-}
-function defaultLoginId(provider) {
-  return `${provider}:${DEFAULT_LOGIN_NAME}`;
-}
-var DEFAULT_LOGIN_IDS = LOGIN_PROVIDERS.map(defaultLoginId);
-function isDefaultLoginId(id) {
-  return DEFAULT_LOGIN_IDS.includes(id);
-}
-function providerOfLoginId(id) {
-  return id.startsWith("codex:") ? "codex" : "claude";
-}
-function nameOfLoginId(id) {
-  return id.slice(id.indexOf(":") + 1);
+function newLoginId(taken = []) {
+  const used = new Set(taken);
+  for (; ; ) {
+    let id = "";
+    for (let index = 0; index < NEW_LOGIN_ID_LENGTH; index++) id += ID_ALPHABET[(0, import_node_crypto3.randomInt)(ID_ALPHABET.length)];
+    if (!used.has(id) && isLoginIdText(id)) return id;
+  }
 }
 
 // src/data/lock.ts
-var import_node_crypto3 = require("node:crypto");
+var import_node_crypto4 = require("node:crypto");
 var import_node_fs3 = require("node:fs");
 var import_node_path2 = require("node:path");
 var DEFAULT_LOCK_TIMEOUT_MS = 15e3;
@@ -4231,7 +4233,7 @@ function acquireFileLockSync(path, options = {}) {
   };
   const timeoutMs = options.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const retryMs = options.retryMs ?? DEFAULT_LOCK_RETRY_MS;
-  const token = (0, import_node_crypto3.randomBytes)(16).toString("hex");
+  const token = (0, import_node_crypto4.randomBytes)(16).toString("hex");
   const started = Date.now();
   makePrivateDirSync((0, import_node_path2.dirname)(path));
   for (; ; ) {
@@ -4299,8 +4301,8 @@ function previousLogPath() {
 function configLockPath() {
   return (0, import_node_path3.join)(kurmisHome(), "config.json.lock");
 }
-function claudeDefaultProbeFolder() {
-  return (0, import_node_path3.join)(kurmisHome(), "probe", "claude-default");
+function ownClaudeProbeFolder() {
+  return (0, import_node_path3.join)(kurmisHome(), "probe", "claude-own");
 }
 function wrapperSettingsFolder() {
   return (0, import_node_path3.join)(kurmisHome(), "settings");
@@ -4311,26 +4313,26 @@ function probeWorkFolder() {
 function windowsAutostartScriptPath() {
   return (0, import_node_path3.join)(kurmisHome(), "autostart.js");
 }
+function pausedFilePath() {
+  return (0, import_node_path3.join)(kurmisHome(), "paused.json");
+}
 function providerFolder(provider) {
   return (0, import_node_path3.join)(kurmisHome(), provider);
 }
-function loginFolder(id) {
-  const checked = toLoginId(id);
-  if (isDefaultLoginId(checked)) {
-    throw new Error(`${checked} is the machine's own login and has no folder in the kurmis data folder.`);
+function loginFolder(login) {
+  const id = toLoginId(login.id);
+  if (login.machineOwn) {
+    throw new Error(`${id} is the machine's own ${login.provider} sign-in and has no folder in the kurmis data folder.`);
   }
-  return (0, import_node_path3.join)(providerFolder(providerOfLoginId(checked)), nameOfLoginId(checked));
+  return (0, import_node_path3.join)(providerFolder(login.provider), id);
 }
 function loginLockPath(id) {
-  const checked = toLoginId(id);
-  return (0, import_node_path3.join)(kurmisHome(), "locks", `${providerOfLoginId(checked)}-${nameOfLoginId(checked)}.lock`);
+  return (0, import_node_path3.join)(kurmisHome(), "locks", `${toLoginId(id)}.lock`);
 }
-function codexMergedRecordPath(id) {
-  const checked = toLoginId(id);
-  if (isDefaultLoginId(checked) || providerOfLoginId(checked) !== "codex") {
-    throw new Error(`${checked} is not an extra Codex login.`);
-  }
-  return (0, import_node_path3.join)(kurmisHome(), "codex-merged", `${nameOfLoginId(checked)}.json`);
+function codexMergedRecordPath(login) {
+  const id = toLoginId(login.id);
+  if (login.machineOwn || login.provider !== "codex") throw new Error(`${id} is not an extra Codex login.`);
+  return (0, import_node_path3.join)(kurmisHome(), "codex-merged", `${id}.json`);
 }
 
 // src/data/validate.ts
@@ -4388,34 +4390,37 @@ function expectInteger(value, where, min, max) {
 }
 
 // src/data/config.ts
-var CONFIG_VERSION = 1;
+var CONFIG_VERSION = 2;
 var DEFAULT_PORT = 28411;
 var MIN_PORT = 1024;
 var MAX_PORT = 65535;
 var ConfigError = class extends Error {
-  constructor(message) {
-    super(message);
+  constructor(message, options) {
+    super(message, options);
     this.name = "ConfigError";
   }
 };
-function newLoginSettings(id, patch = {}) {
+function machineOwnLogin(config, provider) {
+  const own2 = config.logins.find((login) => login.machineOwn && login.provider === provider);
+  if (own2 === void 0) throw new ConfigError(`The config has no login for the machine's own ${provider} sign-in.`);
+  return own2;
+}
+function extraLogins(config, provider) {
+  return config.logins.filter((login) => !login.machineOwn && (provider === void 0 || login.provider === provider));
+}
+function newLoginSettings(ref, patch = {}) {
   const login = {
-    id,
-    provider: providerOfLoginId(id),
-    label: nameOfLoginId(id),
+    id: ref.id,
+    provider: ref.provider,
+    machineOwn: ref.machineOwn,
+    alias: ref.id,
+    aliasSetByUser: false,
     routing: DEFAULT_AUTO_ROUTE,
     fiveHourLimit: DEFAULT_FIVE_HOUR_LIMIT_PERCENT,
     weeklyLimit: DEFAULT_WEEKLY_LIMIT_PERCENT,
     useFirst: false
   };
-  return withConfigErrors(() => applyPatch(login, patch, topOf(`settings of ${id}`)));
-}
-function withPlainErrors(check) {
-  try {
-    return check();
-  } catch (error) {
-    throw new ConfigError(error instanceof Error ? error.message : String(error));
-  }
+  return withConfigErrors(() => applyPatch(login, patch, topOf(`settings of ${ref.id}`)));
 }
 function withConfigErrors(check) {
   try {
@@ -4425,24 +4430,41 @@ function withConfigErrors(check) {
     throw error;
   }
 }
+function emptyConfig() {
+  return { version: CONFIG_VERSION, port: DEFAULT_PORT, logins: [] };
+}
 function defaultConfig() {
-  return {
-    version: CONFIG_VERSION,
-    port: DEFAULT_PORT,
-    logins: DEFAULT_LOGIN_IDS.map((id) => newLoginSettings(id))
-  };
+  return ensureMachineOwnLogins(emptyConfig());
+}
+function ensureMachineOwnLogins(config) {
+  const missing = LOGIN_PROVIDERS.filter((provider) => !config.logins.some((login) => login.machineOwn && login.provider === provider));
+  if (missing.length === 0) return config;
+  const ids = [...loginIds(config), ...config.logins.map((login) => login.alias)];
+  const added = missing.map((provider) => {
+    const id = newLoginId(ids);
+    ids.push(id);
+    return newLoginSettings({ id, provider, machineOwn: true });
+  });
+  return { ...config, logins: ordered([...config.logins, ...added]) };
+}
+function ordered(logins) {
+  const own2 = LOGIN_PROVIDERS.flatMap((provider) => logins.filter((login) => login.machineOwn && login.provider === provider));
+  return [...own2, ...logins.filter((login) => !login.machineOwn)];
 }
 function checkLimit(value, where) {
   return expectInteger(value, where, 1, 100);
 }
-function checkLabel(value, where) {
-  const label = expectString(value, where).trim();
-  if (label === "" || label.length > 64) fail(where, "must be 1 to 64 characters");
-  return label;
+function checkAlias(value, where) {
+  const alias = expectString(value, where);
+  if (!isAliasText(alias)) fail(where, `must be ${ALIAS_RULE}`);
+  return alias;
 }
 function applyPatch(login, patch, where) {
   const next = { ...login };
-  if (patch.label !== void 0) next.label = checkLabel(patch.label, child(where, "label"));
+  if (patch.alias !== void 0) {
+    next.alias = checkAlias(patch.alias, child(where, "alias"));
+    next.aliasSetByUser = true;
+  }
   if (patch.routing !== void 0) next.routing = expectBoolean(patch.routing, child(where, "routing"));
   if (patch.fiveHourLimit !== void 0) next.fiveHourLimit = checkLimit(patch.fiveHourLimit, child(where, "fiveHourLimit"));
   if (patch.weeklyLimit !== void 0) next.weeklyLimit = checkLimit(patch.weeklyLimit, child(where, "weeklyLimit"));
@@ -4451,21 +4473,21 @@ function applyPatch(login, patch, where) {
 }
 function parseLogin(value, where) {
   const raw = expectObject(value, where);
-  const idText = expectString(raw.id, child(where, "id"));
-  const parsed = parseLoginId(idText);
-  if (parsed === null) {
-    fail(child(where, "id"), 'must be claude:<name> or codex:<name>, with a name of 1 to 32 lowercase letters, digits, "-" or "_"');
-  }
-  if (raw.provider !== void 0 && raw.provider !== parsed.provider) {
-    fail(child(where, "provider"), `must be "${parsed.provider}", the provider in the id`);
-  }
+  const id = expectString(raw.id, child(where, "id"));
+  if (!isLoginId(id)) fail(child(where, "id"), "must be 1 to 32 lowercase letters and digits");
+  const provider = expectString(raw.provider, child(where, "provider"));
+  if (!isLoginProvider(provider)) fail(child(where, "provider"), 'must be "claude" or "codex"');
+  const machineOwn = raw.machineOwn === void 0 ? false : expectBoolean(raw.machineOwn, child(where, "machineOwn"));
   const patch = {};
-  for (const key of ["label", "routing", "fiveHourLimit", "weeklyLimit", "useFirst"]) {
+  for (const key of ["routing", "fiveHourLimit", "weeklyLimit", "useFirst"]) {
     if (raw[key] !== void 0) patch[key] = raw[key];
   }
-  return applyPatch(newLoginSettings(parsed.id), patch, where);
+  const login = applyPatch(newLoginSettings({ id, provider, machineOwn }), patch, where);
+  if (raw.alias !== void 0) login.alias = checkAlias(raw.alias, child(where, "alias"));
+  if (raw.aliasSetByUser !== void 0) login.aliasSetByUser = expectBoolean(raw.aliasSetByUser, child(where, "aliasSetByUser"));
+  return login;
 }
-function migrate(raw, file) {
+function checkVersion(raw, file) {
   const version = raw.version;
   if (version === void 0) fail(topOf(file), 'has no "version" field');
   if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
@@ -4477,28 +4499,45 @@ function migrate(raw, file) {
       `was written by a newer kurmis (config version ${String(version)}); this kurmis reads version ${String(CONFIG_VERSION)}. Update kurmis.`
     );
   }
-  return raw;
+  if (version < CONFIG_VERSION) {
+    fail(
+      topOf(file),
+      `was written by an older kurmis (config version ${String(version)}), and this kurmis reads only version ${String(CONFIG_VERSION)}. Delete the file, then add the extra logins again with "kurmis login claude" and "kurmis login codex"`
+    );
+  }
 }
 function parseConfig(value, file) {
-  const raw = migrate(expectObject(value, topOf(file)), file);
+  const raw = expectObject(value, topOf(file));
+  checkVersion(raw, file);
   const where = topOf(file);
   const port = raw.port === void 0 ? DEFAULT_PORT : expectInteger(raw.port, child(where, "port"), MIN_PORT, MAX_PORT);
   const listed = raw.logins === void 0 ? [] : expectArray(raw.logins, child(where, "logins"));
-  const byId = /* @__PURE__ */ new Map();
+  const logins = [];
   listed.forEach((entry, index) => {
-    const login = parseLogin(entry, child(child(where, "logins"), index));
-    if (byId.has(login.id)) fail(child(child(child(where, "logins"), index), "id"), `repeats "${login.id}"`);
-    byId.set(login.id, login);
+    const at2 = child(child(where, "logins"), index);
+    const login = parseLogin(entry, at2);
+    if (logins.some((other) => other.id === login.id)) fail(child(at2, "id"), `repeats "${login.id}"`);
+    if (login.machineOwn && logins.some((other) => other.machineOwn && other.provider === login.provider)) {
+      fail(child(at2, "machineOwn"), `is true for a second ${login.provider} login; only one login of a provider is the machine's own`);
+    }
+    const clash = logins.find((other) => other.id === login.alias || other.alias === login.id || other.provider === login.provider && other.alias === login.alias);
+    if (clash !== void 0) {
+      fail(child(at2, "alias"), clash.provider === login.provider && clash.alias === login.alias ? `repeats "${login.alias}" of another ${login.provider} login` : `"${login.alias}" and the id "${login.id}" must not be the id or alias of another login`);
+    }
+    logins.push(login);
   });
-  const defaults = DEFAULT_LOGIN_IDS.map((id) => byId.get(id) ?? newLoginSettings(id));
-  const extras = [...byId.values()].filter((login) => !isDefaultLoginId(login.id));
-  return { version: CONFIG_VERSION, port, logins: [...defaults, ...extras] };
+  return { version: CONFIG_VERSION, port, logins: ordered(logins) };
 }
-function loadConfig(path = configPath()) {
+function readConfigFile(path) {
   const read = readJsonFileSync(path);
-  if (read.status === "missing") return defaultConfig();
+  if (read.status === "missing") return emptyConfig();
   if (read.status === "corrupt") throw new ConfigError(`${path} is not valid JSON: ${read.reason}`);
   return withConfigErrors(() => parseConfig(read.value, path));
+}
+function loadConfig(path = configPath(), lockOptions = {}) {
+  const config = readConfigFile(path);
+  if (ensureMachineOwnLogins(config) === config) return config;
+  return changeConfig((current) => current, path, lockOptions);
 }
 function saveConfig(config, path = configPath()) {
   writeJsonFileSync(path, { version: CONFIG_VERSION, port: config.port, logins: config.logins });
@@ -4506,38 +4545,108 @@ function saveConfig(config, path = configPath()) {
 function findLogin(config, id) {
   return config.logins.find((login) => login.id === id);
 }
-function addLogin(config, id, patch = {}) {
-  const checked = withPlainErrors(() => toLoginId(id));
-  if (findLogin(config, checked) !== void 0) throw new ConfigError(`There is already a login ${checked}.`);
-  return { ...config, logins: [...config.logins, newLoginSettings(checked, patch)] };
+function loginIds(config) {
+  return config.logins.map((login) => login.id);
+}
+function newLoginIdFor(config) {
+  return newLoginId([...loginIds(config), ...config.logins.map((login) => login.alias)]);
+}
+var PROVIDER_NAMES = { claude: "Claude", codex: "Codex" };
+function resolveLogin(config, text2, provider) {
+  const typed = text2.trim().toLowerCase();
+  const colon = typed.indexOf(":");
+  let scope = provider;
+  let name = typed;
+  if (colon >= 0) {
+    const prefix = typed.slice(0, colon);
+    if (!isLoginProvider(prefix)) return { error: `"${text2}" names no login; give an alias or id, or claude:<alias> or codex:<alias>` };
+    if (provider !== void 0 && prefix !== provider) {
+      return { error: `"${text2}" is a ${PROVIDER_NAMES[prefix]} login; this takes a ${PROVIDER_NAMES[provider]} login` };
+    }
+    scope = prefix;
+    name = typed.slice(colon + 1);
+  }
+  const inScope = config.logins.filter((login) => scope === void 0 || login.provider === scope);
+  const byId = inScope.find((login) => login.id === name);
+  if (byId !== void 0) return { login: byId };
+  const byAlias = inScope.filter((login) => login.alias === name);
+  if (byAlias.length === 1) return { login: byAlias[0] };
+  if (byAlias.length > 1) {
+    return { error: `a Claude login and a Codex login are both called "${name}"; give claude:${name} or codex:${name}` };
+  }
+  const other = provider === void 0 ? void 0 : config.logins.find((login) => login.provider !== provider && (login.id === name || login.alias === name));
+  if (other !== void 0 && provider !== void 0) {
+    return { error: `"${name}" is a ${PROVIDER_NAMES[other.provider]} login; this takes a ${PROVIDER_NAMES[provider]} login` };
+  }
+  const what = scope === void 0 ? "login" : `${PROVIDER_NAMES[scope]} login`;
+  return { error: `there is no ${what} called "${name}"` };
+}
+function aliasProblem(config, login, alias) {
+  if (!isAliasText(alias)) return `"${alias}" is not an alias; an alias is ${ALIAS_RULE}`;
+  for (const other of config.logins) {
+    if (other.id === login.id) continue;
+    if (other.id === alias) return `"${alias}" is the id of another login`;
+    if (other.provider === login.provider && other.alias === alias) {
+      return `another ${PROVIDER_NAMES[login.provider]} login is already called "${alias}"`;
+    }
+  }
+  return null;
+}
+function addLogin(config, ref, patch = {}) {
+  if (!isLoginId(ref.id)) throw new ConfigError(`"${ref.id}" is not a login id.`);
+  if (findLogin(config, ref.id) !== void 0) throw new ConfigError(`There is already a login ${ref.id}.`);
+  if (config.logins.some((other) => other.alias === ref.id)) throw new ConfigError(`"${ref.id}" is the alias of another login.`);
+  const login = newLoginSettings({ id: ref.id, provider: ref.provider, machineOwn: false }, patch);
+  const problem = aliasProblem(config, login, login.alias);
+  if (problem !== null) throw new ConfigError(`${capitalized(problem)}.`);
+  return { ...config, logins: [...config.logins, login] };
 }
 function removeLogin(config, id) {
-  if (isDefaultLoginId(id)) throw new ConfigError(`${id} is the machine's own login and cannot be removed.`);
-  if (findLogin(config, id) === void 0) throw new ConfigError(`There is no login ${id}.`);
-  return { ...config, logins: config.logins.filter((login) => login.id !== id) };
+  const login = findLogin(config, id);
+  if (login === void 0) throw new ConfigError(`There is no login ${id}.`);
+  if (login.machineOwn) throw new ConfigError(`${login.alias} is the machine's own ${login.provider} sign-in and cannot be removed.`);
+  return { ...config, logins: config.logins.filter((other) => other.id !== id) };
 }
 function updateLogin(config, id, patch) {
   const current = findLogin(config, id);
   if (current === void 0) throw new ConfigError(`There is no login ${id}.`);
-  const next = withConfigErrors(() => applyPatch(current, patch, topOf(`settings of ${id}`)));
+  const next = withConfigErrors(() => applyPatch(current, patch, topOf(`settings of ${current.alias}`)));
+  if (patch.alias !== void 0) {
+    const problem = aliasProblem(config, current, next.alias);
+    if (problem !== null) throw new ConfigError(`${capitalized(problem)}.`);
+  }
   return { ...config, logins: config.logins.map((login) => login.id === id ? next : login) };
+}
+function followEmail(config, id, email) {
+  const login = findLogin(config, id);
+  if (email === null || login === void 0 || login.aliasSetByUser) return config;
+  const others = config.logins.filter((other) => other.id !== id);
+  const alias = automaticAlias(email, login.id, login.alias, {
+    aliases: others.filter((other) => other.provider === login.provider).map((other) => other.alias),
+    ids: others.map((other) => other.id)
+  });
+  if (alias === login.alias) return config;
+  return { ...config, logins: config.logins.map((other) => other.id === id ? { ...login, alias } : other) };
+}
+function capitalized(text2) {
+  return text2.charAt(0).toUpperCase() + text2.slice(1);
 }
 function changeConfig(change, path = configPath(), lockOptions = {}) {
   const lockPath = path === configPath() ? configLockPath() : `${path}.lock`;
   try {
     return withFileLockSync(lockPath, () => {
-      const next = change(loadConfig(path));
+      const next = change(ensureMachineOwnLogins(readConfigFile(path)));
       saveConfig(next, path);
       return next;
     }, lockOptions);
   } catch (error) {
-    if (error instanceof LockTimeoutError) throw new ConfigError(error.message);
+    if (error instanceof LockTimeoutError) throw new ConfigError(error.message, { cause: error });
     throw error;
   }
 }
 function configStamp(path = configPath()) {
   try {
-    return (0, import_node_crypto4.createHash)("sha256").update((0, import_node_fs4.readFileSync)(path)).digest("hex");
+    return (0, import_node_crypto5.createHash)("sha256").update((0, import_node_fs4.readFileSync)(path)).digest("hex");
   } catch (error) {
     if (error.code === "ENOENT") return "missing";
     throw error;
@@ -4578,30 +4687,39 @@ function refusedUntil(usage) {
   const at2 = reset === null ? NaN : Date.parse(reset);
   return Number.isFinite(at2) ? at2 : Infinity;
 }
-var CODEX_SESSION = { homeAccountId: CODEX_DEFAULT_ACCOUNT_ID, currentAccountId: null, pinnedAccountId: null };
+function ownCodexLogin(status2) {
+  const own2 = status2.logins.find((login) => login.provider === "codex" && login.machineOwn);
+  if (own2 === void 0) throw new Error("The daemon's status has no login for the machine's own Codex sign-in.");
+  return own2;
+}
+function aliasIn(status2, id) {
+  return status2.logins.find((login) => login.id === id)?.alias ?? id;
+}
 function chooseCodexLogin(status2, now) {
+  const ownId = ownCodexLogin(status2).id;
+  const session = { homeAccountId: ownId, currentAccountId: null, pinnedAccountId: null };
   const rows = codexRouteAccounts(status2);
-  const chosen = chooseAccount(CODEX_SESSION, rows, now, /* @__PURE__ */ new Set());
-  const pinned = effectivePin(CODEX_SESSION, rows);
-  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? "ranked" : "default", note: null };
+  const chosen = chooseAccount(session, rows, now, /* @__PURE__ */ new Set());
+  const pinned = effectivePin(session, rows);
+  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? "ranked" : "machine-own", note: null };
   if (pinned !== null) {
     return {
       login: pinned,
       kind: "none-signed-in",
-      note: `${pinned} does not look signed in; starting Codex on it anyway.`
+      note: `${aliasIn(status2, pinned)} does not look signed in; starting Codex on it anyway.`
     };
   }
-  const inScope = accountsInScope(CODEX_SESSION, rows);
+  const inScope = accountsInScope(session, rows);
   if (inScope.length === 0) {
     return {
-      login: CODEX_DEFAULT_ACCOUNT_ID,
+      login: ownId,
       kind: "none-signed-in",
-      note: `No Codex login that routing may use is signed in; starting on ${CODEX_DEFAULT_ACCOUNT_ID}.`
+      note: `No Codex login that routing may use is signed in; starting on ${aliasIn(status2, ownId)}, this machine's own Codex sign-in.`
     };
   }
   let best = null;
   for (const row of inScope) {
-    const readyAt = poolReadyAt([row], now, null, CODEX_DEFAULT_ACCOUNT_ID);
+    const readyAt = poolReadyAt([row], now, null, ownId);
     if (readyAt !== null && (best === null || readyAt < best.readyAt)) best = { id: row.id, readyAt };
   }
   if (best === null) {
@@ -4609,14 +4727,14 @@ function chooseCodexLogin(status2, now) {
     return {
       login: first.id,
       kind: "all-out",
-      note: `Every Codex login is at its limit and none says when it resets; starting on ${first.id}.`
+      note: `Every Codex login is at its limit and none says when it resets; starting on ${aliasIn(status2, first.id)}.`
     };
   }
   const when = countdownIn(best.readyAt, now) ?? "now";
   return {
     login: best.id,
     kind: "all-out",
-    note: `Every Codex login is at its limit; starting on ${best.id}, whose usage comes back first (${when}).`
+    note: `Every Codex login is at its limit; starting on ${aliasIn(status2, best.id)}, whose usage comes back first (${when}).`
   };
 }
 function codexRouteBlock(status2, id, now) {
@@ -4653,21 +4771,21 @@ var NOT_INHERITED = {
   ANTHROPIC_CUSTOM_HEADERS: void 0
 };
 var FORCE_CREDENTIAL_MANAGER_VARIABLE = "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN";
-function claudeLoginEnv(id, forceCredentialManager = false) {
+function claudeLoginEnv(login, forceCredentialManager = false) {
   const force = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: "1" } : {};
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
+  if (login.machineOwn) {
     return { CLAUDE_CONFIG_DIR: void 0, CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
   }
-  return { CLAUDE_CONFIG_DIR: loginFolder(id), CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
+  return { CLAUDE_CONFIG_DIR: loginFolder(login), CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
 }
-function claudeProbeEnv(id) {
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return { CLAUDE_CONFIG_DIR: claudeDefaultProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: "", ...NOT_INHERITED };
+function claudeProbeEnv(login) {
+  if (login.machineOwn) {
+    return { CLAUDE_CONFIG_DIR: ownClaudeProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: "", ...NOT_INHERITED };
   }
-  return claudeLoginEnv(id);
+  return claudeLoginEnv(login);
 }
-function codexLoginEnv(id, inherited = {}, platform = process.platform) {
-  if (id !== CODEX_DEFAULT_ACCOUNT_ID) return { CODEX_HOME: loginFolder(id), ...NOT_INHERITED };
+function codexLoginEnv(login, inherited = {}, platform = process.platform) {
+  if (!login.machineOwn) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED };
   const windows = platform === "win32";
   const home = windows ? Object.entries(inherited).find(([name]) => name.toUpperCase() === "CODEX_HOME")?.[1] : inherited["CODEX_HOME"];
   return isKurmisCodexHome(home, providerFolder("codex"), windows) ? { CODEX_HOME: void 0, ...NOT_INHERITED } : { ...NOT_INHERITED };
@@ -4860,11 +4978,11 @@ function isTemporaryPath(path, folders, platform) {
   const separators = platform === "win32" ? /[\\/]+/ : /\/+/;
   const fold = (text2) => platform === "win32" ? text2.toLowerCase() : text2;
   if (path.split(separators).some((part) => fold(part) === "fnm_multishells")) return true;
-  const join16 = platform === "win32" ? "\\" : "/";
-  const plain = fold(path.split(separators).join(join16));
+  const join17 = platform === "win32" ? "\\" : "/";
+  const plain = fold(path.split(separators).join(join17));
   return folders.some((folder) => {
-    const root = fold(folder.split(separators).join(join16)).replace(/[\\/]+$/, "");
-    return root !== "" && (plain === root || plain.startsWith(root + join16));
+    const root = fold(folder.split(separators).join(join17)).replace(/[\\/]+$/, "");
+    return root !== "" && (plain === root || plain.startsWith(root + join17));
   });
 }
 function nodeForJobs(options = {}) {
@@ -5373,7 +5491,7 @@ var realFiles = {
 };
 
 // src/cli/codex-home-files.ts
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 var import_node_fs9 = require("node:fs");
 var import_promises4 = require("node:fs/promises");
 var import_promises5 = require("node:timers/promises");
@@ -6211,16 +6329,16 @@ async function removeFolderLink(place, platform = process.platform) {
 function emptyRecord(config) {
   return { config, copied: {}, links: {}, conflicts: [] };
 }
-async function prepareCodexHome(id, options) {
-  const login = toLoginId(id);
-  if (providerOfLoginId(login) !== "codex") throw new Error(`${login} is not a Codex login.`);
-  if (isDefaultLoginId(login)) return { codexHome: null, warnings: [] };
+async function prepareCodexHome(login, options) {
+  const name = login.alias ?? login.id;
+  if (login.provider !== "codex") throw new Error(`${name} is not a Codex login.`);
+  if (login.machineOwn) return { codexHome: null, warnings: [] };
   const platform = options.platform ?? process.platform;
   const home = loginFolder(login);
   try {
     makePrivateDirSync(home);
   } catch (error) {
-    throw new Error(`Could not create the Codex home of ${login} at ${home}: ${errorText2(error)}`, { cause: error });
+    throw new Error(`Could not create the Codex home of ${name} at ${home}: ${errorText2(error)}`, { cause: error });
   }
   const source = codexSourceHome(options.env, platform);
   const warnings = [];
@@ -6276,7 +6394,7 @@ function stringRecord(value) {
   return Object.fromEntries(Object.entries(value).filter((entry) => typeof entry[1] === "string"));
 }
 function sha256(text2) {
-  return (0, import_node_crypto5.createHash)("sha256").update(text2).digest("hex");
+  return (0, import_node_crypto6.createHash)("sha256").update(text2).digest("hex");
 }
 function codexSourceHome(env, platform = process.platform) {
   const fallback = (0, import_node_path11.join)((0, import_node_os4.homedir)(), ".codex");
@@ -6499,7 +6617,7 @@ async function writeIfUnchanged(target, next, mode) {
     const current = await readText(target);
     const text2 = next(current);
     if (text2 === null) return "unchanged";
-    const temp = `${target}.${String(process.pid)}.${(0, import_node_crypto5.randomBytes)(4).toString("hex")}.tmp`;
+    const temp = `${target}.${String(process.pid)}.${(0, import_node_crypto6.randomBytes)(4).toString("hex")}.tmp`;
     const handle = await (0, import_promises4.open)(temp, TEMP_FLAGS2, mode);
     try {
       try {
@@ -6708,7 +6826,7 @@ function refusalAnswer(session, rows, now, cliOnOwnCredentials = false) {
   return { ...poolLimitAnswer(session, usable, now), kind: "pool-limit" };
 }
 function noSignerAnswer(cliOnOwnCredentials = false) {
-  const message = cliOnOwnCredentials ? "No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not kurmis' claude:default, and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude with `kurmis claude`, or run `kurmis setup --undo` with that CLAUDE_CONFIG_DIR." : "No Claude login kurmis may use for this session could sign the request. Run `kurmis status` to see which logins are signed in.";
+  const message = cliOnOwnCredentials ? "No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not the login a plain `claude` uses, and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude with `kurmis claude`, or run `kurmis setup --pause` with that CLAUDE_CONFIG_DIR." : "No Claude login kurmis may use for this session could sign the request. Run `kurmis status` to see which logins are signed in.";
   return {
     status: ROUTER_REFUSAL_STATUS,
     headers: { "content-type": "application/json", "retry-after": "5" },
@@ -6765,7 +6883,7 @@ function routeBlockText(block, keychain = false, startedOn = false, platform = p
 }
 
 // src/core/control-api.ts
-var CONTROL_API_VERSION = 1;
+var CONTROL_API_VERSION = 2;
 var CONTROL_PATHS = {
   /** `GET`: `StatusAnswer`. */
   status: `${CONTROL_PREFIX}status`,
@@ -6782,11 +6900,11 @@ var CONTROL_PATHS = {
 var MAX_CONTROL_BODY_BYTES = 64 * 1024;
 
 // src/data/daemon-file.ts
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto7 = require("node:crypto");
 var import_node_fs10 = require("node:fs");
 var import_node_path12 = require("node:path");
 function generateDaemonSecret() {
-  return (0, import_node_crypto6.randomBytes)(32).toString("hex");
+  return (0, import_node_crypto7.randomBytes)(32).toString("hex");
 }
 var SECRET_PATTERN = /^[0-9a-f]{64}$/;
 function readKey(path = keyPath()) {
@@ -6813,7 +6931,7 @@ function readOrCreateKey(path = keyPath()) {
   return key;
 }
 function createKeyFile(path, key) {
-  const temporary = (0, import_node_path12.join)((0, import_node_path12.dirname)(path), `.key-${process.pid}-${(0, import_node_crypto6.randomBytes)(4).toString("hex")}`);
+  const temporary = (0, import_node_path12.join)((0, import_node_path12.dirname)(path), `.key-${process.pid}-${(0, import_node_crypto7.randomBytes)(4).toString("hex")}`);
   writeFileAtomicSync(temporary, `${key}
 `, { mode: PRIVATE_FILE_MODE });
   try {
@@ -6871,7 +6989,7 @@ function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
   if (read.status === "missing") return false;
   if (read.status === "ok" && read.info.pid !== pid) return false;
   afterCheck?.();
-  const aside = `${path}.${String(process.pid)}-${(0, import_node_crypto6.randomBytes)(4).toString("hex")}.removing`;
+  const aside = `${path}.${String(process.pid)}-${(0, import_node_crypto7.randomBytes)(4).toString("hex")}.removing`;
   try {
     retryWhileLockedSync(() => {
       (0, import_node_fs10.renameSync)(path, aside);
@@ -7097,6 +7215,7 @@ var FIND_TIMEOUT_MS = 1e4;
 var START_TIMEOUT_MS = 15e3;
 var PROBE_TIMEOUT_MS = 9e4;
 var STOP_TIMEOUT_MS = 3e4;
+var NOW_STOP_TIMEOUT_MS = 15e3;
 var STOP_GRACE_MS = 1e4;
 var KILL_WAIT_MS = 5e3;
 var PORT_FREE_TIMEOUT_MS = 5e3;
@@ -7318,11 +7437,12 @@ async function stopDaemon(options) {
     if (problem !== null) throw new DaemonError(problem);
     return false;
   }
-  const waitMs = options.stopTimeoutMs ?? STOP_TIMEOUT_MS;
-  const body = { maxWaitMs: waitMs };
+  const now = options.now === true;
+  const waitMs = options.stopTimeoutMs ?? (now ? NOW_STOP_TIMEOUT_MS : STOP_TIMEOUT_MS);
+  const body = { maxWaitMs: now ? 0 : waitMs };
   const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop, body });
   if (result.kind === "answered" && result.status !== 200) throw failureOf(result, found, "the stop request");
-  const graceMs = platform === "win32" ? options.stopGraceMs ?? STOP_GRACE_MS : 0;
+  const graceMs = platform === "win32" && !now ? options.stopGraceMs ?? STOP_GRACE_MS : 0;
   if (await waitForExit(found.pid, waitMs + graceMs)) return true;
   const kill = options.kill ?? ((pid, signal) => process.kill(pid, signal));
   try {
@@ -7560,7 +7680,7 @@ async function settleWithin(start2, ms) {
 }
 
 // src/cli/settings-arg.ts
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 var import_node_fs11 = require("node:fs");
 var import_node_os7 = require("node:os");
 var import_node_path14 = require("node:path");
@@ -7797,7 +7917,7 @@ var RUN_SETTINGS_FILE_NAME = /^run-(\d+)-[0-9a-f]{16}\.json$/;
 function storeSettings(text2, holdsUserSettings, folder = wrapperSettingsFolder(), now = Date.now(), pid = process.pid) {
   if (!holdsUserSettings) return { path: storeSettingsFile(text2, folder, now), remove: () => void 0 };
   pruneSettingsFiles(folder, now, null);
-  const path = (0, import_node_path14.join)(folder, `run-${String(pid)}-${(0, import_node_crypto7.randomBytes)(8).toString("hex")}.json`);
+  const path = (0, import_node_path14.join)(folder, `run-${String(pid)}-${(0, import_node_crypto8.randomBytes)(8).toString("hex")}.json`);
   writeFileAtomicSync(path, text2, { mode: PRIVATE_FILE_MODE });
   return {
     path,
@@ -7810,7 +7930,7 @@ function storeSettings(text2, holdsUserSettings, folder = wrapperSettingsFolder(
   };
 }
 function storeSettingsFile(text2, folder = wrapperSettingsFolder(), now = Date.now()) {
-  const path = (0, import_node_path14.join)(folder, `${(0, import_node_crypto7.createHash)("sha256").update(text2).digest("hex").slice(0, 32)}.json`);
+  const path = (0, import_node_path14.join)(folder, `${(0, import_node_crypto8.createHash)("sha256").update(text2).digest("hex").slice(0, 32)}.json`);
   let current = false;
   try {
     current = (0, import_node_fs11.readFileSync)(path, "utf8") === text2;
@@ -7893,8 +8013,18 @@ function userOwnedRoutingVariables(layers) {
   });
 }
 
+// src/cli/login-names.ts
+var PROVIDER_NAMES2 = { claude: "Claude", codex: "Codex" };
+function machineOwnText(provider) {
+  return `this machine's own ${PROVIDER_NAMES2[provider]} sign-in`;
+}
+function loginArgument(config, login) {
+  const found = resolveLogin(config, login.alias);
+  return "login" in found && found.login.id === login.id ? login.alias : `${login.provider}:${login.alias}`;
+}
+
 // src/cli/wrapper-args.ts
-function parseWrapperArgs(provider, args) {
+function parseWrapperArgs(args) {
   const result = { help: false, login: null, passThrough: [] };
   let index = 0;
   while (index < args.length) {
@@ -7911,7 +8041,6 @@ function parseWrapperArgs(provider, args) {
     let value;
     if (arg === "--login") {
       value = args[index + 1];
-      if (value === void 0) return { error: "--login needs a login id, for example --login work" };
       index += 2;
     } else if (arg.startsWith("--login=")) {
       value = arg.slice("--login=".length);
@@ -7919,40 +8048,28 @@ function parseWrapperArgs(provider, args) {
     } else {
       break;
     }
+    if (value === void 0 || value === "") return { error: "--login needs the alias or id of a login, for example --login work-example" };
     if (result.login !== null) return { error: "--login was given twice" };
-    const login = resolveLogin(provider, value);
-    if (typeof login === "object") return login;
-    result.login = login;
+    result.login = value;
   }
   result.passThrough = args.slice(index);
   return result;
 }
-function resolveLogin(provider, value) {
-  const parsed = parseLoginId(value);
-  if (parsed !== null) {
-    if (parsed.provider !== provider) return { error: `${value} is a ${parsed.provider} login, not a ${provider} one` };
-    return parsed.id;
-  }
-  if (value.includes(":")) return { error: `"${value}" is not a login id` };
-  try {
-    return loginId(provider, value);
-  } catch {
-    return { error: `"${value}" is not a login name` };
-  }
-}
 
 // src/cli/commands/claude.ts
-var USAGE = `Usage: kurmis claude [--login <id>] [--] [claude arguments...]
+var USAGE = `Usage: kurmis claude [--login <login>] [--] [claude arguments...]
 
 Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
 which signs each one with a login that has room, and the command exits with claude's exit code.
 The daemon is started first when it is not running.
 
 Options (only before the first argument kurmis does not know):
-  --login <id>   Keep the session on one login, whatever its limits say. <id> is claude:<name>
-                 or just <name>. Without it the session is on Auto.
-  -h, --help     Show this help.
-  --             Pass everything after it to claude, even arguments kurmis knows.
+  --login <login>   Keep the session on one Claude login, whatever its limits say. <login> is
+                    the login's alias or its id, as "kurmis list" shows them, for example
+                    --login work-example. Only Claude logins are looked at, so a Codex login
+                    with the same alias does not count. Without --login the session is on Auto.
+  -h, --help        Show this help.
+  --                Pass everything after it to claude, even arguments kurmis knows.
 
 Everything from the first argument kurmis does not know is passed to claude unchanged, except
 claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
@@ -7981,7 +8098,7 @@ function createClaudeCommand(overrides = {}) {
 }
 var claudeCommand = createClaudeCommand();
 async function runClaude(args, context, deps) {
-  const parsed = parseWrapperArgs("claude", args);
+  const parsed = parseWrapperArgs(args);
   if ("error" in parsed) return usageError("claude", parsed.error, context);
   if (parsed.help) {
     writeLine(context.stdout, USAGE);
@@ -8000,17 +8117,20 @@ async function runClaude(args, context, deps) {
     if (error instanceof ProgramNotFoundError) return fail4(error.message, notStartedExitCode("ENOENT"));
     return fail4(messageOf(error));
   }
-  if (parsed.login !== null && parsed.login !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-    let config;
-    try {
-      config = deps.loadConfig();
-    } catch (error) {
-      if (!(error instanceof ConfigError)) throw error;
-      return fail4(error.message);
+  let config;
+  try {
+    config = deps.loadConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    return fail4(error.message);
+  }
+  let pinned = null;
+  if (parsed.login !== null) {
+    const resolved = resolveLogin(config, parsed.login, "claude");
+    if ("error" in resolved) {
+      return fail4(`${resolved.error}. "kurmis list" shows the logins, and "kurmis login claude" adds one.`);
     }
-    if (findLogin(config, parsed.login) === void 0) {
-      return fail4(`there is no login ${parsed.login}. "kurmis list" shows the logins, and "kurmis login claude" adds one.`);
-    }
+    pinned = resolved.login;
   }
   let connection;
   try {
@@ -8019,8 +8139,8 @@ async function runClaude(args, context, deps) {
     return fail4(daemonUnreachable(error));
   }
   let startedOn;
-  if (parsed.login !== null) {
-    startedOn = parsed.login;
+  if (pinned !== null) {
+    startedOn = pinned;
   } else {
     let status2;
     try {
@@ -8028,22 +8148,21 @@ async function runClaude(args, context, deps) {
     } catch (error) {
       return fail4(daemonUnreachable(error));
     }
-    startedOn = autoStartLogin(startableLogins(status2));
-    if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-      writeLine(
-        context.stderr,
-        `kurmis claude: ${CLAUDE_DEFAULT_ACCOUNT_ID} is not signed in, so claude starts on ${startedOn}'s credentials; requests are still routed on Auto.`
-      );
+    const startId = autoStartLogin(startableLogins(status2));
+    startedOn = status2.logins.find((login) => login.id === startId) ?? machineOwnLogin(config, "claude");
+    if (!startedOn.machineOwn) {
+      const own2 = status2.logins.find((login) => login.provider === "claude" && login.machineOwn) ?? machineOwnLogin(config, "claude");
+      writeLine(context.stderr, `kurmis claude: ${own2.alias}, ${machineOwnText("claude")}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
     }
   }
   let secureStorageDir = null;
-  if (startedOn !== CLAUDE_DEFAULT_ACCOUNT_ID) {
-    secureStorageDir = loginFolder(startedOn);
+  if (!startedOn.machineOwn) {
+    secureStorageDir = loginFolder({ id: startedOn.id, provider: "claude", machineOwn: false });
     if (!deps.folderExists(secureStorageDir)) {
-      return fail4(`the folder of ${startedOn} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${startedOn}".`);
+      return fail4(`the folder of ${startedOn.alias} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${loginArgument(config, { id: startedOn.id, provider: "claude", alias: startedOn.alias })}".`);
     }
   }
-  if (startedOn === CLAUDE_DEFAULT_ACCOUNT_ID && configDirHasOwnCredentials(context.env, deps.platform)) {
+  if (startedOn.machineOwn && configDirHasOwnCredentials(context.env, deps.platform)) {
     writeLine(context.stderr, `kurmis claude: ${configDirNote(context.env["CLAUDE_CONFIG_DIR"] ?? "", deps)}`);
   }
   const layers = settingsLayers(userSettings, context.env, deps);
@@ -8051,8 +8170,8 @@ async function runClaude(args, context, deps) {
   const routed = withoutRoutedVariables(routedClaudeEnv({
     port: connection.port,
     key: connection.key,
-    login: parsed.login,
-    startedOn,
+    login: pinned?.id ?? null,
+    startedOn: startedOn.id,
     secureStorageDir,
     inheritedCustomHeaders: inheritedCustomHeaders(layers.layers)
   }), userOwnedRoutingVariables(layers.layers));
@@ -8080,7 +8199,8 @@ async function runClaude(args, context, deps) {
 function startableLogins(status2) {
   return status2.logins.filter((login) => login.provider === "claude").map((login) => ({
     id: login.id,
-    loggedIn: login.signedIn ?? login.id === CLAUDE_DEFAULT_ACCOUNT_ID,
+    machineOwn: login.machineOwn,
+    loggedIn: login.signedIn ?? login.machineOwn,
     autoRoute: login.routing
   }));
 }
@@ -8100,9 +8220,9 @@ function settingsLayers(userSettings, env, deps) {
 function configDirNote(value, deps) {
   if (namesDefaultClaudeFolder(value, deps.platform, deps.homeDir())) {
     const keeps = deps.platform === "win32" ? "may keep its credentials in a Credential Manager entry" : "keeps its credentials in a Keychain item";
-    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of ${CLAUDE_DEFAULT_ACCOUNT_ID}, but a claude started with it set ${keeps} of its own, which may hold another account. Kurmis starts claude with ${CLAUDE_DEFAULT_ACCOUNT_ID}'s credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.`;
+    return `CLAUDE_CONFIG_DIR names ~/.claude, the folder of the machine's own Claude login, but a claude started with it set ${keeps} of its own, which may hold another account. Kurmis starts claude with the machine's own login's credentials, the ones a claude without CLAUDE_CONFIG_DIR uses.`;
   }
-  return `CLAUDE_CONFIG_DIR is set, but ${CLAUDE_DEFAULT_ACCOUNT_ID} is the login in ~/.claude, so claude signs in with that login's credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from CLAUDE_CONFIG_DIR.`;
+  return "CLAUDE_CONFIG_DIR is set, but the machine's own Claude login is the one in ~/.claude, so claude signs in with that login's credentials, not with those in CLAUDE_CONFIG_DIR. Settings and transcripts still come from CLAUDE_CONFIG_DIR.";
 }
 function oauthTokenNotes(env, layers, userSettings, userSettingsPath) {
   const windows = layers.windows === true;
@@ -8136,16 +8256,18 @@ function messageOf(error) {
 
 // src/cli/commands/codex.ts
 var CODEX_PROBE_WAIT_MS = 5e3;
-var USAGE2 = `Usage: kurmis codex [--login <id>] [--] [codex arguments...]
+var USAGE2 = `Usage: kurmis codex [--login <login>] [--] [codex arguments...]
 
 Starts Codex with the terminal attached, on the login that ranks first (the same order Claude's
 Auto uses) or on the one named, and exits with codex's exit code. Without --login the daemon is
 asked for each login's usage, and started first when it is not running.
 
 Options (only before the first argument kurmis does not know):
-  --login <id>   Start on this login. <id> is codex:<name> or just <name>.
-  -h, --help     Show this help.
-  --             Pass everything after it to codex, even arguments kurmis knows.
+  --login <login>   Start on this Codex login. <login> is the login's alias or its id, as
+                    "kurmis list" shows them, for example --login work-example. Only Codex
+                    logins are looked at, so a Claude login with the same alias does not count.
+  -h, --help        Show this help.
+  --                Pass everything after it to codex, even arguments kurmis knows.
 
 Everything from the first argument kurmis does not know is passed to codex unchanged.
 "kurmis codex -- --help" shows codex's own help.`;
@@ -8171,7 +8293,7 @@ function createCodexCommand(overrides = {}) {
 }
 var codexCommand = createCodexCommand();
 async function runCodex(args, context, deps) {
-  const parsed = parseWrapperArgs("codex", args);
+  const parsed = parseWrapperArgs(args);
   if ("error" in parsed) return usageError("codex", parsed.error, context);
   if (parsed.help) {
     writeLine(context.stdout, USAGE2);
@@ -8184,33 +8306,8 @@ async function runCodex(args, context, deps) {
     writeLine(context.stderr, `kurmis codex: ${messageOf2(error)}`);
     return error instanceof ProgramNotFoundError ? notStartedExitCode("ENOENT") : EXIT_FAILURE;
   }
-  let login;
-  if (parsed.login === CODEX_DEFAULT_ACCOUNT_ID) {
-    login = parsed.login;
-  } else if (parsed.login !== null) {
-    let config;
-    try {
-      config = deps.loadConfig();
-    } catch (error) {
-      if (!(error instanceof ConfigError)) throw error;
-      writeLine(context.stderr, `kurmis codex: ${error.message}`);
-      return EXIT_FAILURE;
-    }
-    if (findLogin(config, parsed.login) === void 0) {
-      writeLine(context.stderr, `kurmis codex: there is no login ${parsed.login}. "kurmis list" shows the logins.`);
-      return EXIT_FAILURE;
-    }
-    login = parsed.login;
-  } else {
-    login = await chooseLogin(context, deps);
-  }
-  let prepared;
-  try {
-    prepared = await deps.prepareCodexHome(login, { env: context.env, platform: deps.platform });
-  } catch (error) {
-    writeLine(context.stderr, `kurmis codex: could not prepare the Codex home of ${login}: ${messageOf2(error)}`);
-    return EXIT_FAILURE;
-  }
+  const prepared = await preparedHome(parsed.login, context, deps);
+  if (prepared === null) return EXIT_FAILURE;
   for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis codex: ${warning}`);
   const env = applyEnvPatch(context.env, codexHomePatch(prepared, context.env, deps.platform), deps.platform === "win32");
   const end = await deps.child.runInteractive(
@@ -8219,13 +8316,45 @@ async function runCodex(args, context, deps) {
   );
   return deps.child.finishLikeChild(end, { stderr: context.stderr, name: "codex", platform: deps.platform });
 }
+async function preparedHome(named, context, deps) {
+  let config;
+  try {
+    config = deps.loadConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    if (named !== null) {
+      writeLine(context.stderr, `kurmis codex: ${error.message}`);
+      return null;
+    }
+    writeLine(context.stderr, `kurmis codex: ${error.message} Starting on ${machineOwnText("codex")}.`);
+    return { codexHome: null, warnings: [] };
+  }
+  let login;
+  if (named !== null) {
+    const resolved = resolveLogin(config, named, "codex");
+    if ("error" in resolved) {
+      writeLine(context.stderr, `kurmis codex: ${resolved.error}. "kurmis list" shows the logins, and "kurmis login codex" adds one.`);
+      return null;
+    }
+    login = resolved.login;
+  } else {
+    login = await chooseLogin(context, config, deps);
+  }
+  try {
+    return await deps.prepareCodexHome(login, { env: context.env, platform: deps.platform });
+  } catch (error) {
+    writeLine(context.stderr, `kurmis codex: could not prepare the Codex home of ${login.alias}: ${messageOf2(error)}`);
+    return null;
+  }
+}
 function codexHomePatch(prepared, env, platform) {
   if (prepared.codexHome !== null) return { CODEX_HOME: prepared.codexHome };
   const windows = platform === "win32";
   const inherited = windows ? Object.entries(env).find(([name]) => name.toUpperCase() === "CODEX_HOME")?.[1] : env.CODEX_HOME;
   return isKurmisCodexHome(inherited, providerFolder("codex"), windows) ? { CODEX_HOME: void 0 } : {};
 }
-async function chooseLogin(context, deps) {
+async function chooseLogin(context, config, deps) {
+  const own2 = machineOwnLogin(config, "codex");
   let status2;
   try {
     const connection = await deps.daemon.ensureDaemon({ env: context.env });
@@ -8243,17 +8372,18 @@ async function chooseLogin(context, deps) {
   } catch (error) {
     writeLine(
       context.stderr,
-      `kurmis codex: the kurmis daemon could not be reached (${messageOf2(error)}); starting on ${CODEX_DEFAULT_ACCOUNT_ID}.`
+      `kurmis codex: the kurmis daemon could not be reached (${messageOf2(error)}); starting on ${own2.alias}, ${machineOwnText("codex")}.`
     );
-    return CODEX_DEFAULT_ACCOUNT_ID;
+    return own2;
   }
   const choice = chooseCodexLogin(status2, deps.now());
+  const chosen = findLogin(config, choice.login) ?? own2;
   if (choice.note !== null) {
     writeLine(context.stderr, `kurmis codex: ${choice.note}`);
   } else if (status2.logins.filter((row) => row.provider === "codex").length > 1) {
-    writeLine(context.stderr, `kurmis codex: starting on ${choice.login}.`);
+    writeLine(context.stderr, `kurmis codex: starting on ${chosen.alias}.`);
   }
-  return choice.login;
+  return chosen;
 }
 function messageOf2(error) {
   return error instanceof Error ? error.message : String(error);
@@ -8274,6 +8404,7 @@ var LOG_EVENTS = [
   "port_in_use",
   "config_loaded",
   "config_invalid",
+  "alias_write_failed",
   "state_loaded",
   "state_write_failed",
   "control_request",
@@ -8429,11 +8560,11 @@ var import_node_fs14 = require("node:fs");
 var import_node_os9 = require("node:os");
 var import_node_path16 = require("node:path");
 var CLAUDE_PROFILE_FILE = ".claude.json";
-function claudeIdentityFiles(id, home = (0, import_node_os9.homedir)()) {
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
-    return [(0, import_node_path16.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE)];
+function claudeIdentityFiles(login, home = (0, import_node_os9.homedir)()) {
+  if (login.machineOwn) {
+    return [(0, import_node_path16.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE)];
   }
-  return [(0, import_node_path16.join)(loginFolder(id), CLAUDE_PROFILE_FILE)];
+  return [(0, import_node_path16.join)(loginFolder(login), CLAUDE_PROFILE_FILE)];
 }
 function parseClaudeIdentity(text2) {
   try {
@@ -8463,8 +8594,8 @@ var ClaudeIdentityReader = class {
   home;
   cache = /* @__PURE__ */ new Map();
   /** The login's identity from the first of its files that names somebody, or null. */
-  read(id) {
-    for (const file of claudeIdentityFiles(id, this.home())) {
+  read(login) {
+    for (const file of claudeIdentityFiles(login, this.home())) {
       const value = this.readFile(file);
       if (value !== null) return value;
     }
@@ -8488,8 +8619,8 @@ var ClaudeIdentityReader = class {
     }
   }
 };
-function readClaudeIdentity(id, home = (0, import_node_os9.homedir)()) {
-  return new ClaudeIdentityReader(() => home).read(id);
+function readClaudeIdentity(login, home = (0, import_node_os9.homedir)()) {
+  return new ClaudeIdentityReader(() => home).read(login);
 }
 
 // src/platform/frame-process.ts
@@ -8775,7 +8906,7 @@ var CLAUDE_PROBE_ARGS = [
 ];
 var TOKEN_VARIABLES = { CLAUDE_CODE_OAUTH_TOKEN: void 0, CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: void 0 };
 var PROBE_SETTINGS = { DISABLE_AUTOUPDATER: "1" };
-async function probeClaudeUsage(id, options) {
+async function probeClaudeUsage(login, options) {
   const now = options.now ?? Date.now;
   const timeoutMs = options.timeoutMs ?? CLAUDE_PROBE_TIMEOUT_MS;
   if (options.signal?.aborted === true) return abortedProbe(null);
@@ -8788,11 +8919,11 @@ async function probeClaudeUsage(id, options) {
     }
     return probeFailure(null, "other", "The claude program could not be looked up.");
   }
-  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(id), ...TOKEN_VARIABLES, ...PROBE_SETTINGS });
+  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(login), ...TOKEN_VARIABLES, ...PROBE_SETTINGS });
   const cwd = probeWorkFolder();
   try {
     makePrivateDirSync(cwd);
-    if (id === CLAUDE_DEFAULT_ACCOUNT_ID) makePrivateDirSync(claudeDefaultProbeFolder());
+    if (login.machineOwn) makePrivateDirSync(ownClaudeProbeFolder());
   } catch {
     return probeFailure(null, "other", "The usage probe could not create its folder in the kurmis data folder.");
   }
@@ -8807,7 +8938,7 @@ async function probeClaudeUsage(id, options) {
       if (reply !== null) replies.settle(reply.id, reply.reply);
     }
   });
-  const result = await converse(claude, replies, id, timeoutMs, now, options.previous ?? null);
+  const result = await converse(claude, replies, login.id, timeoutMs, now, options.previous ?? null);
   const exit = await claude.close(PROBE_CLOSE_GRACE_MS);
   if (!result.ok && exit.end === "aborted") return abortedProbe(result.signedIn);
   return result;
@@ -8880,7 +9011,14 @@ function codexLoginStatus(read) {
 // src/daemon/codex-probe.ts
 var CODEX_PROBE_TIMEOUT_MS = 3e4;
 var CODEX_PROBE_ARGS = ["app-server"];
-async function probeCodexUsage(id, options) {
+async function probeCodexUsage(login, options) {
+  return await runProbe(login, options, false);
+}
+async function readCodexEmail(login, options) {
+  const result = await runProbe(login, options, true);
+  return result.ok ? result.email ?? null : null;
+}
+async function runProbe(login, options, accountOnly) {
   const now = options.now ?? Date.now;
   const timeoutMs = options.timeoutMs ?? CODEX_PROBE_TIMEOUT_MS;
   if (options.signal?.aborted === true) return abortedProbe(null);
@@ -8893,7 +9031,7 @@ async function probeCodexUsage(id, options) {
     }
     return probeFailure(null, "other", "The codex program could not be looked up.");
   }
-  const env = applyEnvPatch(options.env, codexLoginEnv(id, options.env));
+  const env = applyEnvPatch(options.env, codexLoginEnv(login, options.env));
   const cwd = probeWorkFolder();
   try {
     makePrivateDirSync(cwd);
@@ -8911,12 +9049,12 @@ async function probeCodexUsage(id, options) {
       if (reply !== null) replies.settle(reply.id, reply.reply);
     }
   });
-  const result = await converse2(codex, replies, id, timeoutMs, now);
+  const result = await converse2(codex, replies, login.id, timeoutMs, now, accountOnly);
   const exit = await codex.close(PROBE_CLOSE_GRACE_MS);
   if (!result.ok && exit.end === "aborted") return abortedProbe(result.signedIn);
   return result;
 }
-async function converse2(codex, replies, id, timeoutMs, now) {
+async function converse2(codex, replies, id, timeoutMs, now, accountOnly) {
   let nextId = 1;
   const ask = (method, params) => {
     const requestId = nextId++;
@@ -8938,14 +9076,17 @@ async function converse2(codex, replies, id, timeoutMs, now) {
   if (read === null) return probeFailure(null, "invalid", "codex app-server's answer about the sign-in could not be read.");
   const status2 = codexLoginStatus(read);
   if (!status2.loggedIn) {
-    return { ok: true, signedIn: false, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status2.subscriptionType } };
+    return { ok: true, signedIn: false, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status2.subscriptionType }, email: null };
+  }
+  if (accountOnly) {
+    return { ok: true, signedIn: true, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status2.subscriptionType }, email: status2.email };
   }
   const limits = await ask("account/rateLimits/read");
   if (limits.kind === "ended") return failureForExit("codex", limits.exit, timeoutMs, true);
   if (!limits.value.ok) return probeFailure(true, "upstream_error", "Codex could not read the plan usage from OpenAI.");
   const usage = codexUsageFromResult(id, limits.value.result, now());
   if (usage === null) return probeFailure(true, "invalid", "codex app-server's answer about the plan usage could not be read.");
-  return { ok: true, signedIn: true, usage: withPlan(usage, status2.subscriptionType) };
+  return { ok: true, signedIn: true, usage: withPlan(usage, status2.subscriptionType), email: status2.email };
 }
 function withPlan(usage, plan) {
   return usage.subscriptionType === null && plan !== null ? { ...usage, subscriptionType: plan } : usage;
@@ -8968,7 +9109,7 @@ function createControl(options) {
   async function status2() {
     table.checkConfig();
     await tokens.prime(table.claudeLogins().map((login) => login.id));
-    const rows = table.routeRows(CLAUDE_DEFAULT_ACCOUNT_ID, false);
+    const rows = table.routeRows(table.ownLogin("claude").id, false);
     const at2 = now();
     const logins = table.logins().map((login) => {
       const row = rows.find((each) => each.id === login.id);
@@ -8976,7 +9117,8 @@ function createControl(options) {
       return {
         id: login.id,
         provider: login.provider,
-        label: login.label,
+        alias: login.alias,
+        machineOwn: login.machineOwn,
         routing: login.routing,
         fiveHourLimit: login.fiveHourLimit,
         weeklyLimit: login.weeklyLimit,
@@ -8986,7 +9128,7 @@ function createControl(options) {
         cooldownUntil: cooldown === null ? null : Number.isFinite(cooldown) ? cooldown : "unknown",
         block: row === void 0 ? null : routeBlock(row, at2),
         sessions: login.provider === "claude" ? table.sessionCount(login.id) : 0,
-        email: login.provider === "claude" ? identity.read(login.id)?.email ?? null : null,
+        email: login.provider === "claude" ? identity.read(login)?.email ?? null : table.codexEmail(login.id),
         probing: poller.isRunning(login.id)
       };
     });
@@ -9317,6 +9459,7 @@ function createCoalescedWriter(write, options) {
 var NO_SESSION_KEY = ":no-session";
 var CONFIG_CHECK_MS = 2e3;
 var STATE_WRITE_MS = 2e3;
+var CONFIG_LOCK_TIMEOUT_MS = 500;
 var LoginTable = class {
   constructor(options) {
     this.options = options;
@@ -9337,6 +9480,11 @@ var LoginTable = class {
   state = emptyState();
   /** What the last probe of each login said about its sign-in. Absent: not probed yet. */
   signedIn = /* @__PURE__ */ new Map();
+  /**
+   * The email the last successful probe of each Codex login named, null when it named none.
+   * In memory only, for the status answer: it is never logged or written to a file.
+   */
+  codexEmails = /* @__PURE__ */ new Map();
   /**
    * Sessions held to one login after a 400 on the login they had just moved to
    * (`replayDecision`'s `pin-back`). The proxy lets go of a hold when the held login cannot
@@ -9391,7 +9539,7 @@ var LoginTable = class {
     }
     if (stamp === this.stamp) return { ok: true, changed: false };
     try {
-      this.config = loadConfig(this.configFile);
+      this.config = loadConfig(this.configFile, { timeoutMs: CONFIG_LOCK_TIMEOUT_MS });
     } catch (error) {
       this.stamp = stamp;
       this.options.log.write("config_invalid", { reason: "invalid" });
@@ -9402,6 +9550,7 @@ var LoginTable = class {
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id);
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id);
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id);
+    for (const id of [...this.codexEmails.keys()]) if (!ids.has(id)) this.codexEmails.delete(id);
     for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id);
     for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id);
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id);
@@ -9414,7 +9563,7 @@ var LoginTable = class {
     if (this.options.now() - this.lastCheck < (this.options.configCheckMs ?? CONFIG_CHECK_MS)) return;
     this.reloadConfig();
   }
-  /** Every login in `config.json`, the two default logins first. */
+  /** Every login in `config.json`, the machine's own logins first. */
   logins() {
     return this.config.logins;
   }
@@ -9422,7 +9571,14 @@ var LoginTable = class {
     return this.config.logins.filter((login) => login.provider === "claude");
   }
   find(id) {
-    return this.config.logins.find((login) => login.id === id);
+    return findLogin(this.config, id);
+  }
+  /**
+   * The machine's own login of a provider: the one a plain `claude` or `codex` is signed in
+   * to. The config always has one for each provider.
+   */
+  ownLogin(provider) {
+    return machineOwnLogin(this.config, provider);
   }
   port() {
     return this.config.port;
@@ -9433,8 +9589,8 @@ var LoginTable = class {
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
    * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
    * credentials are no kurmis login's (`STARTED_ON_NONE`): no login is signed with its header,
-   * and `claude:default`, whose token belongs to another account than the CLI's, is left out of
-   * the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
+   * and the machine's own Claude login, whose token belongs to another account than the CLI's,
+   * is left out of the request's pool (`loggedIn` and `credentialsReadable` false). The proxy forwards that
    * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
    *
@@ -9445,7 +9601,7 @@ var LoginTable = class {
   routeRows(startedOn, callerSigns, pinned = null) {
     const now = this.options.now();
     return this.claudeLogins().map((login) => {
-      const notTheCli = startedOn === null && login.id === CLAUDE_DEFAULT_ACCOUNT_ID;
+      const notTheCli = startedOn === null && login.machineOwn;
       const token = notTheCli ? null : this.options.tokens.read(login.id);
       const passThrough = token === null && callerSigns && login.id === startedOn;
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned;
@@ -9522,6 +9678,35 @@ var LoginTable = class {
     if (this.signedIn.get(id) === value) return;
     this.signedIn.set(id, value);
     this.changed();
+  }
+  /** The email the last successful probe of a Codex login named, or null. In memory only. */
+  codexEmail(id) {
+    return this.codexEmails.get(id) ?? null;
+  }
+  /** Keeps what a successful probe of a Codex login said its email is (null: none). */
+  setCodexEmail(id, email) {
+    if (this.find(id)?.provider !== "codex") return;
+    this.codexEmails.set(id, email);
+  }
+  /**
+   * Gives the login the automatic alias its email makes (`followEmail` in `config.ts`) when its
+   * alias is automatic and does not fit the email yet, by writing `config.json` and reading it
+   * again. The change is worked out again inside the lock, from the file as it is then. When the
+   * lock is not free within `CONFIG_LOCK_TIMEOUT_MS`, or the write fails, the failure is logged
+   * with the login's id only and the config stays as it is; the next probe tries again. The log
+   * line never names the alias or the email.
+   */
+  noteEmail(id, email) {
+    this.checkConfig();
+    const login = this.find(id);
+    if (login === void 0 || followEmail(this.config, id, email) === this.config) return;
+    try {
+      changeConfig((current) => followEmail(current, id, email), this.configFile, { timeoutMs: CONFIG_LOCK_TIMEOUT_MS });
+    } catch (error) {
+      this.options.log.write("alias_write_failed", { login: login.id, reason: isLockTimeout(error) ? "timeout" : "error", code: errorCodeOf(error) });
+      return;
+    }
+    this.reloadConfig();
   }
   /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
   markRefused(id) {
@@ -9629,6 +9814,9 @@ var LoginTable = class {
     for (const [key] of byUse.slice(0, this.held.size - MAX_SESSIONS)) this.held.delete(key);
   }
 };
+function isLockTimeout(error) {
+  return error instanceof Error && error.cause instanceof LockTimeoutError;
+}
 function messageOf3(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -9674,7 +9862,7 @@ var CapacityCooling = class {
    * what `capacityRefusal` said, `retryAfter` the answer's `retry-after` header, and `random`
    * a 0-1 number for the jitter.
    */
-  noteNoCapacity(sessionId, loginId2, reason, retryAfter, random, now) {
+  noteNoCapacity(sessionId, loginId, reason, retryAfter, random, now) {
     this.dropExpired(now);
     const attempt = (this.streaks.get(sessionId)?.attempt ?? 0) + 1;
     this.streaks.set(sessionId, { attempt, at: now });
@@ -9687,8 +9875,8 @@ var CapacityCooling = class {
     );
     const entry = this.cooling.get(sessionId) ?? { logins: /* @__PURE__ */ new Map(), reason };
     entry.reason = reason;
-    const until = Math.max(entry.logins.get(loginId2) ?? 0, now + delayMs);
-    entry.logins.set(loginId2, until);
+    const until = Math.max(entry.logins.get(loginId) ?? 0, now + delayMs);
+    entry.logins.set(loginId, until);
     this.cooling.set(sessionId, entry);
     return { attempt, delayMs, until };
   }
@@ -9711,8 +9899,8 @@ var CapacityCooling = class {
     return this.cooling.get(sessionId) ?? null;
   }
   /** Whether this login is cooling for the session now. */
-  isCooling(sessionId, loginId2, now) {
-    return (this.coolingOf(sessionId, now)?.logins.get(loginId2) ?? 0) > now;
+  isCooling(sessionId, loginId, now) {
+    return (this.coolingOf(sessionId, now)?.logins.get(loginId) ?? 0) > now;
   }
   /**
    * What a held request of the session waits for. `usable` is the logins the session may use
@@ -10022,17 +10210,18 @@ function createProxy(options) {
     }
   };
   async function handle(req, res) {
-    const info = readRouteRequest((name) => headerValue(req, name));
+    const info = readRouteRequest((name) => headerValue(req, name), table.ownLogin("claude").id);
     if (!routeKeyMatches(info.key, options.key)) {
       log.write("proxy_rejected", { reason: "bad_secret", method: methodOf(req.method) });
       req.resume();
       res.writeHead(403).end();
       return;
     }
-    if (info.login === "invalid" || info.startedOn === "invalid") {
+    const problem = headerProblem(info);
+    if (problem !== null) {
       log.write("proxy_rejected", { reason: "invalid", method: methodOf(req.method) });
       req.resume();
-      send(res, invalidRequest(info.login === "invalid" ? "The x-kurmis-login header does not name a Claude login (claude:<name>)." : "The x-kurmis-started-on header does not name a Claude login (claude:<name>)."));
+      send(res, invalidRequest(problem));
       return;
     }
     open4++;
@@ -10057,6 +10246,17 @@ function createProxy(options) {
       finished2();
     }
   }
+  function headerProblem(info) {
+    if (info.login === "invalid") return "The x-kurmis-login header is not a login id.";
+    if (info.startedOn === "invalid") return 'The x-kurmis-started-on header is neither a login id nor "none".';
+    if (info.login === null) return null;
+    table.checkConfig();
+    return table.find(info.login)?.provider === "claude" ? null : "The x-kurmis-login header does not name a Claude login.";
+  }
+  function accountUuidOf(id) {
+    const login = table.find(id);
+    return login === void 0 ? null : identity.read(login)?.accountUuid ?? null;
+  }
   async function route(req, res, info, signal) {
     const arrived = now();
     const read = await readBody2(req, maxBodyBytes, signal);
@@ -10072,13 +10272,14 @@ function createProxy(options) {
       return;
     }
     table.checkConfig();
+    const ownClaude = table.ownLogin("claude").id;
     const sessionKey = info.sessionId !== null && isSessionId(info.sessionId) ? info.sessionId : NO_SESSION_KEY;
     let sentBack = info.login === null ? table.heldLogin(sessionKey) : null;
     let sentBackHere = false;
     let leftAnswer = null;
     const pinned = info.login ?? sentBack;
     const session = {
-      homeAccountId: pinned ?? CLAUDE_DEFAULT_ACCOUNT_ID,
+      homeAccountId: pinned ?? ownClaude,
       currentAccountId: table.sessionLogin(sessionKey),
       pinnedAccountId: pinned
     };
@@ -10099,7 +10300,7 @@ function createProxy(options) {
       sentBack = null;
       sentBackHere = false;
       session.pinnedAccountId = null;
-      session.homeAccountId = CLAUDE_DEFAULT_ACCOUNT_ID;
+      session.homeAccountId = ownClaude;
     };
     const pinBackEnds = (rows) => {
       if (sentBack === null) return false;
@@ -10204,7 +10405,7 @@ function createProxy(options) {
         excluded.add(row.id);
         continue;
       }
-      const outgoing = upstreamRequest(req.headers, body, authorization, identity.read(row.id)?.accountUuid ?? null);
+      const outgoing = upstreamRequest(req.headers, body, authorization, accountUuidOf(row.id));
       attempted.add(row.id);
       const holdLeft = holdSince === null ? null : holdSince + holdMs - now();
       const holdOver = new AbortController();
@@ -10605,11 +10806,11 @@ var CredentialsFileReader = class {
 var import_node_os10 = require("node:os");
 
 // src/core/keychain-service.ts
-var import_node_crypto8 = require("node:crypto");
+var import_node_crypto9 = require("node:crypto");
 var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
 function keychainService(secureStorageDir) {
   if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
-  const digest = (0, import_node_crypto8.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
+  const digest = (0, import_node_crypto9.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
   return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
 }
 
@@ -11102,59 +11303,75 @@ function probeEnvironment(tokens, id, env) {
 function securityProgramOf(env, processEnv = process.env) {
   return systemProgram("security", env, processEnv);
 }
-function claudeSecureStorageDir(id) {
-  return isDefaultLoginId(checkedClaudeId(id)) ? null : loginFolder(id);
+function claudeSecureStorageDir(login) {
+  return checkedClaude(login).machineOwn ? null : loginFolder(login);
 }
-function claudeCredentialsDir(id, home) {
-  return isDefaultLoginId(checkedClaudeId(id)) ? (0, import_node_path18.join)(home, ".claude") : loginFolder(id);
+function claudeCredentialsDir(login, home) {
+  return checkedClaude(login).machineOwn ? (0, import_node_path18.join)(home, ".claude") : loginFolder(login);
 }
 function createTokenSource(options) {
   const home = options.home ?? import_node_os11.homedir;
-  const file = new CredentialsFileReader({ credentialsDir: (id) => claudeCredentialsDir(id, home()) });
+  const known = /* @__PURE__ */ new Map();
+  const claudeLogin = (id) => {
+    const seen = known.get(id);
+    if (seen !== void 0) return seen;
+    const found = isLoginId(id) ? options.login(id) : void 0;
+    if (found?.provider !== "claude" || found.id !== id) return null;
+    const login = { id: found.id, provider: "claude", machineOwn: found.machineOwn };
+    known.set(id, login);
+    return login;
+  };
+  const isClaude = (id) => claudeLogin(id) !== null;
+  const checked = (id) => {
+    const login = claudeLogin(id);
+    if (login === null) throw new Error(`${id} is not the id of a Claude login.`);
+    return login;
+  };
+  const file = new CredentialsFileReader({ credentialsDir: (id) => claudeCredentialsDir(checked(id), home()) });
   const credentialManager = (options.platform ?? process.platform) === "win32" ? new CredentialManagerReader({
-    secureStorageDir: claudeSecureStorageDir,
-    fileExists: (id) => (0, import_node_fs16.existsSync)((0, import_node_path18.join)(claudeCredentialsDir(id, home()), CREDENTIALS_FILE_NAME)),
+    secureStorageDir: (id) => claudeSecureStorageDir(checked(id)),
+    fileExists: (id) => (0, import_node_fs16.existsSync)((0, import_node_path18.join)(claudeCredentialsDir(checked(id), home()), CREDENTIALS_FILE_NAME)),
     read: options.credentialRead ?? powerShellCredentialRead(options.env),
     now: options.now,
     onFailure: (failure2) => {
-      const login = parseLoginId(failure2.id);
+      const login = claudeLogin(failure2.id);
       if (login !== null) options.log?.write("token_read_failed", { login: login.id, reason: credentialManagerReasonOf(failure2.kind) });
     }
   }) : null;
   const keychain = keychainHoldsSecret(options.platform ?? process.platform) ? new KeychainCredentialsReader({
-    accounts: { secureStorageDir: claudeSecureStorageDir },
+    accounts: { secureStorageDir: (id) => claudeSecureStorageDir(checked(id)) },
     securityProgram: securityProgramOf(options.env),
     readTimeoutMs: options.keychainReadTimeoutMs,
     now: options.now,
     onFailure: (failure2) => {
-      const login = parseLoginId(failure2.id);
+      const login = claudeLogin(failure2.id);
       if (login !== null) options.log?.write("token_read_failed", { login: login.id, reason: logReasonOf(failure2.kind) });
     }
   }) : null;
   return {
     keychain: keychain !== null,
     read(id) {
-      if (!isClaudeLoginId(id)) return null;
+      if (!isClaude(id)) return null;
       return credentialManager?.read(id) ?? keychain?.read(id) ?? file.read(id);
     },
     async prime(ids) {
-      const claude = ids.filter(isClaudeLoginId);
+      const claude = ids.filter(isClaude);
       await Promise.all([keychain?.prime(claude), credentialManager?.prime(claude)]);
     },
     invalidate(id) {
-      if (!isClaudeLoginId(id)) return;
+      if (!isClaude(id)) return;
       keychain?.invalidate(id);
       credentialManager?.invalidate(id);
       file.invalidate(id);
     },
     markStale(id) {
-      if (!isClaudeLoginId(id)) return;
+      if (!isClaude(id)) return;
       keychain?.invalidate(id);
       credentialManager?.markStale(id);
       file.invalidate(id);
     },
     inCredentialManager(id) {
-      return isClaudeLoginId(id) && credentialManager !== null && credentialManager.holds(id);
+      return isClaude(id) && credentialManager !== null && credentialManager.holds(id);
     },
     clear() {
       keychain?.clear();
@@ -11181,12 +11398,9 @@ function logReasonOf(kind) {
 function credentialManagerReasonOf(kind) {
   return kind === "not_credentials" ? "invalid" : "other";
 }
-function isClaudeLoginId(id) {
-  return parseLoginId(id)?.provider === "claude";
-}
-function checkedClaudeId(id) {
-  if (!isClaudeLoginId(id)) throw new Error(`${id} is not a Claude login id.`);
-  return id;
+function checkedClaude(login) {
+  if (login.provider !== "claude") throw new Error(`${login.id} is not a Claude login.`);
+  return login;
 }
 
 // src/daemon/usage-poller.ts
@@ -11288,13 +11502,13 @@ var UsagePoller = class {
   async run(login, cause) {
     const { table, log, now } = this.options;
     const id = login.id;
-    const logged = isLoginId(id) ? id : void 0;
     const startedAt = now();
-    log.write(cause === "renewal" ? "token_renewal_started" : "usage_probe_started", { login: logged, provider: login.provider });
+    log.write(cause === "renewal" ? "token_renewal_started" : "usage_probe_started", { login: id, provider: login.provider });
     const probe = login.provider === "claude" ? this.options.probeClaude : this.options.probeCodex;
+    const ref = { id, provider: login.provider, machineOwn: login.machineOwn };
     let answer2;
     try {
-      answer2 = await probe(id, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) });
+      answer2 = await probe(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) });
     } catch {
       answer2 = { ok: false, signedIn: null, reason: "other", error: "The usage probe failed unexpectedly." };
     }
@@ -11313,16 +11527,29 @@ var UsagePoller = class {
       const after = setAt2 !== null && setAt2 > startedAt ? before : cooldownAfterProbe(before, answer2.usage);
       if (after !== before) {
         table.setCooldown(id, after);
-        if (after === null) log.write("cooldown_ended", { login: logged });
+        if (after === null) log.write("cooldown_ended", { login: id });
       }
-      log.write(cause === "renewal" ? "token_renewal_finished" : "usage_probe_finished", { login: logged, ms, ok: true });
+      log.write(cause === "renewal" ? "token_renewal_finished" : "usage_probe_finished", { login: id, ms, ok: true });
+      this.learnEmail(ref, answer2);
     } else {
       const previous = table.usage(id);
       const base = previous ?? (login.provider === "claude" ? emptyAccountUsage(id, now()) : emptyCodexUsage(id, now()));
       table.setUsage(id, { ...base, error: answer2.error });
       if (answer2.signedIn !== null) table.setSignedIn(id, answer2.signedIn);
-      log.write(cause === "renewal" ? "token_renewal_finished" : "usage_probe_failed", { login: logged, ms, ok: false, reason: answer2.reason });
+      log.write(cause === "renewal" ? "token_renewal_finished" : "usage_probe_failed", { login: id, ms, ok: false, reason: answer2.reason });
     }
+  }
+  /**
+   * Keeps what a successful probe said about the login's email: a Codex login's email in the
+   * table's memory, and, when the probe found the login signed in and an email is known, the
+   * login's automatic alias made from it.
+   */
+  learnEmail(login, answer2) {
+    const { table, identity } = this.options;
+    if (login.provider === "codex") table.setCodexEmail(login.id, answer2.signedIn ? answer2.email ?? null : null);
+    if (!answer2.signedIn) return;
+    const email = login.provider === "codex" ? answer2.email ?? null : identity.read(login)?.email ?? null;
+    if (email !== null) table.noteEmail(login.id, email);
   }
 };
 
@@ -11331,7 +11558,13 @@ function createDaemonApp(options) {
   const now = options.now ?? Date.now;
   const tuning = options.tuning ?? {};
   const { env, log, key } = options;
-  const tokens = createTokenSource({ env, log, now, ...tuning.platform === void 0 ? {} : { platform: tuning.platform } });
+  const tokens = createTokenSource({
+    login: (id) => table.find(id),
+    env,
+    log,
+    now,
+    ...tuning.platform === void 0 ? {} : { platform: tuning.platform }
+  });
   const identity = new ClaudeIdentityReader();
   const table = new LoginTable({
     tokens,
@@ -11343,10 +11576,11 @@ function createDaemonApp(options) {
   const poller = new UsagePoller({
     table,
     tokens,
+    identity,
     env,
     log,
     now,
-    probeClaude: tuning.probeClaude ?? ((id, probe) => probeClaudeUsage(id, { ...probe, env: probeEnvironment(tokens, id, probe.env) })),
+    probeClaude: tuning.probeClaude ?? ((login, probe) => probeClaudeUsage(login, { ...probe, env: probeEnvironment(tokens, login.id, probe.env) })),
     probeCodex: tuning.probeCodex ?? probeCodexUsage,
     ...tuning.pollIntervalMs === void 0 ? {} : { intervalMs: tuning.pollIntervalMs }
   });
@@ -11907,22 +12141,23 @@ var restart = async (args, context) => {
   }
 };
 var stop = async (args, context) => {
-  const parsed = parseCommandArgs("daemon stop", args, {}, context);
+  const parsed = parseCommandArgs("daemon stop", args, { now: { type: "boolean" } }, context);
   if (typeof parsed === "number") return parsed;
+  const now = parsed.values.now === true;
   try {
     const found = await findDaemon(clientOptions(context));
     if (found === null) {
       const problem = await keyRefusedProblem(clientOptions(context));
       if (problem !== null) throw new DaemonError(problem);
     }
-    if (found === null || !await stopDaemon(clientOptions(context))) {
+    if (found === null || !await stopDaemon({ ...clientOptions(context), now })) {
       writeLine(context.stdout, "The kurmis daemon is not running.");
       const silent = found === null ? silentDaemon() : null;
       if (silent !== null) {
         writeLine(context.stdout, `Process ${String(silent.pid)}, named in daemon.json, does not answer on ${address(silent.port)}, so it was not asked to stop. It may be finishing its open requests before it stops.`);
       }
     } else {
-      writeLine(context.stdout, `Stopped the kurmis daemon (pid ${String(found.pid)}).`);
+      writeLine(context.stdout, now ? `Stopped the kurmis daemon (pid ${String(found.pid)}) without waiting for its open requests.` : `Stopped the kurmis daemon (pid ${String(found.pid)}).`);
     }
     return EXIT_OK;
   } catch (error) {
@@ -12009,8 +12244,10 @@ when it is not running, so it seldom needs starting by hand.
   start                   Start it in the background, replacing one of an older version.
                           --env NAME=VALUE sets a kurmis variable in the daemon's
                           environment; the Windows logon entry uses it.
-  stop                    Stop it after it finishes the requests it has open, waiting at most
-                          30 seconds for them.
+  stop [--now]            Stop it after it finishes the requests it has open, waiting at most
+                          30 seconds for them. With --now it stops at once and cuts the
+                          requests it has open. An open Claude session then sees a dropped
+                          connection and retries the request.
   restart                 Start a new one now; the old one finishes its open requests first.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
@@ -12044,16 +12281,16 @@ function namesAccount(file) {
     return false;
   }
 }
-function hasLocalCredentials(id, env, home) {
-  if (id === CLAUDE_DEFAULT_ACCOUNT_ID) {
+function hasLocalCredentials(login, env, home) {
+  if (login.provider === "codex") return (0, import_node_fs17.existsSync)((0, import_node_path20.join)(codexHomeOf(login, env, home), "auth.json"));
+  if (login.machineOwn) {
     return (0, import_node_fs17.existsSync)((0, import_node_path20.join)(home, ".claude", ".credentials.json")) || namesAccount((0, import_node_path20.join)(home, CLAUDE_PROFILE_FILE));
   }
-  if (id.startsWith("codex:")) return (0, import_node_fs17.existsSync)((0, import_node_path20.join)(codexHomeOf(id, env, home), "auth.json"));
-  const folder = loginFolder(id);
+  const folder = loginFolder(login);
   return (0, import_node_fs17.existsSync)((0, import_node_path20.join)(folder, ".credentials.json")) || namesAccount((0, import_node_path20.join)(folder, CLAUDE_PROFILE_FILE));
 }
-function codexHomeOf(id, env, home, platform = process.platform) {
-  const patched = applyEnvPatch(env, codexLoginEnv(id, env, platform), platform === "win32");
+function codexHomeOf(login, env, home, platform = process.platform) {
+  const patched = applyEnvPatch(env, codexLoginEnv(login, env, platform), platform === "win32");
   const named = platform === "win32" ? windowsEnv(patched, "CODEX_HOME") : patched["CODEX_HOME"];
   return named !== void 0 && named !== "" ? named : (0, import_node_path20.join)(home, ".codex");
 }
@@ -12071,7 +12308,7 @@ function codexKeepsSignInElsewhere(codexHome) {
     return true;
   }
 }
-async function codexSignedIn2(id, env, deps) {
+async function codexSignedIn2(login, env, deps) {
   let program;
   try {
     program = deps.findProgram("codex", { env });
@@ -12082,22 +12319,23 @@ async function codexSignedIn2(id, env, deps) {
   const result = await deps.runProgram(
     program.command,
     [...program.args, "login", "status"],
-    { timeoutMs: CODEX_LOGIN_STATUS_TIMEOUT_MS, env: applyEnvPatch(env, codexLoginEnv(id, env)), maxOutputBytes: 64 * 1024 }
+    { timeoutMs: CODEX_LOGIN_STATUS_TIMEOUT_MS, env: applyEnvPatch(env, codexLoginEnv(login, env)), maxOutputBytes: 64 * 1024 }
   );
   return result.code === 0;
 }
-async function hasCredentials(id, env, home, deps) {
-  if (hasLocalCredentials(id, env, home)) return true;
-  if (!id.startsWith("codex:") || !codexKeepsSignInElsewhere(codexHomeOf(id, env, home))) return false;
-  return await codexSignedIn2(id, env, deps);
+async function hasCredentials(login, env, home, deps) {
+  if (hasLocalCredentials(login, env, home)) return true;
+  if (login.provider !== "codex" || !codexKeepsSignInElsewhere(codexHomeOf(login, env, home))) return false;
+  return await codexSignedIn2(login, env, deps);
 }
-var HEADER = ["ID", "LABEL", "AUTO", "FIVE-HOUR", "WEEKLY", "USE-FIRST", "CREDENTIALS"];
+var HEADER = ["PROVIDER", "ALIAS", "ID", "AUTO", "FIVE-HOUR", "WEEKLY", "USE-FIRST", "CREDENTIALS"];
 function formatLoginTable(logins) {
   const rows = [
     HEADER,
     ...logins.map((login) => [
+      login.provider,
+      login.alias,
       login.id,
-      login.label,
       login.routing ? "on" : "off",
       `${String(login.fiveHourLimit)}%`,
       `${String(login.weeklyLimit)}%`,
@@ -12106,7 +12344,9 @@ function formatLoginTable(logins) {
     ])
   ];
   const widths = HEADER.map((_, column) => Math.max(...rows.map((row) => row[column].length)));
-  return rows.map((row) => row.map((cell, column) => cell.padEnd(widths[column])).join("  ").trimEnd()).join("\n");
+  const table = rows.map((row) => row.map((cell, column) => cell.padEnd(widths[column])).join("  ").trimEnd());
+  const own2 = logins.filter((login) => login.machineOwn).map((login) => `${login.alias} is ${machineOwnText(login.provider)}: the account a plain "${login.provider}" is signed in to.`);
+  return [...table, ...own2.length > 0 ? ["", ...own2] : []].join("\n");
 }
 function createListCommand(deps = {}) {
   const home = deps.home ?? import_node_os13.homedir;
@@ -12116,10 +12356,17 @@ function createListCommand(deps = {}) {
     summary: "List the logins and their routing settings",
     usage: `Usage: kurmis list [--json]
 
-Lists every login kurmis knows, the machine's own claude:default and codex:default first, with
-its settings and whether it has credentials on this machine. Change the settings with
-"kurmis set". The columns:
+Lists every login kurmis knows, with its settings and whether it has credentials on this
+machine. The machine's own Claude and Codex logins come first. They are the accounts a plain
+"claude" and a plain "codex" are signed in to, and the lines under the table name them.
+Change the settings with "kurmis set". The columns:
 
+  PROVIDER      claude or codex.
+  ALIAS         The name you type for the login, for example in "kurmis claude --login".
+                Kurmis makes it from the account's email until you set one with
+                "kurmis set <alias> --alias <new alias>". While kurmis knows no email for
+                the login, the alias is its id.
+  ID            The login's id, which never changes. Commands take it in place of the alias.
   AUTO          Whether Auto routing may use the login (set --auto).
   FIVE-HOUR     Auto routing stops using the login once its five-hour window reaches this
                 (set --five-hour).
@@ -12132,7 +12379,8 @@ its settings and whether it has credentials on this machine. Change the settings
                 whether they still work.
 
 Options:
-  --json       Print the logins as JSON, with a "credentials" field for the last column.
+  --json       Print the logins as JSON. Each has "alias", "id", "provider", "machineOwn"
+               (true for the machine's own logins) and "credentials" for the last column.
   -h, --help   Show this help.`,
     async run(args, context) {
       const parsed = parseCommandArgs("list", args, { json: { type: "boolean" } }, context);
@@ -12145,7 +12393,7 @@ Options:
         writeLine(context.stderr, `kurmis list: ${error.message}`);
         return EXIT_FAILURE;
       }
-      const listed = await Promise.all(logins.map(async (login) => ({ ...login, credentials: await hasCredentials(login.id, context.env, home(), codex) })));
+      const listed = await Promise.all(logins.map(async (login) => ({ ...login, credentials: await hasCredentials(login, context.env, home(), codex) })));
       writeLine(context.stdout, parsed.values.json === true ? JSON.stringify(listed, null, 2) : formatLoginTable(listed));
       return EXIT_OK;
     }
@@ -12243,8 +12491,8 @@ function removeFile2(path, fs, platform) {
 var LOGIN_LOCK_STALE_MS = 24 * 60 * 60 * 1e3;
 var LOGIN_LOCK_WAIT_MS = 500;
 var LoginBusyError = class extends Error {
-  constructor(id, path, pid) {
-    super(`another "kurmis login" or "kurmis logout" of ${id} is running now${pid === null ? "" : ` (pid ${String(pid)})`}. Wait for it to end and try again. If none is running, delete ${path}.`);
+  constructor(id, path, pid, name = id) {
+    super(`another "kurmis login" or "kurmis logout" of ${name} is running now${pid === null ? "" : ` (pid ${String(pid)})`}. Wait for it to end and try again. If none is running, delete ${path}.`);
     this.id = id;
     this.path = path;
     this.name = "LoginBusyError";
@@ -12252,45 +12500,61 @@ var LoginBusyError = class extends Error {
   id;
   path;
 };
-function lockLogin(id) {
+function lockLogin(id, name = id) {
   const path = loginLockPath(id);
   try {
     return acquireFileLockSync(path, { timeoutMs: LOGIN_LOCK_WAIT_MS, staleMs: LOGIN_LOCK_STALE_MS });
   } catch (error) {
-    if (error instanceof LockTimeoutError) throw new LoginBusyError(id, path, error.holder?.pid ?? null);
+    if (error instanceof LockTimeoutError) throw new LoginBusyError(id, path, error.holder?.pid ?? null, name);
     throw error;
   }
 }
 
+// src/cli/sign-out.ts
+var LOGOUT_TIMEOUT_MS = 3e4;
+async function signOutLogin(login, env, deps) {
+  const cliName = login.provider === "claude" ? "claude auth logout" : "codex logout";
+  let problem;
+  try {
+    const program = deps.findProgram(login.provider, { env });
+    const patch = login.provider === "claude" ? claudeLoginEnv(login, deps.platform === "win32") : codexLoginEnv(login, env);
+    const cliArgs = login.provider === "claude" ? ["auth", "logout"] : ["logout"];
+    const result = await deps.runProgram(
+      program.command,
+      [...program.args, ...cliArgs],
+      { timeoutMs: LOGOUT_TIMEOUT_MS, env: applyEnvPatch(env, patch) }
+    );
+    if (result.code === 0) return null;
+    problem = result.error ?? `exit code ${String(result.code)}`;
+  } catch (error) {
+    if (!(error instanceof ProgramNotFoundError)) throw error;
+    problem = error.message;
+  }
+  return `"${cliName}" did not finish (${problem})`;
+}
+function leftBehindText(login, platform) {
+  if (login.provider !== "claude") return "";
+  const service = keychainService(loginFolder(login));
+  if (platform === "darwin") return ` Its Keychain item "${service}" may be left; Keychain Access can delete it.`;
+  if (platform === "win32") return ` Its Windows credentials "${service}/\u2026" may be left; Credential Manager can delete them.`;
+  return "";
+}
+
 // src/cli/commands/login.ts
 var LOGIN_PROBE_WAIT_MS = 15e3;
-function freeLoginName(provider, config, skip = /* @__PURE__ */ new Set()) {
-  for (let number = 2; ; number++) {
-    const id = `${provider}:${String(number)}`;
-    if (!skip.has(String(number)) && findLogin(config, id) === void 0 && !(0, import_node_fs19.existsSync)(loginFolder(id))) return String(number);
+function loginTarget(argument, config) {
+  if (isLoginProvider(argument)) return { kind: "new", provider: argument };
+  const resolved = resolveLogin(config, argument);
+  if ("error" in resolved) {
+    return { error: `${resolved.error}. "kurmis login claude" or "kurmis login codex" adds a new login, and "kurmis list" shows the logins there are` };
   }
+  return { kind: "existing", login: resolved.login };
 }
-function loginTarget(argument, name, config, skip = /* @__PURE__ */ new Set()) {
-  if (isLoginProvider(argument)) {
-    const chosen = name ?? freeLoginName(argument, config, skip);
-    if (!isValidLoginName(chosen)) {
-      return { error: `"${chosen}" is not a login name; a name is 1 to 32 lowercase letters, digits, "-" or "_"` };
-    }
-    const id = `${argument}:${chosen}`;
-    if (findLogin(config, id) !== void 0) {
-      return { error: `there is already a login ${id}; "kurmis login ${id}" signs it in again` };
-    }
-    return { id, isNew: true };
+function freshLoginId(config) {
+  for (; ; ) {
+    const id = newLoginIdFor(config);
+    if (LOGIN_PROVIDERS.every((provider) => !(0, import_node_fs19.existsSync)(loginFolder({ id, provider, machineOwn: false })))) return id;
   }
-  if (name !== void 0) return { error: '--name goes with "kurmis login claude" or "kurmis login codex", not with a login id' };
-  if (!argument.includes(":")) {
-    return { error: `"${argument}" is not claude, codex or a login id such as claude:${argument}` };
-  }
-  const parsed = parseLoginId(argument);
-  if (parsed === null) {
-    return { error: `"${argument}" is not a login id; a login id is claude:<name> or codex:<name>, where the name is 1 to 32 lowercase letters, digits, "-" or "_"` };
-  }
-  return { id: parsed.id, isNew: findLogin(config, parsed.id) === void 0 };
 }
 function homeIdentity(home) {
   try {
@@ -12303,41 +12567,26 @@ function fail2(context, message) {
   writeLine(context.stderr, `kurmis login: ${message}`);
   return EXIT_FAILURE;
 }
-function reserveLogin(argument, name) {
-  const skip = /* @__PURE__ */ new Set();
-  for (; ; ) {
-    const target = loginTarget(argument, name, loadConfig(), skip);
-    if ("error" in target) return { error: target.error, usage: true };
-    const numbered = isLoginProvider(argument) && name === void 0;
-    let lock;
-    try {
-      lock = lockLogin(target.id);
-    } catch (error) {
-      if (!(error instanceof LoginBusyError)) throw error;
-      if (!numbered) return { error: error.message, usage: false };
-      skip.add(target.id.slice(target.id.indexOf(":") + 1));
-      continue;
-    }
-    try {
-      const config = loadConfig();
-      const listed = findLogin(config, target.id) !== void 0;
-      if (numbered && (listed || (0, import_node_fs19.existsSync)(loginFolder(target.id)))) {
-        lock.release();
-        skip.add(target.id.slice(target.id.indexOf(":") + 1));
-        continue;
-      }
-      if (target.isNew && listed && isLoginProvider(argument)) {
-        lock.release();
-        return { error: `there is already a login ${target.id}; "kurmis login ${target.id}" signs it in again`, usage: true };
-      }
-      return { id: target.id, isNew: !listed, lock };
-    } catch (error) {
-      lock.release();
-      throw error;
-    }
-  }
+function sameEmail(a, b) {
+  return a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
 }
-async function tellDaemon(daemon, id, env, probeWaitMs) {
+async function sameAccount(config, login, email, env, deps) {
+  const others = config.logins.filter((other) => other.provider === login.provider && other.id !== login.id);
+  if (login.provider === "claude") {
+    return others.find((other) => sameEmail(readClaudeIdentity(other, deps.home())?.email ?? null, email)) ?? null;
+  }
+  const known = /* @__PURE__ */ new Map();
+  try {
+    const connection = await deps.daemon.findDaemon({ env });
+    if (connection !== null) {
+      for (const row of (await deps.daemon.readStatus(connection)).logins) if (row.email !== null) known.set(row.id, row.email);
+    }
+  } catch {
+  }
+  const emails = await Promise.all(others.map(async (other) => known.get(other.id) ?? await deps.readCodexEmail(other, env)));
+  return others.find((_, index) => sameEmail(emails[index] ?? null, email)) ?? null;
+}
+async function tellDaemon(daemon, login, env, probeWaitMs) {
   let connection;
   try {
     connection = await daemon.findDaemon({ env });
@@ -12349,20 +12598,20 @@ async function tellDaemon(daemon, id, env, probeWaitMs) {
   }
   const lines = [reloadText({ kind: "reloaded" }) ?? ""];
   const found = connection;
-  const probed = await settleWithin((signal) => daemon.requestProbe(found, [id], signal), probeWaitMs);
+  const probed = await settleWithin((signal) => daemon.requestProbe(found, [login.id], signal), probeWaitMs);
   if (probed.kind === "done") {
-    const row = probed.value.logins.find((login) => login.id === id);
-    if (row?.signedIn === false) lines.push(`The daemon still finds ${id} signed out; "kurmis status" shows what it knows.`);
+    const row = probed.value.logins.find((other) => other.id === login.id);
+    if (row?.signedIn === false) lines.push(`The daemon still finds ${login.alias} signed out; "kurmis status" shows what it knows.`);
   } else {
     const why = probed.kind === "timeout" ? `did not finish within ${String(probeWaitMs / 1e3)} s` : `failed (${probed.error instanceof Error ? probed.error.message : String(probed.error)})`;
-    lines.push(`The daemon's check of ${id} ${why}; it checks the login again within 15 minutes.`);
+    lines.push(`The daemon's check of ${login.alias} ${why}; it checks the login again within 15 minutes.`);
   }
   return lines;
 }
 async function signIn(run2) {
-  const { id, isNew, lock, provider, program, label, context } = run2;
-  const isDefault = isDefaultLoginId(id);
-  const folder = isDefault ? null : loginFolder(id);
+  const { ref, isNew, name, lock, program, alias, context, deps } = run2;
+  const provider = ref.provider;
+  const folder = ref.machineOwn ? null : loginFolder(ref);
   let created = false;
   if (folder !== null && !(0, import_node_fs19.existsSync)(folder)) {
     makePrivateDirSync(folder);
@@ -12371,56 +12620,92 @@ async function signIn(run2) {
   const cleanUp = () => {
     if (!created || folder === null) return;
     removeTreeSync(folder);
-    if (provider === "codex") (0, import_node_fs19.rmSync)(codexMergedRecordPath(id), { force: true });
+    if (provider === "codex") (0, import_node_fs19.rmSync)(codexMergedRecordPath(ref), { force: true });
   };
-  const notAdded = isNew ? ` ${id} was not added.` : "";
-  if (provider === "codex" && !isDefault) {
+  const notAdded = isNew ? " No login was added." : "";
+  if (provider === "codex" && !ref.machineOwn) {
     try {
-      const prepared = await run2.deps.prepareCodexHome(id, { env: context.env });
+      const prepared = await deps.prepareCodexHome({ ...ref, alias: name }, { env: context.env });
       for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`);
     } catch (error) {
       cleanUp();
-      return fail2(context, `could not prepare the Codex home of ${id}: ${error instanceof Error ? error.message : String(error)}.${notAdded}`);
+      return fail2(context, `could not prepare the Codex home of ${name}: ${error instanceof Error ? error.message : String(error)}.${notAdded}`);
     }
   }
   const cliName = provider === "claude" ? "claude auth login" : "codex login";
-  writeLine(context.stdout, `Signing in ${id}${isNew ? " (a new login)" : ""} with "${cliName}". Follow its steps.`);
-  const credentialManager = provider === "claude" && await run2.deps.inCredentialManager(folder, context.env);
-  const env = applyEnvPatch(context.env, provider === "claude" ? claudeLoginEnv(id, credentialManager) : codexLoginEnv(id, context.env));
+  const what = isNew ? `a new ${PROVIDER_NAMES2[provider]} login (id ${ref.id})` : name;
+  writeLine(context.stdout, `Signing in ${what} with "${cliName}". Follow its steps.`);
+  const credentialManager = provider === "claude" && await deps.inCredentialManager(folder, context.env);
+  const env = applyEnvPatch(context.env, provider === "claude" ? claudeLoginEnv(ref, credentialManager) : codexLoginEnv(ref, context.env));
   const cliArgs = provider === "claude" ? ["auth", "login", "--claudeai"] : ["login"];
-  const end = await run2.deps.runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env });
+  const end = await deps.runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env });
   if (end.kind !== "exit") {
     cleanUp();
     lock.release();
     if (isNew) writeLine(context.stderr, `kurmis login:${notAdded}`);
-    return run2.deps.runner.finishLikeChild(end, { stderr: context.stderr, name: provider });
+    return deps.runner.finishLikeChild(end, { stderr: context.stderr, name: provider });
   }
   if (end.code !== 0) {
     cleanUp();
     return fail2(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`);
   }
-  if (provider === "claude" && isDefault) {
-    (0, import_node_fs19.rmSync)((0, import_node_path22.join)(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
+  if (provider === "claude" && ref.machineOwn) {
+    (0, import_node_fs19.rmSync)((0, import_node_path22.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
   }
-  const identity = provider === "claude" ? isDefault ? homeIdentity(run2.deps.home()) : readClaudeIdentity(id, run2.deps.home()) : null;
-  if (identity === null && !await hasCredentials(id, context.env, run2.deps.home(), run2.deps)) {
+  const identity = provider === "claude" ? ref.machineOwn ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home()) : null;
+  if (identity === null && !await hasCredentials(ref, context.env, deps.home(), deps)) {
     cleanUp();
-    return fail2(context, `"${cliName}" ended, but ${id} has no credentials.${notAdded}`);
+    return fail2(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`);
   }
+  const email = provider === "claude" ? identity?.email ?? null : await deps.readCodexEmail(ref, context.env);
+  if (isNew && email !== null) {
+    let config;
+    try {
+      config = loadConfig();
+    } catch (error) {
+      if (!(error instanceof ConfigError)) throw error;
+      return fail2(context, `${name} is signed in, but config.json could not be read: ${error.message} "kurmis logout ${ref.id}" removes its credentials and folder.`);
+    }
+    const existing = await sameAccount(config, ref, email, context.env, deps);
+    if (existing !== null) return await dropDuplicate(run2, config, existing, email);
+  }
+  let saved;
   try {
-    const patch = label === void 0 ? {} : { label };
-    if (isNew) changeConfig((config) => addLogin(config, id, patch));
-    else if (label !== void 0) changeConfig((config) => updateLogin(config, id, patch));
+    saved = changeConfig((config) => {
+      let next = isNew ? addLogin(config, ref, alias === void 0 ? {} : { alias }) : config;
+      if (!isNew && alias !== void 0) next = updateLogin(next, ref.id, { alias });
+      return followEmail(next, ref.id, email);
+    });
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
-    return fail2(context, `${id} is signed in but could not be saved: ${error.message} Run "kurmis login ${id}" again, or "kurmis logout ${id}" to remove its credentials.`);
+    return fail2(context, isNew ? `${name} is signed in but could not be added: ${error.message} "kurmis logout ${ref.id}" removes its credentials and folder.` : `${name} is signed in again but its settings could not be saved: ${error.message}`);
   }
-  const who = identity?.email ?? null;
-  writeLine(context.stdout, who === null ? `Signed in ${id}.` : `Signed in ${id} as ${who}.`);
+  const login = findLogin(saved, ref.id);
+  const argument = loginArgument(saved, login);
+  writeLine(context.stdout, email === null ? "Signed in." : `Signed in as ${email}.`);
   if (isNew) {
-    writeLine(context.stdout, `Added ${id} with the label "${label ?? id.slice(id.indexOf(":") + 1)}", Auto routing on and both limits at 100%. "kurmis set ${id}" changes that.`);
+    writeLine(context.stdout, `Added ${login.alias} (id ${login.id}), a ${PROVIDER_NAMES2[provider]} login with Auto routing on and both limits at 100%. "kurmis set ${argument}" changes that.`);
+  } else if (login.alias !== name) {
+    writeLine(context.stdout, `${name} is now called ${login.alias}.`);
   }
-  for (const line of await tellDaemon(run2.deps.daemon, id, context.env, run2.deps.probeWaitMs)) writeLine(context.stdout, line);
+  for (const line of await tellDaemon(deps.daemon, login, context.env, deps.probeWaitMs)) writeLine(context.stdout, line);
+  return EXIT_OK;
+}
+async function dropDuplicate(run2, config, existing, email) {
+  const { ref, context, deps } = run2;
+  const problem = await signOutLogin(ref, context.env, deps);
+  if (problem !== null) {
+    writeLine(context.stderr, `kurmis login: ${problem}; the new sign-in is deleted anyway.${leftBehindText(ref, deps.platform)}`);
+  }
+  try {
+    removeTreeSync(loginFolder(ref));
+    if (ref.provider === "codex") (0, import_node_fs19.rmSync)(codexMergedRecordPath(ref), { force: true });
+  } catch (error) {
+    return fail2(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted (${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`);
+  }
+  const which = existing.machineOwn ? `${existing.alias}, ${machineOwnText(existing.provider)}` : existing.alias;
+  writeLine(context.stdout, `${email} is already a kurmis ${PROVIDER_NAMES2[ref.provider]} login: ${which} (id ${existing.id}). No login was added, and the new sign-in was signed out again.`);
+  writeLine(context.stdout, `"kurmis login ${loginArgument(config, existing)}" signs ${existing.alias} in again.`);
   return EXIT_OK;
 }
 function createLoginCommand(deps = {}) {
@@ -12432,65 +12717,92 @@ function createLoginCommand(deps = {}) {
     home: deps.home ?? import_node_os14.homedir,
     prepareCodexHome: deps.prepareCodexHome ?? realPrepareCodexHome,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
-    inCredentialManager: deps.inCredentialManager ?? ((folder, env) => holdsStoredRecord(folder, env))
+    inCredentialManager: deps.inCredentialManager ?? ((folder, env) => holdsStoredRecord(folder, env)),
+    readCodexEmail: deps.readCodexEmail ?? ((login, env) => readCodexEmail(login, { env })),
+    platform: deps.platform ?? process.platform
   };
   return {
     name: "login",
     summary: "Sign in a new login, or sign an existing one in again",
-    usage: `Usage: kurmis login claude|codex [--name <name>] [--label <text>]
-       kurmis login <id> [--label <text>]
+    usage: `Usage: kurmis login claude|codex [--alias <alias>]
+       kurmis login <login> [--alias <alias>]
 
 Signs a login in with Claude Code's "claude auth login" or Codex's "codex login", which open
-the sign-in page in the browser, and adds it to kurmis with Auto routing on and both limits at
-100% ("kurmis set" changes that).
+the sign-in page in the browser.
 
-  kurmis login claude          Adds a new Claude login, named 2, 3, ... (claude:2) unless
-                               --name gives the name.
-  kurmis login codex           The same for Codex.
-  kurmis login claude:work     Adds claude:work, or signs it in again when it exists. This also
-                               signs in the machine's own claude:default or codex:default again.
+  kurmis login claude         Adds a new Claude login. It gets Auto routing on and both limits
+                              at 100%; "kurmis set" changes that.
+  kurmis login codex          Adds a new Codex login.
+  kurmis login work-example   Signs the login work-example in again, for example after it was
+                              signed out. This works for the machine's own logins too.
 
-A name is 1 to 32 lowercase letters, digits, "-" or "_". Each extra login keeps its own
-credentials in its folder in the kurmis data folder (on macOS in the Keychain).
+<login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
+Codex login have the same alias, put claude: or codex: in front, for example
+claude:work-example.
+
+Each login gets an id of random letters and digits, which never changes. Its alias is the name
+you see and type. Kurmis makes the alias from the account's email: work@example.com gives
+work-example. Without --alias, the alias follows the email when the account changes.
+
+When the account you sign in to is already a kurmis login, kurmis signs the new sign-in out
+again, adds nothing and says which login the account is.
+
+Each extra login keeps its own credentials in its folder in the kurmis data folder (on macOS in
+the Keychain). Kurmis prints the account's email and does not store it.
 
 Options:
-  --name <name>    The name of the new login, for "kurmis login claude|codex".
-  --label <text>   The name "kurmis list" and "kurmis status" show. Defaults to the login's name.
-  -h, --help       Show this help.`,
+  --alias <alias>   The alias of the login, in place of the one made from the email. It is 1
+                    to 32 lowercase letters, digits, "-" or "_", starts with a letter or digit,
+                    and is not "claude" or "codex". No other login of the same provider may
+                    have it. Kurmis keeps it when the email changes.
+  -h, --help        Show this help.`,
     async run(args, context) {
-      const parsed = parseCommandArgs("login", args, { name: { type: "string" }, label: { type: "string" } }, context, true);
+      const parsed = parseCommandArgs("login", args, { alias: { type: "string" } }, context, true);
       if (typeof parsed === "number") return parsed;
-      if (parsed.positionals.length !== 1) return usageError("login", "takes claude, codex or one login id", context);
-      const label = parsed.values.label?.trim();
-      if (label !== void 0 && (label === "" || label.length > 64)) return usageError("login", "--label takes 1 to 64 characters", context);
-      const argument = parsed.positionals[0];
-      let target;
+      if (parsed.positionals.length !== 1) return usageError("login", "takes claude, codex, or one login by its alias or id", context);
+      const alias = parsed.values.alias;
+      let config;
       try {
-        target = loginTarget(argument, parsed.values.name, loadConfig());
+        config = loadConfig();
       } catch (error) {
         if (error instanceof ConfigError) return fail2(context, error.message);
         throw error;
       }
+      const target = loginTarget(parsed.positionals[0], config);
       if ("error" in target) return usageError("login", target.error, context);
-      const provider = target.id.startsWith("codex:") ? "codex" : "claude";
+      const isNew = target.kind === "new";
+      const ref = isNew ? { id: freshLoginId(config), provider: target.provider, machineOwn: false } : { id: target.login.id, provider: target.login.provider, machineOwn: target.login.machineOwn };
+      const name = isNew ? ref.id : target.login.alias;
+      if (alias !== void 0) {
+        const problem = aliasProblem(config, ref, alias);
+        if (problem !== null) return usageError("login", problem, context);
+      }
       let program;
       try {
-        program = full.findProgram(provider, { env: context.env });
+        program = full.findProgram(ref.provider, { env: context.env });
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail2(context, error.message);
         throw error;
       }
-      let reserved;
+      let lock;
       try {
-        reserved = reserveLogin(argument, parsed.values.name);
+        lock = lockLogin(ref.id, name);
       } catch (error) {
-        if (error instanceof ConfigError) return fail2(context, error.message);
+        if (error instanceof LoginBusyError) return fail2(context, error.message);
         throw error;
       }
-      if ("error" in reserved) return reserved.usage ? usageError("login", reserved.error, context) : fail2(context, reserved.error);
-      const { id, isNew, lock } = reserved;
       try {
-        return await signIn({ id, isNew, lock, provider, program, label, context, deps: full });
+        if (!isNew) {
+          let current;
+          try {
+            current = loadConfig();
+          } catch (error) {
+            if (error instanceof ConfigError) return fail2(context, error.message);
+            throw error;
+          }
+          if (findLogin(current, ref.id) === void 0) return fail2(context, `${name} was removed by another kurmis command just now`);
+        }
+        return await signIn({ ref, isNew, name, lock, program, alias, context, deps: full });
       } finally {
         lock.release();
       }
@@ -12501,7 +12813,6 @@ var loginCommand = createLoginCommand();
 
 // src/cli/commands/logout.ts
 var import_node_fs20 = require("node:fs");
-var LOGOUT_TIMEOUT_MS = 3e4;
 function exists(path) {
   try {
     (0, import_node_fs20.lstatSync)(path);
@@ -12514,99 +12825,157 @@ function fail3(context, message) {
   writeLine(context.stderr, `kurmis logout: ${message}`);
   return EXIT_FAILURE;
 }
-function createLogoutCommand(deps = {}) {
+function errorText3(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function createLoginLogout(deps = {}) {
   const daemon = deps.daemon ?? realDaemonClient;
-  const find = deps.findProgram ?? realFindProgram;
-  const run2 = deps.runProgram ?? runProgram;
-  const platform = deps.platform ?? process.platform;
-  async function signOut(id, provider, folder, env) {
-    const cliName = provider === "claude" ? "claude auth logout" : "codex logout";
-    let problem;
-    try {
-      const program = find(provider, { env });
-      const patch = provider === "claude" ? claudeLoginEnv(id, platform === "win32") : codexLoginEnv(id, env);
-      const cliArgs = provider === "claude" ? ["auth", "logout"] : ["logout"];
-      const result = await run2(program.command, [...program.args, ...cliArgs], { timeoutMs: LOGOUT_TIMEOUT_MS, env: applyEnvPatch(env, patch) });
-      if (result.code === 0) return null;
-      problem = result.error ?? `exit code ${String(result.code)}`;
-    } catch (error) {
-      if (!(error instanceof ProgramNotFoundError)) throw error;
-      problem = error.message;
-    }
-    const left = provider !== "claude" ? "" : platform === "darwin" ? ` Its Keychain item "${keychainService(folder)}" may be left; Keychain Access can delete it.` : platform === "win32" ? ` Its Windows credentials "${keychainService(folder)}/\u2026" may be left; Credential Manager can delete them.` : "";
-    return `"${cliName}" did not finish (${problem}); the login is removed anyway.${left}`;
-  }
-  return {
-    name: "logout",
-    summary: "Remove a login and its credentials",
-    usage: `Usage: kurmis logout <id>
-
-Signs out the login <id> (claude:<name> or codex:<name>) with "claude auth logout" or
-"codex logout", removes it from kurmis and deletes its folder in the kurmis data folder.
-A running daemon stops using it at once. The machine's own logins, claude:default and
-codex:default, cannot be removed.
-
-Options:
-  -h, --help   Show this help.`,
-    async run(args, context) {
-      const parsed = parseCommandArgs("logout", args, {}, context, true);
-      if (typeof parsed === "number") return parsed;
-      if (parsed.positionals.length !== 1) return usageError("logout", "takes one login id", context);
-      const text2 = parsed.positionals[0];
-      const login = parseLoginId(text2);
-      if (login === null) return usageError("logout", `"${text2}" is not a login id (claude:<name> or codex:<name>)`, context);
-      const { id, provider } = login;
-      if (isDefaultLoginId(id)) {
-        const cli = provider === "claude" ? "claude auth logout" : "codex logout";
-        return usageError("logout", `${id} is the machine's own login and cannot be removed. To sign it out, run "${cli}" yourself.`, context);
-      }
-      let lock;
-      try {
-        lock = lockLogin(id);
-      } catch (error) {
-        if (error instanceof LoginBusyError) return fail3(context, error.message);
-        throw error;
-      }
-      try {
-        return await removeLoginNow(id, provider, context);
-      } finally {
-        lock.release();
-      }
-    }
+  const signOutDeps = {
+    findProgram: deps.findProgram ?? realFindProgram,
+    runProgram: deps.runProgram ?? runProgram,
+    platform: deps.platform ?? process.platform
   };
-  async function removeLoginNow(id, provider, context) {
-    const folder = loginFolder(id);
-    let listed;
+  async function removeNow(login, context, options) {
+    const { id } = login;
+    const again = options.again ?? `kurmis logout ${id}`;
+    const folder = loginFolder(login);
+    let name = id;
+    let listed = false;
     try {
-      listed = findLogin(loadConfig(), id) !== void 0;
-      if (listed) changeConfig((config) => removeLogin(config, id));
+      const found = findLogin(loadConfig(), id);
+      if (found?.machineOwn === true) return fail3(context, `${found.alias} is ${machineOwnText(found.provider)} and cannot be removed.`);
+      if (found !== void 0 && found.provider === login.provider) {
+        listed = true;
+        name = found.alias;
+        changeConfig((config) => removeLogin(config, id));
+      }
     } catch (error) {
       if (error instanceof ConfigError) return fail3(context, error.message);
       throw error;
     }
     const hasFolder = exists(folder);
     if (!listed && !hasFolder) {
-      const record2 = provider === "codex" ? codexMergedRecordPath(id) : null;
-      if (record2 === null || !exists(record2)) return fail3(context, `there is no login ${id}; "kurmis list" shows them`);
+      const record2 = login.provider === "codex" ? codexMergedRecordPath(login) : null;
+      if (record2 === null || !exists(record2)) return fail3(context, `there is no login ${id}; "kurmis list" shows the logins`);
       (0, import_node_fs20.rmSync)(record2, { force: true });
-      writeLine(context.stdout, `Deleted the record of what was merged into ${id}'s home, which ${id} left behind.`);
+      writeLine(context.stdout, `Deleted the record of what was merged into the Codex home of ${id}, which ${id} left behind.`);
       return EXIT_OK;
     }
     const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null;
-    if (hasFolder || provider === "claude") {
-      const problem = await signOut(id, provider, folder, context.env);
-      if (problem !== null) writeLine(context.stderr, `kurmis logout: ${problem}`);
+    if (hasFolder || login.provider === "claude") {
+      const problem = await signOutLogin(login, context.env, signOutDeps);
+      if (problem !== null) {
+        const left = leftBehindText(login, signOutDeps.platform);
+        if (options.keepFolderWhenSignOutFails === true && hasFolder) {
+          if (reload !== null) writeLine(context.stdout, reload);
+          const kept = listed ? ` ${name} is removed from kurmis, but its folder` : " Its folder";
+          return fail3(context, `${problem}.${left}${kept} ${folder} is kept, so that "${again}" runs it again.`);
+        }
+        writeLine(context.stderr, `kurmis logout: ${problem}; ${name} is removed anyway.${left}`);
+      }
     }
     try {
       removeTreeSync(folder);
-      if (provider === "codex") (0, import_node_fs20.rmSync)(codexMergedRecordPath(id), { force: true });
+      if (login.provider === "codex") (0, import_node_fs20.rmSync)(codexMergedRecordPath(login), { force: true });
     } catch (error) {
-      return fail3(context, `${listed ? `${id} is removed from kurmis, but ` : ""}its folder ${folder} could not be deleted (${error instanceof Error ? error.message : String(error)}). Close what uses it and run "kurmis logout ${id}" again.`);
+      const problem = `its folder ${folder} could not be deleted (${errorText3(error)})`;
+      return fail3(context, listed ? `${name} is removed from kurmis, but ${problem}. Close what uses it and run "${again}".` : `${id} left a folder behind, but ${problem}. Close what uses it and run "${again}" again.`);
     }
-    writeLine(context.stdout, listed ? `Removed ${id}.` : `Deleted the folder that ${id} left behind.`);
+    writeLine(context.stdout, listed ? `Removed ${name} (id ${id}).` : `Deleted the folder that ${id} left behind.`);
     if (reload !== null) writeLine(context.stdout, reload);
     return EXIT_OK;
   }
+  return async (login, context, options = {}) => {
+    if (login.machineOwn) return fail3(context, `${login.id} is ${machineOwnText(login.provider)} and cannot be removed.`);
+    let name;
+    try {
+      name = findLogin(loadConfig(), login.id)?.alias ?? login.id;
+    } catch (error) {
+      if (error instanceof ConfigError) return fail3(context, error.message);
+      throw error;
+    }
+    let lock;
+    try {
+      lock = lockLogin(login.id, name);
+    } catch (error) {
+      if (error instanceof LoginBusyError) return fail3(context, error.message);
+      throw error;
+    }
+    try {
+      return await removeNow(login, context, options);
+    } finally {
+      lock.release();
+    }
+  };
+}
+function logoutTarget(config, text2) {
+  const resolved = resolveLogin(config, text2);
+  if ("login" in resolved) {
+    const login = resolved.login;
+    if (login.machineOwn) {
+      const cli = login.provider === "claude" ? "claude auth logout" : "codex logout";
+      return {
+        kind: "error",
+        usage: true,
+        message: `${login.alias} is ${machineOwnText(login.provider)} and cannot be removed. To sign it out, run "${cli}" yourself.`
+      };
+    }
+    return { kind: "logins", logins: [{ id: login.id, provider: login.provider, machineOwn: false }] };
+  }
+  const colon = text2.indexOf(":");
+  const prefix = colon < 0 ? null : text2.slice(0, colon);
+  const id = colon < 0 ? text2 : text2.slice(colon + 1);
+  const providers = prefix === null ? LOGIN_PROVIDERS : isLoginProvider(prefix) ? [prefix] : [];
+  if (isLoginId(id) && findLogin(config, id) === void 0) {
+    const refs = providers.map((provider) => ({ id, provider, machineOwn: false }));
+    const withFolder = refs.filter((login) => exists(loginFolder(login)));
+    if (withFolder.length > 0) return { kind: "logins", logins: withFolder };
+    const recordOnly = refs.filter((login) => login.provider === "codex" && exists(codexMergedRecordPath(login)));
+    if (recordOnly.length > 0) return { kind: "logins", logins: recordOnly };
+  }
+  return { kind: "error", usage: false, message: `${resolved.error}; "kurmis list" shows the logins` };
+}
+function createLogoutCommand(deps = {}) {
+  const logOut = createLoginLogout(deps);
+  return {
+    name: "logout",
+    summary: "Remove a login and its credentials",
+    usage: `Usage: kurmis logout <login>
+
+Signs a login out with "claude auth logout" or "codex logout", removes it from kurmis and
+deletes its folder in the kurmis data folder. A running daemon stops using it at once.
+
+<login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
+Codex login have the same alias, put claude: or codex: in front, for example
+codex:work-example.
+
+The machine's own Claude and Codex logins cannot be removed. To sign them out, run
+"claude auth logout" or "codex logout" yourself.
+
+An id that is in no list any more but still has a folder in the kurmis data folder, for
+example after a removal that stopped half-way, has that folder deleted.
+
+Options:
+  -h, --help   Show this help.`,
+    async run(args, context) {
+      const parsed = parseCommandArgs("logout", args, {}, context, true);
+      if (typeof parsed === "number") return parsed;
+      if (parsed.positionals.length !== 1) return usageError("logout", "takes one login, by its alias or id", context);
+      let target;
+      try {
+        target = logoutTarget(loadConfig(), parsed.positionals[0]);
+      } catch (error) {
+        if (error instanceof ConfigError) return fail3(context, error.message);
+        throw error;
+      }
+      if (target.kind === "error") return target.usage ? usageError("logout", target.message, context) : fail3(context, target.message);
+      for (const login of target.logins) {
+        const code = await logOut(login, context);
+        if (code !== EXIT_OK) return code;
+      }
+      return EXIT_OK;
+    }
+  };
 }
 var logoutCommand = createLogoutCommand();
 
@@ -12621,7 +12990,6 @@ function parsePercent(text2) {
   const value = Number(text2);
   return value >= 1 && value <= 100 ? value : null;
 }
-var MAX_LABEL_LENGTH = 64;
 function patchFromOptions(options) {
   const patch = {};
   for (const [option, field] of [["auto", "routing"], ["use-first", "useFirst"]]) {
@@ -12638,34 +13006,26 @@ function patchFromOptions(options) {
     if (value === null) return { error: `--${option} takes a whole number from 1 to 100, not "${text2}"` };
     patch[field] = value;
   }
-  if (options.label !== void 0) {
-    const label = options.label.trim();
-    if (label === "" || label.length > MAX_LABEL_LENGTH) return { error: `--label takes 1 to ${String(MAX_LABEL_LENGTH)} characters` };
-    patch.label = label;
-  }
-  if (Object.keys(patch).length === 0) return { error: "give at least one of --auto, --five-hour, --weekly, --use-first or --label" };
+  if (options.alias !== void 0) patch.alias = options.alias;
+  if (Object.keys(patch).length === 0) return { error: "give at least one of --auto, --five-hour, --weekly, --use-first or --alias" };
   return patch;
 }
-function resolveLoginArgument(text2, config) {
-  if (text2.includes(":")) {
-    if (parseLoginId(text2) === null) return { error: `"${text2}" is not a login id (claude:<name> or codex:<name>)` };
-    const login = findLogin(config, text2);
-    return login ?? { error: `there is no login ${text2}; "kurmis list" shows them` };
-  }
-  const matches = config.logins.filter((login) => login.id.slice(login.id.indexOf(":") + 1) === text2);
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) return { error: `"${text2}" could be ${matches.map((login) => login.id).join(" or ")}; give the full id` };
-  return { error: `there is no login named "${text2}"; "kurmis list" shows them` };
+function aliasSource(login) {
+  if (login.aliasSetByUser) return "set by you";
+  if (login.alias === login.id) return "the id, while kurmis knows no email for the login";
+  return "made from the email";
 }
 function formatLoginSettings(login) {
-  return [
-    `${login.id}`,
-    `  label       ${login.label}`,
+  const lines = [`${login.alias} (${PROVIDER_NAMES2[login.provider]}, id ${login.id})`];
+  if (login.machineOwn) lines.push(`  ${machineOwnText(login.provider)}`);
+  lines.push(
+    `  alias       ${login.alias} (${aliasSource(login)})`,
     `  auto        ${login.routing ? "on" : "off"}`,
     `  five-hour   ${String(login.fiveHourLimit)}%`,
     `  weekly      ${String(login.weeklyLimit)}%`,
     `  use-first   ${login.useFirst ? "on" : "off"}`
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 function failWith(context, message) {
   writeLine(context.stderr, `kurmis set: ${message}`);
@@ -12675,41 +13035,58 @@ function createSetCommand(deps = {}) {
   const daemon = deps.daemon ?? realDaemonClient;
   return {
     name: "set",
-    summary: "Change a login's routing settings or label",
-    usage: `Usage: kurmis set <id> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>]
-                    [--use-first on|off] [--label <text>]
+    summary: "Change a login's routing settings or alias",
+    usage: `Usage: kurmis set <login> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>]
+                       [--use-first on|off] [--alias <alias>]
 
-Changes the settings of the login <id> (claude:<name> or codex:<name>, or just the name when
-only one login has it) and prints them. A running daemon uses them at once. Give at least one
-option.
+Changes the settings of a login and prints them. A running daemon uses them at once. Give at
+least one option.
+
+<login> is the login's alias or its id, as "kurmis list" shows them. When a Claude login and a
+Codex login have the same alias, put claude: or codex: in front, for example
+claude:work-example.
 
 Options:
   --auto on|off         Whether Auto routing may use the login. A session started with
-                        "--login <id>" uses it either way.
+                        "--login <login>" uses it either way.
   --five-hour <1-100>   Auto routing stops using the login once its five-hour window is at
                         this percentage.
   --weekly <1-100>      The same for the weekly window.
   --use-first on|off    Take this login before every other one that has room.
-  --label <text>        The name "kurmis list" and "kurmis status" show, 1 to 64 characters.
-  -h, --help            Show this help.`,
+  --alias <alias>       The name you type and see for the login. It is 1 to 32 lowercase
+                        letters, digits, "-" or "_", starts with a letter or digit, and is not
+                        "claude" or "codex". No other login of the same provider may have it,
+                        and it may not be another login's id.
+                        Kurmis keeps an alias you set; without one, the alias follows the
+                        account's email.
+  -h, --help            Show this help.
+
+Example:
+  kurmis set work-example --weekly 80 --use-first on`,
     async run(args, context) {
       const parsed = parseCommandArgs("set", args, {
         auto: { type: "string" },
         "five-hour": { type: "string" },
         weekly: { type: "string" },
         "use-first": { type: "string" },
-        label: { type: "string" }
+        alias: { type: "string" }
       }, context, true);
       if (typeof parsed === "number") return parsed;
-      if (parsed.positionals.length !== 1) return usageError("set", "takes one login id", context);
+      if (parsed.positionals.length !== 1) return usageError("set", "takes one login, by its alias or id", context);
       const patch = patchFromOptions(parsed.values);
       if ("error" in patch) return usageError("set", patch.error, context);
       let login;
       try {
-        const resolved = resolveLoginArgument(parsed.positionals[0], loadConfig());
-        if ("error" in resolved) return usageError("set", resolved.error, context);
-        const config = changeConfig((current) => updateLogin(current, resolved.id, patch));
-        login = findLogin(config, resolved.id);
+        const config = loadConfig();
+        const resolved = resolveLogin(config, parsed.positionals[0]);
+        if ("error" in resolved) return usageError("set", `${resolved.error}; "kurmis list" shows the logins`, context);
+        const target = resolved.login;
+        if (patch.alias !== void 0) {
+          const problem = aliasProblem(config, target, patch.alias);
+          if (problem !== null) return usageError("set", problem, context);
+        }
+        const changed = changeConfig((current) => updateLogin(current, target.id, patch));
+        login = findLogin(changed, target.id);
       } catch (error) {
         if (error instanceof ConfigError) return failWith(context, error.message);
         throw error;
@@ -12724,15 +13101,51 @@ Options:
 var setCommand = createSetCommand();
 
 // src/cli/commands/setup.ts
+var import_node_fs26 = require("node:fs");
 var import_node_os15 = require("node:os");
-var import_node_path25 = require("node:path");
+var import_node_path26 = require("node:path");
+var import_promises6 = require("node:readline/promises");
 
-// src/platform/autostart.ts
-var import_node_fs22 = require("node:fs");
-
-// src/platform/windows-autostart.ts
+// src/data/remove-data-folder.ts
 var import_node_fs21 = require("node:fs");
 var import_node_path23 = require("node:path");
+var FOLDERS = ["claude", "codex", "codex-merged", "locks", "probe", "settings"];
+var FILES = ["autostart.js", "autostart.vbs", "config.json", "daemon.json", "daemon.log", "key", "paused.json", "state.json"];
+function isKurmisEntry(name) {
+  if (FOLDERS.includes(name) || FILES.includes(name)) return true;
+  if (name.startsWith(".key-")) return true;
+  return FILES.some((file) => name.startsWith(`${file}.`));
+}
+function lstatOrNull(path) {
+  try {
+    return (0, import_node_fs21.lstatSync)(path);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function removeDataFolder(platform = process.platform) {
+  const path = kurmisHome();
+  const stat2 = lstatOrNull(path);
+  if (stat2 === null) return { path, removed: true, left: [] };
+  const link = stat2.isSymbolicLink();
+  const folder = link ? import_node_fs21.realpathSync.native(path) : path;
+  for (const name of (0, import_node_fs21.readdirSync)(folder)) {
+    if (isKurmisEntry(name)) removeTreeSync((0, import_node_path23.join)(folder, name), { platform });
+  }
+  const left = (0, import_node_fs21.readdirSync)(folder);
+  if (left.length > 0) return { path, removed: false, left };
+  retryWhileLockedSync(() => (0, import_node_fs21.rmdirSync)(folder), platform);
+  if (link) removeTreeSync(path, { platform });
+  return { path, removed: true, left: [] };
+}
+
+// src/platform/autostart.ts
+var import_node_fs23 = require("node:fs");
+
+// src/platform/windows-autostart.ts
+var import_node_fs22 = require("node:fs");
+var import_node_path24 = require("node:path");
 var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 var RUN_VALUE_NAME = "kurmis";
 var REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg;
@@ -12794,7 +13207,7 @@ function windowsAutostartEnvironment(env = process.env, processEnv = process.env
   const hooks = inheritedTestHooks(env, processEnv);
   for (const name of DAEMON_JOB_VARIABLES) {
     const value = env[name] || hooks[name];
-    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path23.win32.resolve(value) : value;
+    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path24.win32.resolve(value) : value;
   }
   return out;
 }
@@ -12807,7 +13220,7 @@ function autostartScript(script) {
   const command = autostartCommandLine(script);
   const lines = [
     "// Written by kurmis setup: starts the kurmis daemon at logon without a console window.",
-    "// kurmis setup --undo removes it.",
+    "// kurmis setup --uninstall-and-logout removes it.",
     'var shell = new ActiveXObject("WScript.Shell");',
     `shell.CurrentDirectory = ${jscriptString(script.cwd)};`
   ];
@@ -12832,7 +13245,7 @@ function encodeScript(text2) {
 function readScript(path) {
   let bytes;
   try {
-    bytes = (0, import_node_fs21.readFileSync)(path);
+    bytes = (0, import_node_fs22.readFileSync)(path);
   } catch {
     return null;
   }
@@ -12847,10 +13260,10 @@ ${result.stdout}`.replace(/\s+/g, " ").trim();
 }
 var ok2 = (result) => result.code === 0 && result.error === null;
 function userProfile(env) {
-  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path23.dirname)(windowsAutostartScriptPath());
+  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path24.dirname)(windowsAutostartScriptPath());
 }
 async function scriptHostProblem(wscript, reg) {
-  if (!(0, import_node_fs21.existsSync)(wscript)) {
+  if (!(0, import_node_fs22.existsSync)(wscript)) {
     return `${wscript} does not exist, so Windows Script Host, which starts the daemon at logon without a console window, is not installed or was removed.`;
   }
   for (const key of SCRIPT_HOST_SETTINGS_KEYS) {
@@ -12861,9 +13274,9 @@ async function scriptHostProblem(wscript, reg) {
   return null;
 }
 function removeOldVbsScript(scriptPath) {
-  const old = (0, import_node_path23.join)((0, import_node_path23.dirname)(scriptPath), "autostart.vbs");
-  if (old === scriptPath || !(0, import_node_fs21.existsSync)(old)) return false;
-  (0, import_node_fs21.rmSync)(old, { force: true });
+  const old = (0, import_node_path24.join)((0, import_node_path24.dirname)(scriptPath), "autostart.vbs");
+  if (old === scriptPath || !(0, import_node_fs22.existsSync)(old)) return false;
+  (0, import_node_fs22.rmSync)(old, { force: true });
   return true;
 }
 async function registerWindowsAutostart(options) {
@@ -12892,8 +13305,8 @@ async function registerWindowsAutostart(options) {
   }
   let changed = false;
   if (readScript(scriptPath) !== text2) {
-    makePrivateDirSync((0, import_node_path23.dirname)(scriptPath));
-    (0, import_node_fs21.writeFileSync)(scriptPath, encodeScript(text2));
+    makePrivateDirSync((0, import_node_path24.dirname)(scriptPath));
+    (0, import_node_fs22.writeFileSync)(scriptPath, encodeScript(text2));
     changed = true;
   }
   const data = runValueData(wscript, scriptPath);
@@ -12922,7 +13335,7 @@ async function unregisterWindowsAutostart(options) {
     else warning = `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}).`;
   }
   if (readScript(scriptPath) !== null) {
-    (0, import_node_fs21.rmSync)(scriptPath, { force: true });
+    (0, import_node_fs22.rmSync)(scriptPath, { force: true });
     changed = true;
   }
   if (removeOldVbsScript(scriptPath)) changed = true;
@@ -12940,7 +13353,7 @@ function loginProgram(options, platform) {
 }
 function readText2(path) {
   try {
-    return (0, import_node_fs22.readFileSync)(path, "utf8");
+    return (0, import_node_fs23.readFileSync)(path, "utf8");
   } catch {
     return null;
   }
@@ -13006,15 +13419,18 @@ async function unregisterLaunchAgent(options) {
     warning = `${error.message} The login item's file is removed, so it does not start the daemon at the next login.`;
   }
   if (readText2(path) !== null) {
-    (0, import_node_fs22.rmSync)(path, { force: true });
+    (0, import_node_fs23.rmSync)(path, { force: true });
     changed = true;
   }
   return warning === void 0 ? { changed, where: path } : { changed, where: path, warning };
 }
 
+// src/cli/global-routing.ts
+var import_node_fs25 = require("node:fs");
+
 // src/cli/global-settings.ts
-var import_node_fs23 = require("node:fs");
-var import_node_path24 = require("node:path");
+var import_node_fs24 = require("node:fs");
+var import_node_path25 = require("node:path");
 var BASE_URL = "ANTHROPIC_BASE_URL";
 var CUSTOM_HEADERS2 = "ANTHROPIC_CUSTOM_HEADERS";
 var KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", ...OAUTH_TOKEN_VARIABLES];
@@ -13222,7 +13638,7 @@ function displayValue(value) {
 }
 function keyVariableWarnings(env) {
   if (env === void 0) return [];
-  return KEY_VARIABLES.filter((name) => env[name] !== void 0 && env[name] !== "").map((name) => OAUTH_TOKEN_VARIABLES.includes(name) ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of claude:default's credentials, and a request kurmis sends on claude:default may be billed to the token's account. Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.` : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`);
+  return KEY_VARIABLES.filter((name) => env[name] !== void 0 && env[name] !== "").map((name) => OAUTH_TOKEN_VARIABLES.includes(name) ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of the credentials of the machine's own Claude login, and a request kurmis sends on that login may be billed to the token's account. Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.` : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`);
 }
 function backupBefore(backupText) {
   if (backupText === null || backupText === void 0) return null;
@@ -13383,21 +13799,21 @@ function sameLines(a, b) {
 function claudeSettingsPath(env) {
   const configDir = env.CLAUDE_CONFIG_DIR;
   if (configDir === void 0 || configDir === "") return claudeUserSettingsPath(env);
-  const dir = (0, import_node_path24.resolve)(configDir);
-  const inside = (0, import_node_path24.relative)(kurmisHome(), dir);
-  if (inside === "" || !inside.startsWith("..") && !(0, import_node_path24.isAbsolute)(inside)) {
+  const dir = (0, import_node_path25.resolve)(configDir);
+  const inside = (0, import_node_path25.relative)(kurmisHome(), dir);
+  if (inside === "" || !inside.startsWith("..") && !(0, import_node_path25.isAbsolute)(inside)) {
     throw new SettingsFileError(
       `CLAUDE_CONFIG_DIR is ${dir}, which is inside kurmis' data folder. Run kurmis setup from a shell without it.`
     );
   }
-  return (0, import_node_path24.join)(dir, "settings.json");
+  return (0, import_node_path25.join)(dir, "settings.json");
 }
 function backupPathFor(settingsPath) {
   return `${settingsPath}.kurmis-backup`;
 }
 function readText3(path) {
   try {
-    return (0, import_node_fs23.readFileSync)(path, "utf8");
+    return (0, import_node_fs24.readFileSync)(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -13405,7 +13821,7 @@ function readText3(path) {
 }
 function writeTarget(path) {
   try {
-    return (0, import_node_fs23.realpathSync)(path);
+    return (0, import_node_fs24.realpathSync)(path);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -13413,19 +13829,19 @@ function writeTarget(path) {
   for (let hop = 0; hop < 40; hop++) {
     let stats;
     try {
-      stats = (0, import_node_fs23.lstatSync)(current);
+      stats = (0, import_node_fs24.lstatSync)(current);
     } catch (error) {
       if (error.code === "ENOENT") return current;
       throw error;
     }
     if (!stats.isSymbolicLink()) return current;
-    current = (0, import_node_path24.resolve)((0, import_node_path24.dirname)(current), (0, import_node_fs23.readlinkSync)(current));
+    current = (0, import_node_path25.resolve)((0, import_node_path25.dirname)(current), (0, import_node_fs24.readlinkSync)(current));
   }
   throw new SettingsFileError(`${path} is a chain of more than 40 symbolic links`);
 }
 function linkTargetOf(path) {
   try {
-    if (!(0, import_node_fs23.lstatSync)(path).isSymbolicLink()) return null;
+    if (!(0, import_node_fs24.lstatSync)(path).isSymbolicLink()) return null;
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -13444,21 +13860,21 @@ function backUp(path, replace, platform) {
   const backup = backupPathFor(path);
   if (!replace) {
     try {
-      (0, import_node_fs23.copyFileSync)(path, backup, import_node_fs23.constants.COPYFILE_EXCL);
+      (0, import_node_fs24.copyFileSync)(path, backup, import_node_fs24.constants.COPYFILE_EXCL);
     } catch (error) {
       if (error.code === "EEXIST") return null;
       throw error;
     }
-    if (platform !== "win32") (0, import_node_fs23.chmodSync)(backup, PRIVATE_FILE_MODE);
+    if (platform !== "win32") (0, import_node_fs24.chmodSync)(backup, PRIVATE_FILE_MODE);
     return backup;
   }
   const temp = `${backup}.${String(process.pid)}.tmp`;
   try {
-    (0, import_node_fs23.copyFileSync)(path, temp);
-    if (platform !== "win32") (0, import_node_fs23.chmodSync)(temp, PRIVATE_FILE_MODE);
+    (0, import_node_fs24.copyFileSync)(path, temp);
+    if (platform !== "win32") (0, import_node_fs24.chmodSync)(temp, PRIVATE_FILE_MODE);
     replaceFileSync(temp, backup);
   } catch (error) {
-    (0, import_node_fs23.rmSync)(temp, { force: true });
+    (0, import_node_fs24.rmSync)(temp, { force: true });
     throw error;
   }
   return backup;
@@ -13472,7 +13888,7 @@ function readOnlyError(target) {
 function writeEdit(path, edit, existed, userOnly, platform) {
   const target = writeTarget(path);
   if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target, platform) : null };
-  const before = existed ? (0, import_node_fs23.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
+  const before = existed ? (0, import_node_fs24.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
   if (platform === "win32" && existed && isReadOnly(before)) {
     throw readOnlyError(target);
   }
@@ -13488,7 +13904,7 @@ function writeEdit(path, edit, existed, userOnly, platform) {
     throw error;
   }
   if (platform === "win32") return { backup, modeBefore: null };
-  (0, import_node_fs23.chmodSync)(target, mode);
+  (0, import_node_fs24.chmodSync)(target, mode);
   return { backup, modeBefore: existed && mode !== before ? before : null };
 }
 function failWith2(path, error) {
@@ -13522,7 +13938,7 @@ function checkSetupSettingsFile(path, values, platform = process.platform) {
   try {
     const text2 = readText3(path);
     const edit = applySetupToText(text2, values);
-    if (platform === "win32" && text2 !== null && isReadOnly((0, import_node_fs23.statSync)(writeTarget(path)).mode)) {
+    if (platform === "win32" && text2 !== null && isReadOnly((0, import_node_fs24.statSync)(writeTarget(path)).mode)) {
       throw readOnlyError(writeTarget(path));
     }
     return edit.hadKurmis;
@@ -13546,11 +13962,26 @@ function undoSettingsFile(path, values, platform = process.platform) {
   return { ...edit, path, existed: true, backupWritten: written.backup, linkTarget: linkTargetOf(path), modeBefore: null, backupModeBefore: null };
 }
 
-// src/cli/commands/setup.ts
-var USAGE3 = `Usage: kurmis setup [--undo]
+// src/cli/global-routing.ts
+function isPaused() {
+  return (0, import_node_fs25.existsSync)(pausedFilePath());
+}
+function markPaused(now = /* @__PURE__ */ new Date()) {
+  writeJsonFileSync(pausedFilePath(), { pausedAt: now.toISOString() }, { mode: PRIVATE_FILE_MODE });
+}
+function clearPaused() {
+  const path = pausedFilePath();
+  if (!(0, import_node_fs25.existsSync)(path)) return false;
+  (0, import_node_fs25.rmSync)(path, { force: true });
+  return true;
+}
 
-Routes every Claude Code on this machine through kurmis, not only the ones started with
-"kurmis claude":
+// src/cli/commands/setup.ts
+var NPM_UNINSTALL = "npm uninstall -g kurmis";
+var USAGE3 = `Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]
+
+Turns global routing on: every Claude Code on this machine goes through kurmis, not only the
+ones started with "kurmis claude". Setup:
 
 - starts the daemon now, and goes no further when it cannot;
 - puts kurmis' address and key in the "env" block of your Claude Code settings file,
@@ -13559,15 +13990,26 @@ Routes every Claude Code on this machine through kurmis, not only the ones start
   and the file is copied to settings.json.kurmis-backup before kurmis adds its settings.
   Because the file then holds kurmis' key, on macOS and Linux setup makes it and the copy
   readable only by you;
-- makes the kurmis daemon start when you log in.
+- makes the kurmis daemon start when you log in (macOS and Windows).
 
-Claude Code sessions that are already open keep their settings; start them again.
+Claude Code sessions that are already open keep the settings they started with; start them
+again.
 
 Options:
-  --undo       Take kurmis' settings out of the file again and stop starting the daemon at
-               login. A setting you changed yourself is left as it is. The daemon keeps
-               running for "kurmis claude"; stop it with "kurmis daemon stop".
-  -h, --help   Show this help.`;
+  --pause                 Take kurmis' settings out of the settings file, so a plain "claude"
+                          no longer goes through kurmis. A setting you changed yourself is left
+                          as it is. The daemon, its start at login, your logins and the backup
+                          copy stay. "kurmis setup" turns global routing on again.
+  --uninstall-and-logout  Remove everything kurmis set up: its settings and the backup copy,
+                          the daemon's start at login, every login you added to kurmis (each is
+                          signed out first, which removes its Keychain or Credential Manager
+                          item), the daemon and the kurmis data folder. Your own Claude Code
+                          and Codex sign-ins are not signed out, so a plain "claude" and
+                          "codex" keep working. It lists what it removes and asks first. The
+                          last step, "${NPM_UNINSTALL}", is yours to run.
+  --yes                   With --uninstall-and-logout: do not ask. Without a terminal to ask
+                          at, --uninstall-and-logout needs it.
+  -h, --help              Show this help.`;
 function changeLine(change, undo) {
   const note = change.note === void 0 ? "" : ` (${change.note})`;
   switch (change.action) {
@@ -13610,37 +14052,38 @@ function reportFile(result, undo, context) {
 function modeText(mode) {
   return `0${(mode & 511).toString(8).padStart(3, "0")}`;
 }
-function errorText3(error) {
+function errorText4(error) {
   return error instanceof Error ? error.message : String(error);
 }
-async function autostartStep(undo, deps, context) {
+async function autostartStep(remove, deps, context) {
   let result;
   try {
     const options = { env: context.env, platform: deps.platform };
-    result = undo ? await deps.unregisterAutostart(options) : await deps.registerAutostart(options);
+    result = remove ? await deps.unregisterAutostart(options) : await deps.registerAutostart(options);
   } catch (error) {
-    result = { changed: false, where: null, warning: errorText3(error) };
+    result = { changed: false, where: null, warning: errorText4(error) };
   }
   const supported = deps.platform === "darwin" || deps.platform === "win32";
   const warnsOnly = result.warningOnly === true || result.loadsAtNextLogin === true || result.noEntryPossible === true || !supported;
-  if (!undo && result.warning !== void 0 && warnsOnly) {
+  if (!remove && result.warning !== void 0 && warnsOnly) {
     writeLine(context.stderr, `Warning: ${result.warning}`);
     return true;
   }
   if (result.warning !== void 0) {
-    writeLine(context.stderr, undo ? `Could not remove the daemon's start at login: ${result.warning}` : `Could not make the daemon start at login: ${result.warning}`);
+    writeLine(context.stderr, remove ? `Could not remove the daemon's start at login: ${result.warning}` : `Could not make the daemon start at login: ${result.warning}`);
     return false;
   }
   const where = result.where === null ? "" : ` (${result.where})`;
-  if (undo) {
-    writeLine(context.stdout, result.changed ? `The daemon no longer starts at login${where}.` : "The daemon was not set to start at login.");
+  if (remove) {
+    if (!supported) return true;
+    writeLine(context.stdout, result.changed ? `Removed the daemon's start at login${where}.` : "The daemon was not set to start at login.");
   } else {
     writeLine(context.stdout, result.changed ? `The daemon now starts at login${where}.` : `The daemon already starts at login${where}.`);
   }
   return true;
 }
 async function daemonStep(port, path, hadKurmis, deps, context) {
-  const unchanged = hadKurmis ? `${path} was not changed. It still holds kurmis' settings from an earlier setup, so Claude Code that reads it reaches kurmis only while a daemon runs on the port they name. Run "kurmis setup" again once the daemon runs, or "kurmis setup --undo" to take them out.` : `${path} was not changed, so Claude Code does not use kurmis yet. Run "kurmis setup" again once the daemon runs.`;
+  const unchanged = hadKurmis ? `${path} was not changed. It still holds kurmis' settings from an earlier setup, so Claude Code that reads it reaches kurmis only while a daemon runs on the port they name. Run "kurmis setup" again once the daemon runs, or "kurmis setup --pause" to take them out.` : `${path} was not changed, so Claude Code does not use kurmis yet. Run "kurmis setup" again once the daemon runs.`;
   try {
     const connection = await deps.daemon.ensureDaemon({ env: context.env });
     if (connection.port !== port) {
@@ -13654,126 +14097,339 @@ async function daemonStep(port, path, hadKurmis, deps, context) {
     writeLine(context.stdout, `The daemon is running on port ${String(connection.port)}.`);
     return connection.key;
   } catch (error) {
-    writeLine(context.stderr, `The daemon could not be started: ${errorText3(error)}`);
+    writeLine(context.stderr, `The daemon could not be started: ${errorText4(error)}`);
     writeLine(context.stderr, `${unchanged} "kurmis daemon start" starts it and says what is wrong.`);
     return null;
   }
 }
-async function daemonRuns(deps, context) {
+async function runningDaemonPid(deps, context) {
   try {
-    return await deps.daemon.findDaemon({ env: context.env }) !== null;
+    return (await deps.daemon.findDaemon({ env: context.env }))?.pid ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 function defaultFolderRefusal(env, platform) {
   const value = env["CLAUDE_CONFIG_DIR"];
   const home = (0, import_node_os15.homedir)();
   if (value === void 0 || !configDirHasOwnCredentials(env, platform)) return null;
-  const folder = (0, import_node_path25.join)(home, ".claude");
-  const defaultFile = (0, import_node_path25.join)(folder, "settings.json");
+  const folder = (0, import_node_path26.join)(home, ".claude");
+  const defaultFile = (0, import_node_path26.join)(folder, "settings.json");
   if (namesDefaultClaudeFolder(value, platform, home)) {
     return `CLAUDE_CONFIG_DIR is set to ${value}, which is the default Claude Code folder ${folder}. A claude started with CLAUDE_CONFIG_DIR set keeps its credentials apart from one started without it, even when the variable names that folder, and both read ${defaultFile}, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again.`;
   }
   if (sharesDefaultSettingsFile(value, platform, home)) {
-    return `CLAUDE_CONFIG_DIR is set to ${value}, and ${(0, import_node_path25.join)(value, "settings.json")} is a link to the default Claude Code settings file ${defaultFile}. A claude started with CLAUDE_CONFIG_DIR set signs in with the credentials in ${value}, a plain claude with those in ${folder}, and both read that one file, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again, or give that folder a settings.json of its own.`;
+    return `CLAUDE_CONFIG_DIR is set to ${value}, and ${(0, import_node_path26.join)(value, "settings.json")} is a link to the default Claude Code settings file ${defaultFile}. A claude started with CLAUDE_CONFIG_DIR set signs in with the credentials in ${value}, a plain claude with those in ${folder}, and both read that one file, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again, or give that folder a settings.json of its own.`;
   }
   return null;
 }
-async function runSetup(undo, deps, context) {
-  let path;
-  let port;
-  const refusal = undo ? null : defaultFolderRefusal(context.env, deps.platform);
+function settingsPathOrFail(context) {
+  try {
+    return claudeSettingsPath(context.env);
+  } catch (error) {
+    if (!(error instanceof SettingsFileError)) throw error;
+    writeLine(context.stderr, `kurmis setup: ${error.message}`);
+    return null;
+  }
+}
+function portOrNull() {
+  try {
+    return loadConfig().port;
+  } catch (error) {
+    if (!(error instanceof ConfigError)) throw error;
+    return null;
+  }
+}
+async function runSetup(deps, context) {
+  const refusal = defaultFolderRefusal(context.env, deps.platform);
   if (refusal !== null) {
     writeLine(context.stderr, `kurmis setup: ${refusal}`);
     return EXIT_FAILURE;
   }
-  try {
-    path = claudeSettingsPath(context.env);
-  } catch (error) {
-    if (!(error instanceof SettingsFileError)) throw error;
-    writeLine(context.stderr, `kurmis setup: ${error.message}`);
-    return EXIT_FAILURE;
-  }
+  const path = settingsPathOrFail(context);
+  if (path === null) return EXIT_FAILURE;
+  let port;
   try {
     port = loadConfig().port;
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
-    if (!undo) {
-      writeLine(context.stderr, `kurmis setup: ${error.message}`);
-      return EXIT_FAILURE;
-    }
-    port = null;
+    writeLine(context.stderr, `kurmis setup: ${error.message}`);
+    return EXIT_FAILURE;
   }
-  let key = null;
-  if (!undo) {
-    let hadKurmis;
-    try {
-      hadKurmis = checkSetupSettingsFile(path, { port, key: readOrCreateKey() });
-    } catch (error) {
-      if (!(error instanceof SettingsFileError)) throw error;
-      writeLine(context.stderr, `kurmis setup: ${error.message}`);
-      return EXIT_FAILURE;
-    }
-    key = await daemonStep(port, path, hadKurmis, deps, context);
-    if (key === null) return EXIT_FAILURE;
-  }
-  let result;
+  let hadKurmis;
   try {
-    result = undo ? undoSettingsFile(path, { port }) : setupSettingsFile(path, { port, key, credentialsOfItsOwn: configDirHasOwnCredentials(context.env, deps.platform) });
+    hadKurmis = checkSetupSettingsFile(path, { port, key: readOrCreateKey() });
   } catch (error) {
     if (!(error instanceof SettingsFileError)) throw error;
     writeLine(context.stderr, `kurmis setup: ${error.message}`);
     return EXIT_FAILURE;
   }
-  reportFile(result, undo, context);
-  if (!undo && configDirHasOwnCredentials(context.env, deps.platform)) {
-    writeLine(context.stdout, `CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder, which is not kurmis' claude:default. Kurmis sends its requests only to the extra logins and never signs them as claude:default. "kurmis claude" still starts on claude:default.`);
+  const key = await daemonStep(port, path, hadKurmis, deps, context);
+  if (key === null) return EXIT_FAILURE;
+  let result;
+  try {
+    result = setupSettingsFile(path, { port, key, credentialsOfItsOwn: configDirHasOwnCredentials(context.env, deps.platform) });
+  } catch (error) {
+    if (!(error instanceof SettingsFileError)) throw error;
+    writeLine(context.stderr, `kurmis setup: ${error.message}`);
+    return EXIT_FAILURE;
   }
-  const ok3 = await autostartStep(undo, deps, context);
-  if (undo) {
-    if (await daemonRuns(deps, context)) {
-      writeLine(context.stdout, 'The daemon keeps running for "kurmis claude" and for sessions already open; "kurmis daemon stop" stops it.');
-    }
-  } else if (result.changed) {
-    writeLine(context.stdout, "Claude Code sessions that are already open keep their old settings; start them again.");
+  reportFile(result, false, context);
+  if (clearPaused()) writeLine(context.stdout, "Global routing was paused; it is on again.");
+  if (configDirHasOwnCredentials(context.env, deps.platform)) {
+    writeLine(context.stdout, `CLAUDE_CONFIG_DIR is set, so a plain claude that reads this file signs in with the login in that folder, which is not the machine's own Claude login. Kurmis sends its requests only to the extra logins and never signs them as the machine's own Claude login. "kurmis claude" still starts on the machine's own Claude login.`);
+  }
+  const ok3 = await autostartStep(false, deps, context);
+  if (result.changed) {
+    writeLine(context.stdout, "Claude Code sessions that are already open keep the settings they started with; start them again.");
   }
   if (!ok3) {
-    writeLine(context.stderr, undo ? 'The settings file change above was made; run "kurmis setup --undo" again to finish.' : 'The settings file change above was made; run "kurmis setup" again to finish.');
+    writeLine(context.stderr, 'The settings file change above was made; run "kurmis setup" again to finish.');
     return EXIT_FAILURE;
   }
   return EXIT_OK;
 }
+async function runPause(deps, context) {
+  const path = settingsPathOrFail(context);
+  if (path === null) return EXIT_FAILURE;
+  let result;
+  try {
+    result = undoSettingsFile(path, { port: portOrNull() });
+  } catch (error) {
+    if (!(error instanceof SettingsFileError)) throw error;
+    writeLine(context.stderr, `kurmis setup: ${error.message}`);
+    return EXIT_FAILURE;
+  }
+  const wasPaused = isPaused();
+  if (!result.changed && !wasPaused) {
+    reportFile(result, true, context);
+    writeLine(context.stdout, 'Global routing is not on, so there is nothing to pause. "kurmis setup" turns it on.');
+    return EXIT_OK;
+  }
+  reportFile(result, true, context);
+  if (!wasPaused) markPaused();
+  writeLine(context.stdout, wasPaused && !result.changed ? "Global routing is already paused." : "Paused global routing: a plain claude and the IDE extensions no longer go through kurmis.");
+  writeLine(context.stdout, 'The daemon, its start at login, your logins and the settings backup stay. "kurmis setup" turns global routing on again.');
+  if (result.changed) {
+    writeLine(context.stdout, "Claude Code sessions that are already open keep the settings they started with, and so keep using kurmis until they end; start them again.");
+  }
+  if (await runningDaemonPid(deps, context) !== null) {
+    writeLine(context.stdout, '"kurmis claude" still uses the daemon; "kurmis daemon stop" stops it.');
+  }
+  return EXIT_OK;
+}
+function loginsKurmisAdded(config) {
+  const added = extraLogins(config).map((login) => ({
+    login: { id: login.id, provider: login.provider, machineOwn: false },
+    name: login.alias
+  }));
+  for (const provider of LOGIN_PROVIDERS) {
+    let names;
+    try {
+      names = (0, import_node_fs26.readdirSync)(providerFolder(provider));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!isLoginId(name) || findLogin(config, name)?.machineOwn === true) continue;
+      if (added.some(({ login }) => login.id === name && login.provider === provider)) continue;
+      added.push({ login: { id: name, provider, machineOwn: false }, name });
+    }
+  }
+  return added;
+}
+function autostartEntry(platform) {
+  if (platform === "darwin") return (0, import_node_fs26.existsSync)(autostartPlistPath()) ? autostartPlistPath() : null;
+  if (platform === "win32") return `${RUN_ENTRY_DESCRIPTION}, if it is set`;
+  return null;
+}
+function settingsHaveKurmis(path, port) {
+  let text2;
+  try {
+    text2 = (0, import_node_fs26.readFileSync)(path, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+  let backupText;
+  try {
+    backupText = (0, import_node_fs26.readFileSync)(backupPathFor(path), "utf8");
+  } catch {
+    backupText = null;
+  }
+  try {
+    return undoSetupInText(text2, { port, backupText }).changed;
+  } catch (error) {
+    if (error instanceof SettingsFileError) throw new SettingsFileError(`${path} cannot be changed: ${error.message}`);
+    throw error;
+  }
+}
+function listLine(context, text2) {
+  writeLine(context.stdout, `  - ${text2}`);
+}
+async function runUninstall(yes, deps, context) {
+  const path = settingsPathOrFail(context);
+  if (path === null) return EXIT_FAILURE;
+  let config;
+  let inSettings;
+  try {
+    config = loadConfig();
+    inSettings = settingsHaveKurmis(path, config.port);
+  } catch (error) {
+    if (!(error instanceof ConfigError) && !(error instanceof SettingsFileError)) throw error;
+    writeLine(context.stderr, `kurmis setup: ${error.message} Nothing was removed.`);
+    return EXIT_FAILURE;
+  }
+  const logins = loginsKurmisAdded(config);
+  const backup = backupPathFor(path);
+  const hasBackup = (0, import_node_fs26.existsSync)(backup);
+  const autostart = autostartEntry(deps.platform);
+  const pid = await runningDaemonPid(deps, context);
+  const dataFolder = kurmisHome();
+  writeLine(context.stdout, "This removes what kurmis set up on this machine:");
+  if (inSettings) listLine(context, `kurmis' settings in ${path}`);
+  if (hasBackup) listLine(context, `${backup}, the copy of that file kurmis made`);
+  if (autostart !== null) listLine(context, `the daemon's start at login (${autostart})`);
+  listLine(context, logins.length === 0 ? "no logins: none was added to kurmis" : `the logins added to kurmis, each signed out first: ${logins.map(({ name }) => name).join(", ")}`);
+  if (pid !== null) listLine(context, `the running daemon (pid ${String(pid)}), which is stopped`);
+  if ((0, import_node_fs26.existsSync)(dataFolder)) listLine(context, `the kurmis data folder ${dataFolder}`);
+  writeLine(context.stdout, 'Your own Claude Code and Codex sign-ins are not signed out, so a plain "claude" and "codex" keep working.');
+  if (!yes) {
+    if (!deps.stdinIsTerminal()) {
+      writeLine(context.stderr, "kurmis setup: --uninstall-and-logout asks before it removes anything, and there is no terminal to ask at. Run it again with --yes to remove all of the above. Nothing was removed.");
+      return EXIT_FAILURE;
+    }
+    const answer2 = await deps.ask("Remove all of this? [y/N] ", context);
+    if (answer2 === null || !/^\s*y(es)?\s*$/i.test(answer2)) {
+      writeLine(context.stdout, "Nothing was removed.");
+      return EXIT_FAILURE;
+    }
+  }
+  let result;
+  try {
+    result = undoSettingsFile(path, { port: config.port });
+  } catch (error) {
+    if (!(error instanceof SettingsFileError)) throw error;
+    writeLine(context.stderr, `kurmis setup: ${error.message}`);
+    writeLine(context.stderr, "Nothing else was removed, since Claude Code that reads the file still uses the daemon.");
+    return EXIT_FAILURE;
+  }
+  reportFile(result, true, context);
+  let failed2 = false;
+  try {
+    if ((0, import_node_fs26.existsSync)(backup)) {
+      (0, import_node_fs26.rmSync)(backup, { force: true });
+      writeLine(context.stdout, `Deleted ${backup}.`);
+    }
+  } catch (error) {
+    writeLine(context.stderr, `Could not delete ${backup}: ${errorText4(error)}`);
+    failed2 = true;
+  }
+  if (!await autostartStep(true, deps, context)) failed2 = true;
+  let keepData = false;
+  try {
+    writeLine(context.stdout, await deps.stopDaemon({ env: context.env }) ? `Stopped the daemon${pid === null ? "" : ` (pid ${String(pid)})`}.` : "The daemon was not running.");
+  } catch (error) {
+    if (!(error instanceof DaemonError)) throw error;
+    writeLine(context.stderr, `Could not stop the daemon: ${error.message}`);
+    failed2 = true;
+    keepData = true;
+  }
+  const notRemoved = [];
+  for (const { login, name } of logins) {
+    const code = await deps.logOutLogin(login, context, { keepFolderWhenSignOutFails: true, again: "kurmis setup --uninstall-and-logout" });
+    if (code !== EXIT_OK) notRemoved.push(name);
+  }
+  if (notRemoved.length > 0) {
+    writeLine(context.stderr, `Could not remove ${notRemoved.join(", ")}; see above.`);
+    failed2 = true;
+    keepData = true;
+  }
+  if (keepData) {
+    writeLine(context.stderr, `Kept the kurmis data folder ${dataFolder}, which a second run needs to finish.`);
+  } else {
+    let removal = null;
+    try {
+      removal = removeDataFolder(deps.platform);
+    } catch (error) {
+      writeLine(context.stderr, `Could not delete the kurmis data folder ${dataFolder}: ${errorText4(error)}`);
+      failed2 = true;
+    }
+    if (removal !== null && removal.removed) writeLine(context.stdout, `Deleted the kurmis data folder ${dataFolder}.`);
+    if (removal !== null && !removal.removed) {
+      writeLine(context.stdout, `Deleted kurmis' files in ${dataFolder}. The folder is left, because it also holds files kurmis did not write: ${removal.left.join(", ")}.`);
+    }
+  }
+  if (result.changed) {
+    writeLine(context.stdout, "Claude Code sessions that are already open keep the settings they started with and can no longer reach kurmis; start them again.");
+  }
+  if (failed2) {
+    writeLine(context.stderr, 'Fix what is named above and run "kurmis setup --uninstall-and-logout" again to finish.');
+    return EXIT_FAILURE;
+  }
+  writeLine(context.stdout, `Last step: remove the kurmis program with "${NPM_UNINSTALL}".`);
+  return EXIT_OK;
+}
+async function askAtTerminal(question) {
+  const lines = (0, import_promises6.createInterface)({ input: process.stdin, output: process.stdout });
+  const controller = new AbortController();
+  lines.on("SIGINT", () => controller.abort());
+  lines.on("close", () => controller.abort());
+  try {
+    return await lines.question(question, { signal: controller.signal });
+  } catch {
+    return null;
+  } finally {
+    lines.close();
+  }
+}
 function createSetupCommand(deps = {}) {
+  const daemon = deps.daemon ?? realDaemonClient;
+  const platform = deps.platform ?? process.platform;
   const full = {
-    daemon: deps.daemon ?? realDaemonClient,
+    daemon,
     registerAutostart: deps.registerAutostart ?? registerAutostart,
     unregisterAutostart: deps.unregisterAutostart ?? unregisterAutostart,
-    platform: deps.platform ?? process.platform
+    stopDaemon: deps.stopDaemon ?? stopDaemon,
+    logOutLogin: deps.logOutLogin ?? createLoginLogout({ daemon, platform }),
+    stdinIsTerminal: deps.stdinIsTerminal ?? (() => process.stdin.isTTY === true),
+    ask: deps.ask ?? askAtTerminal,
+    platform
   };
   return {
     name: "setup",
-    summary: "Route every Claude Code on this machine through kurmis",
+    summary: "Turn global routing on, pause it, or remove everything kurmis set up",
     usage: USAGE3,
     async run(args, context) {
-      const parsed = parseCommandArgs("setup", args, { undo: { type: "boolean" } }, context);
+      const parsed = parseCommandArgs("setup", args, {
+        pause: { type: "boolean" },
+        "uninstall-and-logout": { type: "boolean" },
+        yes: { type: "boolean" }
+      }, context);
       if (typeof parsed === "number") return parsed;
-      return runSetup(parsed.values.undo === true, full, context);
+      const pause = parsed.values.pause === true;
+      const uninstall = parsed.values["uninstall-and-logout"] === true;
+      const yes = parsed.values.yes === true;
+      if (pause && uninstall) return usageError("setup", "--pause and --uninstall-and-logout cannot be used together", context);
+      if (yes && !uninstall) return usageError("setup", "--yes goes with --uninstall-and-logout", context);
+      if (uninstall) return runUninstall(yes, full, context);
+      return pause ? runPause(full, context) : runSetup(full, context);
     }
   };
 }
 var setupCommand = createSetupCommand();
 
 // src/cli/status-format.ts
-var STATUS_JSON_FORMAT = 1;
+var STATUS_JSON_FORMAT = 2;
 function statusJson(answer2, now, options) {
   return {
     format: STATUS_JSON_FORMAT,
     daemon: { version: answer2.version, pid: answer2.pid, port: answer2.port, startedAt: isoTime(answer2.startedAt) },
     logins: answer2.logins.map((login) => ({
       id: login.id,
+      alias: login.alias,
       provider: login.provider,
-      label: login.label,
+      machineOwn: login.machineOwn,
       email: login.email ?? null,
       signedIn: login.signedIn,
       probing: login.probing === true,
@@ -13785,9 +14441,27 @@ function statusJson(answer2, now, options) {
       blocked: blockJson(answer2, login, now, options),
       sessions: login.provider === "claude" ? login.sessions : null
     })),
-    codexStart: codexStart(answer2, now)
+    codexStart: codexStart(answer2, now),
+    warnings: sameAccountWarnings(answer2)
   };
 }
+function loginArgument2(answer2, login) {
+  const shared = answer2.logins.some((other) => other.id !== login.id && other.alias === login.alias);
+  return shared ? `${login.provider}:${login.alias}` : login.alias;
+}
+function sameAccountWarnings(answer2) {
+  const warnings = [];
+  for (const own2 of answer2.logins.filter((login) => login.machineOwn && login.email !== null)) {
+    const email = own2.email.trim().toLowerCase();
+    for (const extra of answer2.logins) {
+      if (extra.machineOwn || extra.provider !== own2.provider || extra.email?.trim().toLowerCase() !== email) continue;
+      const product = PRODUCT_NAMES[own2.provider];
+      warnings.push(`${extra.alias} and ${own2.alias}, this machine's own ${product} sign-in, are the same ${product} account (${own2.email}), so they use one subscription. "kurmis logout ${loginArgument2(answer2, extra)}" removes ${extra.alias}.`);
+    }
+  }
+  return warnings;
+}
+var PRODUCT_NAMES = { claude: "Claude", codex: "Codex" };
 function formatStatus(answer2, now, options) {
   const json = statusJson(answer2, now, options);
   json.logins.forEach((login, index) => {
@@ -13799,11 +14473,12 @@ function formatStatus(answer2, now, options) {
     `kurmis daemon ${answer2.version}, pid ${String(answer2.pid)}, port ${String(answer2.port)}, running for ${spanText(now - answer2.startedAt)}`
   ];
   const labelWidth = Math.min(MAX_LABEL_WIDTH, Math.max(0, ...json.logins.flatMap((login) => (login.usage?.windows ?? []).map((window) => window.label.length))));
+  for (const warning of json.warnings) lines.push("", ...wrap(`Warning: ${warning}`, "", "  "));
   for (const login of json.logins) {
     lines.push("", ...loginLines(login, now, labelWidth));
   }
   if (json.codexStart !== null) {
-    lines.push("", ...wrap(`kurmis codex would start on ${json.codexStart.login}.` + (json.codexStart.note === null ? "" : ` ${json.codexStart.note}`), "", ""));
+    lines.push("", ...wrap(`kurmis codex would start on ${json.codexStart.alias}.` + (json.codexStart.note === null ? "" : ` ${json.codexStart.note}`), "", ""));
   }
   return `${lines.join("\n")}
 `;
@@ -13811,9 +14486,11 @@ function formatStatus(answer2, now, options) {
 var WIDTH = 80;
 var MAX_LABEL_WIDTH = 24;
 function loginLines(login, now, labelWidth) {
-  const name = login.id.slice(login.id.indexOf(":") + 1);
-  const title = login.label === name ? login.id : `${login.id}  "${login.label}"`;
-  const lines = [login.email === null ? title : `${title}  ${login.email}`];
+  const title = `${login.alias} (${PRODUCT_NAMES[login.provider]}, id ${login.id})`;
+  const lines = login.email === null ? [title] : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`] : [title, `  ${login.email}`];
+  if (login.machineOwn) {
+    lines.push(`  this machine's own ${PRODUCT_NAMES[login.provider]} sign-in, the account a plain "${login.provider}" uses`);
+  }
   const facts = [
     login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
     login.routing ? "routing on" : "routing off",
@@ -13911,7 +14588,8 @@ function localTimeText(at2, now, timeZone) {
 function codexStart(answer2, now) {
   if (!answer2.logins.some((login) => login.provider === "codex")) return null;
   const choice = chooseCodexLogin(answer2, now);
-  return { login: choice.login, note: choice.note };
+  const alias = answer2.logins.find((login) => login.id === choice.login)?.alias ?? choice.login;
+  return { login: choice.login, alias, note: choice.note };
 }
 function isoTime(at2) {
   return Number.isFinite(at2) ? new Date(at2).toISOString() : String(at2);
@@ -13940,8 +14618,15 @@ var USAGE4 = `Usage: kurmis status [--json]
 Shows each login's five-hour and weekly usage, its limits, and whether routing can use it now.
 The daemon is started first when it is not running.
 
+Each login is shown by its alias, with its provider, its id and the account's email when the
+daemon knows it. The machine's own Claude and Codex logins are marked: they are the accounts a
+plain "claude" and a plain "codex" are signed in to. When an extra login is the same account
+as the machine's own login of its provider, a warning says so, because both then use one
+subscription.
+
 Options:
-  --json       Print the same as JSON.
+  --json       Print the same as JSON. Each login has "alias", "id", "provider" and
+               "machineOwn"; "warnings" holds the warnings.
   -h, --help   Show this help.`;
 function createStatusCommand(overrides = {}) {
   const deps = {

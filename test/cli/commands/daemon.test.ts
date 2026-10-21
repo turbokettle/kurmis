@@ -30,3 +30,13 @@ describe('daemon start --env', () => {
     expect(stderr()).toContain('kurmis daemon start: --env takes NAME=VALUE')
   })
 })
+
+describe('daemon stop --now', () => {
+  it('is in the help, which says what an open Claude session sees', async () => {
+    let stdout = ''
+    const context = { stdout: { write: (text: string) => (stdout += text) }, stderr: { write: () => true }, env: {} }
+    expect(await runCli(['daemon', '--help'], context)).toBe(0)
+    expect(stdout).toContain('stop [--now]')
+    expect(stdout).toContain('sees a dropped\n                          connection and retries the request.')
+  })
+})

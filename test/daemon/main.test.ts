@@ -191,6 +191,21 @@ describe('runDaemon', () => {
     expect(logText()).toMatch(/drain_cut_short count=1 reason=timeout/)
   }, 30_000)
 
+  it('cuts its open requests at once on a control stop that names a wait of 0', async () => {
+    const daemon = await startListening()
+    const open = hold(20_000)
+    await waitUntil(() => daemon.factory.apps[0]?.openRequests() === 1, 2_000, 'the open request')
+    const stoppedAt = Date.now()
+    const answer = await controlRequest({ port, key: key(), method: 'POST', path: CONTROL_PATHS.stop, body: { maxWaitMs: 0 } })
+    expect(answer).toMatchObject({ kind: 'answered', status: 200 })
+    expect(await daemon.exit).toBe(0)
+    expect(Date.now() - stoppedAt).toBeLessThan(5_000)
+    expect((await open).kind).toBe('failed')
+    expect(readDaemonFile().status).toBe('missing')
+    expect(daemon.factory.apps[0]?.calls.close).toBe(1)
+    expect(logText()).toMatch(/drain_cut_short count=1 reason=timeout/)
+  }, 30_000)
+
   it('closes idle keep-alive connections when it stops', async () => {
     const daemon = await startListening()
     const agent = new Agent({ keepAlive: true })
