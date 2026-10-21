@@ -1,7 +1,9 @@
-// A stand-in for the `codex` CLI, for tests. It answers `codex --version`, runs a small
-// `codex app-server` on stdin and stdout, and for any other command line it prints one line
-// and exits. Which login it is signed in as comes from `$CODEX_HOME/auth.json`. What it
-// answers can be changed with a scenario file. test/fakes/README.md lists every setting.
+// A stand-in for the `codex` CLI, for tests. It answers `codex --version` and
+// `codex login status`, runs a small `codex app-server` on stdin and stdout, and for any other
+// command line it prints one line and exits. Which login it is signed in as comes from
+// `$CODEX_HOME/auth.json`, or from a stand-in for the system keyring when the home's
+// `config.toml` keeps the sign-in there. What it answers can be changed with a scenario file.
+// test/fakes/README.md lists every setting.
 //
 // The wire format is the one the real `codex app-server` 0.163.0 was measured to use: one JSON
 // message per line, no `jsonrpc` field, answers `{id, result}` or `{error: {code, message}, id}`,
@@ -10,6 +12,7 @@
 // It never prints or records a token, and it writes nothing to disk except the record file
 // that FAKE_CODEX_RECORD names.
 
+import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, readFileSync, realpathSync } from 'node:fs'
 import { arch, homedir, release } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -32,6 +35,8 @@ const RECORDED_NAME_PREFIXES = ['CODEX_', 'OPENAI_', 'KURMIS_', 'ANTHROPIC_', 'C
 const args = process.argv.slice(2)
 const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex')
 const recordPath = process.env.FAKE_CODEX_RECORD || ''
+/** The folder that stands in for the system keyring: one file per Codex home (`keyringItemPath`). */
+const keyringDir = process.env.FAKE_CODEX_KEYRING_DIR || ''
 const version = process.env.FAKE_CODEX_VERSION || DEFAULT_VERSION
 
 main()
@@ -40,7 +45,7 @@ function main() {
   const command = subcommand(args)
   record({
     event: 'start',
-    mode: command === '--version' ? 'version' : command === 'app-server' ? 'app-server' : 'other',
+    mode: command === '--version' ? 'version' : command === 'app-server' ? 'app-server' : loginStatusCommand() ? 'login-status' : 'other',
     argv: args,
     codexHome: process.env.CODEX_HOME ?? null,
     authFile: existsSync(join(codexHome, 'auth.json')),
@@ -56,8 +61,21 @@ function main() {
     runAppServer()
     return
   }
+  if (loginStatusCommand()) {
+    // The real CLI writes this to stderr and exits 1 when signed out.
+    const login = readLogin()
+    process.stderr.write(login === null ? 'Not logged in\n' : login.account.type === 'chatgpt' ? 'Logged in using ChatGPT\n' : 'Logged in using an API key\n')
+    process.exitCode = login === null ? 1 : 0
+    return
+  }
   process.stdout.write(`fake-codex: this is the test stand-in for codex, started with ${JSON.stringify(args)}\n`)
   process.exitCode = Number(process.env.FAKE_CODEX_EXIT_CODE || '0')
+}
+
+/** Whether the command line is `codex login status`. */
+function loginStatusCommand() {
+  const rest = args.slice(args.indexOf(subcommand(args)))
+  return rest[0] === 'login' && rest[1] === 'status'
 }
 
 /**
@@ -298,7 +316,7 @@ function write(message) {
 function readLogin() {
   let auth
   try {
-    auth = JSON.parse(readFileSync(join(codexHome, 'auth.json'), 'utf8'))
+    auth = JSON.parse(authText())
   } catch {
     return null
   }
@@ -320,6 +338,51 @@ function readLogin() {
     return { account: { type: 'apiKey' }, accountId: null }
   }
   return null
+}
+
+/**
+ * Where the home keeps its sign-in, as `cli_auth_credentials_store` in `$CODEX_HOME/config.toml`
+ * says: `file` (the default), `keyring` or `auto`. The fake reads only a plain top-level line.
+ * @returns {string}
+ */
+function credentialsStore() {
+  let text
+  try {
+    text = readFileSync(join(codexHome, 'config.toml'), 'utf8')
+  } catch {
+    return 'file'
+  }
+  const table = text.search(/^\s*\[/m)
+  const top = table === -1 ? text : text.slice(0, table)
+  const match = /^\s*cli_auth_credentials_store\s*=\s*["']([a-z]+)["']/m.exec(top)
+  return match ? match[1] : 'file'
+}
+
+/**
+ * The stand-in keyring item of this Codex home: a file in FAKE_CODEX_KEYRING_DIR named after a
+ * hash of the home's path, as the real CLI names its keyring entry after the home. Empty when
+ * the variable is not set.
+ * @param {string} home
+ * @returns {string}
+ */
+function keyringItemPath(home) {
+  if (keyringDir.length === 0) return ''
+  return join(keyringDir, `${createHash('sha256').update(resolve(home)).digest('hex').slice(0, 16)}.json`)
+}
+
+/**
+ * The text of the sign-in, from `auth.json` or the keyring item as `credentialsStore` says.
+ * Throws when there is none.
+ * @returns {string}
+ */
+function authText() {
+  const store = credentialsStore()
+  const item = keyringItemPath(codexHome)
+  if (store === 'keyring' || store === 'auto') {
+    if (item.length > 0 && existsSync(item)) return readFileSync(item, 'utf8')
+    if (store === 'keyring') throw new Error('no keyring item')
+  }
+  return readFileSync(join(codexHome, 'auth.json'), 'utf8')
 }
 
 /**

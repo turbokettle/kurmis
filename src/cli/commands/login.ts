@@ -7,10 +7,12 @@
 // Claude runs `claude auth login --claudeai` with the login's folder as `CLAUDE_CONFIG_DIR`
 // (`claudeLoginEnv`), Codex runs `codex login` with the folder as `CODEX_HOME` (`codexLoginEnv`).
 // The CLI gets the terminal, as in `kurmis claude`. A new login is added to config.json only after
-// its CLI has exited 0 and its credentials are there; otherwise a folder this command created is
-// removed again. The email the CLI reports is shown on the terminal and written nowhere: the
-// label defaults to the login's name. On Windows a Claude login whose record is in Credential
-// Manager signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new token replaces it.
+// its CLI has exited 0 and its credentials are there (`hasCredentials`: for a Codex login whose
+// `config.toml` keeps the sign-in in the system's keyring, `codex login status` says so);
+// otherwise a folder this command created is removed again. The email the CLI reports is shown
+// on the terminal and written nowhere: the label defaults to the login's name. On Windows a
+// Claude login whose record is in Credential Manager signs in with
+// `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new token replaces it.
 //
 // The run holds the login's lock (`login-lock.ts`) from before it creates the folder until it is
 // done, so a second `kurmis login` or a `kurmis logout` of the same login stops at once instead
@@ -32,16 +34,19 @@ import { makePrivateDirSync } from '../../platform/files.ts'
 import { holdsStoredRecord } from '../../platform/windows-credentials.ts'
 import { ProgramNotFoundError, type findProgram, type ResolvedProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
+import { runProgram } from '../../platform/run.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realChildRunner, realDaemonClient, realFindProgram, realPrepareCodexHome, reloadText, settleWithin, type ChildRunner, type DaemonClient } from '../command-deps.ts'
 import type { FileLock } from '../../data/lock.ts'
 import { LoginBusyError, lockLogin } from '../login-lock.ts'
-import { hasLocalCredentials } from './list.ts'
+import { hasCredentials } from './list.ts'
 
 export interface LoginDeps {
   daemon: DaemonClient
   runner: ChildRunner
   findProgram: typeof findProgram
+  /** Runs `codex login status` for a Codex login that keeps its sign-in in the keyring (`hasCredentials`). */
+  runProgram: typeof runProgram
   /** The user's home folder, where `~/.claude.json` and `~/.codex` are. */
   home: () => string
   /**
@@ -214,7 +219,8 @@ async function signIn(run: SignInRun): Promise<number> {
   const cleanUp = (): void => {
     if (!created || folder === null) return
     removeTreeSync(folder)
-    // Preparing the Codex home wrote what it merged in; a later login of this name must not find it.
+    // Preparing the Codex home wrote what it merged in; a later login of this name must not
+    // find it.
     if (provider === 'codex') rmSync(codexMergedRecordPath(id), { force: true })
   }
   const notAdded = isNew ? ` ${id} was not added.` : ''
@@ -255,7 +261,7 @@ async function signIn(run: SignInRun): Promise<number> {
     rmSync(join(claudeDefaultProbeFolder(), CLAUDE_PROFILE_FILE), { force: true })
   }
   const identity = provider === 'claude' ? (isDefault ? homeIdentity(run.deps.home()) : readClaudeIdentity(id, run.deps.home())) : null
-  if (identity === null && !hasLocalCredentials(id, context.env, run.deps.home())) {
+  if (identity === null && !(await hasCredentials(id, context.env, run.deps.home(), run.deps))) {
     cleanUp()
     return fail(context, `"${cliName}" ended, but ${id} has no credentials.${notAdded}`)
   }
@@ -286,6 +292,7 @@ export function createLoginCommand(deps: Partial<LoginDeps> = {}): Command {
     daemon: deps.daemon ?? realDaemonClient,
     runner: deps.runner ?? realChildRunner,
     findProgram: deps.findProgram ?? realFindProgram,
+    runProgram: deps.runProgram ?? runProgram,
     home: deps.home ?? homedir,
     prepareCodexHome: deps.prepareCodexHome ?? realPrepareCodexHome,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,

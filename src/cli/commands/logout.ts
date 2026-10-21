@@ -137,7 +137,8 @@ Options:
     }
     const hasFolder = exists(folder)
     if (!listed && !hasFolder) {
-      // A failed `kurmis login` of a new Codex login can leave only the record of what was merged into its home.
+      // A failed `kurmis login` of a new Codex login can leave only the record of what was
+      // merged into its home.
       const record = provider === 'codex' ? codexMergedRecordPath(id) : null
       if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis list" shows them`)
       rmSync(record, { force: true })
@@ -146,7 +147,8 @@ Options:
     }
     const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null
 
-    // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the folder is gone.
+    // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the
+    // folder is gone.
     if (hasFolder || provider === 'claude') {
       const problem = await signOut(id, provider, folder, context.env)
       if (problem !== null) writeLine(context.stderr, `kurmis logout: ${problem}`)

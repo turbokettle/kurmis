@@ -20,7 +20,7 @@
 // merge needs it), a hash of each file copied, the target of each link kurmis made or found
 // in place, and the folders already warned about. A home that is empty when the start begins
 // (a new login) starts from an empty record, so a record left by an earlier login of the same
-// name is not used.
+// name is not used, and that record is written even when the first merge does not land.
 //
 // `config.toml` and the copied files of the default home are read through a link, so a file
 // that is a symlink into a dotfiles folder is still used.
@@ -31,6 +31,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { constants, type Dirent } from 'node:fs'
 import { lstat, open, readdir, readFile, rm, rmdir, stat } from 'node:fs/promises'
+import { setTimeout as delay } from 'node:timers/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import {
@@ -66,7 +67,11 @@ export interface PrepareCodexHomeOptions {
 
 /** What kurmis last merged and copied into a login's home (`codexMergedRecordPath`). */
 interface CodexMergedRecord {
-  /** The default home's `config.toml` without secrets, as last merged in; null before the first merge. */
+  /**
+   * The default home's `config.toml` without secrets, as last merged in. '' for a home that
+   * nothing has been merged into yet, so that the first merge counts every setting already in
+   * the login's file as its own. Null only for a home made by a kurmis that kept no record.
+   */
   config: string | null
   /** For each file copied in, the SHA-256 of the text kurmis last copied there. */
   copied: Record<string, string>
@@ -80,8 +85,9 @@ interface CodexMergedRecord {
   conflicts: string[]
 }
 
-function emptyRecord(): CodexMergedRecord {
-  return { config: null, copied: {}, links: {}, conflicts: [] }
+/** A record with nothing in it, `config` as given. */
+function emptyRecord(config: string | null): CodexMergedRecord {
+  return { config, copied: {}, links: {}, conflicts: [] }
 }
 
 /**
@@ -105,13 +111,17 @@ export async function prepareCodexHome(id: string, options: PrepareCodexHomeOpti
   const source = codexSourceHome(options.env, platform)
   const warnings: string[] = []
   const recordPath = codexMergedRecordPath(login)
-  const record = (await isEmptyFolder(home)) ? emptyRecord() : await readRecord(recordPath, warnings)
+  // A new home starts from an empty record, which is always written: without it, a home
+  // whose first merge did not land (the default home's file did not parse, the login's file
+  // kept changing) would look like one made before kurmis kept a record at the next start.
+  const isNew = await isEmptyFolder(home)
+  const record = isNew ? emptyRecord('') : await readRecord(recordPath, warnings)
   const next: CodexMergedRecord = { config: record.config, copied: { ...record.copied }, links: {}, conflicts: [] }
   await linkSharedFolders(source, home, platform, warnings, record, next)
   for (const file of CODEX_AGENTS_FILES) await copyAgents(source, home, file, warnings, record, next)
   await refreshConfig(source, home, warnings, record, next)
   next.conflicts.sort()
-  if (formatJson(next) !== formatJson(record)) {
+  if (isNew || formatJson(next) !== formatJson(record)) {
     try {
       await writeJsonFile(recordPath, next, { mode: PRIVATE_FILE_MODE })
     } catch (error) {
@@ -129,20 +139,30 @@ async function isEmptyFolder(folder: string): Promise<boolean> {
   }
 }
 
-/** The record of a login's home; an empty one when there is none or it is damaged. */
+/**
+ * The record of a login's home that is not new. When there is none, the home was made by a
+ * kurmis that kept no record, and `config` is null. When it cannot be read or is damaged,
+ * `config` is '': what was merged before is not known, so every setting in the login's file
+ * counts as its own and none is removed.
+ */
 async function readRecord(path: string, warnings: string[]): Promise<CodexMergedRecord> {
   let read
   try {
     read = await readJsonFile(path)
   } catch (error) {
-    warnings.push(`Could not read ${path}, so this start merges as if nothing had been merged before: ${errorText(error)}`)
-    return emptyRecord()
+    warnings.push(`Could not read ${path}, so this start keeps every setting of the login's config.toml: ${errorText(error)}`)
+    return emptyRecord('')
   }
-  if (read.status !== 'ok' || read.value === null || typeof read.value !== 'object') return emptyRecord()
+  if (read.status === 'missing') return emptyRecord(null)
+  if (read.status !== 'ok' || read.value === null || typeof read.value !== 'object' || Array.isArray(read.value)) {
+    warnings.push(`${path} is damaged, so this start keeps every setting of the login's config.toml.`)
+    return emptyRecord('')
+  }
   const value = read.value as Record<string, unknown>
   const conflicts = value['conflicts']
+  const config = value['config']
   return {
-    config: typeof value['config'] === 'string' ? value['config'] : null,
+    config: typeof config === 'string' ? config : config === null ? null : '',
     copied: stringRecord(value['copied']),
     links: stringRecord(value['links']),
     conflicts: Array.isArray(conflicts) ? conflicts.filter((name): name is string => typeof name === 'string') : []
@@ -312,40 +332,82 @@ async function removeStaleLinks(
   }
 }
 
+/** How many times `placeLink` reads the place and tries to link it before it gives up. */
+const LINK_ATTEMPTS = 4
+
+/** How long `placeLink` waits before it reads the place again after a step another start got in the way of. */
+const LINK_RETRY_DELAY_MS = 25
+
+/**
+ * Whether a step at a link's place failed because another `kurmis codex` on the same login
+ * was making or replacing the link at the same moment, so that reading the place again finds
+ * out what is there: EEXIST (the other's link or folder is there now), ENOENT (the other
+ * removed the folder), and on Windows EBUSY, EPERM and EACCES. Windows makes a junction in
+ * steps (libuv creates an empty folder, opens it and sets the reparse point), and a step fails
+ * with one of those when the other start removed that folder or holds it open.
+ */
+export function retryableLinkError(code: string | undefined, platform: NodeJS.Platform): boolean {
+  if (code === 'EEXIST' || code === 'ENOENT') return true
+  return platform === 'win32' && (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES')
+}
+
 /**
  * Makes `place` a link to `from` unless it is one: `linked` when it is in the end, `conflict`
  * when a folder with something in it or a link elsewhere is there. An empty real folder is
- * removed first (`rmdir` removes only an empty one). Another `kurmis codex` on the same login
- * may do the same at the same moment: then removing the folder fails because it is gone or is
- * the other's link already, or creating the link fails with EEXIST, and the place is read again.
+ * removed first (`rmdir` removes only an empty one).
+ *
+ * Another `kurmis codex` on the same login may do the same at the same moment. On Windows the
+ * empty folder seen may even be the other's junction while it is being made, and removing it
+ * makes the other's next step fail. So when removing the folder or creating the link fails
+ * with an error `retryableLinkError` accepts, the place is read again after a short wait, up
+ * to `LINK_ATTEMPTS` times, and the other's link is found there. When the place never becomes
+ * the link, the last error of creating it is thrown, so a lasting failure (no right to make a
+ * link there) is not reported as a folder of the login's own. `link` is replaced in tests.
  */
-async function placeLink(from: string, place: string, platform: NodeJS.Platform): Promise<'linked' | 'conflict'> {
-  for (let attempt = 0; attempt < 2; attempt++) {
+export async function placeLink(from: string, place: string, platform: NodeJS.Platform,
+  link: typeof linkFolder = linkFolder): Promise<'linked' | 'conflict'> {
+  let failure: unknown = null
+  for (let attempt = 1; attempt <= LINK_ATTEMPTS; attempt++) {
+    if (attempt > 1) await delay(LINK_RETRY_DELAY_MS)
     const found = await readFolderLink(place, platform)
     const action = codexLinkAction(found, from, platform)
     if (action === 'linked') return 'linked'
     if (action === 'conflict') {
       if (found.kind !== 'other') return 'conflict'
-      if (!(await removeEmptyFolder(place))) continue
+      const removed = await removeEmptyFolder(place, platform)
+      if (removed === 'kept') return 'conflict'
+      if (removed === 'again') continue
     }
     try {
-      await linkFolder(from, place, platform)
+      await link(from, place, platform)
       return 'linked'
     } catch (error) {
-      if (errorCode(error) !== 'EEXIST') throw error
+      if (!retryableLinkError(errorCode(error), platform)) throw error
+      failure = error
     }
   }
-  return codexLinkAction(await readFolderLink(place, platform), from, platform) === 'linked' ? 'linked' : 'conflict'
+  if (codexLinkAction(await readFolderLink(place, platform), from, platform) === 'linked') return 'linked'
+  if (failure !== null && errorCode(failure) !== 'EEXIST') throw failure
+  return 'conflict'
 }
 
-/** Removes `place` when it is a real folder with nothing in it. Answers whether it did. */
-async function removeEmptyFolder(place: string): Promise<boolean> {
+/**
+ * Removes `place` when it is a real folder with nothing in it. Answers `removed` when it did,
+ * `kept` when the place is a file or a folder with something in it, and `again` when another
+ * start at the same place explains what happened: the place is a link now, or it is gone,
+ * or on Windows it is held open (`retryableLinkError`).
+ */
+async function removeEmptyFolder(place: string, platform: NodeJS.Platform): Promise<'removed' | 'kept' | 'again'> {
   try {
-    if (!(await lstat(place)).isDirectory()) return false
+    const stats = await lstat(place)
+    if (stats.isSymbolicLink()) return 'again'
+    if (!stats.isDirectory()) return 'kept'
     await rmdir(place)
-    return true
-  } catch {
-    return false
+    return 'removed'
+  } catch (error) {
+    const code = errorCode(error)
+    // Removing a link answers ENOTDIR on macOS and Linux.
+    return code === 'ENOTDIR' || (code !== 'EEXIST' && retryableLinkError(code, platform)) ? 'again' : 'kept'
   }
 }
 
