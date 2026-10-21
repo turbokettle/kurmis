@@ -45,6 +45,8 @@ export function loginStatus(id: string, patch: Partial<LoginStatus> = {}): Login
     cooldownUntil: null,
     block: null,
     sessions: 0,
+    email: null,
+    probing: false,
     ...patch
   }
 }
