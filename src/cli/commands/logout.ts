@@ -8,16 +8,17 @@
 //    credentials file, where there is one, goes with the folder anyway. On macOS the message
 //    names the Keychain item that may be left.
 // 3. The login's folder is deleted without following links out of it (`removeTreeSync`): a
-//    Codex home links into `~/.codex`, and only the links are removed.
+//    Codex home links into `~/.codex`, and only the links are removed. For a Codex login the
+//    record of what was last merged into its home (`codexMergedRecordPath`) goes too.
 //
 // A login that is no longer in config.json but still has a folder (a removal that stopped
 // half-way) is cleaned up the same way.
-import { lstatSync } from 'node:fs'
+import { lstatSync, rmSync } from 'node:fs'
 import { keychainService } from '../../core/keychain-service.ts'
 import { changeConfig, ConfigError, findLogin, loadConfig, removeLogin } from '../../data/config.ts'
 import { applyEnvPatch, claudeLoginEnv, codexLoginEnv } from '../../data/login-env.ts'
 import { isDefaultLoginId, parseLoginId } from '../../data/login-id.ts'
-import { loginFolder } from '../../data/paths.ts'
+import { codexMergedRecordPath, loginFolder } from '../../data/paths.ts'
 import { ProgramNotFoundError, type findProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { runProgram } from '../../platform/run.ts'
@@ -120,6 +121,7 @@ Options:
       }
       try {
         removeTreeSync(folder)
+        if (provider === 'codex') rmSync(codexMergedRecordPath(id), { force: true })
       } catch (error) {
         return fail(context, `${listed ? `${id} is removed from kurmis, but ` : ''}its folder ${folder} could not be deleted ` +
           `(${error instanceof Error ? error.message : String(error)}). Close what uses it and run "kurmis logout ${id}" again.`)

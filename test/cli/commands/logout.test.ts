@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createLogoutCommand, type LogoutDeps } from '../../../src/cli/commands/logout.ts'
 import { keychainService } from '../../../src/core/keychain-service.ts'
 import { addLogin, defaultConfig, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
-import { kurmisHome, loginFolder } from '../../../src/data/paths.ts'
+import { codexMergedRecordPath, kurmisHome, loginFolder } from '../../../src/data/paths.ts'
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram, type RunResult } from '../../../src/platform/run.ts'
 import { FAKE_CLAUDE_SCRIPT, readFakeClaudeRecord, writeClaudeCredentials } from '../../fakes/index.ts'
@@ -81,6 +81,8 @@ describe('kurmis logout', () => {
     writeFileSync(join(folder, 'auth.json'), '{}')
     symlinkSync(join(own, 'sessions'), join(folder, 'sessions'), 'junction')
     symlinkSync(join(own, 'AGENTS.md'), join(folder, 'AGENTS.md'), 'file')
+    mkdirSync(join(kurmisHome(), 'codex-merged'), { recursive: true })
+    writeFileSync(codexMergedRecordPath('codex:side'), '{"config":null,"copied":{},"conflicts":[]}\n')
     const run = fakeRun()
     const logout = createLogoutCommand({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: run.runProgram })
     expect(await logout.run(['codex:side'], collect().context)).toBe(0)
@@ -89,6 +91,8 @@ describe('kurmis logout', () => {
     expect(existsSync(folder)).toBe(false)
     expect(readFileSync(join(own, 'sessions', 'one.jsonl'), 'utf8')).toBe('kept')
     expect(readFileSync(join(own, 'AGENTS.md'), 'utf8')).toBe('kept')
+    // The record of what was merged into the home goes with it.
+    expect(existsSync(codexMergedRecordPath('codex:side'))).toBe(false)
     expect(findLogin(loadConfig(), 'codex:side')).toBeUndefined()
   })
 
