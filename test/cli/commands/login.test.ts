@@ -5,7 +5,7 @@ import { realPrepareCodexHome, type ChildRunner } from '../../../src/cli/command
 import { createLoginCommand, freeLoginName, loginTarget, type LoginDeps } from '../../../src/cli/commands/login.ts'
 import type { ChildEnd, ChildSpec } from '../../../src/cli/wrapper.ts'
 import { addLogin, defaultConfig, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
-import { configPath, kurmisHome, loginFolder, loginLockPath } from '../../../src/data/paths.ts'
+import { codexMergedRecordPath, configPath, kurmisHome, loginFolder, loginLockPath } from '../../../src/data/paths.ts'
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram } from '../../../src/platform/run.ts'
 import { FAKE_CLAUDE_SCRIPT, writeClaudeIdentity, writeCodexAuth } from '../../fakes/index.ts'
@@ -366,6 +366,16 @@ describe('kurmis login codex', () => {
     expect(await login.run(['codex'], out.context)).toBe(1)
     expect(existsSync(loginFolder('codex:2'))).toBe(false)
     expect(findLogin(loadConfig(), 'codex:2')).toBeUndefined()
+  })
+
+  it('removes the merged record of a new home when codex login fails', async () => {
+    const defaultHome = join(home, '.codex')
+    mkdirSync(defaultHome, { recursive: true })
+    writeFileSync(join(defaultHome, 'config.toml'), 'model = "gpt-test"\n')
+    const { login } = command(fakeRunner(exitWith(1)))
+    expect(await login.run(['codex', '--name', 'side'], collect().context)).toBe(1)
+    expect(existsSync(loginFolder('codex:side'))).toBe(false)
+    expect(existsSync(codexMergedRecordPath('codex:side'))).toBe(false)
   })
 
   it('signs codex:default in with CODEX_HOME as inherited', async () => {

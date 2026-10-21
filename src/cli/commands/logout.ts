@@ -12,7 +12,9 @@
 //    record of what was last merged into its home (`codexMergedRecordPath`) goes too.
 //
 // A login that is no longer in config.json but still has a folder (a removal that stopped
-// half-way) is cleaned up the same way.
+// half-way) is cleaned up the same way. A Codex login of which only that record is left (a
+// failed `kurmis login` of a new login, from before that cleaned the record up) has the record
+// deleted.
 //
 // The whole removal holds the login's lock (`login-lock.ts`), so it never runs while a
 // `kurmis login` of the same login writes into the folder.
@@ -131,7 +133,14 @@ Options:
       throw error
     }
     const hasFolder = exists(folder)
-    if (!listed && !hasFolder) return fail(context, `there is no login ${id}; "kurmis list" shows them`)
+    if (!listed && !hasFolder) {
+      // A failed `kurmis login` of a new Codex login can leave only the record of what was merged into its home.
+      const record = provider === 'codex' ? codexMergedRecordPath(id) : null
+      if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis list" shows them`)
+      rmSync(record, { force: true })
+      writeLine(context.stdout, `Deleted the record of what was merged into ${id}'s home, which ${id} left behind.`)
+      return EXIT_OK
+    }
     const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null
 
     // Claude on macOS keeps the secret in the Keychain, so its logout runs even when the folder is gone.

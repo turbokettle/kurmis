@@ -778,7 +778,9 @@ Only a home that cannot be created stops it.
 home, the default home's `config.toml` without secrets as it was last merged in, a SHA-256 of
 each file last copied in, the target of each link kurmis made (or found leading where it would
 make it), and the folders already warned about. It is kept outside the Codex home, written with
-mode 0600, rewritten only when it changes, and removed by `logout`. A home
+mode 0600, and rewritten only when it changes. `logout` removes it, and so does a `kurmis login`
+of a new login that fails; `logout` of a login of which only the record is left removes the
+record. A home
 that is empty when a start begins (a new login) starts from an empty record, so a record left
 by an earlier login of the same name is not used.
 
@@ -1133,8 +1135,8 @@ These are known and left as they are.
     so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
     --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
     wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
-    local credentials are there; otherwise a folder this run created is removed and nothing is
-    added. The email is printed and never stored; the label defaults to the name. A running
+    local credentials are there; otherwise a folder this run created is removed (for Codex with
+    its `codex-merged/` record) and nothing is added. The email is printed and never stored; the label defaults to the name. A running
     daemon is told to reload and asked to probe the login, waiting up to 15 seconds, because
     it may still hold the login as signed out from before and Auto would pass it over until
     its next poll; none is started for this.
@@ -1144,7 +1146,8 @@ These are known and left as they are.
     `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
     item that may be left on macOS, and the removal goes on), and deletes the folder with
     `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
-    without following them.
+    without following them. For a Codex login it also deletes `codex-merged/<name>.json`, and
+    when that record is all that is left of the login, deleting it is all logout does.
   - `set <id> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>] [--use-first on|off]
     [--label <text>]`: needs at least one option, changes `config.json` under the lock, tells a
     running daemon to reload and prints the login's settings. `<id>` may be a bare name when only
