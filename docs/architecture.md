@@ -238,7 +238,10 @@ older version, after that daemon finishes the requests it has open.
   `codexLoginEnv`, sending `initialize`, `account/read` and `account/rateLimits/read`. Each probe
   has 30 s from start to exit and is killed with its child processes after that, or when the
   daemon closes (`src/platform/frame-process.ts`). After its answer the probe closes the CLI's
-  input and waits for it to exit, so a token the CLI renewed is on disk when the probe ends.
+  input and waits for it to exit, so a token the CLI renewed is on disk when the probe ends. The
+  daemon finds `claude` and `codex` on the PATH it was started with, so a CLI installed or put on
+  PATH later is found only after a `kurmis daemon restart` from a shell that finds it; the error
+  a probe records when the program is missing says that.
 - **Tokens** (`src/daemon/tokens.ts`). On macOS the login's Keychain item comes first
   (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read
   when the Keychain gives no token: the CLI falls back to the file when it cannot use the

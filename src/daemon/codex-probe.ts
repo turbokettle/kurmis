@@ -36,6 +36,7 @@ import {
   PendingReplies,
   PROBE_CLOSE_GRACE_MS,
   probeFailure,
+  programMissingText,
   replyOrExit,
   type ProbeOptions,
   type ProbeResult,
@@ -69,7 +70,7 @@ export async function probeCodexUsage(id: string, options: ProbeOptions): Promis
     program = findProgram('codex', { env: options.env })
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, 'missing', 'The codex program was not found. Install Codex, or put codex on PATH.')
+      return probeFailure(null, 'missing', programMissingText('codex'))
     }
     return probeFailure(null, 'other', 'The codex program could not be looked up.')
   }
