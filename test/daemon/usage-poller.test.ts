@@ -9,11 +9,14 @@ import { freshHome, writeLogins } from './harness.ts'
 
 let home = ''
 let invalidated: string[] = []
+let markedStale: string[] = []
 const source: TokenSource = {
   keychain: false,
   read: () => null,
   prime: () => Promise.resolve(),
   invalidate: (id) => { invalidated.push(id) },
+  markStale: (id) => { markedStale.push(id) },
+  inCredentialManager: () => false,
   clear: () => undefined
 }
 const events: Array<{ event: string; fields: unknown }> = []
@@ -33,6 +36,7 @@ function setup(probe: ProbeFunction, codex: ProbeFunction = probe): { table: Log
 beforeEach(() => {
   home = freshHome()
   invalidated = []
+  markedStale = []
   events.length = 0
 })
 
@@ -41,13 +45,23 @@ afterEach(() => {
 })
 
 describe('a probe', () => {
+  test('for a renewal makes the next token read wait for a new read', async () => {
+    writeLogins({})
+    const { poller } = setup((id) => Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 30) }))
+    await poller.probe('claude:default', 'renewal')
+    expect(invalidated).toEqual(['claude:default'])
+    expect(markedStale).toEqual([])
+  })
+
   test('stores the usage and the sign-in, and makes the next token read look again', async () => {
     writeLogins({})
     const { table, poller } = setup((id) => Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 30) }))
     await poller.probe('claude:default', 'request')
     expect(table.usage('claude:default')?.fiveHour?.utilization).toBe(30)
     expect(table.probedSignedIn('claude:default')).toBe(true)
-    expect(invalidated).toEqual(['claude:default'])
+    // Marked old rather than forgotten, so the next request does not wait for a new read.
+    expect(markedStale).toEqual(['claude:default'])
+    expect(invalidated).toEqual([])
     expect(events.map((line) => line.event)).toEqual(expect.arrayContaining(['usage_probe_started', 'usage_probe_finished']))
   })
 

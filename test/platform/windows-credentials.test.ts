@@ -3,86 +3,148 @@ import { keychainService } from '../../src/core/keychain-service.ts'
 import type { RunResult } from '../../src/platform/run.ts'
 import {
   CHUNK_CHARS,
-  credReadScript,
-  credentialTarget,
-  parseCredReadOutput,
+  chooseAccount,
+  credEnumScript,
+  credentialBatches,
+  credentialFilter,
+  MAX_ENCODED_COMMAND_CHARS,
+  parseCredEnumOutput,
   powerShellCredentialRead,
+  preferredAccounts,
   readStoredRecords,
-  type CredentialAnswer,
-  type CredentialRead
+  type CredentialRead,
+  type FilterAnswer
 } from '../../src/platform/windows-credentials.ts'
 
 const RECORD = JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-example', refreshToken: 'example-refresh', expiresAt: 4_100_000_000_000 } })
+const SERVICE = 'Claude Code-credentials'
+const ACCOUNTS = ['example-user', 'claude-code-user']
 
-const found = (text: string): CredentialAnswer => ({ kind: 'found', blob: Buffer.from(text, 'utf8') })
-const missing: CredentialAnswer = { kind: 'missing' }
-
-/** A `CredentialRead` over a map of target names, recording each batch it was asked for. */
-function store(items: Record<string, string>): { read: CredentialRead; batches: string[][] } {
-  const batches: string[][] = []
+/** A Credential Manager in memory, listed the way `CredEnumerateW` lists a `<prefix>*` filter, recording each call. */
+function store(items: Record<string, string>): { read: CredentialRead; calls: string[][] } {
+  const calls: string[][] = []
   return {
-    batches,
-    read: (targets) => {
-      batches.push([...targets])
-      return Promise.resolve(targets.map((target) => (target in items ? found(items[target] ?? '') : missing)))
+    calls,
+    read: (filters) => {
+      calls.push([...filters])
+      return Promise.resolve(filters.map((filter): FilterAnswer => {
+        const prefix = filter.replace(/\*$/, '').toLowerCase()
+        const listed = Object.entries(items).filter(([name]) => name.toLowerCase().startsWith(prefix))
+        return { kind: 'items', items: new Map(listed.map(([name, blob]) => [name, Buffer.from(blob, 'utf8')])) }
+      }))
     }
   }
 }
 
-describe('Credential Manager target names', () => {
-  it('are the Keychain service name with /claude-code-user, as Claude Code names them through Bun.secrets', () => {
-    expect(credentialTarget(null)).toBe('Claude Code-credentials/claude-code-user')
-    expect(credentialTarget('C:\\Users\\Example\\.kurmis\\claude\\work', '#m'))
-      .toBe(`${keychainService('C:\\Users\\Example\\.kurmis\\claude\\work')}/claude-code-user#m`)
-    expect(credentialTarget('C:\\x')).toMatch(/^Claude Code-credentials-[0-9a-f]{8}\/claude-code-user$/)
+const encoded = (text: string): string => Buffer.from(text, 'utf8').toString('base64')
+
+describe('Credential Manager names', () => {
+  it('are listed with the Keychain service name and /*, whatever the account name is', () => {
+    expect(credentialFilter(null)).toBe('Claude Code-credentials/*')
+    expect(credentialFilter('C:\\Users\\Example\\.kurmis\\claude\\work'))
+      .toBe(`${keychainService('C:\\Users\\Example\\.kurmis\\claude\\work')}/*`)
+  })
+
+  it('prefer the account name Claude Code gives on macOS, then claude-code-user', () => {
+    expect(preferredAccounts({ USER: 'example' }, () => 'other')).toEqual(['example', 'claude-code-user'])
+    expect(preferredAccounts({}, () => 'Example.User')).toEqual(['Example.User', 'claude-code-user'])
+    expect(preferredAccounts({}, () => 'Jānis Bērziņš')).toEqual(['claude-code-user'])
+    expect(preferredAccounts({}, () => { throw new Error('no user') })).toEqual(['claude-code-user'])
+  })
+
+  it('take the preferred account that is there, else the only one, else none', () => {
+    expect(chooseAccount(['claude-code-user', 'example-user'], ACCOUNTS)).toBe('example-user')
+    expect(chooseAccount(['CLAUDE-CODE-USER'], ACCOUNTS)).toBe('claude-code-user')
+    expect(chooseAccount(['someone'], ACCOUNTS)).toBe('someone')
+    expect(chooseAccount(['someone', 'another'], ACCOUNTS)).toBeNull()
   })
 })
 
-describe('the CredReadW script', () => {
-  it('declares CredReadW and quotes every target name for PowerShell', () => {
-    const script = credReadScript(["Claude Code-credentials/claude-code-user", "it's/claude-code-user#0"])
-    expect(script).toContain('CredReadW(string target, int type, int flags, out IntPtr credential)')
-    expect(script).toContain("$targets=@('Claude Code-credentials/claude-code-user','it''s/claude-code-user#0')")
-    expect(script).toContain('[KurmisCredRead]::Read($targets[$i])')
+describe('the CredEnumerateW script', () => {
+  it('declares CredEnumerateW and quotes every filter for PowerShell', () => {
+    const script = credEnumScript(['Claude Code-credentials/*', "it's/*"])
+    expect(script).toContain('CredEnumerateW(string filter, int flags, out int count, out IntPtr credentials)')
+    expect(script).toContain("$filters=@('Claude Code-credentials/*','it''s/*')")
+    expect(script).toContain('[KurmisCredEnum]::List($filters[$i])')
   })
 
-  it('has its answers read back by index', () => {
-    const blob = Buffer.from(RECORD).toString('base64')
-    expect(parseCredReadOutput(`1 -\r\n0 + ${blob}\r\n2 ! 5\r\n`, 3)).toEqual([
-      { kind: 'found', blob: Buffer.from(RECORD) }, { kind: 'missing' }, { kind: 'error', code: 5 }
+  it('has its answers read back by index, with the count checked', () => {
+    const stdout = [
+      `1 + ${encoded('a/claude-code-user')} ${encoded(RECORD)}`,
+      `1 + ${encoded('a/claude-code-user#m')} `,
+      '1 . 2',
+      '0 . 0',
+      '2 ! 5'
+    ].join('\r\n')
+    expect(parseCredEnumOutput(stdout, 3)).toEqual([
+      { kind: 'items', items: new Map() },
+      { kind: 'items', items: new Map([['a/claude-code-user', Buffer.from(RECORD)], ['a/claude-code-user#m', Buffer.alloc(0)]]) },
+      { kind: 'error', code: 5 }
     ])
-    expect(parseCredReadOutput('0 -\r\n', 2)).toBeNull()
-    expect(parseCredReadOutput('', 0)).toEqual([])
+    expect(parseCredEnumOutput('0 . 0\r\n', 2)).toBeNull()
+    expect(parseCredEnumOutput(`0 + ${encoded('a/x')} ${encoded('y')}\r\n0 . 2\r\n`, 1)).toBeNull()
+    expect(parseCredEnumOutput('', 0)).toEqual([])
+  })
+
+  it('is split into runs whose -EncodedCommand stays within the command line limit', () => {
+    const filters = Array.from({ length: 600 }, (_, i) => credentialFilter(`C:\\Users\\Example\\.kurmis\\claude\\login-${String(i)}`))
+    const batches = credentialBatches(filters)
+    expect(batches.length).toBeGreaterThan(1)
+    expect(batches.flat()).toEqual(filters)
+    for (const batch of batches) {
+      expect(Buffer.from(credEnumScript(batch), 'utf16le').toString('base64').length).toBeLessThanOrEqual(MAX_ENCODED_COMMAND_CHARS)
+    }
+    // A hundred logins still fit in one run.
+    expect(credentialBatches(filters.slice(0, 100))).toHaveLength(1)
   })
 })
 
 describe('readStoredRecords', () => {
-  it('reads a record kept whole, and nothing for a login without one', async () => {
-    const { read, batches } = store({ [credentialTarget(null)]: RECORD })
-    expect(await readStoredRecords([null, 'C:\\work'], read)).toEqual([{ kind: 'found', text: RECORD }, { kind: 'missing' }])
-    expect(batches).toEqual([[credentialTarget(null), credentialTarget(null, '#m'), credentialTarget('C:\\work'), credentialTarget('C:\\work', '#m')]])
+  it('reads a record kept whole under any account name, and nothing for a login without one', async () => {
+    const { read, calls } = store({ [`${SERVICE}/someone`]: RECORD, [`${keychainService('C:\\other')}/someone`]: 'other login' })
+    expect(await readStoredRecords([null, 'C:\\work'], read, ACCOUNTS)).toEqual([{ kind: 'found', text: RECORD }, { kind: 'missing' }])
+    expect(calls).toEqual([[credentialFilter(null), credentialFilter('C:\\work')]])
+  })
+
+  it('does not take another login\'s record, whose service name only starts the same', async () => {
+    const { read } = store({ [`${keychainService('C:\\work')}/claude-code-user`]: RECORD })
+    expect(await readStoredRecords([null], read, ACCOUNTS)).toEqual([{ kind: 'missing' }])
+  })
+
+  it('takes the preferred account when there are several, and fails when none of them is preferred', async () => {
+    const several = store({ [`${SERVICE}/claude-code-user`]: 'older', [`${SERVICE}/example-user`]: RECORD })
+    expect(await readStoredRecords([null], several.read, ACCOUNTS)).toEqual([{ kind: 'found', text: RECORD }])
+    const unknown = store({ [`${SERVICE}/one`]: RECORD, [`${SERVICE}/two`]: RECORD })
+    expect((await readStoredRecords([null], unknown.read, ACCOUNTS))[0]).toMatchObject({ kind: 'failed' })
   })
 
   it('joins a chunked record the way Claude Code writes it: base64 slices of 2400 characters and a #m count', async () => {
     const big = JSON.stringify({ claudeAiOauth: JSON.parse(RECORD).claudeAiOauth, mcpOAuth: { example: 'x'.repeat(5000) } })
-    const encoded = Buffer.from(big, 'utf8').toString('base64')
-    const slices = Array.from({ length: Math.ceil(encoded.length / CHUNK_CHARS) }, (_, i) => encoded.slice(i * CHUNK_CHARS, (i + 1) * CHUNK_CHARS))
-    const items: Record<string, string> = { [credentialTarget(null, '#m')]: JSON.stringify({ n: slices.length, l: encoded.length }) }
-    slices.forEach((slice, i) => { items[credentialTarget(null, `#${String(i)}`)] = slice })
+    const base64 = Buffer.from(big, 'utf8').toString('base64')
+    const slices = Array.from({ length: Math.ceil(base64.length / CHUNK_CHARS) }, (_, i) => base64.slice(i * CHUNK_CHARS, (i + 1) * CHUNK_CHARS))
+    const items: Record<string, string> = { [`${SERVICE}/claude-code-user#m`]: JSON.stringify({ n: slices.length, l: base64.length }) }
+    slices.forEach((slice, i) => { items[`${SERVICE}/claude-code-user#${String(i)}`] = slice })
     // A whole item left from before is not used while #m is valid.
-    items[credentialTarget(null)] = 'stale'
-    const { read, batches } = store(items)
-    expect(await readStoredRecords([null], read)).toEqual([{ kind: 'found', text: big }])
-    expect(batches[1]).toEqual(slices.map((_, i) => credentialTarget(null, `#${String(i)}`)))
+    items[`${SERVICE}/claude-code-user`] = 'stale'
+    const { read, calls } = store(items)
+    expect(await readStoredRecords([null], read, ACCOUNTS)).toEqual([{ kind: 'found', text: big }])
+    // One run lists the slices too.
+    expect(calls).toHaveLength(1)
   })
 
   it('reads the whole item when #m is not a valid count, and fails a chunked record that does not add up', async () => {
-    const invalid = store({ [credentialTarget(null)]: RECORD, [credentialTarget(null, '#m')]: JSON.stringify({ n: 0, l: 10 }) })
-    expect(await readStoredRecords([null], invalid.read)).toEqual([{ kind: 'found', text: RECORD }])
-    const short = store({ [credentialTarget(null, '#m')]: JSON.stringify({ n: 2, l: 10 }), [credentialTarget(null, '#0')]: 'abcd' })
-    expect((await readStoredRecords([null], short.read))[0]).toMatchObject({ kind: 'failed' })
-    const wrongLength = store({ [credentialTarget(null, '#m')]: JSON.stringify({ n: 1, l: 10 }), [credentialTarget(null, '#0')]: 'abcd' })
-    expect((await readStoredRecords([null], wrongLength.read))[0]).toMatchObject({ kind: 'failed' })
+    const user = `${SERVICE}/claude-code-user`
+    const invalid = store({ [user]: RECORD, [`${user}#m`]: JSON.stringify({ n: 0, l: 10 }) })
+    expect(await readStoredRecords([null], invalid.read, ACCOUNTS)).toEqual([{ kind: 'found', text: RECORD }])
+    const short = store({ [`${user}#m`]: JSON.stringify({ n: 2, l: 10 }), [`${user}#0`]: 'abcd' })
+    expect((await readStoredRecords([null], short.read, ACCOUNTS))[0]).toMatchObject({ kind: 'failed' })
+    const wrongLength = store({ [`${user}#m`]: JSON.stringify({ n: 1, l: 10 }), [`${user}#0`]: 'abcd' })
+    expect((await readStoredRecords([null], wrongLength.read, ACCOUNTS))[0]).toMatchObject({ kind: 'failed' })
+  })
+
+  it('reports a CredEnumerateW error for the login it belongs to', async () => {
+    const read: CredentialRead = (filters) => Promise.resolve(filters.map((): FilterAnswer => ({ kind: 'error', code: 5 })))
+    expect(await readStoredRecords([null], read, ACCOUNTS)).toEqual([{ kind: 'failed', reason: 'CredEnumerateW failed with Win32 error 5' }])
   })
 })
 
@@ -93,23 +155,39 @@ describe('powerShellCredentialRead', () => {
     const calls: Array<{ program: string; args: readonly string[] }> = []
     const read = powerShellCredentialRead({}, (program, args) => {
       calls.push({ program, args })
-      return Promise.resolve(result({ stdout: `0 + ${Buffer.from(RECORD).toString('base64')}\r\n1 -\r\n` }))
+      return Promise.resolve(result({ stdout: `0 + ${encoded('a/claude-code-user')} ${encoded(RECORD)}\r\n0 . 1\r\n1 . 0\r\n` }))
     })
-    expect(await read(['a/claude-code-user', 'a/claude-code-user#m'])).toEqual([found(RECORD), missing])
+    expect(await read(['a/*', 'b/*'])).toEqual([
+      { kind: 'items', items: new Map([['a/claude-code-user', Buffer.from(RECORD)]]) },
+      { kind: 'items', items: new Map() }
+    ])
     expect(calls[0]?.program).toBe(process.env.KURMIS_POWERSHELL_PROGRAM)
     expect(calls[0]?.args).toContain('-EncodedCommand')
+  })
+
+  it('runs PowerShell once per batch', async () => {
+    const filters = Array.from({ length: 600 }, (_, i) => credentialFilter(`C:\\Users\\Example\\.kurmis\\claude\\login-${String(i)}`))
+    let runs = 0
+    const read = powerShellCredentialRead({}, (_program, args) => {
+      runs++
+      const script = Buffer.from(args[args.length - 1] ?? '', 'base64').toString('utf16le')
+      const count = (/\$filters=@\((.*)\)/.exec(script)?.[1] ?? '').split(',').length
+      return Promise.resolve(result({ stdout: Array.from({ length: count }, (_, i) => `${String(i)} . 0`).join('\r\n') }))
+    })
+    expect(await read(filters)).toHaveLength(600)
+    expect(runs).toBe(credentialBatches(filters).length)
   })
 
   it('throws with what PowerShell said on stderr, never with what it printed on stdout', async () => {
     const read = powerShellCredentialRead({}, () => Promise.resolve(result({
       code: 1, stdout: '0 + c2VjcmV0', stderr: 'Cannot add type. Definition of new types is not supported in this language mode.'
     })))
-    const error = await read(['a']).then(() => new Error('no error'), (caught: unknown) => caught as Error)
+    const error = await read(['a/*']).then(() => new Error('no error'), (caught: unknown) => caught as Error)
     expect(error.message).toContain('not supported in this language mode')
     expect(error.message).not.toContain('c2VjcmV0')
   })
 
   it('reaches only the PowerShell stand-in in tests, which fails', async () => {
-    await expect(powerShellCredentialRead({})(['a/claude-code-user'])).rejects.toThrow(/PowerShell exited with code 1/)
+    await expect(powerShellCredentialRead({})(['a/*'])).rejects.toThrow(/PowerShell exited with code 1/)
   })
 })

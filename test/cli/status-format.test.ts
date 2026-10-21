@@ -128,7 +128,8 @@ starting on codex:default, whose usage comes back first (in 1h).
   test('the Keychain wording of a block that has no token', () => {
     const status = statusAnswer([loginStatus('claude:work', { block: { kind: 'no-credentials' } })])
     expect(formatStatus(status, NOW, { keychain: true })).toContain('its Keychain item did not read')
-    expect(formatStatus(status, NOW, { keychain: false })).toContain('its .credentials.json did not read')
+    // On Windows the phrase names Credential Manager as well (routeBlockText).
+    expect(formatStatus(status, NOW, { keychain: false })).toMatch(/its \.credentials\.json (did not read|gave one)/)
   })
 
   test('no Codex line without Codex logins', () => {

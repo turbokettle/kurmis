@@ -15,7 +15,7 @@ import { probeCodexUsage } from './codex-probe.ts'
 import { createControl } from './control.ts'
 import { LoginTable } from './logins.ts'
 import { createProxy } from './proxy.ts'
-import { createTokenSource } from './tokens.ts'
+import { createTokenSource, probeEnvironment } from './tokens.ts'
 import { createUpstream, upstreamOrigin } from './upstream.ts'
 import { UsagePoller, type ProbeFunction } from './usage-poller.ts'
 
@@ -93,7 +93,7 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
     ...(tuning.configCheckMs === undefined ? {} : { configCheckMs: tuning.configCheckMs }),
     ...(tuning.stateWriteMs === undefined ? {} : { stateWriteMs: tuning.stateWriteMs }) })
   const poller = new UsagePoller({ table, tokens, env, log, now,
-    probeClaude: tuning.probeClaude ?? probeClaudeUsage,
+    probeClaude: tuning.probeClaude ?? ((id, probe) => probeClaudeUsage(id, { ...probe, env: probeEnvironment(tokens, id, probe.env) })),
     probeCodex: tuning.probeCodex ?? probeCodexUsage,
     ...(tuning.pollIntervalMs === undefined ? {} : { intervalMs: tuning.pollIntervalMs }) })
   const upstream = createUpstream({ origin: upstreamOrigin(env),

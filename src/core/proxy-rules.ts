@@ -402,13 +402,21 @@ export function whyPassedOver(row: RouteAccount, context: PassedOverContext, now
   return routeBlockText(block, context.keychain, row.id === context.startedOn)
 }
 
-/** A `RouteBlock` as a phrase, for the log and for `kurmis status`. */
-export function routeBlockText(block: RouteBlock, keychain = false, startedOn = false): string {
+/**
+ * A `RouteBlock` as a phrase, for the log and for `kurmis status`. Without the Keychain, a login
+ * on Windows has its token in Credential Manager or in `.credentials.json`, elsewhere only in
+ * the file.
+ */
+export function routeBlockText(block: RouteBlock, keychain = false, startedOn = false, platform: NodeJS.Platform = process.platform): string {
   switch (block.kind) {
     case 'auto-route-off': return 'not opted in to routing'
     case 'signed-out': return 'signed out'
     case 'no-credentials':
-      if (!keychain) return 'no token, its .credentials.json did not read'
+      if (!keychain) {
+        return platform === 'win32'
+          ? 'no token, neither Windows Credential Manager nor its .credentials.json gave one'
+          : 'no token, its .credentials.json did not read'
+      }
       return startedOn
         ? 'no token, its Keychain item did not read and the request carried no authorization header of its own'
         : 'no token, its Keychain item did not read and the CLI signs only for the login it was started on'

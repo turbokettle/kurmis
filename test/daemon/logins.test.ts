@@ -15,6 +15,8 @@ const source: TokenSource = {
   read: (id) => tokens.get(id) ?? null,
   prime: () => Promise.resolve(),
   invalidate: () => undefined,
+  markStale: () => undefined,
+  inCredentialManager: () => false,
   clear: () => undefined
 }
 const events: string[] = []
