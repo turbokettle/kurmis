@@ -140,14 +140,20 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
   })
 })
 
-/** A made-up Windows file system: paths (case-insensitive) to their contents. */
-function windowsFiles(contents: Record<string, string>): ProgramFiles {
-  const files = new Map(Object.entries(contents).map(([path, text]) => [path.toLowerCase(), text]))
+/**
+ * A made-up Windows file system: paths (case-insensitive) to their contents, as bytes or as text
+ * stored as UTF-8.
+ */
+function windowsFiles(contents: Record<string, string | Uint8Array>): ProgramFiles {
+  const files = new Map(Object.entries(contents).map(([path, content]) => [
+    path.toLowerCase(),
+    typeof content === 'string' ? Buffer.from(content, 'utf8') : content
+  ]))
   return {
     isFile: (path) => files.has(path.toLowerCase()),
     isExecutable: (path) => files.has(path.toLowerCase()),
     realPath: (path) => (files.has(path.toLowerCase()) ? path : null),
-    read: (path, maxBytes) => files.get(path.toLowerCase())?.slice(0, maxBytes) ?? null
+    read: (path, maxBytes) => files.get(path.toLowerCase())?.subarray(0, maxBytes) ?? null
   }
 }
 
@@ -161,7 +167,7 @@ describe('PATH on Windows', () => {
   const PLACEHOLDER = 'echo "Error: claude native binary not installed." >&2\nexit 1\n'
   const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 
-  const find = (tool: ToolName, env: NodeJS.ProcessEnv, files: Record<string, string>) =>
+  const find = (tool: ToolName, env: NodeJS.ProcessEnv, files: Record<string, string | Uint8Array>) =>
     findProgram(tool, { env, platform: 'win32', nodePath: NODE, files: windowsFiles(files) })
 
   test('an .exe on PATH is started directly, and the Path spelling of the variable works', () => {
@@ -216,6 +222,62 @@ describe('PATH on Windows', () => {
     }
     expect(find('codex', { PATH: PNPM }, files)).toEqual({ command: NODE, args: [codexEntry], source: 'npm-shim' })
     expect(find('claude', { PATH: PNPM }, files)).toEqual({ command: claudeExe, args: [], source: 'npm-shim' })
+  })
+
+  test('npm 12 shims', () => {
+    const files = {
+      [`${NPM}\\codex.cmd`]: fixture('npm12-global-codex.cmd'),
+      [`${NPM}\\claude.cmd`]: fixture('npm12-global-claude-exe.cmd'),
+      [CODEX_ENTRY]: '',
+      [`${CLAUDE_PACKAGE}\\bin\\claude.exe`]: NATIVE
+    }
+    expect(find('codex', { PATH: NPM }, files)).toEqual({ command: NODE, args: [CODEX_ENTRY], source: 'npm-shim' })
+    expect(find('claude', { PATH: NPM }, files)).toEqual({ command: `${CLAUDE_PACKAGE}\\bin\\claude.exe`, args: [], source: 'npm-shim' })
+  })
+
+  test('pnpm 11 global shims', () => {
+    const group = `${PNPM}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules`
+    const codexEntry = `${group}\\@openai\\codex\\bin\\codex.js`
+    const claudeExe = `${group}\\@anthropic-ai\\claude-code\\bin\\claude.exe`
+    const files = {
+      [`${PNPM}\\codex.cmd`]: fixture('pnpm11-global-codex.cmd'),
+      [`${PNPM}\\claude.cmd`]: fixture('pnpm11-global-claude-exe.cmd'),
+      [codexEntry]: '',
+      [claudeExe]: NATIVE
+    }
+    expect(find('codex', { PATH: PNPM }, files)).toEqual({ command: NODE, args: [codexEntry], source: 'npm-shim' })
+    expect(find('claude', { PATH: PNPM }, files)).toEqual({ command: claudeExe, args: [], source: 'npm-shim' })
+  })
+
+  test('a shim in a folder whose name has a %', () => {
+    const folder = 'C:\\Users\\example\\100%\\npm'
+    const entry = `${folder}\\node_modules\\@openai\\codex\\bin\\codex.js`
+    const files = { [`${folder}\\codex.cmd`]: fixture('npm12-global-codex.cmd'), [entry]: '' }
+    expect(find('codex', { PATH: folder }, files)).toEqual({ command: NODE, args: [entry], source: 'npm-shim' })
+  })
+
+  test('a UTF-8 shim with a byte order mark, in a folder with a non-ASCII name', () => {
+    const home = 'C:\\Users\\ex\u00e4mple\\AppData\\Local\\pnpm'
+    const node = `${home}\\nodejs\\24.11.0\\node.exe`
+    const entry = `${home}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules\\@openai\\codex\\bin\\codex.js`
+    const bom = Buffer.from([0xef, 0xbb, 0xbf])
+    const files = {
+      [`${home}\\codex.cmd`]: Buffer.concat([bom, readFileSync(resolve('test/platform/fixtures', 'pnpm11-node-exec-path-non-ascii.cmd'))]),
+      [entry]: '',
+      [node]: NATIVE,
+      // A one-line shim, so the byte order mark is right before its run line.
+      [`${home}\\claude.cmd`]: Buffer.concat([bom, Buffer.from('@"%~dp0\\t\u00f6\u00f6ls\\claude.exe"   %*\r\n', 'utf8')]),
+      [`${home}\\t\u00f6\u00f6ls\\claude.exe`]: NATIVE
+    }
+    expect(find('codex', { PATH: home }, files)).toEqual({ command: node, args: [entry], source: 'npm-shim' })
+    expect(find('claude', { PATH: home }, files)).toEqual({ command: `${home}\\t\u00f6\u00f6ls\\claude.exe`, args: [], source: 'npm-shim' })
+  })
+
+  test('a shim that is not UTF-8 is skipped', () => {
+    // "ä" in Windows-1252, as an editor saving in the ANSI code page would write it.
+    const files = { 'C:\\a\\codex.cmd': Buffer.from([...Buffer.from('@"%~dp0\\'), 0xe4, ...Buffer.from('\\codex.exe"   %*\r\n')]) }
+    const error = notFound('codex', { env: { PATH: 'C:\\a' }, platform: 'win32', files: windowsFiles(files) })
+    expect(error.message).toContain('C:\\a\\codex.cmd: it is not a package manager shim kurmis can read (it is not UTF-8 text)')
   })
 
   test('PATHEXT order decides between a .cmd and an .exe in the same folder', () => {

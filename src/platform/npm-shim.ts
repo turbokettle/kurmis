@@ -12,20 +12,27 @@
 //
 // The forms read here, each with a fixture in `test/platform/fixtures/`:
 //
-// - npm's `cmd-shim` 5 and later (npm 8 to 11; the fixtures come from cmd-shim 8.0.0): sets
-//   `dp0` to `%~dp0` in a subroutine, sets `_prog` to `%dp0%\node.exe` when that file exists and
-//   to `node` otherwise, and ends with `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% &
-//   "%_prog%" <args> "%dp0%\<target>" %*`. A target with no `#!` line (such as an `.exe`) is
-//   started directly: `"%dp0%\<target>"   %*`.
+// - npm's `cmd-shim` 5 and later (npm 8 to 12; the fixtures come from cmd-shim 8.0.0, which
+//   npm 11.9.0 bundles, and 9.0.2, which npm 12.2.0 bundles): sets `dp0` to `%~dp0` in a
+//   subroutine, sets `_prog` to `%dp0%\node.exe` when that file exists and to `node` otherwise,
+//   and ends with `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%" <args>
+//   "%dp0%\<target>" %*` (9.0.2 puts `set PATHEXT=... &` before `"%_prog%"`). A target with no
+//   `#!` line (such as an `.exe`) is started directly: `"%dp0%\<target>"   %*`.
 // - npm's `cmd-shim` 4 (npm 7): the same `_prog` choice, with the run line at the start of a line
 //   (`"%_prog%"  "%dp0%\<target>" %*`). Written by hand from that version's source.
 // - npm's `cmd-shim` 2 and 3 (npm 6), which yarn 1's `@zkochan/cmd-shim` also wrote: an
 //   `@IF EXIST "%~dp0\node.exe" ( ... ) ELSE ( ... )` with one run line in each branch, or
 //   `@"%~dp0\<target>"   %*` for a target started directly. Written by hand.
-// - pnpm's `@zkochan/cmd-shim` (the fixtures come from 9.0.8): the same `IF EXIST` form with
-//   `%~dp0`, an `@SET "NODE_PATH=..."` block for global installs, and optionally an absolute Node
-//   (`@"C:\Program Files\nodejs\node.exe" ... %*`), `--preserve-symlinks` before the target and
-//   extra arguments after it.
+// - pnpm's shims (the fixtures come from `@zkochan/cmd-shim` 9.0.8, the generator pnpm 10 and
+//   earlier use, and from `@pnpm/bins.cmd-shim` 1100.0.4, the same code pnpm 11.28.6 bundles):
+//   the same `IF EXIST` form with `%~dp0`, an `@SET "NODE_PATH=..."` block for global installs,
+//   and optionally an absolute Node (`@"C:\Program Files\nodejs\node.exe" ... %*`),
+//   `--preserve-symlinks` before the target and extra arguments after it. pnpm 11 writes each
+//   `%` of a path or argument as `%%`, and when the shim has a non-ASCII character it switches
+//   the console to UTF-8 (`chcp 65001`) at the start and back at the end.
+//
+// A `%%` is read as `%`. Any variable other than `%~dp0` and `%dp0%` makes the shim unreadable.
+// The shim file is read as UTF-8, which is what npm and pnpm write.
 //
 // What is not taken over from a shim: the `NODE_PATH` that pnpm's shims set (Node finds a
 // package's dependencies from the package's real folder without it), and the `@SET NAME=value`
@@ -60,6 +67,18 @@ interface RunLine {
   programs: string[]
   /** The words between the program and `%*`; empty when the program is the target itself. */
   rest: string[]
+}
+
+/**
+ * The text of a shim file, or null when the bytes are not UTF-8. npm and pnpm write their shims
+ * as UTF-8 without a byte order mark; a byte order mark, which an editor may add, is dropped.
+ */
+export function decodeCmdShim(bytes: Uint8Array): string | null {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -179,13 +198,23 @@ function readRunLine(run: RunLine, folder: string): CmdShim | { unreadable: stri
 }
 
 /**
- * `%~dp0` and `%dp0%` replaced by the shim's folder (with its trailing backslash, as cmd.exe
- * expands it), and a path normalised. Null when another variable is left, which kurmis would
- * have to guess.
+ * The token as cmd.exe reads it in a batch file: `%%` becomes `%`, and `%~dp0` and `%dp0%`
+ * become the shim's folder (with its trailing backslash, as cmd.exe expands it). The token is
+ * read once from left to right, as cmd.exe does, so a `%` in the folder or one written as `%%`
+ * is not read again as the start of a variable. A path is normalised. Null when the token uses
+ * any other variable, whose value kurmis would have to guess.
  */
 function expand(token: string, folder: string): string | null {
-  const replaced = token.replace(/%~dp0|%dp0%/gi, `${folder}\\`)
-  if (replaced.includes('%')) return null
+  let otherVariable = false
+  const replaced = token.replace(/%%|%~dp0|%dp0%|%/gi, (match) => {
+    if (match === '%%') return '%'
+    if (match === '%') {
+      otherVariable = true
+      return match
+    }
+    return `${folder}\\`
+  })
+  if (otherVariable) return null
   if (isAbsoluteWindowsPath(replaced)) return win32.normalize(replaced)
   // A bare name (`node`) or an option (`--preserve-symlinks`); a relative path would depend on
   // the folder cmd.exe was started in.
