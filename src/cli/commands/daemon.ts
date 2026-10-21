@@ -84,6 +84,11 @@ const stop: Handler = async (args, context) => {
     }
     if (found === null || !(await stopDaemon(clientOptions(context)))) {
       writeLine(context.stdout, 'The kurmis daemon is not running.')
+      const silent = found === null ? silentDaemon() : null
+      if (silent !== null) {
+        writeLine(context.stdout, `Process ${String(silent.pid)}, named in daemon.json, does not answer on ${address(silent.port)}, so ` +
+          'it was not asked to stop. It may be finishing its open requests before it stops.')
+      }
     } else {
       writeLine(context.stdout, `Stopped the kurmis daemon (pid ${String(found.pid)}).`)
     }

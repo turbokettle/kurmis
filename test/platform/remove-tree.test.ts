@@ -51,7 +51,8 @@ describe('removeTreeSync on this machine', () => {
   })
 })
 
-type Entry = { kind: 'dir'; children: string[] } | { kind: 'file'; readOnly?: boolean } | { kind: 'junction' }
+/** `real` is what the real path of a folder resolves to, when it is not the folder itself (a mount point). */
+type Entry = { kind: 'dir'; children: string[]; real?: string } | { kind: 'file'; readOnly?: boolean } | { kind: 'junction' }
 
 /** A Windows-shaped file system in memory, recording each operation. */
 function fakeWindowsFs(entries: Record<string, Entry>): { fs: RemoveTreeFs; calls: string[]; entries: Record<string, Entry> } {
@@ -89,6 +90,10 @@ function fakeWindowsFs(entries: Record<string, Entry>): { fs: RemoveTreeFs; call
       calls.push(`chmod ${path}`)
       const entry = get(path)
       if (entry.kind === 'file') entry.readOnly = false
+    },
+    realpathSync(path) {
+      const entry = get(path)
+      return entry.kind === 'dir' && entry.real !== undefined ? entry.real : path
     }
   }
   return { fs, calls, entries }
@@ -110,6 +115,32 @@ describe('removeTreeSync on Windows', () => {
     expect(calls).toEqual([`readdir ${home}`, `unlink ${sessions}`, `rmdir ${sessions}`, `unlink ${auth}`, `rmdir ${home}`])
   })
 
+  it('removes a volume mounted into a folder as an entry, without going into it', () => {
+    // libuv reports a volume mount point as a plain folder; its real path is the volume.
+    const mounted = join(home, 'mounted')
+    const onVolume = join(mounted, 'data.bin')
+    const { fs, calls, entries } = fakeWindowsFs({
+      [home]: { kind: 'dir', children: ['mounted'] },
+      [mounted]: { kind: 'dir', children: ['data.bin'], real: '\\\\?\\Volume{00000000-0000-0000-0000-000000000001}\\' },
+      [onVolume]: { kind: 'file' }
+    })
+    removeTreeSync(home, { fs, platform: 'win32' })
+    expect(calls).toEqual([`readdir ${home}`, `rmdir ${mounted}`, `rmdir ${home}`])
+    expect(Object.keys(entries)).toEqual([onVolume])
+  })
+
+  it('goes into a folder whose real path differs only in case', () => {
+    const sub = join(home, 'Sub')
+    const file = join(sub, 'f')
+    const { fs, entries } = fakeWindowsFs({
+      [home]: { kind: 'dir', children: ['Sub'] },
+      [sub]: { kind: 'dir', children: ['f'], real: sub.toUpperCase() },
+      [file]: { kind: 'file' }
+    })
+    removeTreeSync(home, { fs, platform: 'win32' })
+    expect(entries).toEqual({})
+  })
+
   it('clears the read-only flag of a file it cannot delete', () => {
     const file = join(home, 'locked')
     const { fs, calls, entries } = fakeWindowsFs({
@@ -129,7 +160,8 @@ describe('removeTreeSync on Windows', () => {
         throw Object.assign(new Error('ENAMETOOLONG'), { code: 'ENAMETOOLONG' })
       },
       rmdirSync: () => undefined,
-      chmodSync: () => undefined
+      chmodSync: () => undefined,
+      realpathSync: (path) => path
     }
     expect(() => removeTreeSync(home, { fs, platform: 'win32' })).toThrow('ENAMETOOLONG')
   })

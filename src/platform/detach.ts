@@ -178,24 +178,33 @@ function quoteWindowsArgument(arg: string): string {
   return `${out}${'\\'.repeat(backslashes * 2)}"`
 }
 
-/** A PowerShell single-quoted string: a quote inside is doubled. */
+/**
+ * A PowerShell single-quoted string. PowerShell ends such a string at any of the single quote
+ * characters `'`, `‘`, `’`, `‚` and `‛`, so each of them inside is doubled.
+ */
 export function powerShellQuote(text: string): string {
-  return `'${text.replace(/'/g, "''")}'`
+  return `'${text.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`
 }
 
 /**
  * The PowerShell script that creates `argv` in `cwd` through WMI and prints `pid <n>`. WMI's
  * `ReturnValue` is not 0 when it refused: 2 access denied, 9 path not found, and so on. Every
  * value is in a single-quoted PowerShell string, so nothing in a path is run.
+ *
+ * `Win32_ProcessStartup` with `ShowWindow` 0 (SW_HIDE) keeps a console window from showing for
+ * the new process. The script uses only cmdlets, hashtables and a cast to `[uint16]`, which
+ * PowerShell's Constrained Language Mode allows, and no .NET calls such as `[Console]::`, which
+ * it blocks; output goes through `Write-Output`.
  */
 export function wmiCreateScript(argv: readonly string[], cwd: string): string {
   return [
     "$ProgressPreference='SilentlyContinue'",
     "$ErrorActionPreference='Stop'",
+    "$s=New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}",
     `$r=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine=${powerShellQuote(windowsCommandLine(argv))};` +
-      `CurrentDirectory=${powerShellQuote(cwd)}}`,
-    'if($r.ReturnValue -ne 0){[Console]::Error.WriteLine("Win32_Process.Create answered $($r.ReturnValue)");exit 1}',
-    "[Console]::Out.WriteLine('pid '+$r.ProcessId)"
+      `CurrentDirectory=${powerShellQuote(cwd)};ProcessStartupInformation=$s}`,
+    'if($r.ReturnValue -ne 0){Write-Output "Win32_Process.Create answered $($r.ReturnValue)";exit 1}',
+    "Write-Output ('pid '+$r.ProcessId)"
   ].join('\n')
 }
 

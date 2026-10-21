@@ -117,6 +117,19 @@ describe('the WMI start', () => {
     expect(script).toContain("CurrentDirectory='C:\\Users\\o''example'")
   })
 
+  it('doubles every quote character PowerShell ends a single-quoted string at', () => {
+    expect(powerShellQuote('a\u2018b\u2019c\u201ad\u201be')).toBe("'a\u2018\u2018b\u2019\u2019c\u201a\u201ad\u201b\u201be'")
+    expect(powerShellQuote("O\u2019Brien's")).toBe("'O\u2019\u2019Brien''s'")
+  })
+
+  it('creates the process hidden, and uses nothing Constrained Language Mode blocks', () => {
+    const script = wmiCreateScript(['node.exe', 'kurmis.cjs'], 'C:\\Users\\example')
+    expect(script).toContain('New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}')
+    expect(script).toContain(';ProcessStartupInformation=$s}')
+    expect(script).not.toContain('[Console]')
+    expect(script).toContain("Write-Output ('pid '+$r.ProcessId)")
+  })
+
   it('runs powershell from the Windows folder with the script encoded', () => {
     const { program, args } = powerShellInvocation('Write-Output 1', { SystemRoot: 'D:\\Windows' })
     // Every test has the stand-in; the real program is in the Windows folder.

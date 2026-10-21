@@ -168,3 +168,13 @@ test('the line splitter keeps an incomplete line and reports one past the cap', 
   expect(lines).toEqual(['ab', 'cdef', ''])
   expect(split(Buffer.from('123456789'))).toBe(false)
 })
+
+test('the line splitter refuses a complete line past the cap, also one that arrives in a single chunk', () => {
+  const lines: string[] = []
+  expect(createLineSplitter(8, (line) => lines.push(line))(Buffer.from('ok\n123456789\n'))).toBe(false)
+  expect(lines).toEqual(['ok'])
+  const split = createLineSplitter(8, (line) => lines.push(line))
+  expect(split(Buffer.from('12345'))).toBe(true)
+  expect(split(Buffer.from('6789\n'))).toBe(false)
+  expect(lines).toEqual(['ok'])
+})

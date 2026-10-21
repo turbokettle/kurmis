@@ -383,6 +383,23 @@ describe('stopDaemon', () => {
     expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, stopGraceMs: 60_000 })).toBe(true)
     expect(processExists(pid)).toBe(false)
   })
+
+  it('says it cannot end a daemon that this user may not signal, instead of calling it stopped', async () => {
+    const key = readOrCreateKey()
+    const pid = await lingeringPid()
+    const daemon = await fakeDaemon(key, { pid })
+    usePort(daemon.port)
+    const kill = (): void => {
+      throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+    }
+    await expect(stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, kill }))
+      .rejects.toThrow(`(pid ${String(pid)}) was asked to stop but is still running, and this command may not end it (EPERM)`)
+    expect(processExists(pid)).toBe(true)
+    const gone = (): void => {
+      throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+    }
+    expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, kill: gone })).toBe(true)
+  })
 })
 
 describe('control requests', () => {

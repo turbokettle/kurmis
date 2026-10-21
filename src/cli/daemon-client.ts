@@ -32,8 +32,10 @@
 // Where the daemon is started from:
 // - macOS, from an ssh login or wherever the login Keychain cannot be read: through launchd, in
 //   the user's GUI session (`src/platform/launchd.ts`), since a daemon in the ssh session could
-//   read no Keychain token. When launchd refuses (nobody is logged in at the screen), it is
-//   started directly with a warning.
+//   read no Keychain token. When launchd refuses the job (nobody is logged in at the screen),
+//   when the job's program exits with an error, or when no daemon answers within
+//   `LAUNCHD_ANSWER_TIMEOUT_MS`, the job is removed and the daemon is started directly with a
+//   warning.
 // - Windows, from an ssh login: through WMI, outside the job the ssh server ends with the session.
 // - Everywhere else: directly, detached.
 import { homedir } from 'node:os'

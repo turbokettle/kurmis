@@ -108,7 +108,8 @@ export function treeKillCommand(
 
 /**
  * Splits a byte stream into lines. Each complete line is handed to `onLine` without its line
- * ending. Answers false when an incomplete line has grown past `maxLineBytes`.
+ * ending. Answers false when a line, complete or not, is longer than `maxLineBytes`; such a line
+ * is not handed on, and the caller stops the program.
  */
 export function createLineSplitter(maxLineBytes: number, onLine: (line: string) => void): (chunk: Buffer) => boolean {
   let pending: Buffer[] = []
@@ -119,6 +120,7 @@ export function createLineSplitter(maxLineBytes: number, onLine: (line: string) 
       const newline = chunk.indexOf(0x0a, start)
       if (newline === -1) break
       const piece = chunk.subarray(start, newline)
+      if (pendingBytes + piece.length > maxLineBytes) return false
       const line = pendingBytes === 0 ? piece : Buffer.concat([...pending, piece])
       pending = []
       pendingBytes = 0
