@@ -36,8 +36,12 @@
 //   do not each set up a new TLS connection. The server may close an idle connection at the
 //   moment a new request is sent on it. Node's documented answer to that is to send the
 //   request again when it failed with a reset on a reused connection before any answer came,
-//   and `send` does that once. The server cannot have read a request on a connection it had
-//   already closed.
+//   and `send` does that once, but only when the reset came while the request was still being
+//   written or within `RESEND_WINDOW_MS` (2 s) after it was. A server that closed the connection
+//   while it was idle cannot have read a request sent on it, and its reset comes within a round
+//   trip. A reset that comes later, such as one after minutes of a long thinking turn, may
+//   follow a request the server did read and work on, and sending it again could run it twice,
+//   so that error goes to the proxy as it is.
 //
 // Bodies are passed on as raw bytes. `node:http` decodes no `content-encoding`, and the proxy
 // asks for `accept-encoding: identity`; a body the server encodes anyway keeps its encoding,
@@ -64,6 +68,12 @@ export const KEEPALIVE_PROBE_DELAY_MS = 30_000
 
 /** A connection with no request on it is closed after this long. */
 export const FREE_SOCKET_TIMEOUT_MS = 30_000
+
+/**
+ * A request reset on a reused connection is sent again only when the reset came within this long
+ * after the request was written. See the file header.
+ */
+export const RESEND_WINDOW_MS = 2_000
 
 /** `discard` reads at most this much of a body before it closes the connection instead. */
 const DISCARD_LIMIT_BYTES = 1024 * 1024
@@ -158,6 +168,8 @@ export interface UpstreamOptions {
   keepAliveProbeDelayMs?: number
   /** Default `FREE_SOCKET_TIMEOUT_MS`. */
   freeSocketTimeoutMs?: number
+  /** Default `RESEND_WINDOW_MS`. */
+  resendWindowMs?: number
 }
 
 export function createUpstream(options: UpstreamOptions): Upstream {
@@ -170,6 +182,7 @@ export function createUpstream(options: UpstreamOptions): Upstream {
   const idleTimeoutMs = options.idleTimeoutMs ?? UPSTREAM_IDLE_TIMEOUT_MS
   const connectTimeoutMs = options.connectTimeoutMs ?? UPSTREAM_CONNECT_TIMEOUT_MS
   const keepAliveProbeDelayMs = options.keepAliveProbeDelayMs ?? KEEPALIVE_PROBE_DELAY_MS
+  const resendWindowMs = options.resendWindowMs ?? RESEND_WINDOW_MS
   const agentOptions = {
     keepAlive: true,
     keepAliveMsecs: keepAliveProbeDelayMs,
@@ -192,6 +205,8 @@ export function createUpstream(options: UpstreamOptions): Upstream {
       let answered = false
       let over = false
       let connectTimer: NodeJS.Timeout | undefined
+      /** When the whole request had been handed to the connection, or null while it is still being written. */
+      let writtenAt: number | null = null
 
       const req = transport.request({
         hostname, port, method: request.method, path: request.path, headers: request.headers, agent
@@ -224,13 +239,15 @@ export function createUpstream(options: UpstreamOptions): Upstream {
         }, connectTimeoutMs)
         socket.once(tls ? 'secureConnect' : 'connect', () => clearTimeout(connectTimer))
       })
+      req.once('finish', () => { writtenAt = Date.now() })
       // Stays attached for the whole exchange: errors after the headers belong to the body.
       req.on('error', (error) => {
         if (answered) return
         answered = true
         const reusedSocket = req.reusedSocket
+        const soonAfterWriting = writtenAt === null || Date.now() - writtenAt <= resendWindowMs
         end()
-        if (!retried && reusedSocket && !signal.aborted && !closed && !(error instanceof UpstreamError) &&
+        if (!retried && reusedSocket && soonAfterWriting && !signal.aborted && !closed && !(error instanceof UpstreamError) &&
           RESET_CODES.has(errorCodeOf(error))) {
           resolve(attempt(request, true))
           return

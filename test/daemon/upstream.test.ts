@@ -45,7 +45,7 @@ async function startServer(handler: Handler): Promise<TestServer> {
   return result
 }
 
-function upstreamFor(origin: string, options: { idleTimeoutMs?: number; connectTimeoutMs?: number } = {}): Upstream {
+function upstreamFor(origin: string, options: { idleTimeoutMs?: number; connectTimeoutMs?: number; resendWindowMs?: number } = {}): Upstream {
   const upstream = createUpstream({ origin, ...options })
   cleanups.push(() => upstream.close())
   return upstream
@@ -262,6 +262,28 @@ describe('createUpstream', () => {
     expect((await readAll(answer.body)).toString('utf8')).toBe('ok')
     expect(served).toBe(2)
     expect(server.sockets).toHaveLength(2)
+  })
+
+  it('does not send a request again when a reused connection is reset long after the request was written', async () => {
+    let received = 0
+    const usedSockets = new Set<Socket>()
+    const server = await startServer((req, res) => {
+      received++
+      if (usedSockets.has(req.socket)) {
+        // The server read the request and worked on it before the connection broke.
+        setTimeout(() => req.socket.destroy(), 300)
+        return
+      }
+      usedSockets.add(req.socket)
+      res.end('ok')
+    })
+    const upstream = upstreamFor(server.url, { resendWindowMs: 100 })
+    await readAll((await upstream.send(get('/'))).body)
+    const error = await upstream.send({ ...get('/'), method: 'POST', body: Buffer.from('{}'),
+      headers: { 'content-length': '2' } }).catch((e: unknown) => e)
+    expect(error).toMatchObject({ kind: 'network', code: 'ECONNRESET' })
+    await wait(100)
+    expect(received).toBe(2)
   })
 
   it('gives up with timeout when a new connection is not ready in time', async () => {

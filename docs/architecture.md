@@ -212,8 +212,11 @@ older version, after that daemon finishes the requests it has open.
   gives up, and that aborts the upstream request at once. The only other end set on a request is
   the capacity hold's, and only until the answer's headers arrive. A connection that carries no
   data in either direction for 20 minutes fails; a new connection must be ready within 30 s; TCP
-  keep-alive probes start after 30 s of silence; idle connections are kept for reuse for 30 s,
-  and a request that meets a reset on a reused connection before any answer is sent once more.
+  keep-alive probes start after 30 s of silence; idle connections are kept for reuse for 30 s.
+  A request that meets a reset on a reused connection before any answer is sent once more, but
+  only when the reset came while the request was being written or within 2 s after
+  (`RESEND_WINDOW_MS`): that is a connection the server closed while it was idle. A later reset
+  may follow a request the server worked on, and goes to the CLI as a 502 instead.
   Answers are passed on byte for byte as they arrive, with backpressure: a CLI that reads slowly
   pauses the upstream connection. The daemon's HTTP client decodes nothing, so
   `content-encoding` is passed on with the body.
