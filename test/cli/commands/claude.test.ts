@@ -34,12 +34,20 @@ interface Harness {
 
 /** The settings files kurmis would have written, by the path it passed to claude. */
 const storedSettings = new Map<string, string>()
-const storeSettings = (text: string): string => {
+/** The files written with a copy of the person's settings, and the ones removed again. */
+const ownFiles: string[] = []
+const removedFiles: string[] = []
+const storeSettings = (text: string, holdsUserSettings: boolean) => {
   const path = `/kurmis-settings/${String(storedSettings.size)}.json`
   storedSettings.set(path, text)
-  return path
+  if (holdsUserSettings) ownFiles.push(path)
+  return { path, remove: () => void (holdsUserSettings && removedFiles.push(path)) }
 }
-beforeEach(() => storedSettings.clear())
+beforeEach(() => {
+  storedSettings.clear()
+  ownFiles.length = 0
+  removedFiles.length = 0
+})
 
 function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<ClaudeDeps> = {}): Harness {
   const specs: ChildSpec[] = []
@@ -264,13 +272,37 @@ describe('kurmis claude --login', () => {
 })
 
 describe('kurmis claude with the person\'s own settings', () => {
-  test('an inline --settings is merged: their keys and variables kept, kurmis\' routing variables winning', async () => {
+  test('an inline --settings is merged: their keys and variables kept, kurmis\' address and key winning', async () => {
     const h = harness()
     const theirs = JSON.stringify({ model: 'opus', env: { MINE: 'yes', ANTHROPIC_BASE_URL: 'http://example.com', ENABLE_TOOL_SEARCH: 'false' } })
     await createClaudeCommand(h.deps).run(['-p', '--settings', theirs, 'hi'], collect().context)
     const settings = passedSettings(h.specs[0])
-    expect(settings).toMatchObject({ model: 'opus', env: { MINE: 'yes', ANTHROPIC_BASE_URL: BASE_URL, ENABLE_TOOL_SEARCH: 'true' } })
+    // Their own ENABLE_TOOL_SEARCH is theirs to choose; the address is kurmis'.
+    expect(settings).toMatchObject({ model: 'opus', env: { MINE: 'yes', ANTHROPIC_BASE_URL: BASE_URL, ENABLE_TOOL_SEARCH: 'false' } })
+    expect(h.specs[0]?.env.ENABLE_TOOL_SEARCH).toBeUndefined()
     expect(h.specs[0]?.args.slice(3)).toEqual(['-p', 'hi'])
+    // The copy of their settings is removed once claude has ended, before the wrapper ends like it.
+    expect(ownFiles).toEqual([h.specs[0]?.args[2]])
+    expect(removedFiles).toEqual(ownFiles)
+  })
+
+  test('a value of the person\'s own for ENABLE_TOOL_SEARCH or CLAUDE_CODE_MAX_RETRIES is left as it is', async () => {
+    const h = harness()
+    await createClaudeCommand(h.deps).run([], collect({ CLAUDE_CODE_MAX_RETRIES: '4' }).context)
+    expect(h.specs[0]?.env.CLAUDE_CODE_MAX_RETRIES).toBe('4')
+    expect(h.specs[0]?.env.ENABLE_TOOL_SEARCH).toBe('true')
+    const env = passedSettings(h.specs[0]).env as Record<string, string>
+    expect(env.CLAUDE_CODE_MAX_RETRIES).toBeUndefined()
+    expect(env.ENABLE_TOOL_SEARCH).toBe('true')
+    // Without settings of the person's, the shared file is kept for claude's background sessions.
+    expect(ownFiles).toEqual([])
+
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { ENABLE_TOOL_SEARCH: 'false' } }))
+    const again = harness()
+    await createClaudeCommand(again.deps).run([], collect().context)
+    expect(passedSettings(again.specs[0]).env).not.toHaveProperty('ENABLE_TOOL_SEARCH')
+    expect(again.specs[0]?.env.ENABLE_TOOL_SEARCH).toBeUndefined()
   })
 
   test('a settings file is read relative to the folder, merged and passed in the settings file kurmis writes; theirs is not changed', async () => {

@@ -33,8 +33,11 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   happens, so two waiters never remove each other's new lock. A lock is released only by the
   process whose token it holds.
 - `settings/` holds the settings files `kurmis claude` passes to claude with `--settings`
-  (below). Each is named after a hash of its contents, mode 0600, and removed once no start has
-  used it for 30 days.
+  (below), mode 0600. One that holds only kurmis' variables is named after a hash of its
+  contents and removed once no start has used it for 30 days. One that holds a copy of the
+  person's own `--settings` is `run-<pid>-<random>.json`, deleted when that wrapper ends; one a
+  killed wrapper left is removed by the next start once its pid no longer runs (or after 30
+  days, in case the pid was reused).
 - `claude/<name>/` is the config folder of the extra Claude login `claude:<name>`. On Windows
   it holds the login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain,
   under a name derived from this folder's path (`keychainService` in
@@ -418,7 +421,10 @@ since `process.execPath` names a versioned folder that a Homebrew upgrade remove
 - `ANTHROPIC_CUSTOM_HEADERS` carrying the key, and the login when one was named;
 - `ENABLE_TOOL_SEARCH=true`, because the CLI turns tool search off for any base URL that is not
   Anthropic's, and the proxy passes it through;
-- `CLAUDE_CODE_MAX_RETRIES=15`, so a request outlasts a daemon restart;
+- `CLAUDE_CODE_MAX_RETRIES=15`, so a request outlasts a daemon restart. These two are left out
+  when the person sets either themselves, in their `--settings`, the user settings file or the
+  environment, to a value that is not empty: routing works without them, so their value stays,
+  as `kurmis setup` keeps it in `settings.json`;
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the login's folder when a login other than the
   default was named;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
@@ -467,13 +473,23 @@ So the wrapper passes exactly one `--settings`, first, ahead of the person's arg
 - When the person's arguments carry `--settings` before claude's `--`, the last one is read
   (inline JSON, or the file, relative to the current folder), kurmis' variables are merged into
   its `env`, and every `--settings` of theirs is taken out. Their other keys and variables are
-  kept; for the four routing variables kurmis' values win. Their file is never changed.
+  kept; for the base URL and the custom headers kurmis' values win, and their own
+  `ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_MAX_RETRIES` stay (above). Their file is never changed.
   Settings that cannot be read, are not a JSON object, or have an `env` that is not an object
   stop the start with a message.
-- The merged settings go to claude as a file in the data folder's `settings/`, not inline,
-  because they hold the key and a command line is visible to other users in the process list.
-  The file is not deleted when claude exits, because claude passes its `--settings` value on to
-  processes it starts itself, such as background sessions, which can outlive the wrapper.
+- The merged settings go to claude as a file in the data folder's `settings/`, mode 0600, not
+  inline, because they hold the key and a command line is visible to other users in the process
+  list. Claude passes its `--settings` value on to processes it starts itself, such as
+  background sessions, which can outlive the wrapper. So a file with only kurmis' variables is
+  shared by every start with the same values (named after their hash) and kept. A file with a
+  copy of the person's own settings, which may hold secrets of theirs, belongs to one wrapper
+  (`run-<pid>-<random>.json`, so several wrappers at once each have their own) and is deleted
+  when claude has ended. A process claude starts with it after that cannot start: Claude Code
+  2.1.306 stops with "Error: Settings file not found: <path>". So a background session that
+  claude starts after the wrapper has ended fails when the person passed their own
+  `--settings`; one that is already running has read the file. The next start removes a file a
+  killed wrapper left, by the pid in its name: when that pid no longer runs, or when the file is
+  older than 30 days, in case the pid was reused by another program.
 - `ANTHROPIC_CUSTOM_HEADERS` keeps the person's own header lines. They are taken from the
   highest layer that sets the variable, as the CLI would: their `--settings`, then the user
   settings file (`$CLAUDE_CONFIG_DIR/settings.json` when that is set, else

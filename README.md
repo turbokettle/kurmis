@@ -104,6 +104,9 @@ kurmis' own options goes to `claude` unchanged, so `kurmis claude --resume` or
   means `claude:work`.
 
 If you pass your own `--settings`, kurmis adds its settings to yours; your file is not changed.
+The combined copy is kept in kurmis' data folder, readable only by you, and deleted when
+`kurmis claude` ends, so a background session Claude Code starts after that cannot read it. Your
+own `ENABLE_TOOL_SEARCH` or `CLAUDE_CODE_MAX_RETRIES`, wherever you set it, is left as it is.
 
 A `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) in your shell would make claude sign its
 requests with that token instead of a kurmis login, so `kurmis claude` starts claude without it

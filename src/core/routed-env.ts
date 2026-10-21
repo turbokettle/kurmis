@@ -32,6 +32,20 @@ export const OAUTH_TOKEN_VARIABLES: readonly string[] = ['CLAUDE_CODE_OAUTH_TOKE
 export const ROUTING_VARIABLES: readonly string[] = ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS',
   'ENABLE_TOOL_SEARCH', 'CLAUDE_CODE_MAX_RETRIES']
 
+/**
+ * The routing variables the wrapper leaves as they are when the person sets them themselves (in
+ * their `--settings`, the user settings file or the environment): routing works without them,
+ * so the person's choice wins. `kurmis setup` does the same in `settings.json`.
+ */
+export const USER_OWNED_ROUTING_VARIABLES: readonly string[] = ['ENABLE_TOOL_SEARCH', 'CLAUDE_CODE_MAX_RETRIES']
+
+/** `routed` without the variables in `names`: the CLI keeps what it would inherit for them. */
+export function withoutRoutedVariables(routed: RoutedEnv, names: readonly string[]): RoutedEnv {
+  const set: Record<string, string> = {}
+  for (const [name, value] of Object.entries(routed.set)) if (!names.includes(name)) set[name] = value
+  return { set, unset: routed.unset }
+}
+
 export interface RoutedEnvInput {
   /** The daemon's port on 127.0.0.1. */
   port: number
