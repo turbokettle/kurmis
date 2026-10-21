@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   addLogin,
@@ -15,7 +15,7 @@ import {
   updateLogin
 } from '../../src/data/config.ts'
 import { readJsonFileSync } from '../../src/data/json-file.ts'
-import { configPath } from '../../src/data/paths.ts'
+import { configLockPath, configPath } from '../../src/data/paths.ts'
 
 function writeRaw(value: unknown): void {
   saveRawText(JSON.stringify(value))
@@ -147,6 +147,41 @@ describe('changing logins', () => {
     changeConfig((config) => addLogin(config, 'claude:work'))
     changeConfig((config) => updateLogin(config, 'claude:work', { useFirst: true }))
     expect(findLogin(loadConfig(), 'claude:work')?.useFirst).toBe(true)
+  })
+
+  it('changeConfig holds the config lock while it changes the file and releases it after', () => {
+    changeConfig((config) => {
+      expect(existsSync(configLockPath())).toBe(true)
+      return addLogin(config, 'claude:work')
+    })
+    expect(existsSync(configLockPath())).toBe(false)
+    expect(() => changeConfig(() => {
+      throw new ConfigError('refused')
+    })).toThrow('refused')
+    expect(existsSync(configLockPath())).toBe(false)
+  })
+
+  it('changeConfig refuses a change that calls it again instead of waiting for itself', () => {
+    expect(() => changeConfig((config) => changeConfig(() => config))).toThrow(/already locked by this process/)
+    expect(existsSync(configLockPath())).toBe(false)
+  })
+
+  it('changeConfig answers a ConfigError naming the holder when the lock stays taken', () => {
+    writeFileSync(configLockPath(), JSON.stringify({ pid: process.ppid, createdAt: Date.now(), token: 'other' }))
+    try {
+      let caught: unknown
+      try {
+        changeConfig((config) => addLogin(config, 'claude:work'), configPath(), { timeoutMs: 200 })
+      } catch (error) {
+        caught = error
+      }
+      expect(caught).toBeInstanceOf(ConfigError)
+      expect((caught as Error).message).toContain(`Could not lock ${configLockPath()}`)
+      expect((caught as Error).message).toContain(`kurmis process ${String(process.ppid)} has held it`)
+    } finally {
+      rmSync(configLockPath(), { force: true })
+    }
+    expect(configStamp()).toBe('missing')
   })
 })
 

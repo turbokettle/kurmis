@@ -18,7 +18,8 @@ import {
   type LoginId,
   type LoginProvider
 } from './login-id.ts'
-import { configPath } from './paths.ts'
+import { LockTimeoutError, withFileLockSync, type FileLockOptions } from './lock.ts'
+import { configLockPath, configPath } from './paths.ts'
 import {
   child,
   DataFileError,
@@ -245,14 +246,28 @@ export function updateLogin(config: KurmisConfig, id: string, patch: LoginSettin
 }
 
 /**
- * Loads the config, applies `change`, and saves the result. This is what `login`, `logout`
- * and any settings command use. Two kurmis processes changing the config at the same moment
- * are not coordinated; the later save wins.
+ * Loads the config, applies `change`, and saves the result, holding the lock file
+ * (`configLockPath()`, or `<path>.lock` for another path) from before the read until after the
+ * write, so two kurmis processes changing the config at the same moment both keep their change.
+ * This is what `login`, `logout` and `set` use. `change` must not call `changeConfig` itself. A
+ * lock that cannot be taken in time is a `ConfigError` saying who holds it.
  */
-export function changeConfig(change: (config: KurmisConfig) => KurmisConfig, path = configPath()): KurmisConfig {
-  const next = change(loadConfig(path))
-  saveConfig(next, path)
-  return next
+export function changeConfig(
+  change: (config: KurmisConfig) => KurmisConfig,
+  path = configPath(),
+  lockOptions: FileLockOptions = {}
+): KurmisConfig {
+  const lockPath = path === configPath() ? configLockPath() : `${path}.lock`
+  try {
+    return withFileLockSync(lockPath, () => {
+      const next = change(loadConfig(path))
+      saveConfig(next, path)
+      return next
+    }, lockOptions)
+  } catch (error) {
+    if (error instanceof LockTimeoutError) throw new ConfigError(error.message)
+    throw error
+  }
 }
 
 /**
