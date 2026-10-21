@@ -178,7 +178,10 @@ older version, after that daemon finishes the requests it has open.
   left, the CLI gets the real 429 of the login that is back first, so it behaves exactly as with
   one exhausted account. The proxy answers its own 429 (`poolLimitAnswer`) instead when it holds
   no real one (logins skipped for limits it already knew about), or when a login it did not try
-  is back earlier than every one that refused. A pinned session gets its login's 429 as it is.
+  is back earlier than every one that refused. A pinned session gets its login's 429 as it is. The body of a 429 the proxy keeps
+  to pass on later, and of the 400 before a move back (below), is read for at most 5 s
+  (`KEPT_ANSWER_TIMEOUT_MS`), so a body that stalls does not hold the request back from the next
+  login; what came by then is what the CLI gets.
 - **No capacity.** A 529, or a 429 without usage-limit headers, puts that login into the
   session's backoff (`CapacityCooling` in `src/core/capacity-hold.ts`) and the request goes to
   another login at once when the session may use one that is not cooling. Otherwise it waits for

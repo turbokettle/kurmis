@@ -197,6 +197,45 @@ describe('the hold after a pin-back', () => {
   })
 })
 
+describe('a refusal whose body stalls', () => {
+  const quotaHeaders = (): Record<string, string> => ({
+    'content-type': 'application/json',
+    'anthropic-ratelimit-unified-status': 'rejected',
+    'anthropic-ratelimit-unified-representative-claim': 'five_hour',
+    'anthropic-ratelimit-unified-reset': String(Math.floor(Date.now() / 1000) + 3_600)
+  })
+
+  test('a usage-limit 429 does not keep the request from the next login', async () => {
+    const h = await twoLogins({ tuning: { keptAnswerTimeoutMs: 300 } })
+    h.api.scriptFor(DEFAULT, reply.raw(429, '{"type":"error"', { headers: quotaHeaders(), stall: true }))
+    const started = Date.now()
+    const answer = await messages(h, S1)
+    expect(answer.status).toBe(200)
+    expect(bearers(h)).toEqual([DEFAULT, WORK])
+    expect(Date.now() - started).toBeLessThan(5_000)
+  }, 15_000)
+
+  test('the 400 before a pin-back does not keep the request from the previous login', async () => {
+    const h = await twoLogins({ tuning: { keptAnswerTimeoutMs: 300 } })
+    expect((await messages(h, S1)).status).toBe(200)
+    useWorkFirst()
+    h.api.scriptFor(WORK, reply.raw(400, '{"type":"error"', { headers: { 'content-type': 'application/json' }, stall: true }))
+    const started = Date.now()
+    expect((await messages(h, S1)).status).toBe(200)
+    expect(bearers(h)).toEqual([DEFAULT, WORK, DEFAULT])
+    expect(Date.now() - started).toBeLessThan(5_000)
+  }, 15_000)
+
+  test('with no login left, the CLI gets the part of the 429 that came', async () => {
+    harness = await startHarness({ tuning: { keptAnswerTimeoutMs: 300 } })
+    writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
+    harness.api.scriptFor(DEFAULT, reply.raw(429, '{"type":"error"', { headers: quotaHeaders(), stall: true }))
+    const answer = await messages(harness, S1)
+    expect(answer.status).toBe(429)
+    expect(answer.text).toBe('{"type":"error"')
+  }, 15_000)
+})
+
 describe('stale usage', () => {
   test('a probe for a stale reading that fails is not run again for the same login within a minute', async () => {
     let probes = 0

@@ -64,6 +64,14 @@ export const TOO_LARGE_LINGER_MS = 5_000
 const MAX_KEPT_ANSWER_BYTES = 256 * 1024
 
 /**
+ * How long the proxy waits for the body of a refusal it keeps (a usage-limit 429 it may pass on
+ * later, or the 400 before a pin-back) before it goes on without the rest. Such a body is a few
+ * hundred bytes that come with the headers, so a body still open after this has stalled, and
+ * waiting for it would keep the request from the next login.
+ */
+export const KEPT_ANSWER_TIMEOUT_MS = 5_000
+
+/**
  * How long a request on Auto waits for the renewal of the chosen login's expiring token when
  * another login could take it. The renewal goes on; the request is sent on the other login. A
  * request that has no other login waits for the renewal as long as the probe takes.
@@ -85,6 +93,8 @@ export interface ProxyOptions {
   hold?: { holdMs?: number; baseMs?: number; maxMs?: number }
   maxBodyBytes?: number
   renewalWaitMs?: number
+  /** Default `KEPT_ANSWER_TIMEOUT_MS`. */
+  keptAnswerTimeoutMs?: number
   /** Default `TOO_LARGE_LINGER_MS`. */
   tooLargeLingerMs?: number
 }
@@ -118,6 +128,7 @@ export function createProxy(options: ProxyOptions): Proxy {
   const maxBodyBytes = options.maxBodyBytes ?? MAX_REQUEST_BODY_BYTES
   const renewalWaitMs = options.renewalWaitMs ?? RENEWAL_WAIT_MS
   const lingerMs = options.tooLargeLingerMs ?? TOO_LARGE_LINGER_MS
+  const keptAnswerTimeoutMs = options.keptAnswerTimeoutMs ?? KEPT_ANSWER_TIMEOUT_MS
   let open = 0
   let drainWaiters: Array<() => void> = []
 
@@ -417,7 +428,7 @@ export function createProxy(options: ProxyOptions): Proxy {
       }
       const decision = replayDecision({ status, get, servedBy: row.id, session, attempted })
       if (decision.kind === 'replay') {
-        refusals.push({ login: row.id, until: decision.cooldownUntil, status, headers: answer.headers, body: await keepBody(answer, signal) })
+        refusals.push({ login: row.id, until: decision.cooldownUntil, status, headers: answer.headers, body: await keepBody(answer, signal, keptAnswerTimeoutMs) })
         excluded.add(row.id)
         log.write('retry_other_login', { login: asLogin(row.id), reason: 'usage_limit', status })
         continue
@@ -425,7 +436,7 @@ export function createProxy(options: ProxyOptions): Proxy {
       if (decision.kind === 'pin-back') {
         // The login that answered 400 cannot take this conversation, so it is not tried again.
         // When the previous login cannot serve either, the CLI gets this 400 (`leftAnswer`).
-        leftAnswer = { login: row.id, until: Infinity, status, headers: answer.headers, body: await keepBody(answer, signal) }
+        leftAnswer = { login: row.id, until: Infinity, status, headers: answer.headers, body: await keepBody(answer, signal, keptAnswerTimeoutMs) }
         excluded.add(row.id)
         session.pinnedAccountId = decision.to
         session.homeAccountId = decision.to
@@ -601,12 +612,20 @@ function refuseTooLarge(req: IncomingMessage, res: ServerResponse, max: number, 
   }))
 }
 
-/** Up to `MAX_KEPT_ANSWER_BYTES` of an answer's body; the rest is dropped. */
-async function keepBody(answer: UpstreamAnswer, signal: AbortSignal): Promise<Buffer> {
+/**
+ * Up to `MAX_KEPT_ANSWER_BYTES` of an answer's body, read for at most `timeoutMs`; what comes
+ * later is dropped and the connection closed. Rejects with the signal's reason when `signal`
+ * aborts, at once, also while the body is stalled.
+ */
+async function keepBody(answer: UpstreamAnswer, signal: AbortSignal, timeoutMs: number): Promise<Buffer> {
   const chunks: Buffer[] = []
   let size = 0
+  const body = answer.body
+  const timer = setTimeout(() => { body.destroy() }, timeoutMs)
+  const onAbort = (): void => { body.destroy() }
+  signal.addEventListener('abort', onAbort, { once: true })
   try {
-    for await (const chunk of answer.body) {
+    for await (const chunk of body) {
       signal.throwIfAborted()
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string)
       if (size + bytes.length > MAX_KEPT_ANSWER_BYTES) {
@@ -618,7 +637,11 @@ async function keepBody(answer: UpstreamAnswer, signal: AbortSignal): Promise<Bu
     }
   } catch {
     signal.throwIfAborted()
+  } finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', onAbort)
   }
+  signal.throwIfAborted()
   return Buffer.concat(chunks)
 }
 

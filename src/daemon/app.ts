@@ -55,6 +55,7 @@ export interface DaemonTuning {
   configCheckMs?: number
   stateWriteMs?: number
   renewalWaitMs?: number
+  keptAnswerTimeoutMs?: number
   upstreamIdleTimeoutMs?: number
   /** The platform the token source reads for: the Keychain on `darwin`, the file elsewhere. */
   platform?: NodeJS.Platform
@@ -97,7 +98,8 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
     hold: { ...(tuning.holdMs === undefined ? {} : { holdMs: tuning.holdMs }),
       ...(tuning.holdBaseMs === undefined ? {} : { baseMs: tuning.holdBaseMs }),
       ...(tuning.holdMaxMs === undefined ? {} : { maxMs: tuning.holdMaxMs }) },
-    ...(tuning.renewalWaitMs === undefined ? {} : { renewalWaitMs: tuning.renewalWaitMs }) })
+    ...(tuning.renewalWaitMs === undefined ? {} : { renewalWaitMs: tuning.renewalWaitMs }),
+    ...(tuning.keptAnswerTimeoutMs === undefined ? {} : { keptAnswerTimeoutMs: tuning.keptAnswerTimeoutMs }) })
   const control = createControl({ key, table, tokens, identity, poller, log, now, pid: options.pid, port: options.port,
     startedAt: options.startedAt, onStopRequested: (request) => { options.onStopRequested(request) } })
   let closed: Promise<void> | null = null
