@@ -21,6 +21,7 @@ import {
   routedClaudeEnv,
   withoutRoutedVariables
 } from '../../core/routed-env.ts'
+import { canUseDaemon } from '../../daemon/lifecycle.ts'
 import { ConfigError, loadConfig, plainCliLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
 import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data/login-env.ts'
 import type { LoginId } from '../../data/login-id.ts'
@@ -28,7 +29,7 @@ import { loginFolder, logPath } from '../../data/paths.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
 import { EXIT_FAILURE, EXIT_OK, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realChildRunner, realDaemonClient, realFindProgram, type ChildRunner, type DaemonClient } from '../command-deps.ts'
-import type { DaemonConnection } from '../daemon-client.ts'
+import { DaemonNotUsableError, type DaemonConnection } from '../daemon-client.ts'
 import {
   claudeArgsWithSettings,
   claudeUserSettingsPath,
@@ -166,10 +167,11 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
   let connection: DaemonConnection
   try {
     // Without the config `ensureDaemon` cannot tell which port the daemon belongs on, so a daemon
-    // that runs is used as it is. When none runs, `ensureDaemon` reads the config again, which
-    // works when the config only had its lock taken a moment ago.
-    connection = (config === null ? await deps.daemon.findDaemon({ env: context.env }) : null) ??
-      await deps.daemon.ensureDaemon({ env: context.env })
+    // that runs is used as it is, when this kurmis can read its answers. Otherwise
+    // `ensureDaemon` reads the config again, which works when the config only had its lock taken
+    // a moment ago, and says why it cannot use a daemon that runs.
+    const running = config === null ? await deps.daemon.findDaemon({ env: context.env }) : null
+    connection = running !== null && canUseDaemon(running) ? running : await deps.daemon.ensureDaemon({ env: context.env })
   } catch (error) {
     return fail(daemonUnreachable(error))
   }
@@ -344,6 +346,7 @@ function oauthTokenNotes(env: NodeJS.ProcessEnv, layers: CustomHeaderLayers, use
 }
 
 function daemonUnreachable(error: unknown): string {
+  if (error instanceof DaemonNotUsableError) return `${error.message} Claude is not started unrouted.`
   return `the kurmis daemon could not be reached (${messageOf(error)}). Start it with "kurmis daemon start"; ` +
     `its log is ${logPath()}. Claude is not started unrouted.`
 }

@@ -22,7 +22,7 @@ import { realDaemonClient, realFindProgram, settleWithin, type DaemonClient } fr
 import type { DaemonConnection } from '../daemon-client.ts'
 import { globalRoutingState, type GlobalRoutingState } from '../global-routing.ts'
 import { hasCredentials } from '../local-credentials.ts'
-import { daemonReport, formatStatus, noIdYetStandIn, statusJson, type ReportLogin, type StatusReport } from '../status-format.ts'
+import { daemonOf, daemonReport, formatStatus, noIdYetStandIn, statusJson, type ReportLogin, type StatusReport } from '../status-format.ts'
 
 /**
  * How long `kurmis status` waits for the first usage probe of a daemon that has read no usage
@@ -73,7 +73,9 @@ only. "kurmis claude", "kurmis codex" without --login, "kurmis setup" and
 "kurmis daemon start" each start the daemon.
 
 When the daemon runs an older kurmis than this one, the status still comes from it, and the
-next command that starts the daemon replaces it. When the daemon does not answer the status
+next command that starts the daemon replaces it. A newer daemon is never replaced; when its
+control API version is another, this kurmis cannot read its status, and status says to update
+this kurmis or to stop the daemon with "kurmis daemon stop". When the daemon does not answer the status
 request, or this kurmis cannot read its answer, the logins come from config.json as above,
 with a note on stderr.
 
@@ -228,7 +230,7 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
   const checks = await Promise.all(shown.map(async ({ login }) =>
     [login.id, await hasCredentials(login, context.env, home, deps)] as const))
   return {
-    daemon: daemon === null ? null : { version: daemon.version, pid: daemon.pid, port: daemon.port, startedAt: daemon.startedAt },
+    daemon: daemon === null ? null : daemonOf(daemon),
     source: 'files',
     logins,
     credentials: new Map(checks),

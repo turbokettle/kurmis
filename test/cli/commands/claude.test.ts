@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { createClaudeCommand, startableLogins, type ClaudeDeps } from '../../../src/cli/commands/claude.ts'
 import type { ChildRunner } from '../../../src/cli/command-deps.ts'
 import type { ChildEnd, ChildSpec, FinishOptions } from '../../../src/cli/wrapper.ts'
+import { CONTROL_API_VERSION } from '../../../src/core/control-api.ts'
 import { ConfigError } from '../../../src/data/config.ts'
 import { loginFolder, logPath } from '../../../src/data/paths.ts'
 import { ProgramNotFoundError } from '../../../src/platform/programs.ts'
@@ -257,6 +258,14 @@ describe('kurmis claude on Auto', () => {
     expect(h.specs).toEqual([])
   })
 
+  test('a newer daemon that this kurmis cannot use stops claude with that daemon\'s explanation', async () => {
+    const h = harness({ ensureNotUsable: 'A newer kurmis daemon runs on port 40123 (pid 4242), so this kurmis does not replace it. Update this kurmis.' })
+    const out = collect()
+    expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(1)
+    expect(out.stderr()).toBe('kurmis claude: A newer kurmis daemon runs on port 40123 (pid 4242), so this kurmis does not replace it. Update this kurmis. Claude is not started unrouted.\n')
+    expect(h.specs).toEqual([])
+  })
+
   test('a status that cannot be read is the same error', async () => {
     const h = harness()
     h.daemon.readStatus = () => Promise.reject(new Error('connection reset'))
@@ -342,6 +351,18 @@ describe('kurmis claude --login', () => {
     expect(h.daemon.calls).toEqual(['findDaemon', 'ensureDaemon', 'readStatus'])
     // The status names no login of plain claude, so no started-on header is sent: the daemon reads that as plain claude's login.
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`))
+  })
+
+  test('with config.json unreadable, a running daemon of another control API version is not used', async () => {
+    const h = harness({ connection: { ...FAKE_CONNECTION, apiVersion: CONTROL_API_VERSION + 1 }, ensureFails: 'config.json is not valid JSON.' }, {
+      loadConfig: () => {
+        throw new ConfigError('config.json is not valid JSON.')
+      }
+    })
+    const out = collect()
+    expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(1)
+    expect(h.daemon.calls).toEqual(['findDaemon', 'ensureDaemon'])
+    expect(h.specs).toEqual([])
   })
 
   test('with config.json unreadable, a daemon that cannot be started stops claude', async () => {

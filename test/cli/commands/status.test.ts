@@ -54,7 +54,7 @@ describe('kurmis status with the daemon running', () => {
     const out = collect()
     expect(await command({ daemon, globalRouting: () => 'paused' }).run(['--json'], out.context)).toBe(0)
     const json = JSON.parse(out.stdout()) as StatusJson
-    expect(json).toMatchObject({ format: 4, source: 'daemon', globalRouting: 'paused', daemon: { version: '0.1.0', pid: 4242, older: false } })
+    expect(json).toMatchObject({ format: 5, source: 'daemon', globalRouting: 'paused', daemon: { version: '0.1.0', pid: 4242, older: false } })
     expect(json.logins.map((login) => [login.id, login.alias, login.usedByPlainCli, login.signedIn, login.credentials])).toEqual([
       ['ownclaude1', 'ownclaude1', true, true, null], ['owncodex01', 'owncodex01', true, true, null]
     ])
@@ -189,7 +189,7 @@ describe('kurmis status with the daemon not running', () => {
     const json = collect({})
     expect(await command({ daemon }).run(['--json'], json.context)).toBe(0)
     const parsed = JSON.parse(json.stdout()) as StatusJson
-    expect(parsed).toMatchObject({ format: 4, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
+    expect(parsed).toMatchObject({ format: 5, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
     expect(parsed.logins.map((login) => [login.id, login.alias, login.usedByPlainCli, login.signedIn, login.credentials, login.sessions])).toEqual([
       [OWN_CLAUDE, OWN_CLAUDE, true, null, false, 0], [OWN_CODEX, OWN_CODEX, true, null, false, null],
       ['workclaude', 'work-example', false, null, true, 1], ['sidecodex1', 'sidecodex1', false, null, false, null]

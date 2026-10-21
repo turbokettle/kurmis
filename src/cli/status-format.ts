@@ -15,16 +15,17 @@ import type { LoginStatus, StatusAnswer } from '../core/control-api.ts'
 import { resetsInText, spanText } from '../core/countdown.ts'
 import { routeBlockText } from '../core/proxy-rules.ts'
 import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '../core/usage-rules.ts'
-import { shouldReplace } from '../daemon/lifecycle.ts'
+import { daemonAge } from '../daemon/lifecycle.ts'
 import { isSameClaudeAccount } from '../data/identity.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
 import { loginArgument, plainCliLoginText, PROVIDER_NAMES } from './login-names.ts'
 
 /**
  * Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added.
- * Format 4: a login's `id` and `alias` may be null.
+ * Format 4: a login's `id` and `alias` may be null. Format 5: a login's `machineOwn` is called
+ * `usedByPlainCli`.
  */
-export const STATUS_JSON_FORMAT = 4
+export const STATUS_JSON_FORMAT = 5
 
 export interface StatusJsonWindow {
   /** The provider's key for the window: `five_hour`, `seven_day`, `codex:primary`, ... */
@@ -107,10 +108,11 @@ export interface StatusJsonLogin {
 export interface StatusJson {
   format: typeof STATUS_JSON_FORMAT
   /**
-   * The daemon that answered, or null when none runs. `older` says that it runs an older kurmis
-   * than this one, so the next command that starts the daemon replaces it.
+   * The daemon that answered, or null when none runs. `older` says that it is older than this
+   * kurmis (`shouldReplaceDaemon`), so the next command that starts the daemon replaces it.
+   * `newer` says that it is newer, so no command of this kurmis replaces it.
    */
-  daemon: { version: string; pid: number; port: number; startedAt: string; older: boolean } | null
+  daemon: { version: string; pid: number; port: number; startedAt: string; older: boolean; newer: boolean } | null
   /**
    * Where the logins come from: `daemon`, the daemon's status answer; `files`, `config.json` and
    * the usage the daemon last wrote to `state.json`, when no daemon runs or this kurmis cannot
@@ -154,28 +156,36 @@ export function noIdYetStandIn(provider: AccountProvider): string {
 
 /** What `kurmis status` shows, put together from the daemon or from the files. */
 export interface StatusReport {
-  /** The daemon that answered, or null when none runs. */
-  daemon: { version: string; pid: number; port: number; startedAt: number } | null
+  /** The daemon that answered, or null when none runs. `apiVersion` is absent when its answer had none. */
+  daemon: { version: string; apiVersion?: number; pid: number; port: number; startedAt: number } | null
   /** Where `logins` come from (`StatusJson.source`). */
   source: StatusSource
   logins: ReportLogin[]
   /** With `source` `files`: whether each login's credentials are on this machine, by login id. */
   credentials: ReadonlyMap<string, boolean>
   globalRouting: GlobalRoutingState
-  /** This kurmis' version, which tells whether the daemon is older. */
+  /** This kurmis' version, which with `CONTROL_API_VERSION` tells whether the daemon is older or newer. */
   version: string
 }
 
 /** A report of the daemon's status answer. */
 export function daemonReport(answer: StatusAnswer, globalRouting: GlobalRoutingState, version: string): StatusReport {
   return {
-    daemon: { version: answer.version, pid: answer.pid, port: answer.port, startedAt: answer.startedAt },
+    daemon: daemonOf(answer),
     source: 'daemon',
     logins: answer.logins,
     credentials: new Map(),
     globalRouting,
     version
   }
+}
+
+/** The daemon of a `StatusReport`, from its status answer. */
+export function daemonOf(answer: StatusAnswer): NonNullable<StatusReport['daemon']> {
+  const daemon: NonNullable<StatusReport['daemon']> = { version: answer.version, pid: answer.pid, port: answer.port, startedAt: answer.startedAt }
+  // An older daemon's status answer may have no `apiVersion`.
+  if (typeof answer.apiVersion === 'number') daemon.apiVersion = answer.apiVersion
+  return daemon
 }
 
 export interface StatusFormatOptions {
@@ -196,7 +206,8 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
       pid: daemon.pid,
       port: daemon.port,
       startedAt: isoTime(daemon.startedAt),
-      older: shouldReplace(daemon.version, report.version)
+      older: daemonAge(daemon, report.version) === 'older',
+      newer: daemonAge(daemon, report.version) === 'newer'
     },
     source: report.source,
     globalRouting: report.globalRouting,
@@ -292,6 +303,12 @@ function daemonLines(json: StatusJson, report: StatusReport, now: number): strin
   if (json.daemon?.older === true) {
     lines.push(...wrap(`It runs an older kurmis than this one (${report.version}). The next ` +
       `${DAEMON_STARTERS.replace(' and ', ' or ')} replaces it.`, '', ''))
+  }
+  if (json.daemon?.newer === true) {
+    lines.push(...wrap(report.source === 'daemon'
+      ? `It runs a newer kurmis than this one (${report.version}), which this kurmis does not replace.`
+      : `It runs a newer kurmis than this one (${report.version}), which this kurmis does not replace and cannot use. ` +
+        'Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.', '', ''))
   }
   if (report.source === 'files') {
     lines.push(...wrap('This kurmis cannot read its status, so the logins below come from config.json, with the ' +

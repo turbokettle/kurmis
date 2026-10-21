@@ -44,7 +44,10 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis statu
    `<t1>`. Expect a message that the email is already `<t1>`, exit code 0, no new login in
    `kurmis status`, and no new folder in the data folder's `claude/`. Do the same with the account
    of the login plain claude uses: the message should name that login. On macOS,
-   check that no new `Claude Code-credentials-<8 hex digits>` Keychain item is left.
+   check that no new `Claude Code-credentials-<8 hex digits>` Keychain item is left. When the
+   email of `<t1>` also has a seat in a Team or Enterprise organization, sign in to that one with
+   `kurmis login claude`: expect it to be added, with `<t1's alias>-2` as its alias and a line
+   that `<t1>` has the same email in another organization, and no warning in `kurmis status`.
 4. **An extra login of the account plain claude uses.** This needs a spare Claude account B
    besides the account A of the login plain claude uses. Sign plain `claude` in to B with
    `claude auth login`, and run `kurmis daemon restart` and `kurmis status` until the login

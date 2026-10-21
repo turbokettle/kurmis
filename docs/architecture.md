@@ -416,13 +416,12 @@ daemon both need: a keyed control request, who holds a port, version comparison)
 `daemon.log`. Then it listens on `127.0.0.1:<port>`. The port is the lock that keeps one daemon
 per user. When the port is busy, the daemon asks the holder for its status with the key:
 
-- a kurmis daemon of an older version is replaced (below). So is one of the same version whose
-  control API version (`apiVersion` in its status answer) is another one, or missing: it was
-  built from other code of that version, and its answers may be misread (`shouldReplaceDaemon`
-  in `src/daemon/lifecycle.ts`);
-- any other kurmis daemon (the same version and control API version, a newer version, or a
-  version that cannot be compared, such as `dev`, which code run from the source tree reports)
-  keeps the port, and the new process
+- an older kurmis daemon is replaced (below): one of a lower version, or of the same version
+  whose control API version (`apiVersion` in its status answer) is lower or missing
+  (`daemonAge` and `shouldReplaceDaemon` in `src/daemon/lifecycle.ts`);
+- any other kurmis daemon (the same version and control API version, a newer version, the same
+  version with a higher control API version, or a version that cannot be compared, such as
+  `dev`, which code run from the source tree reports) keeps the port, and the new process
   prints that it already runs and exits 0. Two CLIs that start a daemon at the same moment rely
   on this: the bind decides, and both CLIs connect to the one that won;
 - any other program is an error, exit 1, that says to set `"port"` in `config.json` (1024 to
@@ -460,8 +459,8 @@ at once there. So on Windows only a control `stop`, and Ctrl-C or closing the co
 An uncaught error is logged by its error code only, and the daemon stops without waiting for its
 requests and exits 1. The next `kurmis claude` or `kurmis codex` starts a new one.
 
-**Version handover.** A CLI that finds a daemon of an older version, or of the same version with
-another control API version, starts a new daemon, and the new daemon does the handover: it
+**Version handover.** A CLI that finds an older daemon (a lower version, or the same version
+with a lower control API version) starts a new daemon, and the new daemon does the handover: it
 sends the old one a control `stop` and tries the bind every 100 ms for up to 10 seconds. While
 the old daemon closes, its port may answer the status request with nothing or with an error;
 once the stop is sent that counts as the old daemon going away, not as another program, and the
@@ -469,14 +468,27 @@ bind is tried again. The old daemon frees the port as soon as it has
 answered, and finishes its open requests in the background while the new one serves. A routed Claude
 CLI retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
 in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older kurmis
-never replaces a newer daemon. A daemon on another port than `config.json` names (the port was
+never replaces a newer daemon, so two builds of one version with different control API versions
+do not keep replacing each other: the one with the higher control API version stays. A daemon on another port than `config.json` names (the port was
 changed while it ran) is not reached by the new daemon's bind, so the CLI asks it to stop with a
 control `stop` before it starts the new one, and the old daemon finishes its open requests in the
 background as above. A `stop` that fails or is refused (anything but a 200, or the port already
 closed) is an error, and no new daemon is started, so two daemons never run on two ports. The CLI
-does this only when the running daemon's version is the same as its own or older. When the daemon is
+does this only when the running daemon is not newer than itself. When the daemon is
 newer, or the two versions cannot be compared and differ, the CLI stops with an error that says to
 update kurmis or to stop the daemon with `kurmis daemon stop`.
+
+**A newer daemon.** A newer daemon (a higher version, or the same version with a higher control
+API version) is kept. When its control API version is the CLI's own, the CLI uses it
+(`canUseDaemon`). Otherwise the CLI cannot read its answers: `startDaemon` and `ensureDaemon`
+throw a `DaemonNotUsableError` whose message (`unusableDaemonText` in
+`src/cli/daemon-client.ts`) says that a newer daemon runs, gives both versions, and says to
+update this kurmis or to stop the daemon with `kurmis daemon stop` and run the command again. A
+daemon whose version cannot be compared and whose control API version is another is treated the
+same way. `kurmis claude` and `kurmis setup` then fail with that message; `kurmis codex` prints
+it and starts on the login plain codex uses; `kurmis daemon start` fails with it, and
+`kurmis daemon restart` refuses to replace a newer daemon. `kurmis status` and
+`kurmis daemon status` say that the daemon is newer and, when it cannot be used, what to do.
 
 **Finding it.** The CLI reads `daemon.json` and counts the daemon as running only when it
 answers a status request with the key, within 10 seconds, since a busy daemon on a loaded
@@ -1427,7 +1439,8 @@ These are known and left as they are.
     connection, so the command exits at once while the daemon finishes the probe. `kurmis codex`
     does the same with its 5-second wait. A daemon of an older kurmis is shown as it is, with a
     line that says the next command that starts the daemon replaces it; `status` replaces
-    nothing. When no daemon runs, the one that runs does not answer its status request (a note
+    nothing. A newer daemon gets a line that says this kurmis does not replace it and, when its
+    control API version is another, that this kurmis cannot use it and what to do. When no daemon runs, the one that runs does not answer its status request (a note
     on stderr says so), or it answers in another control API version, the logins come from
     `config.json` and `state.json`: the settings, the last usage snapshot
     with its age, the sessions counted from the placements, and a Claude login's email from its
@@ -1544,11 +1557,11 @@ These are known and left as they are.
   **`kurmis status --json`** prints its own shape, not the control API's answer, so it can stay
   stable while the daemon's usage snapshot changes. Times are ISO strings. `format` is raised
   only when a field is removed or changes meaning; fields may be added. Format 4 lets `id` and
-  `alias` be null.
+  `alias` be null. Format 5 calls a login's `machineOwn` `usedByPlainCli`.
 
   ```json
-  { "format": 4,
-    "daemon": { "version": "0.1.0", "pid": 4242, "port": 28411, "startedAt": "<ISO>", "older": false },
+  { "format": 5,
+    "daemon": { "version": "0.1.0", "pid": 4242, "port": 28411, "startedAt": "<ISO>", "older": false, "newer": false },
     "source": "daemon",
     "globalRouting": "on",
     "logins": [ {
@@ -1564,8 +1577,10 @@ These are known and left as they are.
     "warnings": [ "<sentence>" ] }
   ```
 
-  `daemon` is null while no daemon runs. `older` is true when the daemon runs an older kurmis
-  than this one, so the next command that starts the daemon replaces it. `source` is `daemon`
+  `daemon` is null while no daemon runs. `older` is true when the daemon is older than this
+  kurmis (a lower version, or the same version with a lower control API version), so the next
+  command that starts the daemon replaces it. `newer` is true when it is newer, so no command of
+  this kurmis replaces it. `source` is `daemon`
   when the logins come from the daemon's status answer, and `files` when they come from
   `config.json` and `state.json`: no daemon runs or answers its status request, or the one that
   runs answers in another control API version, and then `daemon` is not null. `globalRouting` is `on`, `paused` or `off`.

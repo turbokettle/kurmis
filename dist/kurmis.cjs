@@ -3872,6 +3872,459 @@ function inheritedOAuthTokenVariables(env, windows = false) {
   return Object.entries(env).filter(([name, value]) => value !== void 0 && value !== "" && OAUTH_TOKEN_VARIABLES.some((other) => windows ? other.toUpperCase() === name.toUpperCase() : other === name)).map(([name]) => name);
 }
 
+// src/daemon/lifecycle.ts
+var import_node_http = require("node:http");
+var import_node_net = require("node:net");
+
+// src/core/proxy-rules.ts
+var ROUTE_PATHS = [
+  { method: "POST", path: "/v1/messages" },
+  { method: "POST", path: "/v1/messages/count_tokens" },
+  { method: "GET", path: "/v1/models" }
+];
+var HELLO_PATH = "/api/hello";
+var CONTROL_PREFIX = "/_kurmis/";
+function requestKind(method, url) {
+  const path = (url ?? "").split("?")[0] ?? "";
+  if (path === HELLO_PATH && (method === "HEAD" || method === "GET")) return { kind: "hello" };
+  if (path.startsWith(CONTROL_PREFIX)) return { kind: "control", path };
+  if (ROUTE_PATHS.some((entry) => entry.method === method && entry.path === path)) return { kind: "route", path };
+  return { kind: "unknown" };
+}
+var ROUTER_REFUSAL_STATUS = 599;
+var HOP_HEADERS = /* @__PURE__ */ new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade"
+]);
+var REPLACED_REQUEST_HEADERS = /* @__PURE__ */ new Set([
+  "authorization",
+  "x-api-key",
+  "host",
+  "content-length",
+  "accept-encoding"
+]);
+function droppedHeaders(connection) {
+  return /* @__PURE__ */ new Set([...HOP_HEADERS, ...(connection ?? "").toLowerCase().split(",").map((name) => name.trim())]);
+}
+function upstreamRequest(incoming, body, authorization, accountUuid) {
+  const connection = incoming["connection"];
+  const drop = droppedHeaders(Array.isArray(connection) ? connection.join(",") : connection);
+  const headers = {};
+  for (const [rawName, value] of Object.entries(incoming)) {
+    const name = rawName.toLowerCase();
+    if (value === void 0 || drop.has(name) || REPLACED_REQUEST_HEADERS.has(name) || KURMIS_HEADERS.includes(name)) continue;
+    headers[name] = Array.isArray(value) ? value.join(", ") : value;
+  }
+  headers["authorization"] = authorization;
+  headers["accept-encoding"] = "identity";
+  const outgoing = body === void 0 ? void 0 : outgoingBody(body, accountUuid);
+  if (outgoing !== void 0) headers["content-length"] = String(outgoing.length);
+  return { headers, body: outgoing };
+}
+function downstreamResponseHeaders(upstream) {
+  const entries = [...upstream].map(([name, value]) => [name.toLowerCase(), value]);
+  const drop = droppedHeaders(entries.find(([name]) => name === "connection")?.[1]);
+  return entries.filter(([name]) => !drop.has(name) && name !== "content-length");
+}
+function rewriteUserId(userId, accountUuid) {
+  let value;
+  try {
+    value = JSON.parse(userId);
+  } catch {
+    return userId;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return userId;
+  if (value["account_uuid"] === accountUuid) return userId;
+  const bytes = Buffer.from(userId, "utf8");
+  const open4 = skipWhitespace(bytes, 0);
+  const found = memberValue(bytes, open4, "account_uuid");
+  const uuid = Buffer.from(JSON.stringify(accountUuid), "utf8");
+  if (found.span !== null) return splice(bytes, found.span.start, found.span.end, uuid).toString("utf8");
+  const close = skipValue(bytes, open4) - 1;
+  const member = Buffer.concat([Buffer.from(`${found.members > 0 ? "," : ""}"account_uuid":`, "utf8"), uuid]);
+  return splice(bytes, close, close, member).toString("utf8");
+}
+function outgoingBody(body, accountUuid) {
+  if (accountUuid === null) return body;
+  const open4 = skipWhitespace(body, 0);
+  if (body[open4] !== BRACE_OPEN) return body;
+  const metadata = memberValue(body, open4, "metadata").span;
+  if (metadata === null || body[metadata.start] !== BRACE_OPEN) return body;
+  const userId = memberValue(body, metadata.start, "user_id").span;
+  if (userId === null || body[userId.start] !== QUOTE) return body;
+  const current = JSON.parse(body.subarray(userId.start, userId.end).toString("utf8"));
+  const rewritten = rewriteUserId(current, accountUuid);
+  if (rewritten === current) return body;
+  return splice(body, userId.start, userId.end, Buffer.from(JSON.stringify(rewritten), "utf8"));
+}
+var QUOTE = 34;
+var BACKSLASH = 92;
+var BRACE_OPEN = 123;
+var BRACE_CLOSE = 125;
+var BRACKET_OPEN = 91;
+var BRACKET_CLOSE = 93;
+var COMMA = 44;
+var COLON = 58;
+function isWhitespace(byte) {
+  return byte === 32 || byte === 9 || byte === 10 || byte === 13;
+}
+function skipWhitespace(bytes, index) {
+  let at2 = index;
+  while (at2 < bytes.length && isWhitespace(bytes[at2])) at2++;
+  return at2;
+}
+function skipString(bytes, index) {
+  let at2 = index + 1;
+  while (at2 < bytes.length) {
+    const byte = bytes[at2];
+    if (byte === BACKSLASH) at2 += 2;
+    else if (byte === QUOTE) return at2 + 1;
+    else at2++;
+  }
+  return at2;
+}
+function skipValue(bytes, index) {
+  const first = bytes[index];
+  if (first === QUOTE) return skipString(bytes, index);
+  if (first === BRACE_OPEN || first === BRACKET_OPEN) {
+    let depth = 0;
+    let at3 = index;
+    while (at3 < bytes.length) {
+      const byte = bytes[at3];
+      if (byte === QUOTE) {
+        at3 = skipString(bytes, at3);
+        continue;
+      }
+      if (byte === BRACE_OPEN || byte === BRACKET_OPEN) depth++;
+      else if (byte === BRACE_CLOSE || byte === BRACKET_CLOSE) {
+        depth--;
+        if (depth === 0) return at3 + 1;
+      }
+      at3++;
+    }
+    return at3;
+  }
+  let at2 = index;
+  while (at2 < bytes.length) {
+    const byte = bytes[at2];
+    if (byte === COMMA || byte === BRACE_CLOSE || byte === BRACKET_CLOSE || isWhitespace(byte)) break;
+    at2++;
+  }
+  return at2;
+}
+function memberValue(bytes, open4, name) {
+  let span = null;
+  let members = 0;
+  let at2 = skipWhitespace(bytes, open4 + 1);
+  while (at2 < bytes.length && bytes[at2] === QUOTE) {
+    const keyEnd = skipString(bytes, at2);
+    const key = JSON.parse(bytes.subarray(at2, keyEnd).toString("utf8"));
+    at2 = skipWhitespace(bytes, keyEnd);
+    if (bytes[at2] !== COLON) break;
+    const start2 = skipWhitespace(bytes, at2 + 1);
+    const end = skipValue(bytes, start2);
+    members++;
+    if (key === name) span = { start: start2, end };
+    at2 = skipWhitespace(bytes, end);
+    if (bytes[at2] !== COMMA) break;
+    at2 = skipWhitespace(bytes, at2 + 1);
+  }
+  return { span, members };
+}
+function splice(bytes, start2, end, insert) {
+  return Buffer.concat([bytes.subarray(0, start2), insert, bytes.subarray(end)]);
+}
+function staleUsageLogins(session, rows, now, refreshed) {
+  const pinned = effectivePin(session, rows);
+  return rows.filter((row) => {
+    const reset = busiestPlanWindow(row.usage)?.resetsAt;
+    return !refreshed.has(row.id) && row.loggedIn && row.credentialsReadable && (pinned === null ? row.autoRoute : row.id === pinned) && reset != null && Date.parse(reset) <= now;
+  }).map((row) => row.id);
+}
+function withoutExpiringTokens(rows, now, session) {
+  const pinned = effectivePin(session, rows);
+  return rows.map((row) => row.tokenExpiresAt !== null && !tokenIsFresh(row.tokenExpiresAt, now) && (pinned === null || poolReadyAt([row], now, pinned, session.homeAccountId) === now) ? { ...row, credentialsReadable: false } : row);
+}
+function refusalAnswer(session, rows, now, cliOnOwnCredentials = false) {
+  const usable2 = withoutExpiringTokens(rows, now, session);
+  if (accountsInScope(session, usable2).length === 0) return { ...noSignerAnswer(cliOnOwnCredentials), kind: "no-signer", resetAt: null };
+  return { ...poolLimitAnswer(session, usable2, now), kind: "pool-limit" };
+}
+function noSignerAnswer(cliOnOwnCredentials = false) {
+  const message = cliOnOwnCredentials ? "No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not the login a plain `claude` uses, and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude with `kurmis claude`, or run `kurmis setup --pause` with that CLAUDE_CONFIG_DIR." : "No Claude login kurmis may use for this session could sign the request. Run `kurmis status` to see which logins are signed in.";
+  return {
+    status: ROUTER_REFUSAL_STATUS,
+    headers: { "content-type": "application/json", "retry-after": "5" },
+    body: JSON.stringify({ type: "error", error: { type: "api_error", message } })
+  };
+}
+function poolLimitAnswer(session, all, now) {
+  const pinned = effectivePin(session, all);
+  const rows = all.filter((row) => pinned === null || row.id === pinned);
+  const reset = poolReadyAt(rows, now, pinned, session.homeAccountId);
+  const next = reset === null ? void 0 : rows.find((row) => poolReadyAt([row], now, pinned, session.homeAccountId) === reset);
+  const blocking = next === void 0 ? void 0 : planUsageWindows(usageAsOf(next.usage, now)).filter((window) => window.utilization >= (pinned === null ? limitForWindow(next, window) : 100)).sort((a, b) => Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? ""))[0];
+  const claim = blocking?.key ?? next?.usage?.limited?.window ?? "five_hour";
+  const message = `Usage limit reached for every login kurmis may use.${reset === null ? "" : ` Resets at ${new Date(reset).toISOString()}.`}`;
+  return {
+    status: 429,
+    headers: {
+      "content-type": "application/json",
+      "anthropic-ratelimit-unified-status": "rejected",
+      "anthropic-ratelimit-unified-representative-claim": claim,
+      ...reset === null ? {} : { "anthropic-ratelimit-unified-reset": String(reset / 1e3) },
+      "retry-after": String(reset === null ? 1 : Math.max(1, Math.ceil((reset - now) / 1e3)))
+    },
+    body: JSON.stringify({ type: "error", error: { type: "rate_limit_error", message } }),
+    resetAt: reset
+  };
+}
+function cooldownAfterProbe(cooldownUntil, snapshot) {
+  if (cooldownUntil !== Infinity || snapshot.source !== "probe" || snapshot.error !== null || !snapshot.rateLimitsAvailable) {
+    return cooldownUntil;
+  }
+  const reset = resetsAtFromUsage(snapshot);
+  if (reset !== null && Number.isFinite(Date.parse(reset))) return Date.parse(reset);
+  return snapshot.status === "rejected" ? cooldownUntil : null;
+}
+function routeBlockText(block, keychain = false, startedOn = false, platform = process.platform) {
+  switch (block.kind) {
+    case "auto-route-off":
+      return "not opted in to routing";
+    case "signed-out":
+      return "signed out";
+    case "no-credentials":
+      if (!keychain) {
+        return platform === "win32" ? "no token, neither Windows Credential Manager nor its .credentials.json gave one" : "no token, its .credentials.json did not read";
+      }
+      return startedOn ? "no token, its Keychain item did not read and the request carried no authorization header of its own" : "no token, its Keychain item did not read and the CLI signs only for the login it was started on";
+    case "token-expiring":
+      return "its token expires within 5 minutes";
+    case "cooldown":
+      return block.until === null ? "cooling down until a usage probe says it is back" : `cooling down until ${new Date(block.until).toISOString()}`;
+    case "over-limit":
+      return `at its limit, the ${block.window} window is at ${String(Math.round(block.utilization))}% of ${String(block.limitPercent)}%`;
+  }
+}
+
+// src/core/control-api.ts
+var CONTROL_API_VERSION = 3;
+var CONTROL_PATHS = {
+  /** `GET`: `StatusAnswer`. */
+  status: `${CONTROL_PREFIX}status`,
+  /** `POST` with a `ProbeRequest`: probes the logins now and answers `StatusAnswer` when done. */
+  probe: `${CONTROL_PREFIX}probe`,
+  /** `POST`: reads `config.json` again. Answers `OkAnswer`. */
+  reload: `${CONTROL_PREFIX}reload`,
+  /**
+   * `POST` with an optional `StopRequest` (no body is the same as `{}`): answers `OkAnswer`,
+   * then stops taking new requests and exits once the open ones have finished.
+   */
+  stop: `${CONTROL_PREFIX}stop`
+};
+var MAX_CONTROL_BODY_BYTES = 64 * 1024;
+
+// src/data/validate.ts
+var DataFileError = class extends Error {
+  constructor(file, field, problem) {
+    super(field === null ? `${file}: ${problem}` : `${file}: ${field} ${problem}`);
+    this.file = file;
+    this.field = field;
+    this.name = "DataFileError";
+  }
+  file;
+  field;
+};
+function topOf(file) {
+  return { file, field: "" };
+}
+function child(where, key) {
+  if (typeof key === "number") return { file: where.file, field: `${where.field}[${String(key)}]` };
+  return { file: where.file, field: where.field === "" ? key : `${where.field}.${key}` };
+}
+function fail(where, problem) {
+  throw new DataFileError(where.file, where.field === "" ? null : where.field, problem);
+}
+function describe(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "a list";
+  if (typeof value === "string") return "a string";
+  if (typeof value === "object") return "an object";
+  return String(value);
+}
+function isPlainObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function expectObject(value, where) {
+  if (!isPlainObject(value)) fail(where, `must be an object, not ${describe(value)}`);
+  return value;
+}
+function expectArray(value, where) {
+  if (!Array.isArray(value)) fail(where, `must be a list, not ${describe(value)}`);
+  return value;
+}
+function expectString(value, where) {
+  if (typeof value !== "string") fail(where, `must be a string, not ${describe(value)}`);
+  return value;
+}
+function expectBoolean(value, where) {
+  if (typeof value !== "boolean") fail(where, `must be true or false, not ${describe(value)}`);
+  return value;
+}
+function expectInteger(value, where, min, max) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+    fail(where, `must be a whole number from ${String(min)} to ${String(max)}, not ${describe(value)}`);
+  }
+  return value;
+}
+
+// src/daemon/lifecycle.ts
+var DAEMON_HOST = "127.0.0.1";
+var CONTROL_TIMEOUT_MS = 5e3;
+var START_WAIT_MS = 1e4;
+var CLOSE_WAIT_MS = 1e4;
+var STOP_FINISH_MAX_MS = START_WAIT_MS + CLOSE_WAIT_MS;
+var MAX_ANSWER_BYTES = 4 * 1024 * 1024;
+function controlRequest(options) {
+  const timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
+  const payload = options.body === void 0 ? void 0 : JSON.stringify(options.body);
+  return new Promise((resolve9) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve9(result);
+    };
+    const headers = { [KEY_HEADER]: options.key, connection: "close" };
+    if (payload !== void 0) {
+      headers["content-type"] = "application/json";
+      headers["content-length"] = String(Buffer.byteLength(payload));
+    }
+    const outgoing = (0, import_node_http.request)(
+      {
+        host: DAEMON_HOST,
+        port: options.port,
+        method: options.method,
+        path: options.path,
+        headers,
+        agent: false,
+        signal: options.signal
+      },
+      (incoming) => {
+        const chunks = [];
+        let size = 0;
+        incoming.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > MAX_ANSWER_BYTES) {
+            finish({ kind: "failed", reason: "the answer was too large" });
+            outgoing.destroy();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        incoming.on("error", (error) => finish({ kind: "failed", reason: error.message }));
+        incoming.on("end", () => {
+          const text2 = Buffer.concat(chunks).toString("utf8");
+          let body;
+          try {
+            body = text2 === "" ? null : JSON.parse(text2);
+          } catch {
+            body = null;
+          }
+          finish({ kind: "answered", status: incoming.statusCode ?? 0, body });
+        });
+      }
+    );
+    const timer = setTimeout(() => {
+      finish({ kind: "failed", reason: `no answer within ${String(timeoutMs)} ms` });
+      outgoing.destroy();
+    }, timeoutMs);
+    outgoing.on("error", (error) => {
+      finish(error.code === "ECONNREFUSED" ? { kind: "refused" } : { kind: "failed", reason: error.code ?? error.message });
+    });
+    outgoing.end(payload);
+  });
+}
+function isStatusAnswer(value) {
+  return isPlainObject(value) && value.ok === true && typeof value.version === "string" && typeof value.pid === "number" && typeof value.port === "number" && typeof value.startedAt === "number" && Array.isArray(value.logins);
+}
+async function portHolder(port, key, timeoutMs = CONTROL_TIMEOUT_MS) {
+  const result = await controlRequest({ port, key, method: "GET", path: CONTROL_PATHS.status, timeoutMs });
+  if (result.kind === "refused") return { kind: "free" };
+  if (result.kind === "failed") return { kind: "other", reason: result.reason };
+  if (result.status === 200 && isStatusAnswer(result.body)) return { kind: "kurmis", status: result.body };
+  return { kind: "other", reason: `it answered ${String(result.status)} to a kurmis status request`, status: result.status };
+}
+function portAcceptsConnections(port, timeoutMs = 1e3) {
+  return new Promise((resolve9) => {
+    const socket = (0, import_node_net.createConnection)({ host: DAEMON_HOST, port });
+    const done = (accepted) => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve9(accepted);
+    };
+    const timer = setTimeout(() => done(true), timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("error", (error) => done(error.code !== "ECONNREFUSED"));
+  });
+}
+function compareVersions(a, b) {
+  const left = parseVersion(a);
+  const right = parseVersion(b);
+  if (left === null || right === null) return null;
+  const length = Math.max(left.parts.length, right.parts.length);
+  for (let index = 0; index < length; index++) {
+    const x = left.parts[index] ?? 0;
+    const y = right.parts[index] ?? 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  if (left.pre === right.pre) return 0;
+  if (left.pre === null) return 1;
+  if (right.pre === null) return -1;
+  return left.pre < right.pre ? -1 : 1;
+}
+function parseVersion(text2) {
+  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(text2.trim());
+  if (match === null) return null;
+  return { parts: (match[1] ?? "").split(".").map(Number), pre: match[2] ?? null };
+}
+function daemonAge(daemon, version, apiVersion = CONTROL_API_VERSION) {
+  const order = compareVersions(daemon.version, version);
+  if (order === null) return "unknown";
+  if (order !== 0) return order === -1 ? "older" : "newer";
+  if (daemon.apiVersion === apiVersion) return "same";
+  return daemon.apiVersion === void 0 || daemon.apiVersion < apiVersion ? "older" : "newer";
+}
+function shouldReplaceDaemon(daemon, version, apiVersion = CONTROL_API_VERSION) {
+  return daemonAge(daemon, version, apiVersion) === "older";
+}
+function canUseDaemon(daemon, apiVersion = CONTROL_API_VERSION) {
+  return daemon.apiVersion === apiVersion;
+}
+function versionText(version, apiVersion) {
+  return `${version} with ${apiVersion === void 0 ? "no control API version" : `control API version ${String(apiVersion)}`}`;
+}
+function delay(ms) {
+  return new Promise((resolve9) => {
+    setTimeout(resolve9, ms);
+  });
+}
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
 // src/data/config.ts
 var import_node_crypto5 = require("node:crypto");
 var import_node_fs4 = require("node:fs");
@@ -4336,60 +4789,6 @@ function codexMergedRecordPath(login) {
   const id = toLoginId(login.id);
   if (login.usedByPlainCli || login.provider !== "codex") throw new Error(`${id} is not an extra Codex login.`);
   return (0, import_node_path3.join)(kurmisHome(), "codex-merged", `${id}.json`);
-}
-
-// src/data/validate.ts
-var DataFileError = class extends Error {
-  constructor(file, field, problem) {
-    super(field === null ? `${file}: ${problem}` : `${file}: ${field} ${problem}`);
-    this.file = file;
-    this.field = field;
-    this.name = "DataFileError";
-  }
-  file;
-  field;
-};
-function topOf(file) {
-  return { file, field: "" };
-}
-function child(where, key) {
-  if (typeof key === "number") return { file: where.file, field: `${where.field}[${String(key)}]` };
-  return { file: where.file, field: where.field === "" ? key : `${where.field}.${key}` };
-}
-function fail(where, problem) {
-  throw new DataFileError(where.file, where.field === "" ? null : where.field, problem);
-}
-function describe(value) {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "a list";
-  if (typeof value === "string") return "a string";
-  if (typeof value === "object") return "an object";
-  return String(value);
-}
-function isPlainObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function expectObject(value, where) {
-  if (!isPlainObject(value)) fail(where, `must be an object, not ${describe(value)}`);
-  return value;
-}
-function expectArray(value, where) {
-  if (!Array.isArray(value)) fail(where, `must be a list, not ${describe(value)}`);
-  return value;
-}
-function expectString(value, where) {
-  if (typeof value !== "string") fail(where, `must be a string, not ${describe(value)}`);
-  return value;
-}
-function expectBoolean(value, where) {
-  if (typeof value !== "boolean") fail(where, `must be true or false, not ${describe(value)}`);
-  return value;
-}
-function expectInteger(value, where, min, max) {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
-    fail(where, `must be a whole number from ${String(min)} to ${String(max)}, not ${describe(value)}`);
-  }
-  return value;
 }
 
 // src/data/config.ts
@@ -6654,260 +7053,6 @@ async function writeIfUnchanged(target, next, mode) {
 var import_node_os5 = require("node:os");
 var import_node_path13 = require("node:path");
 
-// src/core/proxy-rules.ts
-var ROUTE_PATHS = [
-  { method: "POST", path: "/v1/messages" },
-  { method: "POST", path: "/v1/messages/count_tokens" },
-  { method: "GET", path: "/v1/models" }
-];
-var HELLO_PATH = "/api/hello";
-var CONTROL_PREFIX = "/_kurmis/";
-function requestKind(method, url) {
-  const path = (url ?? "").split("?")[0] ?? "";
-  if (path === HELLO_PATH && (method === "HEAD" || method === "GET")) return { kind: "hello" };
-  if (path.startsWith(CONTROL_PREFIX)) return { kind: "control", path };
-  if (ROUTE_PATHS.some((entry) => entry.method === method && entry.path === path)) return { kind: "route", path };
-  return { kind: "unknown" };
-}
-var ROUTER_REFUSAL_STATUS = 599;
-var HOP_HEADERS = /* @__PURE__ */ new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailer",
-  "transfer-encoding",
-  "upgrade"
-]);
-var REPLACED_REQUEST_HEADERS = /* @__PURE__ */ new Set([
-  "authorization",
-  "x-api-key",
-  "host",
-  "content-length",
-  "accept-encoding"
-]);
-function droppedHeaders(connection) {
-  return /* @__PURE__ */ new Set([...HOP_HEADERS, ...(connection ?? "").toLowerCase().split(",").map((name) => name.trim())]);
-}
-function upstreamRequest(incoming, body, authorization, accountUuid) {
-  const connection = incoming["connection"];
-  const drop = droppedHeaders(Array.isArray(connection) ? connection.join(",") : connection);
-  const headers = {};
-  for (const [rawName, value] of Object.entries(incoming)) {
-    const name = rawName.toLowerCase();
-    if (value === void 0 || drop.has(name) || REPLACED_REQUEST_HEADERS.has(name) || KURMIS_HEADERS.includes(name)) continue;
-    headers[name] = Array.isArray(value) ? value.join(", ") : value;
-  }
-  headers["authorization"] = authorization;
-  headers["accept-encoding"] = "identity";
-  const outgoing = body === void 0 ? void 0 : outgoingBody(body, accountUuid);
-  if (outgoing !== void 0) headers["content-length"] = String(outgoing.length);
-  return { headers, body: outgoing };
-}
-function downstreamResponseHeaders(upstream) {
-  const entries = [...upstream].map(([name, value]) => [name.toLowerCase(), value]);
-  const drop = droppedHeaders(entries.find(([name]) => name === "connection")?.[1]);
-  return entries.filter(([name]) => !drop.has(name) && name !== "content-length");
-}
-function rewriteUserId(userId, accountUuid) {
-  let value;
-  try {
-    value = JSON.parse(userId);
-  } catch {
-    return userId;
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return userId;
-  if (value["account_uuid"] === accountUuid) return userId;
-  const bytes = Buffer.from(userId, "utf8");
-  const open4 = skipWhitespace(bytes, 0);
-  const found = memberValue(bytes, open4, "account_uuid");
-  const uuid = Buffer.from(JSON.stringify(accountUuid), "utf8");
-  if (found.span !== null) return splice(bytes, found.span.start, found.span.end, uuid).toString("utf8");
-  const close = skipValue(bytes, open4) - 1;
-  const member = Buffer.concat([Buffer.from(`${found.members > 0 ? "," : ""}"account_uuid":`, "utf8"), uuid]);
-  return splice(bytes, close, close, member).toString("utf8");
-}
-function outgoingBody(body, accountUuid) {
-  if (accountUuid === null) return body;
-  const open4 = skipWhitespace(body, 0);
-  if (body[open4] !== BRACE_OPEN) return body;
-  const metadata = memberValue(body, open4, "metadata").span;
-  if (metadata === null || body[metadata.start] !== BRACE_OPEN) return body;
-  const userId = memberValue(body, metadata.start, "user_id").span;
-  if (userId === null || body[userId.start] !== QUOTE) return body;
-  const current = JSON.parse(body.subarray(userId.start, userId.end).toString("utf8"));
-  const rewritten = rewriteUserId(current, accountUuid);
-  if (rewritten === current) return body;
-  return splice(body, userId.start, userId.end, Buffer.from(JSON.stringify(rewritten), "utf8"));
-}
-var QUOTE = 34;
-var BACKSLASH = 92;
-var BRACE_OPEN = 123;
-var BRACE_CLOSE = 125;
-var BRACKET_OPEN = 91;
-var BRACKET_CLOSE = 93;
-var COMMA = 44;
-var COLON = 58;
-function isWhitespace(byte) {
-  return byte === 32 || byte === 9 || byte === 10 || byte === 13;
-}
-function skipWhitespace(bytes, index) {
-  let at2 = index;
-  while (at2 < bytes.length && isWhitespace(bytes[at2])) at2++;
-  return at2;
-}
-function skipString(bytes, index) {
-  let at2 = index + 1;
-  while (at2 < bytes.length) {
-    const byte = bytes[at2];
-    if (byte === BACKSLASH) at2 += 2;
-    else if (byte === QUOTE) return at2 + 1;
-    else at2++;
-  }
-  return at2;
-}
-function skipValue(bytes, index) {
-  const first = bytes[index];
-  if (first === QUOTE) return skipString(bytes, index);
-  if (first === BRACE_OPEN || first === BRACKET_OPEN) {
-    let depth = 0;
-    let at3 = index;
-    while (at3 < bytes.length) {
-      const byte = bytes[at3];
-      if (byte === QUOTE) {
-        at3 = skipString(bytes, at3);
-        continue;
-      }
-      if (byte === BRACE_OPEN || byte === BRACKET_OPEN) depth++;
-      else if (byte === BRACE_CLOSE || byte === BRACKET_CLOSE) {
-        depth--;
-        if (depth === 0) return at3 + 1;
-      }
-      at3++;
-    }
-    return at3;
-  }
-  let at2 = index;
-  while (at2 < bytes.length) {
-    const byte = bytes[at2];
-    if (byte === COMMA || byte === BRACE_CLOSE || byte === BRACKET_CLOSE || isWhitespace(byte)) break;
-    at2++;
-  }
-  return at2;
-}
-function memberValue(bytes, open4, name) {
-  let span = null;
-  let members = 0;
-  let at2 = skipWhitespace(bytes, open4 + 1);
-  while (at2 < bytes.length && bytes[at2] === QUOTE) {
-    const keyEnd = skipString(bytes, at2);
-    const key = JSON.parse(bytes.subarray(at2, keyEnd).toString("utf8"));
-    at2 = skipWhitespace(bytes, keyEnd);
-    if (bytes[at2] !== COLON) break;
-    const start2 = skipWhitespace(bytes, at2 + 1);
-    const end = skipValue(bytes, start2);
-    members++;
-    if (key === name) span = { start: start2, end };
-    at2 = skipWhitespace(bytes, end);
-    if (bytes[at2] !== COMMA) break;
-    at2 = skipWhitespace(bytes, at2 + 1);
-  }
-  return { span, members };
-}
-function splice(bytes, start2, end, insert) {
-  return Buffer.concat([bytes.subarray(0, start2), insert, bytes.subarray(end)]);
-}
-function staleUsageLogins(session, rows, now, refreshed) {
-  const pinned = effectivePin(session, rows);
-  return rows.filter((row) => {
-    const reset = busiestPlanWindow(row.usage)?.resetsAt;
-    return !refreshed.has(row.id) && row.loggedIn && row.credentialsReadable && (pinned === null ? row.autoRoute : row.id === pinned) && reset != null && Date.parse(reset) <= now;
-  }).map((row) => row.id);
-}
-function withoutExpiringTokens(rows, now, session) {
-  const pinned = effectivePin(session, rows);
-  return rows.map((row) => row.tokenExpiresAt !== null && !tokenIsFresh(row.tokenExpiresAt, now) && (pinned === null || poolReadyAt([row], now, pinned, session.homeAccountId) === now) ? { ...row, credentialsReadable: false } : row);
-}
-function refusalAnswer(session, rows, now, cliOnOwnCredentials = false) {
-  const usable = withoutExpiringTokens(rows, now, session);
-  if (accountsInScope(session, usable).length === 0) return { ...noSignerAnswer(cliOnOwnCredentials), kind: "no-signer", resetAt: null };
-  return { ...poolLimitAnswer(session, usable, now), kind: "pool-limit" };
-}
-function noSignerAnswer(cliOnOwnCredentials = false) {
-  const message = cliOnOwnCredentials ? "No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not the login a plain `claude` uses, and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, start Claude with `kurmis claude`, or run `kurmis setup --pause` with that CLAUDE_CONFIG_DIR." : "No Claude login kurmis may use for this session could sign the request. Run `kurmis status` to see which logins are signed in.";
-  return {
-    status: ROUTER_REFUSAL_STATUS,
-    headers: { "content-type": "application/json", "retry-after": "5" },
-    body: JSON.stringify({ type: "error", error: { type: "api_error", message } })
-  };
-}
-function poolLimitAnswer(session, all, now) {
-  const pinned = effectivePin(session, all);
-  const rows = all.filter((row) => pinned === null || row.id === pinned);
-  const reset = poolReadyAt(rows, now, pinned, session.homeAccountId);
-  const next = reset === null ? void 0 : rows.find((row) => poolReadyAt([row], now, pinned, session.homeAccountId) === reset);
-  const blocking = next === void 0 ? void 0 : planUsageWindows(usageAsOf(next.usage, now)).filter((window) => window.utilization >= (pinned === null ? limitForWindow(next, window) : 100)).sort((a, b) => Date.parse(b.resetsAt ?? "") - Date.parse(a.resetsAt ?? ""))[0];
-  const claim = blocking?.key ?? next?.usage?.limited?.window ?? "five_hour";
-  const message = `Usage limit reached for every login kurmis may use.${reset === null ? "" : ` Resets at ${new Date(reset).toISOString()}.`}`;
-  return {
-    status: 429,
-    headers: {
-      "content-type": "application/json",
-      "anthropic-ratelimit-unified-status": "rejected",
-      "anthropic-ratelimit-unified-representative-claim": claim,
-      ...reset === null ? {} : { "anthropic-ratelimit-unified-reset": String(reset / 1e3) },
-      "retry-after": String(reset === null ? 1 : Math.max(1, Math.ceil((reset - now) / 1e3)))
-    },
-    body: JSON.stringify({ type: "error", error: { type: "rate_limit_error", message } }),
-    resetAt: reset
-  };
-}
-function cooldownAfterProbe(cooldownUntil, snapshot) {
-  if (cooldownUntil !== Infinity || snapshot.source !== "probe" || snapshot.error !== null || !snapshot.rateLimitsAvailable) {
-    return cooldownUntil;
-  }
-  const reset = resetsAtFromUsage(snapshot);
-  if (reset !== null && Number.isFinite(Date.parse(reset))) return Date.parse(reset);
-  return snapshot.status === "rejected" ? cooldownUntil : null;
-}
-function routeBlockText(block, keychain = false, startedOn = false, platform = process.platform) {
-  switch (block.kind) {
-    case "auto-route-off":
-      return "not opted in to routing";
-    case "signed-out":
-      return "signed out";
-    case "no-credentials":
-      if (!keychain) {
-        return platform === "win32" ? "no token, neither Windows Credential Manager nor its .credentials.json gave one" : "no token, its .credentials.json did not read";
-      }
-      return startedOn ? "no token, its Keychain item did not read and the request carried no authorization header of its own" : "no token, its Keychain item did not read and the CLI signs only for the login it was started on";
-    case "token-expiring":
-      return "its token expires within 5 minutes";
-    case "cooldown":
-      return block.until === null ? "cooling down until a usage probe says it is back" : `cooling down until ${new Date(block.until).toISOString()}`;
-    case "over-limit":
-      return `at its limit, the ${block.window} window is at ${String(Math.round(block.utilization))}% of ${String(block.limitPercent)}%`;
-  }
-}
-
-// src/core/control-api.ts
-var CONTROL_API_VERSION = 3;
-var CONTROL_PATHS = {
-  /** `GET`: `StatusAnswer`. */
-  status: `${CONTROL_PREFIX}status`,
-  /** `POST` with a `ProbeRequest`: probes the logins now and answers `StatusAnswer` when done. */
-  probe: `${CONTROL_PREFIX}probe`,
-  /** `POST`: reads `config.json` again. Answers `OkAnswer`. */
-  reload: `${CONTROL_PREFIX}reload`,
-  /**
-   * `POST` with an optional `StopRequest` (no body is the same as `{}`): answers `OkAnswer`,
-   * then stops taking new requests and exits once the open ones have finished.
-   */
-  stop: `${CONTROL_PREFIX}stop`
-};
-var MAX_CONTROL_BODY_BYTES = 64 * 1024;
-
 // src/data/daemon-file.ts
 var import_node_crypto7 = require("node:crypto");
 var import_node_fs10 = require("node:fs");
@@ -7029,140 +7174,6 @@ function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
     return true;
   } finally {
     if (!keepAside) (0, import_node_fs10.rmSync)(aside, { force: true });
-  }
-}
-
-// src/daemon/lifecycle.ts
-var import_node_http = require("node:http");
-var import_node_net = require("node:net");
-var DAEMON_HOST = "127.0.0.1";
-var CONTROL_TIMEOUT_MS = 5e3;
-var START_WAIT_MS = 1e4;
-var CLOSE_WAIT_MS = 1e4;
-var STOP_FINISH_MAX_MS = START_WAIT_MS + CLOSE_WAIT_MS;
-var MAX_ANSWER_BYTES = 4 * 1024 * 1024;
-function controlRequest(options) {
-  const timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
-  const payload = options.body === void 0 ? void 0 : JSON.stringify(options.body);
-  return new Promise((resolve9) => {
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve9(result);
-    };
-    const headers = { [KEY_HEADER]: options.key, connection: "close" };
-    if (payload !== void 0) {
-      headers["content-type"] = "application/json";
-      headers["content-length"] = String(Buffer.byteLength(payload));
-    }
-    const outgoing = (0, import_node_http.request)(
-      {
-        host: DAEMON_HOST,
-        port: options.port,
-        method: options.method,
-        path: options.path,
-        headers,
-        agent: false,
-        signal: options.signal
-      },
-      (incoming) => {
-        const chunks = [];
-        let size = 0;
-        incoming.on("data", (chunk) => {
-          size += chunk.length;
-          if (size > MAX_ANSWER_BYTES) {
-            finish({ kind: "failed", reason: "the answer was too large" });
-            outgoing.destroy();
-            return;
-          }
-          chunks.push(chunk);
-        });
-        incoming.on("error", (error) => finish({ kind: "failed", reason: error.message }));
-        incoming.on("end", () => {
-          const text2 = Buffer.concat(chunks).toString("utf8");
-          let body;
-          try {
-            body = text2 === "" ? null : JSON.parse(text2);
-          } catch {
-            body = null;
-          }
-          finish({ kind: "answered", status: incoming.statusCode ?? 0, body });
-        });
-      }
-    );
-    const timer = setTimeout(() => {
-      finish({ kind: "failed", reason: `no answer within ${String(timeoutMs)} ms` });
-      outgoing.destroy();
-    }, timeoutMs);
-    outgoing.on("error", (error) => {
-      finish(error.code === "ECONNREFUSED" ? { kind: "refused" } : { kind: "failed", reason: error.code ?? error.message });
-    });
-    outgoing.end(payload);
-  });
-}
-function isStatusAnswer(value) {
-  return isPlainObject(value) && value.ok === true && typeof value.version === "string" && typeof value.pid === "number" && typeof value.port === "number" && typeof value.startedAt === "number" && Array.isArray(value.logins);
-}
-async function portHolder(port, key, timeoutMs = CONTROL_TIMEOUT_MS) {
-  const result = await controlRequest({ port, key, method: "GET", path: CONTROL_PATHS.status, timeoutMs });
-  if (result.kind === "refused") return { kind: "free" };
-  if (result.kind === "failed") return { kind: "other", reason: result.reason };
-  if (result.status === 200 && isStatusAnswer(result.body)) return { kind: "kurmis", status: result.body };
-  return { kind: "other", reason: `it answered ${String(result.status)} to a kurmis status request`, status: result.status };
-}
-function portAcceptsConnections(port, timeoutMs = 1e3) {
-  return new Promise((resolve9) => {
-    const socket = (0, import_node_net.createConnection)({ host: DAEMON_HOST, port });
-    const done = (accepted) => {
-      clearTimeout(timer);
-      socket.destroy();
-      resolve9(accepted);
-    };
-    const timer = setTimeout(() => done(true), timeoutMs);
-    socket.once("connect", () => done(true));
-    socket.once("error", (error) => done(error.code !== "ECONNREFUSED"));
-  });
-}
-function compareVersions(a, b) {
-  const left = parseVersion(a);
-  const right = parseVersion(b);
-  if (left === null || right === null) return null;
-  const length = Math.max(left.parts.length, right.parts.length);
-  for (let index = 0; index < length; index++) {
-    const x = left.parts[index] ?? 0;
-    const y = right.parts[index] ?? 0;
-    if (x !== y) return x < y ? -1 : 1;
-  }
-  if (left.pre === right.pre) return 0;
-  if (left.pre === null) return 1;
-  if (right.pre === null) return -1;
-  return left.pre < right.pre ? -1 : 1;
-}
-function parseVersion(text2) {
-  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(text2.trim());
-  if (match === null) return null;
-  return { parts: (match[1] ?? "").split(".").map(Number), pre: match[2] ?? null };
-}
-function shouldReplace(daemonVersion, cliVersion) {
-  return compareVersions(daemonVersion, cliVersion) === -1;
-}
-function shouldReplaceDaemon(daemon, version, apiVersion = CONTROL_API_VERSION) {
-  const order = compareVersions(daemon.version, version);
-  return order === -1 || order === 0 && daemon.apiVersion !== apiVersion;
-}
-function delay2(ms) {
-  return new Promise((resolve9) => {
-    setTimeout(resolve9, ms);
-  });
-}
-function processExists(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
   }
 }
 
@@ -7306,6 +7317,30 @@ function daemonEnvironment(env, processEnv = process.env) {
 function portBusyMessage(port, reason) {
   return `Port ${String(port)} on 127.0.0.1 is in use by another program (${reason}), so the kurmis daemon cannot listen there. Set "port" in ${configPath()} to a free port from 1024 to 65535, then run the command again.`;
 }
+function unusableDaemonText(daemon, version = kurmisVersion, apiVersion = CONTROL_API_VERSION) {
+  if (canUseDaemon(daemon, apiVersion)) return null;
+  const age = daemonAge(daemon, version, apiVersion);
+  const where = `on port ${String(daemon.port)} (pid ${String(daemon.pid)})`;
+  const versions = `The daemon is ${versionText(daemon.version, daemon.apiVersion)}, this kurmis is ${versionText(version, apiVersion)}.`;
+  if (age === "newer") {
+    return `A newer kurmis daemon runs ${where}, so this kurmis does not replace it, and it cannot use a daemon of another control API version. ${versions} Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`;
+  }
+  if (age === "unknown") {
+    return `The kurmis daemon ${where} has a version that cannot be compared with this kurmis' own, so this kurmis does not replace it, and it cannot use a daemon of another control API version. ${versions} Stop the daemon with "kurmis daemon stop" and run the command again.`;
+  }
+  return `The kurmis daemon ${where} is older than this kurmis and has another control API version. ${versions} "kurmis daemon restart" replaces it.`;
+}
+var DaemonNotUsableError = class extends DaemonError {
+  constructor(message) {
+    super(message);
+    this.name = "DaemonNotUsableError";
+  }
+};
+function usable(connection, version, apiVersion) {
+  const problem = unusableDaemonText(connection, version, apiVersion);
+  if (problem !== null) throw new DaemonNotUsableError(problem);
+  return connection;
+}
 async function startDaemon(options) {
   const version = options.version ?? kurmisVersion;
   const apiVersion = options.apiVersion ?? CONTROL_API_VERSION;
@@ -7313,14 +7348,14 @@ async function startDaemon(options) {
   const found = await findDaemon(options);
   let replaced = null;
   if (found !== null) {
-    if (found.port === port && !shouldReplaceDaemon(found, version, apiVersion)) {
-      return { connection: found, started: false, replaced: null };
+    const age = daemonAge(found, version, apiVersion);
+    if (found.port === port && age !== "older") {
+      return { connection: usable(found, version, apiVersion), started: false, replaced: null };
     }
     replaced = found.version;
     if (found.port !== port) {
-      const order = compareVersions(found.version, version);
-      if (order === 1 || order === null && found.version !== version) {
-        throw new DaemonError(`The kurmis daemon ${found.version} runs on port ${String(found.port)}, but ${configPath()} names port ${String(port)}. Its version is ${order === 1 ? "newer than" : "not comparable with"} this kurmis (${version}), so this kurmis does not stop it to move it. Update kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`);
+      if (age === "newer" || age === "unknown" && found.version !== version) {
+        throw new DaemonError(`The kurmis daemon ${found.version} runs on port ${String(found.port)}, but ${configPath()} names port ${String(port)}. It is ${age === "newer" ? "newer than" : "not comparable with"} this kurmis (${versionText(found.version, found.apiVersion)}; this kurmis is ${versionText(version, apiVersion)}), so this kurmis does not stop it to move it. Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`);
       }
       const stopped = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop });
       if (stopped.kind === "failed" || stopped.kind === "answered" && stopped.status !== 200) {
@@ -7341,7 +7376,7 @@ async function startDaemon(options) {
       throw new DaemonError(portBusyMessage(port, holder.reason));
     }
     if (holder.kind === "kurmis" && !shouldReplaceDaemon(holder.status, version, apiVersion)) {
-      return { connection: connectionOf(holder.status, key), started: false, replaced: null };
+      return { connection: usable(connectionOf(holder.status, key), version, apiVersion), started: false, replaced: null };
     }
   }
   const entry = options.entry ?? kurmisEntry({ env: options.env });
@@ -7356,7 +7391,7 @@ async function startDaemon(options) {
     throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`);
   }
   const connection = await waitForDaemon({ port, version, apiVersion, child: child2, timeoutMs: options.startTimeoutMs ?? START_TIMEOUT_MS });
-  return { connection, started: true, replaced };
+  return { connection: usable(connection, version, apiVersion), started: true, replaced };
 }
 async function waitForDaemon(wait) {
   const deadline = Date.now() + wait.timeoutMs;
@@ -7373,7 +7408,7 @@ async function waitForDaemon(wait) {
     if (Date.now() >= deadline) {
       throw new DaemonError(`The kurmis daemon did not answer on port ${String(wait.port)} within ${String(Math.round(wait.timeoutMs / 1e3))} seconds of starting. Run "kurmis daemon run" to see why, or look in ${logPath()}.`);
     }
-    await delay2(POLL_MS);
+    await delay(POLL_MS);
   }
 }
 async function ensureDaemon(options) {
@@ -7416,7 +7451,7 @@ async function waitForExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (processExists(pid)) {
     if (Date.now() >= deadline) return false;
-    await delay2(POLL_MS);
+    await delay(POLL_MS);
   }
   return true;
 }
@@ -7424,7 +7459,7 @@ async function waitForPortFree(port, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (await portAcceptsConnections(port)) {
     if (Date.now() >= deadline) return false;
-    await delay2(POLL_MS);
+    await delay(POLL_MS);
   }
   return true;
 }
@@ -7477,10 +7512,11 @@ async function stopDaemon(options) {
 }
 async function restartDaemon(options) {
   const version = options.version ?? kurmisVersion;
+  const apiVersion = options.apiVersion ?? CONTROL_API_VERSION;
   const found = await findDaemon(options);
   if (found !== null) {
-    if (compareVersions(found.version, version) === 1) {
-      throw new DaemonError(`The running kurmis daemon is version ${found.version}, newer than this kurmis (${version}), so this kurmis does not replace it. Update kurmis, or run "kurmis daemon stop" first.`);
+    if (daemonAge(found, version, apiVersion) === "newer") {
+      throw new DaemonError(`The running kurmis daemon is newer than this kurmis (the daemon is ${versionText(found.version, found.apiVersion)}, this kurmis is ${versionText(version, apiVersion)}), so this kurmis does not replace it. Update this kurmis, or run "kurmis daemon stop" and then "kurmis daemon start".`);
     }
     const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop });
     if (result.kind === "answered" && result.status !== 200) throw failureOf(result, found, "the stop request");
@@ -8157,7 +8193,8 @@ async function runClaude(args, context, deps) {
   }
   let connection;
   try {
-    connection = (config === null ? await deps.daemon.findDaemon({ env: context.env }) : null) ?? await deps.daemon.ensureDaemon({ env: context.env });
+    const running = config === null ? await deps.daemon.findDaemon({ env: context.env }) : null;
+    connection = running !== null && canUseDaemon(running) ? running : await deps.daemon.ensureDaemon({ env: context.env });
   } catch (error) {
     return fail4(daemonUnreachable(error));
   }
@@ -8277,6 +8314,7 @@ function oauthTokenNotes(env, layers, userSettings, userSettingsPath) {
   return notes;
 }
 function daemonUnreachable(error) {
+  if (error instanceof DaemonNotUsableError) return `${error.message} Claude is not started unrouted.`;
   return `the kurmis daemon could not be reached (${messageOf(error)}). Start it with "kurmis daemon start"; its log is ${logPath()}. Claude is not started unrouted.`;
 }
 function messageOf(error) {
@@ -8399,10 +8437,8 @@ async function chooseLogin(context, config, deps) {
       }
     }
   } catch (error) {
-    writeLine(
-      context.stderr,
-      `kurmis codex: the kurmis daemon could not be reached (${messageOf2(error)}); starting on ${own2.alias}, ${plainCliLoginText("codex")}.`
-    );
+    const starting = `starting on ${own2.alias}, ${plainCliLoginText("codex")}.`;
+    writeLine(context.stderr, error instanceof DaemonNotUsableError ? `kurmis codex: ${error.message} Until then, ${starting}` : `kurmis codex: the kurmis daemon could not be reached (${messageOf2(error)}); ${starting}`);
     return own2;
   }
   const choice = chooseCodexLogin(status2, deps.now());
@@ -9960,11 +9996,11 @@ var CapacityCooling = class {
    * cooling. A held request that finds no login and nothing cooling is answered with the pool's
    * own refusal, because then it is a usage limit or a sign-in problem, not a want of capacity.
    */
-  waitFor(sessionId, usable, now) {
+  waitFor(sessionId, usable2, now) {
     const cooling = /* @__PURE__ */ new Set();
     let wakeAt = null;
     for (const [id, until] of this.coolingOf(sessionId, now)?.logins ?? []) {
-      if (until <= now || !usable.has(id)) continue;
+      if (until <= now || !usable2.has(id)) continue;
       cooling.add(id);
       wakeAt = wakeAt === null ? until : Math.min(wakeAt, until);
     }
@@ -11924,7 +11960,7 @@ async function bindPort(server, options) {
       complain(bindTimeoutText(port, seconds3, askedToStop, lastHolder ?? null));
       return 1;
     }
-    await delay2(BIND_RETRY_MS);
+    await delay(BIND_RETRY_MS);
   }
 }
 function bindTimeoutText(port, seconds3, askedToStop, lastHolder) {
@@ -12164,8 +12200,8 @@ function describeStart(result) {
   const { connection } = result;
   const where = `on ${address(connection.port)} (pid ${String(connection.pid)})`;
   if (!result.started) {
-    const newer = compareVersions(connection.version, kurmisVersion) === 1;
-    return newer ? `A newer kurmis daemon (${connection.version}) already runs ${where}; this kurmis is ${kurmisVersion}.` : `The kurmis daemon ${connection.version} already runs ${where}.`;
+    const newer = daemonAge(connection, kurmisVersion) === "newer";
+    return newer ? `A newer kurmis daemon (${versionText(connection.version, connection.apiVersion)}) already runs ${where}; this kurmis is ${versionText(kurmisVersion, CONTROL_API_VERSION)}, and can use it.` : `The kurmis daemon ${connection.version} already runs ${where}.`;
   }
   const replaced = result.replaced === null ? "" : `, replacing version ${result.replaced}, which stops once its open requests finish`;
   return `Started the kurmis daemon ${connection.version} ${where}${replaced}.`;
@@ -12259,12 +12295,16 @@ var status = async (args, context) => {
       return EXIT_OK;
     }
     writeLine(context.stdout, `The kurmis daemon ${answer2.version} runs on ${address(answer2.port)}, pid ${String(answer2.pid)}, since ${new Date(answer2.startedAt).toISOString()}, with ${String(answer2.logins.length)} logins.`);
-    const order = compareVersions(answer2.version, kurmisVersion);
-    if (shouldReplaceDaemon(answer2, kurmisVersion)) {
-      const which = order === -1 ? kurmisVersion : `${kurmisVersion} with control API version ${String(CONTROL_API_VERSION)}, while the daemon has ${typeof answer2.apiVersion === "number" ? String(answer2.apiVersion) : "none"}`;
-      writeLine(context.stdout, `This kurmis is ${which}; the next "kurmis claude", "kurmis codex", "kurmis setup" or "kurmis daemon start" replaces the daemon.`);
+    const age = daemonAge(answer2, kurmisVersion);
+    const versions = `The daemon is ${versionText(answer2.version, answer2.apiVersion)}, this kurmis is ${versionText(kurmisVersion, CONTROL_API_VERSION)}.`;
+    const sameApi = answer2.apiVersion === CONTROL_API_VERSION;
+    if (age === "older") {
+      writeLine(context.stdout, `${versions} The daemon is older, so the next "kurmis claude", "kurmis codex", "kurmis setup" or "kurmis daemon start" replaces it.`);
+    } else if (age === "newer") {
+      writeLine(context.stdout, sameApi ? `${versions} The daemon is newer; this kurmis can use it and does not replace it.` : `${versions} The daemon is newer, so this kurmis does not replace it, and it cannot use a daemon of another control API version. Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`);
+    } else if (age === "unknown" && !sameApi) {
+      writeLine(context.stdout, `${versions} The versions cannot be compared, so this kurmis does not replace the daemon, and it cannot use a daemon of another control API version. Stop the daemon with "kurmis daemon stop" and run the command again.`);
     }
-    if (order === 1) writeLine(context.stdout, `This kurmis is ${kurmisVersion}, older than the daemon.`);
     return EXIT_OK;
   } catch (error) {
     return failed(error, context);
@@ -12299,9 +12339,11 @@ The daemon is the background process that routes Claude requests. "kurmis claude
 "kurmis codex" without --login and "kurmis setup" start it when it is not running, so
 "kurmis daemon start" is seldom needed.
 
-  start                   Start it in the background, replacing one of an older version.
-                          A daemon of the same version is replaced too when its control API
-                          version is another one.
+  start                   Start it in the background, replacing an older one: one of a
+                          lower version, or of the same version with a lower control API
+                          version. A newer daemon is kept. When its control API version is
+                          another, this kurmis cannot use it, and the command says so: update
+                          this kurmis, or run "kurmis daemon stop" and then the command again.
                           --env NAME=VALUE sets a kurmis variable in the daemon's
                           environment; the Windows logon entry uses it.
   stop [--now]            Stop it after it finishes the requests it has open, waiting at most
@@ -12309,6 +12351,7 @@ The daemon is the background process that routes Claude requests. "kurmis claude
                           requests it has open. An open Claude session then sees a dropped
                           connection and retries the request.
   restart                 Start a new one now; the old one finishes its open requests first.
+                          A newer daemon is not replaced.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
   run                     Run it in this terminal instead of the background (what "start"
@@ -14295,6 +14338,11 @@ async function daemonStep(port, path, hadKurmis, deps, context) {
     writeLine(context.stdout, `The daemon is running on port ${String(connection.port)}.`);
     return connection.key;
   } catch (error) {
+    if (error instanceof DaemonNotUsableError) {
+      writeLine(context.stderr, error.message);
+      writeLine(context.stderr, unchanged);
+      return null;
+    }
     writeLine(context.stderr, `The daemon could not be started: ${errorText4(error)}`);
     writeLine(context.stderr, `${unchanged} "kurmis daemon start" starts it and says what is wrong.`);
     return null;
@@ -14687,19 +14735,24 @@ var setupCommand = createSetupCommand();
 var import_node_os15 = require("node:os");
 
 // src/cli/status-format.ts
-var STATUS_JSON_FORMAT = 4;
+var STATUS_JSON_FORMAT = 5;
 function noIdYetStandIn(provider) {
   return `-${provider}`;
 }
 function daemonReport(answer2, globalRouting, version) {
   return {
-    daemon: { version: answer2.version, pid: answer2.pid, port: answer2.port, startedAt: answer2.startedAt },
+    daemon: daemonOf(answer2),
     source: "daemon",
     logins: answer2.logins,
     credentials: /* @__PURE__ */ new Map(),
     globalRouting,
     version
   };
+}
+function daemonOf(answer2) {
+  const daemon = { version: answer2.version, pid: answer2.pid, port: answer2.port, startedAt: answer2.startedAt };
+  if (typeof answer2.apiVersion === "number") daemon.apiVersion = answer2.apiVersion;
+  return daemon;
 }
 function statusJson(report, now, options) {
   const daemon = report.daemon;
@@ -14711,7 +14764,8 @@ function statusJson(report, now, options) {
       pid: daemon.pid,
       port: daemon.port,
       startedAt: isoTime(daemon.startedAt),
-      older: shouldReplace(daemon.version, report.version)
+      older: daemonAge(daemon, report.version) === "older",
+      newer: daemonAge(daemon, report.version) === "newer"
     },
     source: report.source,
     globalRouting: report.globalRouting,
@@ -14782,6 +14836,9 @@ function daemonLines(json, report, now) {
   const lines = [`kurmis daemon ${daemon.version}, pid ${String(daemon.pid)}, port ${String(daemon.port)}, running for ${spanText(now - daemon.startedAt)}`];
   if (json.daemon?.older === true) {
     lines.push(...wrap(`It runs an older kurmis than this one (${report.version}). The next ${DAEMON_STARTERS.replace(" and ", " or ")} replaces it.`, "", ""));
+  }
+  if (json.daemon?.newer === true) {
+    lines.push(...wrap(report.source === "daemon" ? `It runs a newer kurmis than this one (${report.version}), which this kurmis does not replace.` : `It runs a newer kurmis than this one (${report.version}), which this kurmis does not replace and cannot use. Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`, "", ""));
   }
   if (report.source === "files") {
     lines.push(...wrap("This kurmis cannot read its status, so the logins below come from config.json, with the usage the daemon read last.", "", ""));
@@ -14973,7 +15030,9 @@ only. "kurmis claude", "kurmis codex" without --login, "kurmis setup" and
 "kurmis daemon start" each start the daemon.
 
 When the daemon runs an older kurmis than this one, the status still comes from it, and the
-next command that starts the daemon replaces it. When the daemon does not answer the status
+next command that starts the daemon replaces it. A newer daemon is never replaced; when its
+control API version is another, this kurmis cannot read its status, and status says to update
+this kurmis or to stop the daemon with "kurmis daemon stop". When the daemon does not answer the status
 request, or this kurmis cannot read its answer, the logins come from config.json as above,
 with a note on stderr.
 
@@ -15110,7 +15169,7 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
   });
   const checks = await Promise.all(shown.map(async ({ login }) => [login.id, await hasCredentials(login, context.env, home, deps)]));
   return {
-    daemon: daemon === null ? null : { version: daemon.version, pid: daemon.pid, port: daemon.port, startedAt: daemon.startedAt },
+    daemon: daemon === null ? null : daemonOf(daemon),
     source: "files",
     logins,
     credentials: new Map(checks),

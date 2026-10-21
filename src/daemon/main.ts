@@ -5,15 +5,17 @@
 //
 // The port is the lock that keeps one daemon per user. When the port is busy:
 //
-// - a kurmis daemon of an older version, or of the same version with another control API
-//   version (`shouldReplaceDaemon`), is asked to stop (the version handover). It stops
+// - an older kurmis daemon (a lower version, or the same version with a lower or missing
+//   control API version: `shouldReplaceDaemon`) is asked to stop (the version handover). It stops
 //   accepting at once, which frees the port, and finishes its open requests in the background
 //   while this daemon binds the port and serves new ones. A routed Claude CLI retries a
 //   request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment in
 //   between.
-// - any other kurmis daemon (the same version and control API version, a newer version, or a
-//   version that cannot be compared, such as `dev`) keeps the port and this process exits 0. Two CLIs that start a daemon at the same
-//   moment rely on this: the bind decides, and the loser exits.
+// - any other kurmis daemon (the same version and control API version, a newer version, the
+//   same version with a higher control API version, or a version that cannot be compared, such
+//   as `dev`) keeps the port and this process exits 0. Two CLIs that start a daemon at the same
+//   moment rely on this: the bind decides, and the loser exits. A CLI that cannot use the daemon
+//   that kept the port says so (`unusableDaemonText` in `src/cli/daemon-client.ts`).
 // - any other program is an error that says how to change the port.
 //
 // `app.start()`, which reads `state.json`, runs only once the port is bound, so a daemon that

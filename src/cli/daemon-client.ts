@@ -8,15 +8,21 @@
 //
 // **Starting.** `ensureDaemon` starts `<node> <bundle> daemon run` detached
 // (`src/platform/detach.ts`) and waits until a daemon of this version or a newer one answers.
-// A daemon of the same version counts as older when its control API version is another one
-// (`shouldReplaceDaemon`), since then it was built from other code.
+// A daemon is older when its version is lower, or its version is the same and its control API
+// version is lower (`daemonAge`, `shouldReplaceDaemon`). Only an older daemon is replaced.
 // The start is the same from an ssh session as from a terminal at the screen. Two CLIs that
 // start one at the same moment both start a process; the port decides which one stays, the
 // other exits at once, and both CLIs connect to the one that stayed. A daemon of an
 // older version is replaced by the new process itself (`main.ts` asks it to stop, which frees the
 // port at once while it finishes its open requests). A daemon on another port than `config.json`
-// names is asked to stop by the CLI, unless it is newer than the CLI. An older CLI never
-// replaces a newer daemon.
+// names is asked to stop by the CLI, unless it is newer than the CLI.
+//
+// **A newer daemon.** A newer daemon (a higher version, or the same version with a higher
+// control API version) is never replaced. When its control API version is this kurmis' own, it
+// is used. Otherwise this kurmis cannot read its answers, so `startDaemon` and `ensureDaemon`
+// fail with a `DaemonNotUsableError` that says so and what to do: update this kurmis, or stop the
+// daemon with `kurmis daemon stop` and run the command again. The same goes for a daemon whose
+// version cannot be compared with this one (`dev`) and whose control API version is another.
 //
 // **A daemon that refuses the key.** When `daemon.json` names a pid that exists and the program
 // on its port answers the keyed status request with 403, the `key` file was most likely changed
@@ -41,8 +47,9 @@ import { readDaemonFile, readKey, readOrCreateKey, removeDaemonFile, type Daemon
 import { configPath, keyPath, logPath } from '../data/paths.ts'
 import { isPlainObject } from '../data/validate.ts'
 import {
-  compareVersions,
+  canUseDaemon,
   controlRequest,
+  daemonAge,
   delay,
   isStatusAnswer,
   portAcceptsConnections,
@@ -50,6 +57,7 @@ import {
   processExists,
   shouldReplaceDaemon,
   STOP_FINISH_MAX_MS,
+  versionText,
   type ControlResult
 } from '../daemon/lifecycle.ts'
 import { kurmisEntry, spawnDetached, type DetachedChild } from '../platform/detach.ts'
@@ -250,9 +258,51 @@ export interface StartResult {
 }
 
 /**
- * The running daemon, started first when none runs, or replacing one of an older version, one of
- * the same version with another control API version (`shouldReplaceDaemon`), or one on another
- * port than `config.json` names. The longer form of `ensureDaemon`.
+ * Why this kurmis (`version`, `apiVersion`) cannot use the running daemon `daemon`, which it does
+ * not replace either, or null when it can use it (`canUseDaemon`).
+ */
+export function unusableDaemonText(daemon: DaemonConnection, version: string = kurmisVersion,
+  apiVersion: number = CONTROL_API_VERSION): string | null {
+  if (canUseDaemon(daemon, apiVersion)) return null
+  const age = daemonAge(daemon, version, apiVersion)
+  const where = `on port ${String(daemon.port)} (pid ${String(daemon.pid)})`
+  const versions = `The daemon is ${versionText(daemon.version, daemon.apiVersion)}, this kurmis is ${versionText(version, apiVersion)}.`
+  if (age === 'newer') {
+    return `A newer kurmis daemon runs ${where}, so this kurmis does not replace it, and it cannot use a daemon of another ` +
+      `control API version. ${versions} Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`
+  }
+  if (age === 'unknown') {
+    return `The kurmis daemon ${where} has a version that cannot be compared with this kurmis' own, so this kurmis does not ` +
+      `replace it, and it cannot use a daemon of another control API version. ${versions} Stop the daemon with ` +
+      '"kurmis daemon stop" and run the command again.'
+  }
+  return `The kurmis daemon ${where} is older than this kurmis and has another control API version. ${versions} ` +
+    '"kurmis daemon restart" replaces it.'
+}
+
+/**
+ * A daemon runs, but this kurmis cannot use it and does not replace it (`unusableDaemonText`).
+ * The message is the whole explanation, with what to do.
+ */
+export class DaemonNotUsableError extends DaemonError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'DaemonNotUsableError'
+  }
+}
+
+/** `connection` when this kurmis can use it; otherwise throws a `DaemonNotUsableError` that says why. */
+function usable(connection: DaemonConnection, version: string, apiVersion: number): DaemonConnection {
+  const problem = unusableDaemonText(connection, version, apiVersion)
+  if (problem !== null) throw new DaemonNotUsableError(problem)
+  return connection
+}
+
+/**
+ * The running daemon, started first when none runs, or replacing one that is older
+ * (`shouldReplaceDaemon`) or on another port than `config.json` names. The longer form of
+ * `ensureDaemon`. A newer daemon is kept; when this kurmis cannot use it (`unusableDaemonText`),
+ * this throws a `DaemonNotUsableError`.
  */
 export async function startDaemon(options: DaemonClientOptions): Promise<StartResult> {
   const version = options.version ?? kurmisVersion
@@ -261,18 +311,19 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
   const found = await findDaemon(options)
   let replaced: string | null = null
   if (found !== null) {
-    if (found.port === port && !shouldReplaceDaemon(found, version, apiVersion)) {
-      return { connection: found, started: false, replaced: null }
+    const age = daemonAge(found, version, apiVersion)
+    if (found.port === port && age !== 'older') {
+      return { connection: usable(found, version, apiVersion), started: false, replaced: null }
     }
     replaced = found.version
     if (found.port !== port) {
       // The new daemon takes over by itself only on its own port, so the one on the old port is
       // asked to stop here, but only by a kurmis at least as new as it.
-      const order = compareVersions(found.version, version)
-      if (order === 1 || (order === null && found.version !== version)) {
+      if (age === 'newer' || (age === 'unknown' && found.version !== version)) {
         throw new DaemonError(`The kurmis daemon ${found.version} runs on port ${String(found.port)}, but ${configPath()} names port ` +
-          `${String(port)}. Its version is ${order === 1 ? 'newer than' : 'not comparable with'} this kurmis (${version}), so this ` +
-          'kurmis does not stop it to move it. Update kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.')
+          `${String(port)}. It is ${age === 'newer' ? 'newer than' : 'not comparable with'} this kurmis ` +
+          `(${versionText(found.version, found.apiVersion)}; this kurmis is ${versionText(version, apiVersion)}), so this ` +
+          'kurmis does not stop it to move it. Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.')
       }
       const stopped = await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop })
       // `refused` means it has already closed its port, which is what a stop does first.
@@ -299,7 +350,7 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
       throw new DaemonError(portBusyMessage(port, holder.reason))
     }
     if (holder.kind === 'kurmis' && !shouldReplaceDaemon(holder.status, version, apiVersion)) {
-      return { connection: connectionOf(holder.status, key), started: false, replaced: null }
+      return { connection: usable(connectionOf(holder.status, key), version, apiVersion), started: false, replaced: null }
     }
   }
   const entry = options.entry ?? kurmisEntry({ env: options.env })
@@ -315,7 +366,8 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
     throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`)
   }
   const connection = await waitForDaemon({ port, version, apiVersion, child, timeoutMs: options.startTimeoutMs ?? START_TIMEOUT_MS })
-  return { connection, started: true, replaced }
+  // A newer daemon that took the port first keeps it, and the new process exits.
+  return { connection: usable(connection, version, apiVersion), started: true, replaced }
 }
 
 interface WaitForDaemon {
@@ -326,7 +378,7 @@ interface WaitForDaemon {
   timeoutMs: number
 }
 
-/** Waits until a daemon answers on `port` that `shouldReplaceDaemon` keeps: of `version` or newer. */
+/** Waits until a daemon answers on `port` that `shouldReplaceDaemon` keeps: as old as this kurmis, or newer. */
 async function waitForDaemon(wait: WaitForDaemon): Promise<DaemonConnection> {
   const deadline = Date.now() + wait.timeoutMs
   let exitCode: number | null | undefined
@@ -351,8 +403,9 @@ async function waitForDaemon(wait: WaitForDaemon): Promise<DaemonConnection> {
 }
 
 /**
- * The running daemon, started first when none runs, or replacing one of an older version or of
- * the same version with another control API version.
+ * The running daemon, started first when none runs, or replacing one that is older
+ * (`shouldReplaceDaemon`). Throws a `DaemonNotUsableError` when a newer daemon runs that this
+ * kurmis cannot use (`unusableDaemonText`).
  */
 export async function ensureDaemon(options: DaemonClientOptions): Promise<DaemonConnection> {
   return (await startDaemon(options)).connection
@@ -507,15 +560,17 @@ export async function stopDaemon(options: DaemonClientOptions): Promise<boolean>
 /**
  * Stops the running daemon and starts a new one at once: the old one closes its port as soon
  * as it is asked to stop and finishes its open requests in the background. Refuses to replace a
- * daemon of a newer version than this CLI.
+ * newer daemon (`daemonAge`).
  */
 export async function restartDaemon(options: DaemonClientOptions): Promise<StartResult> {
   const version = options.version ?? kurmisVersion
+  const apiVersion = options.apiVersion ?? CONTROL_API_VERSION
   const found = await findDaemon(options)
   if (found !== null) {
-    if (compareVersions(found.version, version) === 1) {
-      throw new DaemonError(`The running kurmis daemon is version ${found.version}, newer than this kurmis (${version}), ` +
-        'so this kurmis does not replace it. Update kurmis, or run "kurmis daemon stop" first.')
+    if (daemonAge(found, version, apiVersion) === 'newer') {
+      throw new DaemonError(`The running kurmis daemon is newer than this kurmis (the daemon is ` +
+        `${versionText(found.version, found.apiVersion)}, this kurmis is ${versionText(version, apiVersion)}), so this kurmis ` +
+        'does not replace it. Update this kurmis, or run "kurmis daemon stop" and then "kurmis daemon start".')
     }
     const result = await controlRequest({ port: found.port, key: found.key, method: 'POST', path: CONTROL_PATHS.stop })
     if (result.kind === 'answered' && result.status !== 200) throw failureOf(result, found, 'the stop request')

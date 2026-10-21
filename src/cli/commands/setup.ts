@@ -49,7 +49,7 @@ import { autostartPlistPath } from '../../platform/launchd.ts'
 import { RUN_ENTRY_DESCRIPTION } from '../../platform/windows-autostart.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, type DaemonClient } from '../command-deps.ts'
-import { DaemonError, stopDaemon, type DaemonClientOptions } from '../daemon-client.ts'
+import { DaemonError, DaemonNotUsableError, stopDaemon, type DaemonClientOptions } from '../daemon-client.ts'
 import { clearPaused, isPaused, markPaused, recordSettingsFile, settingsFilesWith } from '../global-routing.ts'
 import {
   backupPathFor,
@@ -235,6 +235,11 @@ async function daemonStep(port: number, path: string, hadKurmis: boolean, deps: 
     writeLine(context.stdout, `The daemon is running on port ${String(connection.port)}.`)
     return connection.key
   } catch (error) {
+    if (error instanceof DaemonNotUsableError) {
+      writeLine(context.stderr, error.message)
+      writeLine(context.stderr, unchanged)
+      return null
+    }
     writeLine(context.stderr, `The daemon could not be started: ${errorText(error)}`)
     writeLine(context.stderr, `${unchanged} "kurmis daemon start" starts it and says what is wrong.`)
     return null

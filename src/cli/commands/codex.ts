@@ -18,6 +18,7 @@ import {
   type DaemonClient
 } from '../command-deps.ts'
 import type { PreparedCodexHome } from '../codex-home-files.ts'
+import { DaemonNotUsableError } from '../daemon-client.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
 import { plainCliLoginText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
@@ -186,8 +187,10 @@ async function chooseLogin(context: CliContext, config: KurmisConfig, deps: Code
       }
     }
   } catch (error) {
-    writeLine(context.stderr,
-      `kurmis codex: the kurmis daemon could not be reached (${messageOf(error)}); starting on ${own.alias}, ${plainCliLoginText('codex')}.`)
+    const starting = `starting on ${own.alias}, ${plainCliLoginText('codex')}.`
+    writeLine(context.stderr, error instanceof DaemonNotUsableError
+      ? `kurmis codex: ${error.message} Until then, ${starting}`
+      : `kurmis codex: the kurmis daemon could not be reached (${messageOf(error)}); ${starting}`)
     return own
   }
   const choice = chooseCodexLogin(status, deps.now())

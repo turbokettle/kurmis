@@ -14,6 +14,8 @@ import { processExists, STOP_FINISH_MAX_MS } from '../../src/daemon/lifecycle.ts
 import {
   daemonEnvironment,
   DaemonError,
+  DaemonNotUsableError,
+  ensureDaemon,
   findDaemon,
   keyRefusedProblem,
   NOW_STOP_TIMEOUT_MS,
@@ -200,7 +202,7 @@ describe('startDaemon', () => {
     expect(result.connection.version).toBe('1.2.3')
   })
 
-  it('replaces a running daemon of the same version whose control API version is another one, or missing', async () => {
+  it('replaces a running daemon of the same version whose control API version is lower, or missing', async () => {
     const key = readOrCreateKey()
     for (const apiVersion of [CONTROL_API_VERSION - 1, undefined]) {
       const daemon = await fakeDaemon(key, { version: '1.2.3', apiVersion })
@@ -213,7 +215,7 @@ describe('startDaemon', () => {
     }
   }, 30_000)
 
-  it('keeps a running daemon of the same version whose control API version is another one when told this CLI has that one', async () => {
+  it('keeps and uses a running daemon of the same version whose control API version is this CLI\'s own', async () => {
     const key = readOrCreateKey()
     const daemon = await fakeDaemon(key, { version: '1.2.3', apiVersion: CONTROL_API_VERSION + 1 })
     usePort(daemon.port)
@@ -229,6 +231,30 @@ describe('startDaemon', () => {
     const result = await startDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
     expect(result.started).toBe(false)
     expect(daemon.requests.some((request) => request.url === '/_kurmis/stop')).toBe(false)
+  })
+
+  it('neither replaces nor uses a newer daemon of another control API version, and says what to do', async () => {
+    const key = readOrCreateKey()
+    const cases = [
+      { version: '1.2.3', apiVersion: CONTROL_API_VERSION + 1 },
+      { version: '2.0.0', apiVersion: CONTROL_API_VERSION + 1 }
+    ]
+    for (const running of cases) {
+      const daemon = await fakeDaemon(key, running)
+      usePort(daemon.port)
+      const failure = startDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
+      await expect(failure).rejects.toThrow(DaemonNotUsableError)
+      const message = await failure.catch((error: unknown) => (error as Error).message)
+      expect(message).toBe(`A newer kurmis daemon runs on port ${String(daemon.port)} (pid ${String(process.pid)}), so this kurmis ` +
+        'does not replace it, and it cannot use a daemon of another control API version. ' +
+        `The daemon is ${running.version} with control API version ${String(CONTROL_API_VERSION + 1)}, this kurmis is 1.2.3 with ` +
+        `control API version ${String(CONTROL_API_VERSION)}. Update this kurmis, or stop the daemon with "kurmis daemon stop" and ` +
+        'run the command again.')
+      await expect(ensureDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })).rejects.toThrow(DaemonNotUsableError)
+      await expect(restartDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })).rejects.toThrow(/does not replace it/)
+      expect(daemon.requests.some((request) => request.url === '/_kurmis/stop')).toBe(false)
+      await daemon.close()
+    }
   })
 
   it('says how to change the port when another program holds it', async () => {
@@ -256,8 +282,9 @@ describe('startDaemon', () => {
     await expect(failure).rejects.toThrow(DaemonError)
     const message = await failure.catch((error: unknown) => (error as Error).message)
     expect(message).toContain(`The kurmis daemon 2.0.0 runs on port ${String(daemon.port)}, but ${join(kurmisHome(), 'config.json')} ` +
-      `names port ${String(configured)}. Its version is newer than this kurmis (1.2.3)`)
-    expect(message).toContain('Update kurmis, or stop the daemon with "kurmis daemon stop"')
+      `names port ${String(configured)}. It is newer than this kurmis (2.0.0 with control API version ${String(CONTROL_API_VERSION)}; ` +
+      `this kurmis is 1.2.3 with control API version ${String(CONTROL_API_VERSION)})`)
+    expect(message).toContain('Update this kurmis, or stop the daemon with "kurmis daemon stop"')
     expect(daemon.requests.some((request) => request.url === '/_kurmis/stop')).toBe(false)
   })
 

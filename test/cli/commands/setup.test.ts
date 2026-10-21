@@ -230,6 +230,17 @@ describe('kurmis setup', () => {
     expect(result.stderr).toContain(`${settingsPath} was not changed, so Claude Code does not use kurmis yet.`)
   })
 
+  it('writes nothing when a newer daemon runs that this kurmis cannot use, and says what to do', async () => {
+    const { autostart, command } = setup({ ensureNotUsable: 'A newer kurmis daemon runs on port 40123 (pid 4242), so this kurmis does not replace it. Update this kurmis.' })
+    const result = await run(command, [])
+    expect(result.code).toBe(1)
+    expect(existsSync(settingsPath)).toBe(false)
+    expect(autostart.calls).toEqual([])
+    expect(result.stderr).toContain('A newer kurmis daemon runs on port 40123 (pid 4242), so this kurmis does not replace it. Update this kurmis.\n')
+    expect(result.stderr).not.toContain('could not be started')
+    expect(result.stderr).toContain(`${settingsPath} was not changed, so Claude Code does not use kurmis yet.`)
+  })
+
   it('says the file still holds an earlier setup when the daemon cannot start', async () => {
     expect((await run(setup().command, [])).code).toBe(0)
     const text = readFileSync(settingsPath, 'utf8')

@@ -4,14 +4,15 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { CONTROL_API_VERSION, CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
 import { KEY_HEADER } from '../../src/core/route-headers.ts'
 import {
+  canUseDaemon,
   compareVersions,
   controlRequest,
+  daemonAge,
   delay,
   isStatusAnswer,
   portAcceptsConnections,
   portHolder,
   processExists,
-  shouldReplace,
   shouldReplaceDaemon
 } from '../../src/daemon/lifecycle.ts'
 import { freePort } from './helpers.ts'
@@ -69,32 +70,40 @@ describe('compareVersions', () => {
   })
 })
 
-describe('shouldReplace', () => {
-  it('replaces only an older daemon', () => {
-    expect(shouldReplace('0.1.0', '0.2.0')).toBe(true)
-    expect(shouldReplace('0.2.0', '0.2.0')).toBe(false)
-    expect(shouldReplace('0.3.0', '0.2.0')).toBe(false)
-  })
-
-  it('never replaces when either version is not a version', () => {
-    expect(shouldReplace('dev', '0.2.0')).toBe(false)
-    expect(shouldReplace('0.1.0', 'dev')).toBe(false)
-  })
-})
-
 describe('shouldReplaceDaemon', () => {
-  it('also replaces a daemon of the same version with another control API version, or none', () => {
+  it('replaces a daemon of a lower version, or of the same version with a lower control API version, or none', () => {
     expect(shouldReplaceDaemon({ version: '0.1.0', apiVersion: CONTROL_API_VERSION }, '0.2.0')).toBe(true)
+    expect(shouldReplaceDaemon({ version: '0.1.0', apiVersion: CONTROL_API_VERSION + 1 }, '0.2.0')).toBe(true)
     expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION }, '0.2.0')).toBe(false)
     expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION - 1 }, '0.2.0')).toBe(true)
-    expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION + 1 }, '0.2.0')).toBe(true)
     expect(shouldReplaceDaemon({ version: '0.2.0' }, '0.2.0')).toBe(true)
     expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: 7 }, '0.2.0', 7)).toBe(false)
   })
 
-  it('never replaces a newer daemon, or one whose version cannot be compared, whatever its control API version', () => {
+  it('never replaces a newer daemon, one of the same version with a higher control API version, or one whose version cannot be compared', () => {
+    expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION + 1 }, '0.2.0')).toBe(false)
     expect(shouldReplaceDaemon({ version: '0.3.0', apiVersion: CONTROL_API_VERSION - 1 }, '0.2.0')).toBe(false)
     expect(shouldReplaceDaemon({ version: 'dev', apiVersion: CONTROL_API_VERSION - 1 }, 'dev')).toBe(false)
+    expect(shouldReplaceDaemon({ version: 'dev', apiVersion: CONTROL_API_VERSION }, '0.2.0')).toBe(false)
+    expect(shouldReplaceDaemon({ version: '0.1.0', apiVersion: CONTROL_API_VERSION }, 'dev')).toBe(false)
+  })
+})
+
+describe('daemonAge', () => {
+  it('goes by the version first, then by the control API version', () => {
+    expect(daemonAge({ version: '0.1.0', apiVersion: 9 }, '0.2.0', 3)).toBe('older')
+    expect(daemonAge({ version: '0.3.0', apiVersion: 1 }, '0.2.0', 3)).toBe('newer')
+    expect(daemonAge({ version: '0.2.0', apiVersion: 2 }, '0.2.0', 3)).toBe('older')
+    expect(daemonAge({ version: '0.2.0' }, '0.2.0', 3)).toBe('older')
+    expect(daemonAge({ version: '0.2.0', apiVersion: 3 }, '0.2.0', 3)).toBe('same')
+    expect(daemonAge({ version: '0.2.0', apiVersion: 4 }, '0.2.0', 3)).toBe('newer')
+    expect(daemonAge({ version: 'dev', apiVersion: 3 }, '0.2.0', 3)).toBe('unknown')
+  })
+
+  it('lets this kurmis use only a daemon of its own control API version', () => {
+    expect(canUseDaemon({ apiVersion: 3 }, 3)).toBe(true)
+    expect(canUseDaemon({ apiVersion: 4 }, 3)).toBe(false)
+    expect(canUseDaemon({}, 3)).toBe(false)
   })
 })
 

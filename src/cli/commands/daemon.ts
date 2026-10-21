@@ -16,7 +16,7 @@ import {
   type StartResult
 } from '../daemon-client.ts'
 import { CONTROL_API_VERSION } from '../../core/control-api.ts'
-import { compareVersions, shouldReplaceDaemon } from '../../daemon/lifecycle.ts'
+import { daemonAge, versionText } from '../../daemon/lifecycle.ts'
 
 type Handler = (args: string[], context: CliContext) => Promise<number> | number
 
@@ -42,9 +42,11 @@ function describeStart(result: StartResult): string {
   const { connection } = result
   const where = `on ${address(connection.port)} (pid ${String(connection.pid)})`
   if (!result.started) {
-    const newer = compareVersions(connection.version, kurmisVersion) === 1
+    // A newer daemon that this kurmis cannot use is an error of `startDaemon`.
+    const newer = daemonAge(connection, kurmisVersion) === 'newer'
     return newer
-      ? `A newer kurmis daemon (${connection.version}) already runs ${where}; this kurmis is ${kurmisVersion}.`
+      ? `A newer kurmis daemon (${versionText(connection.version, connection.apiVersion)}) already runs ${where}; ` +
+        `this kurmis is ${versionText(kurmisVersion, CONTROL_API_VERSION)}, and can use it.`
       : `The kurmis daemon ${connection.version} already runs ${where}.`
   }
   const replaced = result.replaced === null ? '' : `, replacing version ${result.replaced}, which stops once its open requests finish`
@@ -151,15 +153,23 @@ const status: Handler = async (args, context) => {
     }
     writeLine(context.stdout, `The kurmis daemon ${answer.version} runs on ${address(answer.port)}, pid ${String(answer.pid)}, ` +
       `since ${new Date(answer.startedAt).toISOString()}, with ${String(answer.logins.length)} logins.`)
-    const order = compareVersions(answer.version, kurmisVersion)
-    if (shouldReplaceDaemon(answer, kurmisVersion)) {
-      const which = order === -1 ? kurmisVersion
-        : `${kurmisVersion} with control API version ${String(CONTROL_API_VERSION)}, while the daemon has ` +
-          `${typeof answer.apiVersion === 'number' ? String(answer.apiVersion) : 'none'}`
-      writeLine(context.stdout, `This kurmis is ${which}; the next "kurmis claude", "kurmis codex", "kurmis setup" ` +
-        'or "kurmis daemon start" replaces the daemon.')
+    const age = daemonAge(answer, kurmisVersion)
+    const versions = `The daemon is ${versionText(answer.version, answer.apiVersion)}, this kurmis is ` +
+      `${versionText(kurmisVersion, CONTROL_API_VERSION)}.`
+    const sameApi = answer.apiVersion === CONTROL_API_VERSION
+    if (age === 'older') {
+      writeLine(context.stdout, `${versions} The daemon is older, so the next "kurmis claude", "kurmis codex", "kurmis setup" ` +
+        'or "kurmis daemon start" replaces it.')
+    } else if (age === 'newer') {
+      writeLine(context.stdout, sameApi
+        ? `${versions} The daemon is newer; this kurmis can use it and does not replace it.`
+        : `${versions} The daemon is newer, so this kurmis does not replace it, and it cannot use a daemon of another ` +
+          'control API version. Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.')
+    } else if (age === 'unknown' && !sameApi) {
+      writeLine(context.stdout, `${versions} The versions cannot be compared, so this kurmis does not replace the daemon, ` +
+        'and it cannot use a daemon of another control API version. Stop the daemon with "kurmis daemon stop" and run ' +
+        'the command again.')
     }
-    if (order === 1) writeLine(context.stdout, `This kurmis is ${kurmisVersion}, older than the daemon.`)
     return EXIT_OK
   } catch (error) {
     return failed(error, context)
@@ -203,9 +213,11 @@ The daemon is the background process that routes Claude requests. "kurmis claude
 "kurmis codex" without --login and "kurmis setup" start it when it is not running, so
 "kurmis daemon start" is seldom needed.
 
-  start                   Start it in the background, replacing one of an older version.
-                          A daemon of the same version is replaced too when its control API
-                          version is another one.
+  start                   Start it in the background, replacing an older one: one of a
+                          lower version, or of the same version with a lower control API
+                          version. A newer daemon is kept. When its control API version is
+                          another, this kurmis cannot use it, and the command says so: update
+                          this kurmis, or run "kurmis daemon stop" and then the command again.
                           --env NAME=VALUE sets a kurmis variable in the daemon's
                           environment; the Windows logon entry uses it.
   stop [--now]            Stop it after it finishes the requests it has open, waiting at most
@@ -213,6 +225,7 @@ The daemon is the background process that routes Claude requests. "kurmis claude
                           requests it has open. An open Claude session then sees a dropped
                           connection and retries the request.
   restart                 Start a new one now; the old one finishes its open requests first.
+                          A newer daemon is not replaced.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
   run                     Run it in this terminal instead of the background (what "start"

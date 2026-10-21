@@ -217,6 +217,16 @@ describe('kurmis codex without --login', () => {
   })
 })
 
+describe('kurmis codex with a newer daemon', () => {
+  test('says why it cannot use the daemon and starts on the login plain codex uses', async () => {
+    const h = harness({ ensureNotUsable: 'A newer kurmis daemon runs on port 40123 (pid 4242), so this kurmis does not replace it. Update this kurmis.' })
+    const out = collect()
+    expect(await createCodexCommand(h.deps).run([], out.context)).toBe(3)
+    expect(h.prepared).toEqual([OWN_CODEX])
+    expect(out.stderr()).toBe(`kurmis codex: A newer kurmis daemon runs on port 40123 (pid 4242), so this kurmis does not replace it. Update this kurmis. Until then, starting on ${OWN_CODEX}, the login plain codex uses.\n`)
+  })
+})
+
 describe('kurmis codex and CODEX_HOME', () => {
   test('the login plain codex uses keeps the user\'s own CODEX_HOME', async () => {
     const h = harness()

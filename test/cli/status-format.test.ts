@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import { formatStatus as formatReport, noIdYetStandIn, STATUS_JSON_FORMAT, statusJson as reportJson, type StatusFormatOptions, type StatusReport } from '../../src/cli/status-format.ts'
 import type { LoginId } from '../../src/data/login-id.ts'
-import type { StatusAnswer } from '../../src/core/control-api.ts'
+import { CONTROL_API_VERSION, type StatusAnswer } from '../../src/core/control-api.ts'
 import { accountUsage, usageWindow } from '../core/usage-fixtures.ts'
 import { codexUsage } from '../core/codex-usage-fixture.ts'
 import { daemonStatus, loginStatus, statusAnswer } from './helpers.ts'
@@ -158,7 +158,7 @@ describe('kurmis status as JSON', () => {
   test('has its own format number, ISO times, and the windows in one shape for both providers', () => {
     const json = statusJson(sampleStatus(), NOW, { keychain: false })
     expect(json.format).toBe(STATUS_JSON_FORMAT)
-    expect(json.daemon).toEqual({ version: '0.1.0', pid: 4242, port: 40123, startedAt: at(-2 * HOUR - 5 * MINUTE), older: false })
+    expect(json.daemon).toEqual({ version: '0.1.0', pid: 4242, port: 40123, startedAt: at(-2 * HOUR - 5 * MINUTE), older: false, newer: false })
     expect(json.source).toBe('daemon')
     expect(json.globalRouting).toBe('off')
     expect(json.logins.map((login) => login.id)).toEqual([
@@ -385,6 +385,22 @@ it.
 Global routing is off`)
     // A newer daemon, or one run from the source tree, is not older.
     expect(reportJson(daemonStatus(sampleStatus(), { version: 'dev' }), NOW, { keychain: false }).daemon?.older).toBe(false)
+  })
+
+  test('says when the daemon runs a newer kurmis, and what to do when this kurmis cannot use it', () => {
+    const usable = daemonStatus(sampleStatus(), { version: '0.0.9' })
+    expect(reportJson(usable, NOW, { keychain: false }).daemon).toMatchObject({ older: false, newer: true })
+    expect(formatReport(usable, NOW, { keychain: false })).toContain(`running for 2h 5m
+It runs a newer kurmis than this one (0.0.9), which this kurmis does not
+replace.
+Global routing is off`)
+    const unusable = filesReport({ daemon: { version: '0.1.0', apiVersion: CONTROL_API_VERSION + 1, pid: 4242, port: 40123, startedAt: NOW - HOUR } })
+    expect(reportJson(unusable, NOW, { keychain: false })).toMatchObject({ source: 'files', daemon: { older: false, newer: true } })
+    const text = formatReport(unusable, NOW, { keychain: false })
+    expect(text).toContain(`It runs a newer kurmis than this one (0.1.0), which this kurmis does not replace
+and cannot use. Update this kurmis, or stop the daemon with "kurmis daemon stop"
+and run the command again.`)
+    for (const line of text.split('\n')) expect(line.length).toBeLessThanOrEqual(80)
   })
 
   test('says when it cannot read the status of the daemon that runs', () => {

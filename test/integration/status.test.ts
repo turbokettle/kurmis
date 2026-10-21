@@ -110,7 +110,7 @@ describe('kurmis status, end to end', () => {
     // Nothing has started a daemon yet, and `status` starts none: it shows the files.
     const offline = await statusJson(world)
     expect(world.daemonInfo()).toBeNull()
-    expect(offline).toMatchObject({ format: 4, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
+    expect(offline).toMatchObject({ format: 5, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
     expect(offline.logins.map((login) => [login.id, login.signedIn, login.credentials, login.usage, login.blocked])).toEqual([
       [OWN_CLAUDE, null, true, null, null], [OWN_CODEX, null, true, null, null], [work.id, null, true, null, null], [spare.id, null, true, null, null]
     ])
@@ -126,9 +126,9 @@ describe('kurmis status, end to end', () => {
     const daemon = world.daemonInfo()
     expect(daemon).not.toBeNull()
 
-    expect(status).toMatchObject({ format: 4, source: 'daemon', globalRouting: 'off' })
+    expect(status).toMatchObject({ format: 5, source: 'daemon', globalRouting: 'off' })
     expect(status.daemon).toEqual({
-      version: PACKAGE_VERSION, pid: daemon?.pid, port: world.port, startedAt: new Date(daemon?.startedAt ?? 0).toISOString(), older: false
+      version: PACKAGE_VERSION, pid: daemon?.pid, port: world.port, startedAt: new Date(daemon?.startedAt ?? 0).toISOString(), older: false, newer: false
     })
     expect(Math.abs(Date.parse(status.daemon?.startedAt ?? '') - startedAround)).toBeLessThan(MINUTE_MS)
     expect(status.logins.map((login) => [login.id, login.usedByPlainCli])).toEqual([[OWN_CLAUDE, true], [OWN_CODEX, true], [work.id, false], [spare.id, false]])

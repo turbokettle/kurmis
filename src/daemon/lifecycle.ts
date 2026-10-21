@@ -183,22 +183,45 @@ function parseVersion(text: string): { parts: number[]; pre: string | null } | n
   return { parts: (match[1] ?? '').split('.').map(Number), pre: match[2] ?? null }
 }
 
-/** Whether a daemon of `daemonVersion` should be replaced by one of `cliVersion`. */
-export function shouldReplace(daemonVersion: string, cliVersion: string): boolean {
-  return compareVersions(daemonVersion, cliVersion) === -1
+/**
+ * How a running daemon compares with this kurmis. `older` and `newer` go by the version first
+ * and, when the versions are the same, by the control API version; a status answer without
+ * `apiVersion` comes from a kurmis older than the field, so it is lower than any. `unknown`
+ * means a version that cannot be compared (`compareVersions` answers null).
+ */
+export type DaemonAge = 'older' | 'same' | 'newer' | 'unknown'
+
+/** The `DaemonAge` of a running daemon, as its status answer describes it. */
+export function daemonAge(daemon: { version: string; apiVersion?: number }, version: string,
+  apiVersion: number = CONTROL_API_VERSION): DaemonAge {
+  const order = compareVersions(daemon.version, version)
+  if (order === null) return 'unknown'
+  if (order !== 0) return order === -1 ? 'older' : 'newer'
+  if (daemon.apiVersion === apiVersion) return 'same'
+  return daemon.apiVersion === undefined || daemon.apiVersion < apiVersion ? 'older' : 'newer'
 }
 
 /**
- * Whether a running daemon, as its status answer describes it, should be replaced by a daemon of
- * this kurmis (`version`, `apiVersion`). It is replaced when its version is older
- * (`shouldReplace`), and when its version is the same but its control API version is another
- * one: then it was built from other code of the same version, and its answers may be misread.
- * A status without `apiVersion` counts as another control API version.
+ * Whether a running daemon should be replaced by a daemon of this kurmis (`version`,
+ * `apiVersion`): only when it is older (`daemonAge`). A newer daemon is never replaced, so two
+ * builds that differ only in their control API version cannot keep replacing each other.
  */
 export function shouldReplaceDaemon(daemon: { version: string; apiVersion?: number }, version: string,
   apiVersion: number = CONTROL_API_VERSION): boolean {
-  const order = compareVersions(daemon.version, version)
-  return order === -1 || (order === 0 && daemon.apiVersion !== apiVersion)
+  return daemonAge(daemon, version, apiVersion) === 'older'
+}
+
+/**
+ * Whether this kurmis can read a running daemon's control answers: only one of its own control
+ * API version. A newer daemon of the same control API version can be used.
+ */
+export function canUseDaemon(daemon: { apiVersion?: number }, apiVersion: number = CONTROL_API_VERSION): boolean {
+  return daemon.apiVersion === apiVersion
+}
+
+/** A version and control API version, for messages: `0.2.0 with control API version 3`. */
+export function versionText(version: string, apiVersion: number | undefined): string {
+  return `${version} with ${apiVersion === undefined ? 'no control API version' : `control API version ${String(apiVersion)}`}`
 }
 
 /** Resolves after `ms`. The timer keeps the process alive, so a CLI waiting on it does not exit. */

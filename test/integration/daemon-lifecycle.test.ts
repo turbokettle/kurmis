@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { CONTROL_API_VERSION } from '../../src/core/control-api.ts'
 import { portAcceptsConnections, processExists } from '../../src/daemon/lifecycle.ts'
 import { buildTestBundle } from '../daemon/bundle.ts'
 import { freePort } from '../daemon/helpers.ts'
@@ -148,7 +149,8 @@ describe('the kurmis daemon, end to end', () => {
     const status = await world.kurmis(['daemon', 'status'])
     expect(status.code).toBe(0)
     expect(status.stdout).toContain(`The kurmis daemon ${OLDER_VERSION} runs on`)
-    expect(status.stdout).toContain(`This kurmis is ${PACKAGE_VERSION}; the next "kurmis claude", "kurmis codex", "kurmis setup" or "kurmis daemon start" replaces the daemon.`)
+    expect(status.stdout).toContain(`this kurmis is ${PACKAGE_VERSION} with control API version ${String(CONTROL_API_VERSION)}. The daemon is ` +
+      'older, so the next "kurmis claude", "kurmis codex", "kurmis setup" or "kurmis daemon start" replaces it.')
     // `daemon status` only looks.
     expect(daemonOf(world).pid).toBe(old.pid)
 

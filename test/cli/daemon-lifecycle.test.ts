@@ -7,6 +7,7 @@ import { existsSync, realpathSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { CONTROL_API_VERSION } from '../../src/core/control-api.ts'
 import { readDaemonFile, readOrCreateKey } from '../../src/data/daemon-file.ts'
 import { controlRequest, processExists } from '../../src/daemon/lifecycle.ts'
 import { buildTestBundle } from '../daemon/bundle.ts'
@@ -20,15 +21,21 @@ interface Run {
   stderr: string
 }
 
-let bundles: { older: string; newer: string }
+/**
+ * `older` and `newer` are 0.4.0 and 0.5.0 of this source. `lowApi` and `highApi` are both 0.5.0,
+ * with this source's control API version and one more.
+ */
+let bundles: { older: string; newer: string; lowApi: string; highApi: string }
 let servers: Server[] = []
 
 beforeAll(async () => {
-  const [older, newer] = await Promise.all([
+  const [older, newer, lowApi, highApi] = await Promise.all([
     buildTestBundle({ version: '0.4.0', entry: 'fake' }),
-    buildTestBundle({ version: '0.5.0', entry: 'fake' })
+    buildTestBundle({ version: '0.5.0', entry: 'fake' }),
+    buildTestBundle({ version: '0.5.0', entry: 'fake', apiVersion: CONTROL_API_VERSION }),
+    buildTestBundle({ version: '0.5.0', entry: 'fake', apiVersion: CONTROL_API_VERSION + 1 })
   ])
-  bundles = { older, newer }
+  bundles = { older, newer, lowApi, highApi }
 }, 30_000)
 
 afterEach(async () => {
@@ -44,7 +51,7 @@ const daemonsOf = new Map<string, OwnDaemons>()
 function daemonsIn(home: string): OwnDaemons {
   let daemons = daemonsOf.get(home)
   if (daemons === undefined) {
-    daemons = new OwnDaemons(home, [bundles.older, bundles.newer])
+    daemons = new OwnDaemons(home, Object.values(bundles))
     daemonsOf.set(home, daemons)
   }
   return daemons
@@ -209,14 +216,51 @@ describe('kurmis daemon', () => {
     await kurmis(bundles.newer, home, ['daemon', 'start'])
     const pid = daemonInfo(home)?.pid
     const start = await kurmis(bundles.older, home, ['daemon', 'start'])
-    expect(start.stdout).toContain('A newer kurmis daemon (0.5.0) already runs')
+    expect(start.code).toBe(0)
+    const api = `control API version ${String(CONTROL_API_VERSION)}`
+    expect(start.stdout).toContain(`A newer kurmis daemon (0.5.0 with ${api}) already runs`)
+    expect(start.stdout).toContain(`this kurmis is 0.4.0 with ${api}, and can use it.`)
     const restart = await kurmis(bundles.older, home, ['daemon', 'restart'])
     expect(restart.code).toBe(1)
-    expect(restart.stderr).toContain('newer than this kurmis (0.4.0)')
+    expect(restart.stderr).toContain(`newer than this kurmis (the daemon is 0.5.0 with ${api}, this kurmis is 0.4.0 with ${api})`)
     expect(daemonInfo(home)?.pid).toBe(pid)
     const status = await kurmis(bundles.older, home, ['daemon', 'status'])
-    expect(status.stdout).toContain('This kurmis is 0.4.0, older than the daemon.')
+    expect(status.stdout).toContain('The daemon is newer; this kurmis can use it and does not replace it.')
   }, 60_000)
+
+  it('of one version, replaces a daemon of a lower control API version, and never one of a higher one', async () => {
+    const { home } = await newHome()
+    const low = `0.5.0 with control API version ${String(CONTROL_API_VERSION)}`
+    const high = `0.5.0 with control API version ${String(CONTROL_API_VERSION + 1)}`
+    expect((await kurmis(bundles.lowApi, home, ['daemon', 'start'])).code).toBe(0)
+    const first = daemonInfo(home)?.pid ?? 0
+
+    // The build with the higher control API version replaces the one with the lower.
+    const replaced = await kurmis(bundles.highApi, home, ['daemon', 'start'])
+    expect(replaced.code, replaced.stderr).toBe(0)
+    expect(replaced.stdout).toContain('replacing version 0.5.0')
+    const second = daemonInfo(home)?.pid ?? 0
+    expect(second).not.toBe(first)
+    await waitUntil(() => !processExists(first), 10_000, 'the replaced daemon to exit')
+
+    // The build with the lower one keeps it, says why it cannot use it, and fails.
+    const start = await kurmis(bundles.lowApi, home, ['daemon', 'start'])
+    expect(start.code).toBe(1)
+    expect(start.stderr).toContain('A newer kurmis daemon runs on port')
+    expect(start.stderr).toContain(`The daemon is ${high}, this kurmis is ${low}.`)
+    expect(start.stderr).toContain('Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.')
+    const restart = await kurmis(bundles.lowApi, home, ['daemon', 'restart'])
+    expect(restart.code).toBe(1)
+    expect(restart.stderr).toContain('so this kurmis does not replace it')
+    const status = await kurmis(bundles.lowApi, home, ['daemon', 'status'])
+    expect(status.code).toBe(0)
+    expect(status.stdout).toContain(`The daemon is ${high}, this kurmis is ${low}. The daemon is newer, so this kurmis does not ` +
+      'replace it, and it cannot use a daemon of another control API version.')
+    const report = await kurmis(bundles.lowApi, home, ['status', '--json'])
+    expect(JSON.parse(report.stdout)).toMatchObject({ source: 'files', daemon: { pid: second, older: false, newer: true } })
+    expect(daemonInfo(home)?.pid).toBe(second)
+    expect(processExists(second)).toBe(true)
+  }, 90_000)
 
   it('never lets an older kurmis stop a newer daemon to move it to the port config.json now names', async () => {
     const { home, port } = await newHome()
@@ -227,7 +271,8 @@ describe('kurmis daemon', () => {
     const start = await kurmis(bundles.older, home, ['daemon', 'start'])
     expect(start.code).toBe(1)
     expect(start.stderr).toContain(`The kurmis daemon 0.5.0 runs on port ${String(port)}, but ${join(home, 'config.json')} names port ` +
-      `${String(moved)}. Its version is newer than this kurmis (0.4.0)`)
+      `${String(moved)}. It is newer than this kurmis (0.5.0 with control API version ${String(CONTROL_API_VERSION)}; this kurmis ` +
+      `is 0.4.0 with control API version ${String(CONTROL_API_VERSION)}), so this kurmis does not stop it to move it.`)
     expect(processExists(pid)).toBe(true)
     expect(daemonInfo(home)).toMatchObject({ pid, port })
   }, 60_000)

@@ -4,7 +4,7 @@ import { CONTROL_API_VERSION, type LoginStatus, type StatusAnswer } from '../../
 import type { CliContext } from '../../src/cli/command.ts'
 import type { DaemonClient } from '../../src/cli/command-deps.ts'
 import type { DaemonConnection } from '../../src/cli/daemon-client.ts'
-import { DaemonError } from '../../src/cli/daemon-client.ts'
+import { DaemonError, DaemonNotUsableError } from '../../src/cli/daemon-client.ts'
 import { daemonReport, type StatusReport } from '../../src/cli/status-format.ts'
 import type { LoginRef } from '../../src/data/login-id.ts'
 import { OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
@@ -30,7 +30,7 @@ export function collect(env: NodeJS.ProcessEnv = {}): Collected {
   }
 }
 
-export const FAKE_CONNECTION: DaemonConnection = { port: 40123, key: 'a'.repeat(64), pid: 4242, version: '0.1.0' }
+export const FAKE_CONNECTION: DaemonConnection = { port: 40123, key: 'a'.repeat(64), pid: 4242, version: '0.1.0', apiVersion: CONTROL_API_VERSION }
 
 /**
  * One login as the daemon would report it, with every setting at its default and, unless
@@ -90,6 +90,10 @@ export interface FakeDaemonOptions {
   probed?: StatusAnswer
   /** Makes `ensureDaemon` throw a `DaemonError` with this message. */
   ensureFails?: string
+  /** Makes `ensureDaemon` throw a `DaemonNotUsableError` with this message: a newer daemon runs. */
+  ensureNotUsable?: string
+  /** The connection `findDaemon` and `ensureDaemon` answer. `FAKE_CONNECTION` by default. */
+  connection?: DaemonConnection
   /** Makes `findDaemon` throw a `DaemonError` with this message. */
   findFails?: string
   /** Makes `readStatus` throw a `DaemonError` with this message. */
@@ -107,12 +111,13 @@ export function fakeDaemonClient(options: FakeDaemonOptions = {}): FakeDaemonCli
     async findDaemon() {
       calls.push('findDaemon')
       if (options.findFails !== undefined) throw new DaemonError(options.findFails)
-      return options.running === false ? null : FAKE_CONNECTION
+      return options.running === false ? null : options.connection ?? FAKE_CONNECTION
     },
     async ensureDaemon() {
       calls.push('ensureDaemon')
       if (options.ensureFails !== undefined) throw new DaemonError(options.ensureFails)
-      return FAKE_CONNECTION
+      if (options.ensureNotUsable !== undefined) throw new DaemonNotUsableError(options.ensureNotUsable)
+      return options.connection ?? FAKE_CONNECTION
     },
     async readStatus() {
       calls.push('readStatus')

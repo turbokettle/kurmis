@@ -201,7 +201,8 @@ its limits, whether routing may use it and how many sessions it serves. A line s
 "passed over" says why Auto, or `kurmis codex`, would skip that login now (signed out, at its
 limit, cooling down after a usage-limit answer). The last line says which login `kurmis codex`
 would start on. When the daemon runs an older kurmis than the one you run, `status` says so: the
-next command that starts the daemon replaces it.
+next command that starts the daemon replaces it. When the daemon is newer, `status` says that too,
+and when this kurmis cannot read its status it says what to do.
 
 While the daemon is not running, the first line says so and names the commands that start it:
 `kurmis claude`, `kurmis codex` without `--login`, `kurmis setup` and `kurmis daemon start`. The
@@ -342,6 +343,14 @@ and port; `stop` stops it after it finishes the requests it has open, waiting at
 seconds for them; `stop --now` stops it at once and cuts those requests, and an open Claude
 session then sees a dropped connection and retries the request; `restart` stops it and starts a
 new one; `run` runs it in the terminal, which helps when looking into a problem.
+
+A daemon is older when its kurmis version is lower, or when the version is the same and its
+control API version (the version of the requests the commands send it) is lower. A newer daemon
+is never replaced. When its control API version is not the one this kurmis speaks, this kurmis
+cannot use it. `kurmis claude`, `kurmis setup` and `kurmis daemon start` then stop, and
+`kurmis codex` starts on the login plain `codex` uses; each says that a newer daemon runs. Update
+this kurmis, or run `kurmis daemon stop` and then the command again, which starts a daemon of
+this kurmis.
 
 ## Uninstall
 
