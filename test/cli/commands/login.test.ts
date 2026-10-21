@@ -43,10 +43,11 @@ function fakeRunner(act: (spec: ChildSpec) => ChildEnd): FakeRunner {
 }
 
 /** What a successful `claude auth login` leaves: the account in `$CLAUDE_CONFIG_DIR/.claude.json`, or `~/.claude.json`. */
-function claudeSignsIn(email = 'second@example.com'): (spec: ChildSpec) => ChildEnd {
+function claudeSignsIn(email = 'second@example.com', organizationUuid?: string | null): (spec: ChildSpec) => ChildEnd {
   return (spec) => {
     const dir = spec.env.CLAUDE_CONFIG_DIR
-    writeClaudeIdentity(dir === undefined ? join(home, '.claude.json') : join(dir, '.claude.json'), { email })
+    writeClaudeIdentity(dir === undefined ? join(home, '.claude.json') : join(dir, '.claude.json'),
+      organizationUuid === undefined ? { email } : { email, organizationUuid })
     return { kind: 'exit', code: 0 }
   }
 }
@@ -575,6 +576,46 @@ describe('kurmis login of an account that is already a kurmis login', () => {
     expect(out.stdout()).toContain('work@example.com is already a kurmis Codex login: work-example (id workcodex1).')
     expect(asked).not.toContain('workcodex1')
     expect(daemon.calls).toEqual(['findDaemon', 'readStatus'])
+  })
+
+  it('adds a second login for the same email in another organization, with the alias ending in -2', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'),
+      { email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
+    const signOut = fakeRun()
+    const { login } = command(fakeRunner(claudeSignsIn('work@example.com', '00000000-0000-4000-8000-00000000c002')),
+      { runProgram: signOut.runProgram })
+    const out = collect()
+    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(signOut.runs).toEqual([])
+    const second = extraLogins(loadConfig(), 'claude').find((entry) => entry.id !== 'workclaude')
+    expect(second?.alias).toBe('work-example-2')
+    expect(out.stdout()).toContain('work-example has the same email in another organization. That is another subscription, ' +
+      'so the two are separate logins.')
+  })
+
+  it('takes the same email as the same account when one side has no organization recorded', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com', organizationUuid: null })
+    const signOut = fakeRun()
+    const { login } = command(fakeRunner(claudeSignsIn('work@example.com', '00000000-0000-4000-8000-00000000c002')),
+      { runProgram: signOut.runProgram })
+    const out = collect()
+    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(signOut.runs).toHaveLength(1)
+    expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workclaude'])
+    expect(out.stdout()).toContain('work@example.com is already a kurmis Claude login: work-example (id workclaude).')
+  })
+
+  it('does not warn when an existing login is signed in to the email of another login in another organization', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }, { id: 'homeclaude', provider: 'claude', alias: 'home-example' }] })
+    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'),
+      { email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
+    const { login } = command(fakeRunner(claudeSignsIn('work@example.com', '00000000-0000-4000-8000-00000000c002')),
+      { runProgram: fakeRun().runProgram })
+    const out = collect()
+    expect(await login.run(['home-example'], out.context)).toBe(0)
+    expect(out.stderr()).toBe('')
   })
 
   it('adds the login when no other login of its provider has the email', async () => {

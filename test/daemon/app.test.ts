@@ -388,15 +388,17 @@ describe('the control API', () => {
 
   test("status lists every login with its settings, those of plain claude and plain codex first", async () => {
     const h = await twoLogins()
-    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'), { email: 'work@example.com' })
+    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'),
+      { email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
     const answer = await status(h)
     expect(answer).toMatchObject({ ok: true, apiVersion: CONTROL_API_VERSION, pid: process.pid })
     expect(answer.logins.map((login) => login.id)).toEqual([OWN_CLAUDE, OWN_CODEX, WORK_ID])
     const work = answer.logins.find((login) => login.id === WORK_ID)!
     expect(work).toEqual({ id: WORK_ID, provider: 'claude', alias: WORK_ID, usedByPlainCli: false, routing: true, fiveHourLimit: 100,
       weeklyLimit: 100, useFirst: false, signedIn: true, usage: null, cooldownUntil: null, block: null, sessions: 0,
-      email: 'work@example.com', probing: false })
-    expect(answer.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ provider: 'claude', usedByPlainCli: true, email: null })
+      email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001', probing: false })
+    expect(answer.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ provider: 'claude', usedByPlainCli: true, email: null,
+      organizationUuid: null })
     expect(answer.logins.find((login) => login.id === OWN_CODEX)).toMatchObject({ provider: 'codex', usedByPlainCli: true, email: null,
       block: null })
     expect(h.log.every((line) => !JSON.stringify(line).includes('example.com'))).toBe(true)

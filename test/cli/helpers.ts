@@ -52,6 +52,7 @@ export function loginStatus(login: LoginRef & { alias?: string }, patch: Partial
     block: null,
     sessions: 0,
     email: null,
+    organizationUuid: null,
     probing: false,
     ...patch
   }

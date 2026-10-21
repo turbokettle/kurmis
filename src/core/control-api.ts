@@ -95,6 +95,12 @@ export interface LoginStatus {
    * the daemon's memory only. For the person's own terminal; never logged or stored.
    */
   email: string | null
+  /**
+   * A Claude login's organization uuid from the same profile as its email, or null when none is
+   * recorded; always null for a Codex login. With the email it tells whether two logins are the
+   * same account (`isSameClaudeAccount` in `src/data/identity.ts`).
+   */
+  organizationUuid: string | null
   /** A usage probe of this login is running now. */
   probing: boolean
 }

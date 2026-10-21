@@ -16,6 +16,7 @@ import { resetsInText, spanText } from '../core/countdown.ts'
 import { routeBlockText } from '../core/proxy-rules.ts'
 import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '../core/usage-rules.ts'
 import { shouldReplace } from '../daemon/lifecycle.ts'
+import { isSameClaudeAccount } from '../data/identity.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
 import { loginArgument, plainCliLoginText, PROVIDER_NAMES } from './login-names.ts'
 
@@ -225,30 +226,30 @@ const NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, 
   'editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.'
 
 /**
- * A warning for each pair of logins of one provider whose emails are the same, compared without
- * regard to case: both are then signed in to one account and use one subscription. Of each group
- * of logins with one email, the login plain claude or plain codex uses is the one the others are
- * compared with, else the first; the warning says how to remove the other one.
+ * A warning for each login of one provider that is signed in to the same account as another,
+ * so that both use one subscription. Two Claude logins are the same account when their emails
+ * are the same and so are their organizations (`isSameClaudeAccount`); two Codex logins when
+ * their emails are. The logins are compared in order, the login plain claude or plain codex
+ * uses first: each is compared with the first login of every account found so far, and the
+ * warning says how to remove the later one.
  */
 export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }): string[] {
   const warnings: string[] = []
-  const groups = new Map<string, ReportLogin[]>()
-  for (const login of answer.logins) {
-    if (login.email === null || login.email.trim() === '') continue
-    const key = `${login.provider} ${login.email.trim().toLowerCase()}`
-    groups.set(key, [...(groups.get(key) ?? []), login])
-  }
+  const ordered = [...answer.logins.filter((login) => login.usedByPlainCli), ...answer.logins.filter((login) => !login.usedByPlainCli)]
+  const firsts: ReportLogin[] = []
   const named = answer.logins.filter((login) => login.noIdYet !== true)
-  for (const group of groups.values()) {
-    const kept = group.find((login) => login.usedByPlainCli) ?? group[0]!
-    for (const other of group) {
-      if (other === kept) continue
-      const keptName = !kept.usedByPlainCli ? kept.alias
-        : kept.noIdYet === true ? plainCliLoginText(kept.provider)
-          : `${kept.alias}, ${plainCliLoginText(kept.provider)},`
-      warnings.push(`${other.alias} and ${keptName} are the same ${PROVIDER_NAMES[other.provider]} account (${kept.email!}), ` +
-        `so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, other)}" removes ${other.alias}.`)
+  for (const login of ordered) {
+    if (login.email === null || login.email.trim() === '') continue
+    const kept = firsts.find((first) => first.provider === login.provider && isSameClaudeAccount(first, login))
+    if (kept === undefined) {
+      firsts.push(login)
+      continue
     }
+    const keptName = !kept.usedByPlainCli ? kept.alias
+      : kept.noIdYet === true ? plainCliLoginText(kept.provider)
+        : `${kept.alias}, ${plainCliLoginText(kept.provider)},`
+    warnings.push(`${login.alias} and ${keptName} are the same ${PROVIDER_NAMES[login.provider]} account (${kept.email!}), ` +
+      `so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, login)}" removes ${login.alias}.`)
   }
   return warnings
 }

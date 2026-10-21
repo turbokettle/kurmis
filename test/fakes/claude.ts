@@ -71,7 +71,8 @@ export function readClaudeCredentials(dir: string): Partial<ClaudeCredentials> |
 export interface ClaudeIdentity {
   email: string
   accountUuid?: string
-  organizationUuid?: string
+  /** A made-up organization by default; null writes a block without one. */
+  organizationUuid?: string | null
   organizationName?: string
 }
 
@@ -88,8 +89,10 @@ export function writeClaudeIdentity(file: string, identity: ClaudeIdentity): voi
     oauthAccount: {
       accountUuid: identity.accountUuid ?? '00000000-0000-4000-8000-0000000000a1',
       emailAddress: identity.email,
-      organizationUuid: identity.organizationUuid ?? '00000000-0000-4000-8000-0000000000b1',
-      organizationName: identity.organizationName ?? 'Example Org'
+      ...(identity.organizationUuid === null ? {} : {
+        organizationUuid: identity.organizationUuid ?? '00000000-0000-4000-8000-0000000000b1',
+        organizationName: identity.organizationName ?? 'Example Org'
+      })
     }
   }, null, 2)}\n`)
 }

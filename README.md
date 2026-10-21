@@ -111,6 +111,12 @@ When `kurmis login <login>` signs an existing login in to an account that anothe
 same provider already has, kurmis warns that the two logins are now the same account. It signs
 neither of them out.
 
+A Claude account is its email together with its organization, which Claude Code records in its
+profile. One email can have a personal plan and a seat in a Team or Enterprise organization;
+those are two subscriptions, so `kurmis login claude` adds the second as a login of its own, and
+its alias gets `-2` at the end (`work-example-2`). When the organization of either login is not
+recorded, the email alone decides. A Codex account is its email.
+
 If the sign-in fails, nothing is added. Only one `kurmis login` or `kurmis logout` of the same
 login runs at a time; a second one stops and says so.
 

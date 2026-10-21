@@ -26,7 +26,7 @@ function loginStatus(id: string, patch: Partial<LoginStatus> = {}): LoginStatus 
   return {
     id, provider: id === OWN_CLAUDE ? 'claude' : 'codex', alias: id, usedByPlainCli: id === OWN_CLAUDE || id === OWN_CODEX,
     routing: true, fiveHourLimit: 100, weeklyLimit: 100, useFirst: false, signedIn: true, usage: null, cooldownUntil: null,
-    block: null, sessions: 0, email: null, probing: false, ...patch
+    block: null, sessions: 0, email: null, organizationUuid: null, probing: false, ...patch
   }
 }
 

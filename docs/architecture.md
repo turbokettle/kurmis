@@ -222,7 +222,9 @@ daemon finishes the requests it has open.
   control API version 3).
   It also gives each login's email, for `kurmis status` on the person's own terminal: a Claude
   login's from its profile file (`src/data/identity.ts`), a Codex login's from its last usage probe,
-  which the daemon keeps in memory only. The email is never logged. A request body may be at most 64
+  which the daemon keeps in memory only. The email is never logged. A Claude login also gets the
+  organization uuid from its profile file (`organizationUuid`), which `kurmis status` and
+  `kurmis login` compare along with the email to tell whether two logins are the same account. A request body may be at most 64
   KB (`MAX_CONTROL_BODY_BYTES`). A larger one is answered 413 with the control API's error answer
   (`{ "ok": false, "error": "…" }`) as soon as the size is known, from `content-length` or while
   reading. The daemon then goes on reading the rest of the body and throws it away, for at most 30
@@ -1460,10 +1462,15 @@ These are known and left as they are.
     limits, use-first, sessions, each usage window with its reset, how long ago the usage was
     read, and why routing passes the login over (`routeBlockText`), and last which login
     `kurmis codex` would start on (`src/cli/status-format.ts`). Above the logins it warns about
-    any two logins of one provider with the same email, compared without regard to case,
-    because both then use one subscription (`sameAccountWarnings`): of each group with one email
-    the login plain claude or plain codex uses, else the first, is compared with each of the
-    others, and the warning names the `kurmis logout` that removes the other one. It also warns
+    any two logins of one provider that are the same account, because both then use one
+    subscription (`sameAccountWarnings`). Two Claude logins are the same account when their
+    emails, compared without regard to case, and their organization uuids (`organizationUuid` in
+    `LoginStatus`, from the same profile as the email) are the same, or their emails are the same
+    and either has no organization recorded (`isSameClaudeAccount` in `src/data/identity.ts`).
+    Two Codex logins are the same account when their emails are, since `account/read` names no
+    workspace. The logins are taken in order, the login plain claude or plain codex uses first;
+    each is compared with the first login of every account found so far, and the warning names
+    the `kurmis logout` that removes the later one. It also warns
     about global routing that is on while no daemon runs, because a plain `claude` then cannot
     reach Anthropic. Resets are shown as the time left; a cooldown's
     end is shown in local time (`02:10`, with the date when it is on another day) with the time
@@ -1489,8 +1496,9 @@ These are known and left as they are.
     the CLI wrote (`~/.claude.json` for the login plain claude uses, whose probe folder's
     `.claude.json` is deleted first, because it may name the account signed in before), for Codex from
     `codex app-server` (`readCodexEmail`). The email is printed and never stored. When a new
-    login's email is that of another login of the same provider, compared without regard to
-    case, the login plain claude or plain codex uses included, the new folder is signed out again
+    login is the same account as another login of the same provider (for Claude the same email
+    and organization, `isSameClaudeAccount`; for Codex the same email), the login plain claude or
+    plain codex uses included, the new folder is signed out again
     (`signOutLogin` in `src/cli/sign-out.ts`) and deleted, the command names that login and says
     that `kurmis login <alias>` signs it in again, and it exits 0. A given `--alias` is then not
     used, and the command says so on stderr. The other Claude logins'
@@ -1503,7 +1511,9 @@ These are known and left as they are.
     to an account that another login of the same provider has, the command prints a warning that
     the two logins are now the same account and signs neither out. Otherwise the login is
     added or updated under the config lock, with `--alias` as a user alias, and `followEmail`
-    makes an automatic alias from the email. A running daemon is told to reload and
+    makes an automatic alias from the email. A new Claude login with the email of another login
+    in another organization is added, its alias gets the usual `-2`, and the command says that
+    the other login has the same email in another organization. A running daemon is told to reload and
     asked to probe the login, waiting up to 15 seconds, because it may still hold the login as
     signed out from before and Auto would pass it over until its next poll; none is started for
     this.

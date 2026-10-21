@@ -206,6 +206,16 @@ describe('kurmis status with the daemon not running', () => {
     expect((JSON.parse(out.stdout()) as StatusJson).warnings).toEqual([expect.stringContaining('"kurmis logout own-example"')])
   })
 
+  test('does not warn about one email in two organizations, from the profile files', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'own-example' }] })
+    writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
+    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'),
+      { email: 'own@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c002' })
+    const out = collect({})
+    expect(await command({ daemon: fakeDaemonClient({ running: false }) }).run(['--json'], out.context)).toBe(0)
+    expect((JSON.parse(out.stdout()) as StatusJson).warnings).toEqual([])
+  })
+
   test('warns when global routing is on', async () => {
     writeTestConfig()
     const out = collect({})

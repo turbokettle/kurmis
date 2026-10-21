@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { ClaudeIdentityReader, parseClaudeIdentity, readClaudeIdentity } from '../../src/data/identity.ts'
+import { ClaudeIdentityReader, isSameClaudeAccount, parseClaudeIdentity, readClaudeIdentity } from '../../src/data/identity.ts'
 import { loginFolder, ownClaudeProbeFolder } from '../../src/data/paths.ts'
 import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
 
@@ -21,6 +21,30 @@ describe('parsing', () => {
 
   test.each(['', 'not json', '{}', '{"oauthAccount":null}', '{"oauthAccount":{"accountUuid":""}}'])('%j names nobody', (text) => {
     expect(parseClaudeIdentity(text)).toBeNull()
+  })
+})
+
+describe('the same account', () => {
+  const key = (email: string | null, organizationUuid: string | null) => ({ email, organizationUuid })
+
+  test('is the same email, without regard to case, in the same organization', () => {
+    expect(isSameClaudeAccount(key('work@example.com', 'org-0001'), key(' Work@Example.com', 'ORG-0001'))).toBe(true)
+    expect(isSameClaudeAccount(key('work@example.com', 'org-0001'), key('home@example.com', 'org-0001'))).toBe(false)
+  })
+
+  test('is not one email in two organizations, such as a personal plan and a Team seat', () => {
+    expect(isSameClaudeAccount(key('work@example.com', 'org-0001'), key('work@example.com', 'org-0002'))).toBe(false)
+  })
+
+  test('is decided by the email alone when either side has no organization', () => {
+    expect(isSameClaudeAccount(key('work@example.com', null), key('work@example.com', 'org-0002'))).toBe(true)
+    expect(isSameClaudeAccount(key('work@example.com', 'org-0001'), key('work@example.com', null))).toBe(true)
+    expect(isSameClaudeAccount(key('work@example.com', null), key('home@example.com', null))).toBe(false)
+  })
+
+  test('needs an email on both sides', () => {
+    expect(isSameClaudeAccount(key(null, 'org-0001'), key(null, 'org-0001'))).toBe(false)
+    expect(isSameClaudeAccount(key('work@example.com', 'org-0001'), key(null, 'org-0001'))).toBe(false)
   })
 })
 

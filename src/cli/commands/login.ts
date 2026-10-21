@@ -19,12 +19,15 @@
 // After the sign-in the command reads the account's email: for Claude from the `.claude.json`
 // the CLI wrote (`readClaudeIdentity`; `~/.claude.json` for plain claude's login), for Codex
 // from `codex app-server` (`readCodexEmail`). The email is shown on the terminal and written
-// nowhere. It gives the login's automatic alias (`followEmail`) unless `--alias` sets one. When
-// a new sign-in is an account that is already a kurmis login of the same provider, the login
-// plain claude or plain codex uses included, the new folder is signed out again and deleted,
-// and the command says which login that account already is. For Claude this is checked again
-// under the config lock, before the login is added. When an existing login is signed in to an
-// account that another login of its provider already has, the command warns and signs nothing out.
+// nowhere. It gives the login's automatic alias (`followEmail`) unless `--alias` sets one. A
+// Claude account is its email and its organization (`isSameClaudeAccount`): a personal plan and
+// a Team or Enterprise seat of one email are two logins, and the second gets the alias with
+// `-2`. A Codex account is its email. When a new sign-in is an account that is already a kurmis
+// login of the same provider, the login plain claude or plain codex uses included, the new folder
+// is signed out again and deleted, and the command says which login that account already is.
+// For Claude this is checked again under the config lock, before the login is added. When an
+// existing login is signed in to an account that another login of its provider already has, the
+// command warns and signs nothing out.
 //
 // The run holds the login's lock (`login-lock.ts`) from before it creates the folder until it is
 // done, so a `kurmis logout` of the same login stops at once instead of deleting the folder.
@@ -50,7 +53,9 @@ import {
   type KurmisConfig,
   type LoginSettings
 } from '../../data/config.ts'
-import { CLAUDE_PROFILE_FILE, parseClaudeIdentity, readClaudeIdentity, type ClaudeIdentity } from '../../data/identity.ts'
+import {
+  CLAUDE_PROFILE_FILE, isSameClaudeAccount, isSameEmail, parseClaudeIdentity, readClaudeIdentity, type ClaudeAccountKey, type ClaudeIdentity
+} from '../../data/identity.ts'
 import { applyEnvPatch, claudeLoginEnv, codexLoginEnv } from '../../data/login-env.ts'
 import { isLoginProvider, LOGIN_PROVIDERS, type LoginId, type LoginProvider, type LoginRef } from '../../data/login-id.ts'
 import { codexMergedRecordPath, loginFolder, ownClaudeProbeFolder } from '../../data/paths.ts'
@@ -150,18 +155,15 @@ function fail(context: CliContext, message: string): number {
   return EXIT_FAILURE
 }
 
-function sameEmail(a: string | null, b: string | null): boolean {
-  return a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase()
-}
-
 /**
- * The other login of `login`'s provider that is signed in to the account `email`, or null. Claude
- * emails come from each login's `.claude.json`. Codex emails come from a running daemon's status
- * where it knows them, and from `codex app-server` for the rest, all at the same time.
+ * The other login of `login`'s provider that is signed in to `account`, or null. A Claude account
+ * is its email and its organization (`isSameClaudeAccount`), read from each login's
+ * `.claude.json`. A Codex account is its email, from a running daemon's status where it knows
+ * it, and from `codex app-server` for the rest, all at the same time.
  */
-async function sameAccount(config: KurmisConfig, login: LoginRef, email: string, env: NodeJS.ProcessEnv,
-  deps: LoginDeps): Promise<LoginSettings | null> {
-  if (login.provider === 'claude') return sameClaudeAccount(config, login, email, deps.home())
+async function sameAccount(config: KurmisConfig, login: LoginRef, account: ClaudeAccountKey & { email: string },
+  env: NodeJS.ProcessEnv, deps: LoginDeps): Promise<LoginSettings | null> {
+  if (login.provider === 'claude') return sameClaudeAccount(config, login, account, deps.home())
   const others = config.logins.filter((other) => other.provider === login.provider && other.id !== login.id)
   const known = new Map<string, string>()
   try {
@@ -171,16 +173,30 @@ async function sameAccount(config: KurmisConfig, login: LoginRef, email: string,
     }
   } catch { /* Without the daemon every email is read from Codex. */ }
   const emails = await Promise.all(others.map(async (other) => known.get(other.id) ?? await deps.readCodexEmail(other, env)))
-  return others.find((_, index) => sameEmail(emails[index] ?? null, email)) ?? null
+  // Codex's `account/read` names no workspace, so for Codex the email alone decides.
+  return others.find((_, index) => isSameEmail(emails[index] ?? null, account.email)) ?? null
 }
 
 /**
- * The other Claude login signed in to the account `email`, by each login's `.claude.json`, or
- * null. It reads files only, so it can run while the config lock is held.
+ * The other Claude login signed in to `account`, by each login's `.claude.json`, or null. It
+ * reads files only, so it can run while the config lock is held.
  */
-function sameClaudeAccount(config: KurmisConfig, login: LoginRef, email: string, home: string): LoginSettings | null {
+function sameClaudeAccount(config: KurmisConfig, login: LoginRef, account: ClaudeAccountKey, home: string): LoginSettings | null {
   return config.logins.find((other) => other.provider === 'claude' && other.id !== login.id &&
-    sameEmail(readClaudeIdentity(other, home)?.email ?? null, email)) ?? null
+    isSameClaudeAccount(readClaudeIdentity(other, home) ?? { email: null, organizationUuid: null }, account)) ?? null
+}
+
+/**
+ * Another Claude login with the email of `account` but in another organization, or null: the
+ * same person's other subscription, which is a login of its own.
+ */
+function otherOrganization(config: KurmisConfig, login: LoginRef, account: ClaudeAccountKey, home: string): LoginSettings | null {
+  if (login.provider !== 'claude') return null
+  return config.logins.find((other) => {
+    if (other.provider !== 'claude' || other.id === login.id) return false
+    const identity = readClaudeIdentity(other, home)
+    return identity !== null && isSameEmail(identity.email, account.email) && !isSameClaudeAccount(identity, account)
+  }) ?? null
 }
 
 /**
@@ -299,8 +315,9 @@ async function signIn(run: SignInRun): Promise<number> {
     return fail(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`)
   }
   const email = provider === 'claude' ? identity?.email ?? null : await deps.readCodexEmail(ref, context.env)
+  const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null }
 
-  if (isNew && email !== null) {
+  if (isNew && account !== null) {
     let config: KurmisConfig
     try {
       config = loadConfig()
@@ -309,8 +326,8 @@ async function signIn(run: SignInRun): Promise<number> {
       return fail(context, `${name} is signed in, but config.json could not be read: ${error.message} ` +
         `"kurmis logout ${ref.id}" removes its credentials and folder.`)
     }
-    const existing = await sameAccount(config, ref, email, context.env, deps)
-    if (existing !== null) return await dropDuplicate(run, config, existing, email)
+    const existing = await sameAccount(config, ref, account, context.env, deps)
+    if (existing !== null) return await dropDuplicate(run, config, existing, account.email)
   }
 
   let saved: KurmisConfig
@@ -319,7 +336,7 @@ async function signIn(run: SignInRun): Promise<number> {
       // A Claude account is checked again from the config read under the lock, so two runs of
       // `kurmis login claude` that sign in to one account at the same moment add it once.
       // A Codex email is read from `codex app-server`, which is too slow to run under the lock.
-      const meanwhile = isNew && provider === 'claude' && email !== null ? sameClaudeAccount(config, ref, email, deps.home()) : null
+      const meanwhile = isNew && provider === 'claude' && account !== null ? sameClaudeAccount(config, ref, account, deps.home()) : null
       if (meanwhile !== null) throw new AddedMeanwhile(meanwhile, config)
       let next = isNew ? addLogin(config, ref, alias === undefined ? {} : { alias }) : config
       if (!isNew && alias !== undefined) next = updateLogin(next, ref.id, { alias })
@@ -341,12 +358,17 @@ async function signIn(run: SignInRun): Promise<number> {
   if (isNew) {
     writeLine(context.stdout, `Added ${login.alias} (id ${login.id}), a ${PROVIDER_NAMES[provider]} login with Auto routing on and ` +
       `both limits at 100%. "kurmis set ${argument}" changes that.`)
+    const sibling = account === null ? null : otherOrganization(saved, ref, account, deps.home())
+    if (sibling !== null) {
+      writeLine(context.stdout, `${sibling.alias} has the same email in another organization. That is another subscription, ` +
+        'so the two are separate logins.')
+    }
   } else if (login.alias !== name) {
     writeLine(context.stdout, `${name} is now called ${login.alias}.`)
   }
-  if (!isNew && email !== null) {
+  if (!isNew && account !== null) {
     // Nothing is signed out: the person may have meant either login, and both still work.
-    const other = await sameAccount(saved, ref, email, context.env, deps)
+    const other = await sameAccount(saved, ref, account, context.env, deps)
     if (other !== null) {
       const which = other.usedByPlainCli ? `${other.alias}, ${plainCliLoginText(other.provider)},` : other.alias
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ` +
@@ -428,6 +450,11 @@ a kurmis login, kurmis signs the new sign-in out again, adds nothing and says wh
 account is. --alias is then not used. When "kurmis login <login>" signs a login in to an
 account that another login of the same provider already has, kurmis warns that the two logins
 are now the same account and signs neither out.
+
+A Claude account is its email and its organization: a personal plan and a Team or Enterprise
+seat of the same email are two subscriptions, so they become two logins, and the second one's
+alias ends in -2. When the organization of either login is not known, the email alone decides.
+A Codex account is its email.
 
 Each extra login keeps its own credentials in its folder in the kurmis data folder (on macOS in
 the Keychain). Kurmis prints the account's email and does not store it.

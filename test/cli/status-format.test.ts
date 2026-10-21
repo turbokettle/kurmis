@@ -241,6 +241,18 @@ describe('the warning about an extra login that is the account of the login plai
     for (const line of text.split('\n')) expect(line.length).toBeLessThanOrEqual(80)
   })
 
+  test('says nothing about one email in two organizations, and compares by email when an organization is not known', () => {
+    const status = statusAnswer([
+      loginStatus(OWN_CLAUDE_LOGIN, { email: 'own@example.com', organizationUuid: 'org-0001' }),
+      loginStatus(WORK_CLAUDE, { email: 'own@example.com', organizationUuid: 'org-0002' }),
+      loginStatus({ ...claudeRef('spareclaude'), alias: 'spare-example' }, { email: 'own@example.com', organizationUuid: null })
+    ])
+    expect(statusJson(status, NOW, { keychain: false }).warnings).toEqual([
+      'spare-example and own-example, the login plain claude uses, are the same Claude account (own@example.com), so they ' +
+        'use one subscription. "kurmis logout spare-example" removes spare-example.'
+    ])
+  })
+
   test('says nothing while the email of the login plain claude uses is not known', () => {
     const status = statusAnswer([loginStatus(OWN_CLAUDE_LOGIN), loginStatus(WORK_CLAUDE, { email: 'own@example.com' })])
     expect(statusJson(status, NOW, { keychain: false }).warnings).toEqual([])

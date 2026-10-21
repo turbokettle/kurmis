@@ -19,7 +19,10 @@ machine after each larger change. Linux works where it costs nothing extra.
   A Claude login and a Codex login of the same account can have the same alias.
 - **One login per account.** Signing in to an account that is already a login of the same
   provider adds nothing, and kurmis says which login it is. `kurmis status` warns when two
-  logins of one provider are the same account, because both then use one subscription.
+  logins of one provider are the same account, because both then use one subscription. A Claude
+  account is its email and its organization: one email with a personal plan and a Team or
+  Enterprise seat has two subscriptions, so it is two logins. When the organization of either
+  login is not known, the email alone decides. A Codex account is its email.
 - **Claude:** each extra login keeps only its credentials in a folder of its own. A CLI started
   on it gets `CLAUDE_SECURESTORAGE_CONFIG_DIR` and nothing else, so settings, CLAUDE.md, skills,
   plugins and transcripts stay those of `~/.claude`. The only thing a login changes is which

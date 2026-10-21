@@ -8650,6 +8650,14 @@ var ClaudeIdentityReader = class {
     }
   }
 };
+function isSameClaudeAccount(a, b) {
+  if (!isSameEmail(a.email, b.email)) return false;
+  if (a.organizationUuid === null || b.organizationUuid === null) return true;
+  return a.organizationUuid.trim().toLowerCase() === b.organizationUuid.trim().toLowerCase();
+}
+function isSameEmail(a, b) {
+  return a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
+}
 function readClaudeIdentity(login, home = (0, import_node_os9.homedir)()) {
   return new ClaudeIdentityReader(() => home).read(login);
 }
@@ -9145,6 +9153,7 @@ function createControl(options) {
     const logins = table.logins().map((login) => {
       const row = rows.find((each) => each.id === login.id);
       const cooldown = table.cooldown(login.id, at2);
+      const claude = login.provider === "claude" ? identity.read(login) : null;
       return {
         id: login.id,
         provider: login.provider,
@@ -9159,7 +9168,8 @@ function createControl(options) {
         cooldownUntil: cooldown === null ? null : Number.isFinite(cooldown) ? cooldown : "unknown",
         block: row === void 0 ? null : routeBlock(row, at2),
         sessions: login.provider === "claude" ? table.sessionCount(login.id) : 0,
-        email: login.provider === "claude" ? identity.read(login)?.email ?? null : table.codexEmail(login.id),
+        email: login.provider === "claude" ? claude?.email ?? null : table.codexEmail(login.id),
+        organizationUuid: claude?.organizationUuid ?? null,
         probing: poller.isRunning(login.id)
       };
     });
@@ -12549,11 +12559,8 @@ function fail2(context, message) {
   writeLine(context.stderr, `kurmis login: ${message}`);
   return EXIT_FAILURE;
 }
-function sameEmail(a, b) {
-  return a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
-}
-async function sameAccount(config, login, email, env, deps) {
-  if (login.provider === "claude") return sameClaudeAccount(config, login, email, deps.home());
+async function sameAccount(config, login, account, env, deps) {
+  if (login.provider === "claude") return sameClaudeAccount(config, login, account, deps.home());
   const others = config.logins.filter((other) => other.provider === login.provider && other.id !== login.id);
   const known = /* @__PURE__ */ new Map();
   try {
@@ -12564,10 +12571,18 @@ async function sameAccount(config, login, email, env, deps) {
   } catch {
   }
   const emails = await Promise.all(others.map(async (other) => known.get(other.id) ?? await deps.readCodexEmail(other, env)));
-  return others.find((_, index) => sameEmail(emails[index] ?? null, email)) ?? null;
+  return others.find((_, index) => isSameEmail(emails[index] ?? null, account.email)) ?? null;
 }
-function sameClaudeAccount(config, login, email, home) {
-  return config.logins.find((other) => other.provider === "claude" && other.id !== login.id && sameEmail(readClaudeIdentity(other, home)?.email ?? null, email)) ?? null;
+function sameClaudeAccount(config, login, account, home) {
+  return config.logins.find((other) => other.provider === "claude" && other.id !== login.id && isSameClaudeAccount(readClaudeIdentity(other, home) ?? { email: null, organizationUuid: null }, account)) ?? null;
+}
+function otherOrganization(config, login, account, home) {
+  if (login.provider !== "claude") return null;
+  return config.logins.find((other) => {
+    if (other.provider !== "claude" || other.id === login.id) return false;
+    const identity = readClaudeIdentity(other, home);
+    return identity !== null && isSameEmail(identity.email, account.email) && !isSameClaudeAccount(identity, account);
+  }) ?? null;
 }
 var AddedMeanwhile = class extends Error {
   constructor(existing, config) {
@@ -12651,7 +12666,8 @@ async function signIn(run2) {
     return fail2(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`);
   }
   const email = provider === "claude" ? identity?.email ?? null : await deps.readCodexEmail(ref, context.env);
-  if (isNew && email !== null) {
+  const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null };
+  if (isNew && account !== null) {
     let config;
     try {
       config = loadConfig();
@@ -12659,13 +12675,13 @@ async function signIn(run2) {
       if (!(error instanceof ConfigError)) throw error;
       return fail2(context, `${name} is signed in, but config.json could not be read: ${error.message} "kurmis logout ${ref.id}" removes its credentials and folder.`);
     }
-    const existing = await sameAccount(config, ref, email, context.env, deps);
-    if (existing !== null) return await dropDuplicate(run2, config, existing, email);
+    const existing = await sameAccount(config, ref, account, context.env, deps);
+    if (existing !== null) return await dropDuplicate(run2, config, existing, account.email);
   }
   let saved;
   try {
     saved = changeConfig((config) => {
-      const meanwhile = isNew && provider === "claude" && email !== null ? sameClaudeAccount(config, ref, email, deps.home()) : null;
+      const meanwhile = isNew && provider === "claude" && account !== null ? sameClaudeAccount(config, ref, account, deps.home()) : null;
       if (meanwhile !== null) throw new AddedMeanwhile(meanwhile, config);
       let next = isNew ? addLogin(config, ref, alias === void 0 ? {} : { alias }) : config;
       if (!isNew && alias !== void 0) next = updateLogin(next, ref.id, { alias });
@@ -12681,11 +12697,15 @@ async function signIn(run2) {
   writeLine(context.stdout, email === null ? "Signed in." : `Signed in as ${email}.`);
   if (isNew) {
     writeLine(context.stdout, `Added ${login.alias} (id ${login.id}), a ${PROVIDER_NAMES2[provider]} login with Auto routing on and both limits at 100%. "kurmis set ${argument}" changes that.`);
+    const sibling = account === null ? null : otherOrganization(saved, ref, account, deps.home());
+    if (sibling !== null) {
+      writeLine(context.stdout, `${sibling.alias} has the same email in another organization. That is another subscription, so the two are separate logins.`);
+    }
   } else if (login.alias !== name) {
     writeLine(context.stdout, `${name} is now called ${login.alias}.`);
   }
-  if (!isNew && email !== null) {
-    const other = await sameAccount(saved, ref, email, context.env, deps);
+  if (!isNew && account !== null) {
+    const other = await sameAccount(saved, ref, account, context.env, deps);
     if (other !== null) {
       const which = other.usedByPlainCli ? `${other.alias}, ${plainCliLoginText(other.provider)},` : other.alias;
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. "kurmis login ${argument}" signs ${login.alias} in to another account.`);
@@ -12756,6 +12776,11 @@ a kurmis login, kurmis signs the new sign-in out again, adds nothing and says wh
 account is. --alias is then not used. When "kurmis login <login>" signs a login in to an
 account that another login of the same provider already has, kurmis warns that the two logins
 are now the same account and signs neither out.
+
+A Claude account is its email and its organization: a personal plan and a Team or Enterprise
+seat of the same email are two subscriptions, so they become two logins, and the second one's
+alias ends in -2. When the organization of either login is not known, the email alone decides.
+A Codex account is its email.
 
 Each extra login keeps its own credentials in its folder in the kurmis data folder (on macOS in
 the Keychain). Kurmis prints the account's email and does not store it.
@@ -14714,20 +14739,18 @@ function statusJson(report, now, options) {
 var NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, so a plain claude and the Claude Code editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.';
 function sameAccountWarnings(answer2) {
   const warnings = [];
-  const groups = /* @__PURE__ */ new Map();
-  for (const login of answer2.logins) {
-    if (login.email === null || login.email.trim() === "") continue;
-    const key = `${login.provider} ${login.email.trim().toLowerCase()}`;
-    groups.set(key, [...groups.get(key) ?? [], login]);
-  }
+  const ordered2 = [...answer2.logins.filter((login) => login.usedByPlainCli), ...answer2.logins.filter((login) => !login.usedByPlainCli)];
+  const firsts = [];
   const named = answer2.logins.filter((login) => login.noIdYet !== true);
-  for (const group of groups.values()) {
-    const kept = group.find((login) => login.usedByPlainCli) ?? group[0];
-    for (const other of group) {
-      if (other === kept) continue;
-      const keptName = !kept.usedByPlainCli ? kept.alias : kept.noIdYet === true ? plainCliLoginText(kept.provider) : `${kept.alias}, ${plainCliLoginText(kept.provider)},`;
-      warnings.push(`${other.alias} and ${keptName} are the same ${PROVIDER_NAMES2[other.provider]} account (${kept.email}), so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, other)}" removes ${other.alias}.`);
+  for (const login of ordered2) {
+    if (login.email === null || login.email.trim() === "") continue;
+    const kept = firsts.find((first) => first.provider === login.provider && isSameClaudeAccount(first, login));
+    if (kept === void 0) {
+      firsts.push(login);
+      continue;
     }
+    const keptName = !kept.usedByPlainCli ? kept.alias : kept.noIdYet === true ? plainCliLoginText(kept.provider) : `${kept.alias}, ${plainCliLoginText(kept.provider)},`;
+    warnings.push(`${login.alias} and ${keptName} are the same ${PROVIDER_NAMES2[login.provider]} account (${kept.email}), so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, login)}" removes ${login.alias}.`);
   }
   return warnings;
 }
@@ -14932,7 +14955,9 @@ Each login is shown by its alias, with its provider, its id (when the alias is n
 and the account's email when kurmis knows it. The login plain claude uses and the login plain
 codex uses are marked: they are the accounts a plain "claude" and a plain "codex" are signed
 in to. When two Claude logins are the same account, a warning says so, because both then use
-one subscription. The same goes for Codex.
+one subscription. Two Claude logins are the same account when they have the same email and the
+same organization; a personal plan and a Team or Enterprise seat of one email are not. Two
+Codex logins are the same account when they have the same email.
 
 While the daemon runs, the status comes from it: whether each login is signed in, its usage,
 how many sessions it serves, why routing would pass it over now, and which login
@@ -15057,6 +15082,7 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
   const shown = withPlainCliLogins(config);
   const logins = shown.map(({ login, noIdYet }) => {
     const cooldown = noIdYet ? void 0 : state.cooldowns.get(login.id);
+    const claude = login.provider === "claude" ? readClaudeIdentity(login, home) : null;
     let sessions = 0;
     if (!noIdYet) {
       for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++;
@@ -15076,7 +15102,8 @@ async function reportFromFiles(daemon, globalRouting, context, deps) {
       block: null,
       sessions,
       // A Codex login's email is known only to a running daemon, from its last usage probe.
-      email: login.provider === "claude" ? readClaudeIdentity(login, home)?.email ?? null : null,
+      email: claude?.email ?? null,
+      organizationUuid: claude?.organizationUuid ?? null,
       probing: false,
       ...noIdYet ? { noIdYet: true } : {}
     };

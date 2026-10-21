@@ -55,7 +55,9 @@ Each login is shown by its alias, with its provider, its id (when the alias is n
 and the account's email when kurmis knows it. The login plain claude uses and the login plain
 codex uses are marked: they are the accounts a plain "claude" and a plain "codex" are signed
 in to. When two Claude logins are the same account, a warning says so, because both then use
-one subscription. The same goes for Codex.
+one subscription. Two Claude logins are the same account when they have the same email and the
+same organization; a personal plan and a Team or Enterprise seat of one email are not. Two
+Codex logins are the same account when they have the same email.
 
 While the daemon runs, the status comes from it: whether each login is signed in, its usage,
 how many sessions it serves, why routing would pass it over now, and which login
@@ -198,6 +200,7 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
   const shown = withPlainCliLogins(config)
   const logins: ReportLogin[] = shown.map(({ login, noIdYet }) => {
     const cooldown = noIdYet ? undefined : state.cooldowns.get(login.id)
+    const claude = login.provider === 'claude' ? readClaudeIdentity(login, home) : null
     let sessions = 0
     if (!noIdYet) for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++
     return {
@@ -215,7 +218,8 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
       block: null,
       sessions,
       // A Codex login's email is known only to a running daemon, from its last usage probe.
-      email: login.provider === 'claude' ? readClaudeIdentity(login, home)?.email ?? null : null,
+      email: claude?.email ?? null,
+      organizationUuid: claude?.organizationUuid ?? null,
       probing: false,
       ...(noIdYet ? { noIdYet: true } : {})
     }

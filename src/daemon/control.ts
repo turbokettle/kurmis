@@ -63,6 +63,7 @@ export function createControl(options: ControlOptions): Control {
     const logins: LoginStatus[] = table.logins().map((login) => {
       const row = rows.find((each) => each.id === login.id)
       const cooldown = table.cooldown(login.id, at)
+      const claude = login.provider === 'claude' ? identity.read(login) : null
       return {
         id: login.id,
         provider: login.provider,
@@ -77,7 +78,8 @@ export function createControl(options: ControlOptions): Control {
         cooldownUntil: cooldown === null ? null : Number.isFinite(cooldown) ? cooldown : 'unknown',
         block: row === undefined ? null : routeBlock(row, at),
         sessions: login.provider === 'claude' ? table.sessionCount(login.id) : 0,
-        email: login.provider === 'claude' ? identity.read(login)?.email ?? null : table.codexEmail(login.id),
+        email: login.provider === 'claude' ? claude?.email ?? null : table.codexEmail(login.id),
+        organizationUuid: claude?.organizationUuid ?? null,
         probing: poller.isRunning(login.id)
       }
     })

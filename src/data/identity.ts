@@ -1,7 +1,8 @@
 // Who a Claude login is: the `oauthAccount` block the CLI caches in a config folder's
 // `.claude.json`. The proxy needs the account uuid for `metadata.user_id` (`rewriteUserId` in
 // `src/core/proxy-rules.ts`), `kurmis login` and `status` show the email, and the login's automatic
-// alias is made from it (`followEmail` in `config.ts`).
+// alias is made from it (`followEmail` in `config.ts`). The email and the organization uuid
+// together tell whether two logins are the same account (`isSameClaudeAccount`).
 //
 // The block is read only from a config folder that this login's own CLI runs write, so it can
 // never name another login: the login's folder for an extra login (written by `claude auth login`
@@ -99,6 +100,30 @@ export class ClaudeIdentityReader {
       return null
     }
   }
+}
+
+/** What tells two Claude logins apart as accounts: the email and the organization. */
+export interface ClaudeAccountKey {
+  email: string | null
+  organizationUuid: string | null
+}
+
+/**
+ * Whether two Claude logins are signed in to the same account, which makes them use one
+ * subscription. One email can have a personal plan and a seat in a Team or Enterprise
+ * organization, which are two subscriptions, so the emails must be the same (without regard to
+ * case) and so must the organization uuids. When either side has no organization recorded, the
+ * email alone decides. Without an email on both sides, they are not the same account.
+ */
+export function isSameClaudeAccount(a: ClaudeAccountKey, b: ClaudeAccountKey): boolean {
+  if (!isSameEmail(a.email, b.email)) return false
+  if (a.organizationUuid === null || b.organizationUuid === null) return true
+  return a.organizationUuid.trim().toLowerCase() === b.organizationUuid.trim().toLowerCase()
+}
+
+/** Whether two emails are known and the same, without regard to case or surrounding spaces. */
+export function isSameEmail(a: string | null, b: string | null): boolean {
+  return a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase()
 }
 
 /** One read, without a cache, for the CLI. */
