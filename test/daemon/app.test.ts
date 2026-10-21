@@ -420,16 +420,35 @@ describe('the control API', () => {
   test('a body larger than 64 KB is answered 413, and the client gets the answer rather than a reset', async () => {
     harness = await startHarness()
     const body = Buffer.alloc(2 * 1024 * 1024, 0x20)
-    /** Sends `body` in 64 KB pieces, with a content-length or chunked, and answers what came back. */
+    /**
+     * Sends `body` in 64 KB pieces, with a content-length or chunked, and answers what came back
+     * once the whole body has been sent too. The answer arrives while the body is still being
+     * sent, and the harness closes every connection after the test. Closing one under the
+     * upload makes the next write fail, which ends the request; Node's keep-alive agent then
+     * takes the request's error listener off the socket, finds the socket closed, drops it
+     * without a listener of its own, and the write error is thrown as an uncaught EPIPE or
+     * ECONNRESET. The request's 'close' comes only after the socket is back in the agent's
+     * pool, where it has the agent's error listener.
+     */
     const send = (path: string, chunked: boolean): Promise<{ status: number; text: string }> => new Promise((resolve, reject) => {
+      let answer: { status: number; text: string } | null = null
+      let closed = false
+      const settle = (): void => { if (answer !== null && closed) resolve(answer) }
       const outgoing = request({
         host: '127.0.0.1', port: harness!.port, path, method: 'POST',
         headers: { 'x-kurmis-key': KEY, 'content-type': 'application/json', ...(chunked ? {} : { 'content-length': String(body.length) }) }
       }, (incoming) => {
         const chunks: Buffer[] = []
         incoming.on('data', (chunk: Buffer) => chunks.push(chunk))
-        incoming.on('end', () => resolve({ status: incoming.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }))
+        incoming.on('end', () => {
+          answer = { status: incoming.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }
+          settle()
+        })
         incoming.on('error', reject)
+      })
+      outgoing.on('close', () => {
+        closed = true
+        settle()
       })
       outgoing.on('error', reject)
       for (let at = 0; at < body.length; at += 64 * 1024) outgoing.write(body.subarray(at, at + 64 * 1024))
