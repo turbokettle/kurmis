@@ -762,3 +762,60 @@ describe("a setting deleted from the login's file", () => {
     expect(tomlValue(kept.content)).toEqual({ tools: { web_search: true } })
   })
 })
+
+describe('names the user chose for a table', () => {
+  it('copies an MCP server, a model provider and a profile whose name has a secret word in it', () => {
+    const source = [
+      '[mcp_servers.aws-secrets]',
+      'command = "aws-mcp"',
+      '[model_providers.my-token]',
+      'name = "P"',
+      '[profiles.no-token]',
+      'model = "a"',
+      ''
+    ].join('\n')
+    const result = merge(source, '')
+    expect(sameTomlSettings(result.content, source)).toBe(true)
+    expect(result.missingSecrets).toBe(false)
+  })
+
+  it('still never copies a secret inside such a table', () => {
+    const source = '[mcp_servers.aws-secrets]\ncommand = "aws-mcp"\nbearer_token = "DEFAULT_CANARY"\n[mcp_servers.aws-secrets.env]\nK = "DEFAULT_CANARY"\n'
+    const result = merge(source, '')
+    expect(tomlValue(result.content)).toEqual({ mcp_servers: { 'aws-secrets': { command: 'aws-mcp' } } })
+    expect(JSON.stringify(result)).not.toContain('DEFAULT_CANARY')
+    expect(result.missingSecrets).toBe(true)
+  })
+})
+
+describe('files an earlier kurmis or the person left', () => {
+  it('removes an MCP server that has only secrets left, which Codex refuses to load', () => {
+    const own = 'model = "a"\n[mcp_servers.gone.env]\nK = "LOGIN_CANARY"\n'
+    for (const last of [null, 'model = "a"\n']) {
+      const result = mergeAccountConfig('model = "a"\n', own, last)
+      expect(settingsOf(result.content)).toEqual({ model: 'a' })
+    }
+  })
+
+  it('brings in the rest of an MCP server that has only secrets left when the default home has it', () => {
+    const own = '[mcp_servers.demo.env]\nK = "LOGIN_CANARY"\n'
+    const result = merge('[mcp_servers.demo]\ncommand = "demo"\n', own)
+    expect(tomlValue(result.content)).toEqual({ mcp_servers: { demo: { command: 'demo', env: { K: 'LOGIN_CANARY' } } } })
+  })
+
+  it('merges everything into a login file that holds only comments and blank lines', () => {
+    const source = 'model = "a"\n[notice]\nseen = true\n'
+    const first = merge(source, '')
+    const result = mergeAccountConfig(source, '# my notes\n\n', first.merged)
+    expect(tomlValue(result.content)).toEqual({ model: 'a', notice: { seen: true } })
+  })
+
+  it('does not say the login lacks a secret of an MCP server the login deleted', () => {
+    const source = 'model = "a"\n[mcp_servers.demo]\ncommand = "demo"\n[mcp_servers.demo.env]\nK = "DEFAULT_CANARY"\n'
+    const first = merge(source, '')
+    expect(first.missingSecrets).toBe(true)
+    const result = mergeAccountConfig(source, 'model = "a"\n', first.merged)
+    expect(tomlValue(result.content)).toEqual({ model: 'a' })
+    expect(result.missingSecrets).toBe(false)
+  })
+})

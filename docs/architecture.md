@@ -862,14 +862,17 @@ value, or a whole array) at a time:
   last merged in and the login's file has another value, or lacks the setting: then the login
   (or Codex in a session on it) changed or deleted it, and that stays until the default home's
   value changes. These are the ordinary rules of a three-way merge. A login without a
-  `config.toml` gets the default home's settings again, so deleting the file starts it over.
+  `config.toml`, or with one that sets nothing (only comments and blank lines), gets the
+  default home's settings again, so deleting the file starts it over.
 - A setting the login's file has and the default home no longer has is removed when it was in
   the last merged copy, and kept when it never was. When the default home still has the setting
   but its value now holds a secret (a password added to a URL, an `env` table added to an
   element of an array of tables), the login's value stays and a warning names it (below).
 - A table that loses its last setting that is not a secret goes as a whole, with its header and
   the login's own secrets in it. Codex refuses to load a file where an MCP server has only an
-  `env` table left (`invalid transport`).
+  `env` table left (`invalid transport`). An MCP server that has only secrets and no `command`
+  or `url` in the login's file already (an earlier kurmis left it so), or a model provider with
+  only secrets and no `name`, goes too.
 - An MCP server (`mcp_servers.<name>`) and a model provider (`model_providers.<name>`) each
   count as one unit, because Codex refuses a server without its `command` or `url` and a
   provider without its `name`. One the default home dropped since the last merge goes whole,
@@ -883,22 +886,25 @@ value, or a whole array) at a time:
   into the login's file counts as the login's own once the default home's file appears, and
   none of it is removed.
 
-A secret is never copied from the default home, and a secret in the login's file is never
-changed or removed, except with its whole table. A key name marks the strings under it as
-secrets by its last word (`secretKeyName`): `token`, `secret`, `password`, `passphrase`,
-`authorization`, `cookie`, `apikey`, or `key` other than in `env_key` and `public_key`. So
+A secret is never copied from the default home, and a secret in the login's file is never changed
+or removed, except with its whole table. A key name marks the strings under it as secrets by its
+last word (`secretKeyName`): `token`, `secret`, `password`, `passphrase`, `authorization`,
+`cookie`, `apikey`, or `key` other than in `env_key` and `public_key`. So
 `experimental_bearer_token`, `bearer_token`, `access_token`, `client_secret` and `api_key` are
 secrets, while `bearer_token_env_var` and `env_key` (names of environment variables),
 `cli_auth_credentials_store` (a kind of store), `mcp_oauth_callback_port` (a port) and
-`model_auto_compact_token_limit` (a count) are not. The tables `env`, `set`, `http_headers`,
-`headers` and `query_params` hold secrets whatever their keys are called, and
+`model_auto_compact_token_limit` (a count) are not. The name a person gave an MCP server, a model
+provider, a profile, a folder or a hook is not read this way, so `[mcp_servers.aws-secrets]` and
+`[profiles.no-token]` are copied; the keys below the name still are. The tables `env`, `set`,
+`http_headers`, `headers` and `query_params` hold secrets whatever their keys are called, and
 `client-private-key` (otel's path to a key file) is not a secret. A boolean, a number or a date
 is never a secret. A string is also a secret when its text looks like one (a bearer token, a
-known key format, a password in a URL, `--token <value>`), and an argument list when it passes
-a header or a token. The rule errs towards secrets: `features.network_proxy.credentials.<n>.env`
+known key format, a password in a URL, `--token <value>`), and an argument list when it passes a
+header or a token. The rule errs towards secrets: `features.network_proxy.credentials.<n>.env`
 holds names of variables and is still not copied. When the default home has a secret the login
-lacks, a warning says so. When a secret stands in the way of a setting, the login's stays and a
-warning names the setting, at every start until the two agree. That is when the login's value
+lacks, a warning says so, at every start; a secret of an MCP server or model provider that the
+login deleted does not count. When a secret stands in the way of a setting, the login's stays and
+a warning names the setting, at every start until the two agree. That is when the login's value
 holds a secret, or when the default home's value holds one and differs from the login's in more
 than its secrets: an array of tables with a new `[[x]]` element, or one whose element gained an
 `env` table.
