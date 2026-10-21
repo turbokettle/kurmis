@@ -1,14 +1,15 @@
-// The parts of the `codex app-server` JSON-RPC answers that kurmis reads, written by hand.
+// The fields of the `codex app-server` answer to `account/rateLimits/read` that kurmis
+// reads, written by hand.
 //
 // the original router generates the whole protocol from `codex app-server generate-ts` (Codex 0.163.0).
-// Kurmis reads only two answers, `account/rateLimits/read` and `account/read`, so only the
-// fields its parsers read are written out here, with the same names and nullability as the
-// generated types. Fields the server sends that nothing here reads are left out; each type
-// says which.
+// Kurmis reads only two answers, so only the fields its parsers read are written out here,
+// with the same names and nullability as the generated types. Fields the server sends that
+// nothing here reads are left out; each type says which. The other answer, `account/read`,
+// is small enough that `codex-account.ts` describes it itself.
 //
-// These types describe what the parsers in `codex-usage.ts` and `codex-account.ts` hand
-// back after checking an answer. Nothing may cast a raw answer to one of them: the server
-// can change, so an answer is `unknown` until a parser has checked it.
+// These types describe what `parseCodexRateLimitsRead` in `codex-usage.ts` hands back after
+// checking an answer. Nothing may cast a raw answer to one of them: the server can change,
+// so an answer is `unknown` until a parser has checked it.
 //
 // To read them under the namespace the original router uses: `import type * as v2 from './codex-protocol.ts'`.
 
@@ -95,25 +96,4 @@ export type GetAccountRateLimitsResponse = {
    */
   rateLimitsByLimitId: Record<string, RateLimitSnapshot | undefined> | null
   rateLimitResetCredits: RateLimitResetCreditsSummary | null
-}
-
-/**
- * Who a Codex home is signed in as, from `account/read`. The `chatgpt` email is personal
- * data: see `codex-account.ts` for where it may go.
- *
- * Left out: `usesCodexManagedCredentials` of `amazonBedrock`.
- */
-export type Account =
-  | { type: 'apiKey' }
-  | { type: 'chatgpt'; email: string | null; planType: string }
-  | { type: 'amazonBedrock' }
-
-/**
- * The answer to `account/read`. `account` is null when the home is not signed in.
- * `requiresOpenaiAuth` says whether the configured model provider needs an OpenAI sign-in
- * at all. Left out: `workspaceRouting`.
- */
-export type GetAccountResponse = {
-  account: Account | null
-  requiresOpenaiAuth: boolean
 }
