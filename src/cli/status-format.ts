@@ -59,8 +59,12 @@ export interface StatusJsonLogin {
   id: string
   provider: AccountProvider
   label: string
+  /** The login's email as its own CLI cached it; null when unknown. Shown, never stored. */
+  email: string | null
   /** Whether the login has credentials here; null when the daemon has not looked yet. */
   signedIn: boolean | null
+  /** Whether a usage probe of the login is running now. */
+  probing: boolean
   routing: boolean
   fiveHourLimit: number
   weeklyLimit: number
@@ -99,7 +103,9 @@ export function statusJson(answer: StatusAnswer, now: number, options: StatusFor
       id: login.id,
       provider: login.provider,
       label: login.label,
+      email: login.email ?? null,
       signedIn: login.signedIn,
+      probing: login.probing === true,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
       weeklyLimit: login.weeklyLimit,
@@ -138,7 +144,8 @@ const MAX_LABEL_WIDTH = 24
 
 function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): string[] {
   const name = login.id.slice(login.id.indexOf(':') + 1)
-  const lines = [login.label === name ? login.id : `${login.id}  "${login.label}"`]
+  const title = login.label === name ? login.id : `${login.id}  "${login.label}"`
+  const lines = [login.email === null ? title : `${title}  ${login.email}`]
   const facts = [
     login.signedIn === null ? 'sign-in not checked yet' : login.signedIn ? 'signed in' : 'signed out',
     login.routing ? 'routing on' : 'routing off',
@@ -147,6 +154,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   if (login.useFirst) facts.push('use first')
   if (login.sessions !== null) facts.push(login.sessions === 1 ? '1 session' : `${String(login.sessions)} sessions`)
   if (login.usage?.plan) facts.push(`plan ${login.usage.plan}`)
+  if (login.probing) facts.push('reading usage now')
   lines.push(...wrap(facts.join(', '), '  ', '  '))
   if (login.usage === null) {
     lines.push('  usage not read yet')

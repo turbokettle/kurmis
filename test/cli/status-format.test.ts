@@ -26,6 +26,8 @@ function sampleStatus() {
       fiveHourLimit: 90,
       useFirst: true,
       sessions: 1,
+      email: 'work@example.com',
+      probing: true,
       usage: accountUsage({
         accountId: 'claude:work',
         fetchedAt: NOW - 30_000,
@@ -58,9 +60,9 @@ claude:default
   7 day Opus   12%  resets in 3d 4h
   usage read 3m ago
 
-claude:work  "Work"
+claude:work  "Work"  work@example.com
   signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session,
-  plan max
+  plan max, reading usage now
   5 hour       92%  resets in 45m         limit 90%
   7 day         0%  reset since read      limit 100%
   usage read just now from a forwarded answer
@@ -132,7 +134,9 @@ describe('kurmis status as JSON', () => {
       id: 'claude:work',
       provider: 'claude',
       label: 'Work',
+      email: 'work@example.com',
       signedIn: true,
+      probing: true,
       routing: true,
       fiveHourLimit: 90,
       weeklyLimit: 100,
