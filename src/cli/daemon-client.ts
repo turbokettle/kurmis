@@ -58,7 +58,7 @@ import {
   type ControlResult
 } from '../daemon/lifecycle.ts'
 import { createThroughWmi, inSshSession, kurmisEntry, nodeForJobs, spawnDetached, type DetachedChild } from '../platform/detach.ts'
-import { startThroughLaunchd, type OneShotJob } from '../platform/launchd.ts'
+import { startThroughLaunchd, type JobState, type OneShotJob } from '../platform/launchd.ts'
 import { inheritedTestHooks, systemProgram } from '../platform/system-programs.ts'
 import { windowsAutostartEnvironment } from '../platform/windows-autostart.ts'
 import { kurmisVersion } from '../version.ts'
@@ -159,10 +159,13 @@ function connectionOf(status: StatusAnswer, key: string): DaemonConnection {
 /**
  * The running daemon, or null when none answers. Never starts one. Looks at the port in
  * `daemon.json`, and at the configured port when that finds nothing, since a daemon that has
- * just bound its port may not have written `daemon.json` yet.
+ * just bound its port may not have written `daemon.json` yet. Each status request may take
+ * `FIND_TIMEOUT_MS`; with `timeoutMs`, the requests together also take at most about that long.
  */
-export async function findDaemon(options: DaemonClientOptions): Promise<DaemonConnection | null> {
+export async function findDaemon(options: DaemonClientOptions, timeoutMs?: number): Promise<DaemonConnection | null> {
   void options
+  const until = timeoutMs === undefined ? null : Date.now() + timeoutMs
+  const requestTimeout = (): number => until === null ? FIND_TIMEOUT_MS : Math.min(FIND_TIMEOUT_MS, Math.max(1, until - Date.now()))
   const key = readKey()
   if (key === null) return null
   const read = readDaemonFile()
@@ -176,7 +179,7 @@ export async function findDaemon(options: DaemonClientOptions): Promise<DaemonCo
       removeDaemonFile(pid)
     } else {
       triedPort = port
-      const holder = await portHolder(port, key, FIND_TIMEOUT_MS)
+      const holder = await portHolder(port, key, requestTimeout())
       if (holder.kind === 'kurmis') return connectionOf(holder.status, key)
     }
   }
@@ -187,7 +190,7 @@ export async function findDaemon(options: DaemonClientOptions): Promise<DaemonCo
     return null
   }
   if (port === triedPort) return null
-  const holder = await portHolder(port, key, FIND_TIMEOUT_MS)
+  const holder = await portHolder(port, key, requestTimeout())
   return holder.kind === 'kurmis' ? connectionOf(holder.status, key) : null
 }
 
@@ -396,10 +399,10 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
   return { connection, started: true, replaced, method: used }
 }
 
-interface WaitForLaunchdJob {
+export interface WaitForLaunchdJob {
   port: number
   version: string
-  job: OneShotJob
+  job: Pick<OneShotJob, 'state'>
   /** How long to wait for an answer while the job has not reported success. */
   answerTimeoutMs: number
   /** How long to wait in all once the job's program has exited 0. */
@@ -407,22 +410,53 @@ interface WaitForLaunchdJob {
 }
 
 /**
+ * The shortest time one status request or launchctl call in `waitForLaunchdJob` is given, so
+ * that the last one before the deadline still has a chance to answer.
+ */
+const LAUNCHD_MIN_STEP_MS = 250
+
+/** What `work` answers, or null when it has not answered within `ms`. */
+async function within<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms)
+  })
+  try {
+    return await Promise.race([work, late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * Waits for the daemon a one-shot launchd job starts. Gives up, with a reason, when the job's
  * program exits with a code other than 0, or when no daemon answers within `answerTimeoutMs`.
  * A job whose program exited 0 has started a daemon that answered it, so then the wait goes on
- * up to `timeoutMs`.
+ * up to `timeoutMs`. Each status request and each `launchctl print` is given only the time left
+ * until the deadline (at least `LAUNCHD_MIN_STEP_MS`), so a daemon or a launchctl that hangs
+ * does not hold the wait much past it. Exported for tests.
  */
-async function waitForLaunchdJob(wait: WaitForLaunchdJob): Promise<{ connection: DaemonConnection } | { failure: string }> {
+export async function waitForLaunchdJob(wait: WaitForLaunchdJob): Promise<{ connection: DaemonConnection } | { failure: string }> {
   const started = Date.now()
   let deadline = started + wait.answerTimeoutMs
   let nextState = started
+  const left = (): number => Math.max(LAUNCHD_MIN_STEP_MS, deadline - Date.now())
+  // A `launchctl print` that has not answered in time is waited for again in the next round
+  // rather than started a second time.
+  let pendingState: Promise<JobState> | null = null
   for (;;) {
-    const found = await findDaemon({ env: {} })
+    const found = await findDaemon({ env: {} }, left())
     if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return { connection: found }
     if (Date.now() >= nextState) {
-      const state = await wait.job.state()
+      if (pendingState === null) {
+        pendingState = wait.job.state()
+        // It may still be running when the wait ends; a failure then has no one to tell.
+        pendingState.catch(() => undefined)
+      }
+      const state = await within(pendingState, left())
+      if (state !== null) pendingState = null
       nextState = Date.now() + LAUNCHD_STATE_POLL_MS
-      const code = state.lastExitCode
+      const code = state?.lastExitCode ?? null
       if (code !== null && code !== 0) {
         return {
           failure: `its job exited with code ${String(code)}` +

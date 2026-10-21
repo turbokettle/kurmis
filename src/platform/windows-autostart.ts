@@ -30,15 +30,25 @@
 //   value reach the registry as they are. `reg add /d "\"C:\...\" ..."` is also the form
 //   Microsoft documents for a value with quotes.
 // - **Reading it back:** reg.exe prints in the console's OEM code page, not UTF-8, so a value
-//   with letters outside ASCII does not read back as written. The comparison with what setup
-//   would write treats each run of such letters as matching any other run (`sameRunData`); a
-//   value that still looks different is simply written again.
+//   with letters outside ASCII does not read back as written: such a letter can come out as a
+//   replacement character, a best-fit ASCII letter or `?`, or as two characters in a double-byte
+//   code page. The comparison with what setup would write lets each run of such letters match
+//   any run of 1 to twice as many characters, while the ASCII parts must be the same
+//   (`sameRunData`); a value that still looks different is simply written again.
 // - **The script** is UTF-16 with a byte order mark, which wscript reads whatever the system's
 //   ANSI code page is, so a user folder with letters outside it still works. A program started
 //   at logon gets only the user's environment from Windows, so the kurmis variables the daemon
 //   needs (`KURMIS_HOME` as an absolute path, and the test hooks, when set at setup) go on its
 //   command line as `--env NAME=VALUE`, which `daemon start` and `daemon run` put into their
 //   environment. PATH is that environment's, which is the user's normal one.
+// - **A `%` in the command line:** `WshShell.Run` replaces `%NAME%` in its command line with the
+//   variable NAME (ExpandEnvironmentStrings, which has no escape), so a path or value with `%`
+//   in it could turn into something else at logon. When the command line has a `%`, the script
+//   sets the process variable `KURMIS_PERCENT_SIGN` to `%` and writes each `%` as
+//   `%KURMIS_PERCENT_SIGN%`. The expansion is done once, left to right, so that gives back the
+//   command line as it was. The script checks this with `ExpandEnvironmentStrings` and starts
+//   nothing when it does not match; the next kurmis command starts the daemon anyway. A command
+//   line without `%` is passed as it is.
 //
 // `KURMIS_REG_PROGRAM` and `KURMIS_WSCRIPT_PROGRAM` (test hooks) name stand-ins for reg.exe and
 // wscript.exe; tests use `test/platform/fake-reg/reg.mjs` and `test/platform/fake-windows/`.
@@ -108,14 +118,20 @@ export function scriptHostDisabled(query: RunResult): boolean {
 }
 
 /**
- * Whether two Run values are the same, allowing for reg.exe printing in the OEM code page: each
- * run of characters outside ASCII, in either, counts as one character that matches any other
- * such run. Letters outside ASCII never come out as ASCII, so a value that differs in its
- * ASCII parts is always seen as different.
+ * Whether the Run value read back from `reg query` is the one setup writes, allowing for reg.exe
+ * printing in the console's OEM code page, which Node reads as UTF-8. A character outside ASCII
+ * can come out as a replacement character, as the OEM code page's own letter, as a best-fit
+ * ASCII letter (`ā` as `a`), as `?`, or in a double-byte code page as two characters, of which
+ * the second can be ASCII. So each run of characters outside ASCII in `written` matches any run
+ * of 1 to twice as many characters in `read`. The ASCII parts between them must be the same in
+ * both, so a value that differs there is always seen as different.
  */
 export function sameRunData(read: string, written: string): boolean {
-  const skeleton = (text: string): string => text.replace(/[\u0080-\uffff]+/g, '\u0000')
-  return skeleton(read) === skeleton(written)
+  const pattern = (written.match(/[\u0080-\uffff]+|[^\u0080-\uffff]+/g) ?? []).map((part) => {
+    if (part.charCodeAt(0) < 0x80) return part.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&')
+    return `[\\s\\S]{1,${String(part.length * 2)}}`
+  }).join('')
+  return new RegExp(`^${pattern}$`).test(read)
 }
 
 export function regAddArgs(data: string): string[] {
@@ -184,15 +200,32 @@ export function autostartCommandLine(script: AutostartScript): string {
   return windowsCommandLine([...script.programArguments, ...assignments])
 }
 
-/** The text of the logon script, in JScript. Lines end with CRLF. */
+/** The process variable the logon script sets to `%`, so a `%` in the command line survives `WshShell.Run`. */
+export const PERCENT_SIGN_VARIABLE = 'KURMIS_PERCENT_SIGN'
+
+/**
+ * The text of the logon script, in JScript. Lines end with CRLF. A `%` in the command line is
+ * written as `%KURMIS_PERCENT_SIGN%`, as the file's header describes.
+ */
 export function autostartScript(script: AutostartScript): string {
+  const command = autostartCommandLine(script)
   const lines = [
     '// Written by kurmis setup: starts the kurmis daemon at logon without a console window.',
     '// kurmis setup --undo removes it.',
     'var shell = new ActiveXObject("WScript.Shell");',
-    `shell.CurrentDirectory = ${jscriptString(script.cwd)};`,
-    `shell.Run(${jscriptString(autostartCommandLine(script))}, 0, false);`
+    `shell.CurrentDirectory = ${jscriptString(script.cwd)};`
   ]
+  if (command.includes('%')) {
+    const escaped = command.replaceAll('%', `%${PERCENT_SIGN_VARIABLE}%`)
+    lines.push(
+      `// shell.Run replaces %NAME% with the variable NAME, so each percent sign is written as ${PERCENT_SIGN_VARIABLE}.`,
+      `shell.Environment("Process").Item(${jscriptString(PERCENT_SIGN_VARIABLE)}) = "%";`,
+      `var command = ${jscriptString(escaped)};`,
+      `if (shell.ExpandEnvironmentStrings(command) == ${jscriptString(command)}) shell.Run(command, 0, false);`
+    )
+  } else {
+    lines.push(`shell.Run(${jscriptString(command)}, 0, false);`)
+  }
   return `${lines.join('\r\n')}\r\n`
 }
 
@@ -263,7 +296,8 @@ function removeOldVbsScript(scriptPath: string): boolean {
 
 /**
  * Writes the logon script and the Run value, each only when it differs from what is there.
- * A reg.exe failure is answered as a warning.
+ * The VBScript an older kurmis wrote is removed only once the Run value names the new script
+ * (it already did, or `reg add` succeeded). A reg.exe failure is answered as a warning.
  */
 export async function registerWindowsAutostart(options: WindowsAutostartOptions): Promise<AutostartResult> {
   const reg = options.reg ?? regFor(options.env)
@@ -284,7 +318,7 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   if (unusable !== null) {
     return { changed: false, where: null, warning: `The logon entry was not written: ${unusable} The next kurmis command starts the daemon anyway.` }
   }
-  let changed = removeOldVbsScript(scriptPath)
+  let changed = false
   if (readScript(scriptPath) !== text) {
     makePrivateDirSync(dirname(scriptPath))
     writeFileSync(scriptPath, encodeScript(text))
@@ -294,12 +328,16 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   const query = await reg(regQueryArgs())
   const current = ok(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null
   if (current !== null && current.type === 'REG_SZ' && sameRunData(current.data, data)) {
+    // The Run value names the new script, so the old VBScript is no longer needed.
+    if (removeOldVbsScript(scriptPath)) changed = true
     return { changed, where: RUN_ENTRY_DESCRIPTION }
   }
   const added = await reg(regAddArgs(data))
   if (!ok(added)) {
+    // The Run value may still name the old VBScript, which is kept so that logon still starts the daemon.
     return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` }
   }
+  removeOldVbsScript(scriptPath)
   return { changed: true, where: RUN_ENTRY_DESCRIPTION }
 }
 

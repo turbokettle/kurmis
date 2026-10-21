@@ -11,6 +11,7 @@ import { saveConfig, defaultConfig } from '../../src/data/config.ts'
 import { readOrCreateKey, writeDaemonFile } from '../../src/data/daemon-file.ts'
 import { daemonFilePath, keyPath, kurmisHome } from '../../src/data/paths.ts'
 import { processExists } from '../../src/daemon/lifecycle.ts'
+import type { JobState } from '../../src/platform/launchd.ts'
 import {
   chooseStartMethod,
   daemonEnvironment,
@@ -23,6 +24,7 @@ import {
   restartDaemon,
   startDaemon,
   stopDaemon,
+  waitForLaunchdJob,
   wmiDaemonArguments
 } from '../../src/cli/daemon-client.ts'
 
@@ -345,6 +347,37 @@ describe('starting through launchd', () => {
     await expect(failure).rejects.toThrow(/exited at start/)
     expect(warnings[0]).toContain('could not be started through launchd (no daemon answered within 1 second of loading its job)')
     expect(launchctlCalls().at(-1)).toBe('bootout')
+  }, 30_000)
+})
+
+describe('waitForLaunchdJob', () => {
+  const running: JobState = { loaded: true, path: null, pid: null, lastExitCode: null }
+
+  it('ends near its deadline when the status requests hang', async () => {
+    readOrCreateKey()
+    // Two servers that take every request and never answer: the one daemon.json names, and the configured one.
+    const silent = [await listen(() => undefined), await listen(() => undefined)]
+    servers.push(...silent.map((entry) => entry.server))
+    writeDaemonFile({ pid: process.pid, port: silent[0]?.port ?? 0, version: '1.2.3', startedAt: 1 })
+    usePort(silent[1]?.port ?? 0)
+    const startedAt = Date.now()
+    const outcome = await waitForLaunchdJob({ port: silent[1]?.port ?? 0, version: '1.2.3', job: { state: () => Promise.resolve(running) },
+      answerTimeoutMs: 1_000, timeoutMs: 30_000 })
+    const took = Date.now() - startedAt
+    for (const { server } of silent) server.closeAllConnections()
+    expect(outcome).toEqual({ failure: 'no daemon answered within 1 second of loading its job' })
+    // Each status request used to get 10 seconds of its own.
+    expect(took).toBeLessThan(5_000)
+  }, 30_000)
+
+  it('ends near its deadline when launchctl does not answer, and does not ask it again meanwhile', async () => {
+    let asked = 0
+    const startedAt = Date.now()
+    const outcome = await waitForLaunchdJob({ port: 1, version: '1.2.3',
+      job: { state: () => { asked++; return new Promise<JobState>(() => undefined) } }, answerTimeoutMs: 1_000, timeoutMs: 30_000 })
+    expect(outcome).toEqual({ failure: 'no daemon answered within 1 second of loading its job' })
+    expect(Date.now() - startedAt).toBeLessThan(5_000)
+    expect(asked).toBe(1)
   }, 30_000)
 })
 

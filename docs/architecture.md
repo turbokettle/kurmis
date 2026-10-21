@@ -56,10 +56,12 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   aside and checked again there before it is deleted, and one that names another pid by then is
   linked back, so a file written between the check and the removal is kept. The CLI removes a
   `daemon.json` whose pid no longer exists, and one that is damaged.
-- `launchd/` holds the plists of the short-lived launchd jobs that start the daemon from an ssh
-  login on macOS. Each is removed once its job has run.
+- `launchd/` holds the plists of the short-lived launchd jobs that start the daemon on macOS
+  from an ssh login or wherever the login Keychain cannot be read. Each is removed once its job
+  has run.
 - `autostart.js` is the script the Windows logon entry runs (see "Starting at login"). An
-  `autostart.vbs` an older kurmis wrote is removed by `setup` and `setup --undo`.
+  `autostart.vbs` an older kurmis wrote is removed by `setup --undo`, and by `setup` once the
+  logon entry names `autostart.js`.
 - `key` holds the secret every proxied and control request carries. It is created once and
   kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
   of it and must keep working after the daemon restarts. Only the user can read it.
@@ -406,9 +408,14 @@ the Windows logon script and the command line of a start through WMI. How it is 
   answers, the CLI runs `launchctl bootout gui/<uid>/<label>` and deletes the plist; unloading
   the job does not end the daemon. The CLI waits at most 5 seconds for that answer
   (`LAUNCHD_ANSWER_TIMEOUT_MS`), and reads the job's `last exit code` from
-  `launchctl print` every half second meanwhile. When the job's program exits with a code other
-  than 0, or no daemon answers in the 5 seconds, it removes the job and starts the daemon
-  directly with the warning below. A job launchd cannot start exits 78 (EX_CONFIG); seen when
+  `launchctl print` every half second meanwhile. Each status request and each `launchctl print`
+  in that wait is given only the time left until the deadline (at least a quarter of a second),
+  so a daemon or a launchctl that does not answer holds the wait only a little past it; a
+  `launchctl print` that is still running is waited for again rather than started a second
+  time. When the job's program exits with a code other than 0, or no daemon answers in the 5
+  seconds, it removes the job and starts the daemon directly with the warning below. That
+  daemon runs in the CLI's own session (the ssh session, or the one where the Keychain check
+  failed), so it cannot read the login Keychain either. A job launchd cannot start exits 78 (EX_CONFIG); seen when
   Node, the bundle or the data folder is on an external volume, which a launchd job may not be
   allowed to read, and a job can also hang there. A job that exited 0 has started a daemon, so
   then the CLI waits the full 30 seconds for it. The job's environment is only `HOME`, the caller's `PATH` (so
@@ -491,6 +498,17 @@ warns when the Node it registers is in such a folder (`nodeForJobs`, `isTemporar
   as an absolute path, and the test hooks that are set) go on that command line as
   `daemon start --no-launchd --env NAME=VALUE …`, which `daemon start` puts into its own
   environment and the daemon's, as `daemon run --env` does. `//B` stops error dialogs at logon.
+  - *A `%` in the command line.* `shell.Run` replaces `%NAME%` in its command line with the
+    variable NAME (ExpandEnvironmentStrings, which has no escape), so a path or value with a `%`
+    could change at logon. When the command line has one, the script sets the process variable
+    `KURMIS_PERCENT_SIGN` to `%` (`shell.Environment("Process")`), writes each `%` as
+    `%KURMIS_PERCENT_SIGN%`, and runs the command only when `shell.ExpandEnvironmentStrings`
+    gives back the command line as it was; otherwise it starts nothing and the next kurmis
+    command starts the daemon. A command line without `%` is run as it is. The daemon inherits
+    `KURMIS_PERCENT_SIGN`, which nothing reads.
+  - *Replacing the VBScript.* An `autostart.vbs` an older kurmis wrote is removed only once the
+    Run value names `autostart.js` (it already did, or `reg add` succeeded), so a failed write
+    leaves the old entry working.
   - *Why JScript.* The script was VBScript before. Microsoft has deprecated VBScript: since
     Windows 11 24H2 it is an optional feature, to be turned off by default and later removed.
     JScript runs in the same Windows Script Host and is not part of that deprecation, so the
@@ -502,9 +520,12 @@ warns when the Node it registers is in such a folder (`nodeForJobs`, `isTemporar
     `Enabled` is not 0 under `Software\Microsoft\Windows Script Host\Settings` (HKCU and HKLM).
     Otherwise it writes no entry and warns; the next kurmis command starts the daemon anyway.
   - *Comparing the value.* reg.exe prints in the console's OEM code page, which Node reads as
-    UTF-8, so a value with letters outside ASCII does not read back as written. The comparison
-    counts each run of letters outside ASCII as matching any other such run (`sameRunData`); a
-    value that still looks different is written again.
+    UTF-8, so a value with letters outside ASCII does not read back as written: such a letter
+    can come out as a replacement character, as a best-fit ASCII letter (`ā` as `a`), as `?`,
+    or in a double-byte code page as two characters, the second of which can be ASCII. The
+    comparison lets each run of letters outside ASCII in the value setup writes match any run of
+    1 to twice as many characters in what was read, and the ASCII parts must be the same
+    (`sameRunData`); a value that still looks different is written again.
 - **Other platforms:** a warning (setup still exits 0); the next kurmis command starts the
   daemon.
 
