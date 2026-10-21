@@ -98,6 +98,30 @@ describe('a probe', () => {
     expect(table.cooldown('claude:default')).toBe(Date.parse(reset))
   })
 
+  test('that finds the login signed in ends a refusal of its token', async () => {
+    writeLogins({})
+    const { table, poller } = setup((id) => Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 1) }))
+    table.markRefused('claude:default')
+    await poller.probe('claude:default', 'request')
+    expect(table.isRefused('claude:default')).toBe(false)
+  })
+
+  test('for a stale reading is remembered for a minute, whether it succeeded or not', async () => {
+    writeLogins({})
+    let clock = 1_000_000
+    const table = new LoginTable({ tokens: source, log: { write: () => undefined }, now: () => clock, stateWriteMs: 0 })
+    table.load()
+    const poller = new UsagePoller({ table, tokens: source, env: {}, log: { write: () => undefined }, now: () => clock,
+      probeClaude: () => Promise.resolve({ ok: false, signedIn: null, reason: 'other', error: 'No.' }), probeCodex: () => Promise.reject(new Error('no')) })
+    await poller.probe('claude:default', 'request')
+    expect(poller.recentStaleProbes()).toEqual(new Set())
+    await poller.probe('claude:default', 'stale')
+    clock += 59_000
+    expect(poller.recentStaleProbes()).toEqual(new Set(['claude:default']))
+    clock += 1_000
+    expect(poller.recentStaleProbes()).toEqual(new Set())
+  })
+
   test('is killed when the poller closes', async () => {
     writeLogins({})
     let signal: AbortSignal | undefined

@@ -6,13 +6,16 @@
 // The order the proxy applies them in, for one request (the daemon's job):
 // 1. `requestKind`; a `route` request needs the key (`readRouteRequest`, `routeKeyMatches`).
 // 2. Build the session's `RouteSession` and the logins' `RouteAccount` rows, re-probe the
-//    logins `staleUsageLogins` names, and pick one with `chooseAccount`. A login whose token is
-//    about to expire is renewed first (a usage probe); see `tokenIsFresh`.
+//    logins `staleUsageLogins` names (leaving out those probed for that in the last minute),
+//    and pick one with `chooseAccount`. A login whose token is about to expire is renewed first
+//    (a usage probe); see `tokenIsFresh`.
 // 3. Send `upstreamRequest(...)` to Anthropic. Fold the answer's rate-limit headers into the
 //    login's usage (`usageFromUnifiedHeaders`), and note `quotaCooldownUntil` as its cooldown.
+//    A 401 is renewed once, and then passed on only from the started-on or pinned login.
 // 4. A want of capacity (`capacityRefusal`) goes to `CapacityCooling` and the hold; otherwise
 //    `replayDecision` says whether to pass the answer on, send it again on another login, or
-//    pin the session back. With no login left, answer `refusalAnswer(...)`.
+//    pin the session back. The pin-back holds the session to that login only while the login
+//    can serve. With no login left, answer `refusalAnswer(...)`.
 // 5. Forward the answer with `downstreamResponseHeaders` and the body byte for byte, and only
 //    then record the login as the session's current one.
 import {
@@ -149,7 +152,8 @@ export interface ProxyAnswer {
 
 /**
  * Logins whose usage reading has a busiest plan window whose reset has passed, among those the
- * session may use, and that this request has not re-probed yet (`refreshed`). The proxy probes
+ * session may use, and that are not in `refreshed`: the proxy passes the logins this request has
+ * re-probed already and those probed for a stale reading in the last minute. The proxy probes
  * them before it chooses, because the reading belongs to a window that has ended.
  */
 export function staleUsageLogins(session: RouteSession, rows: readonly RouteAccount[], now: number,

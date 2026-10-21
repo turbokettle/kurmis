@@ -3,18 +3,23 @@
 // lists, and keeps the per-request bookkeeping the original router's `router/proxy.ts` keeps:
 //
 // 1. The key (`routeKeyMatches`), then the `x-kurmis-login` / `x-kurmis-started-on` headers. The
-//    body is read whole, because a request may be sent more than once (a replay).
-// 2. A login is chosen (`pick`): stale usage readings are probed first (`staleUsageLogins`), a
-//    login whose token is about to expire is renewed by a probe before it is used, and logins
-//    the session's capacity backoff is cooling are passed over.
+//    body is read whole, because a request may be sent more than once (a replay); a body over
+//    `MAX_REQUEST_BODY_BYTES` is answered 413 (`refuseTooLarge`).
+// 2. A login is chosen (`pick`): stale usage readings are probed first (`staleUsageLogins`, at
+//    most once a minute per login), a login whose token is about to expire is renewed by a probe
+//    before it is used, and logins the session's capacity backoff is cooling are passed over. A
+//    session held to a login after a pin-back is let go when that login cannot serve.
 // 3. The request goes upstream, signed with the token read for the chosen login, or with the
 //    CLI's own `authorization` header when the chosen login is the one the CLI was started on
 //    and no token was read for it. Every answer's rate-limit headers update the login's usage,
-//    and a usage-limit refusal starts its cooldown.
+//    and a usage-limit refusal starts its cooldown. A 401 on a token the proxy read gets one
+//    renewal; after that it reaches the CLI only from the started-on login or the login the
+//    request is pinned to, and any other request goes on to the next login (`markRefused`).
 // 4. A 529 or a 429 without usage-limit headers puts the login into the session's capacity
-//    backoff and holds the request (`capacity-hold.ts`). A usage-limit 429 on Auto is sent again
-//    on another login before the CLI sees anything, and a 400 on a login the session has just
-//    moved to sends it back to its previous login (`replayDecision`).
+//    backoff and holds the request (`capacity-hold.ts`) until the answer's headers arrive. A
+//    usage-limit 429 on Auto is sent again on another login before the CLI sees anything, and a
+//    400 on a login the session has just moved to sends it back to its previous login
+//    (`replayDecision`), which the session is then held to while that login can serve.
 // 5. The accepted answer is forwarded byte for byte and the session is placed on its login.
 //    When no login is left, the CLI gets the real 429 of the login that is back first, or the
 //    proxy's own answer (`refusalAnswer`) when it holds none.
@@ -23,7 +28,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   accountsInScope, chooseAccount, effectivePin, isDefinitiveQuotaRejection, parseUnifiedHeaders, quotaCooldownUntil,
-  replayDecision, tokenIsFresh, usageFromUnifiedHeaders, type RouteAccount, type RouteSession
+  replayDecision, routeBlock, tokenIsFresh, usageFromUnifiedHeaders, type RouteAccount, type RouteSession
 } from '../core/account-router.ts'
 import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import {
@@ -47,6 +52,13 @@ import type { UsagePoller } from './usage-poller.ts'
  * again; a long conversation with images is tens of megabytes at most.
  */
 export const MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024
+
+/**
+ * How long the proxy goes on reading and dropping a request body that is too large after it
+ * has answered 413, before it closes the connection. A client that sends its whole body before
+ * it reads the answer gets the 413 this way instead of a reset connection.
+ */
+export const TOO_LARGE_LINGER_MS = 5_000
 
 /** The most of a refused answer's body kept for forwarding later. Anthropic's 429 bodies are a few hundred bytes. */
 const MAX_KEPT_ANSWER_BYTES = 256 * 1024
@@ -73,6 +85,8 @@ export interface ProxyOptions {
   hold?: { holdMs?: number; baseMs?: number; maxMs?: number }
   maxBodyBytes?: number
   renewalWaitMs?: number
+  /** Default `TOO_LARGE_LINGER_MS`. */
+  tooLargeLingerMs?: number
 }
 
 export interface Proxy {
@@ -103,6 +117,7 @@ export function createProxy(options: ProxyOptions): Proxy {
   const cooling = new CapacityCooling({ baseMs: options.hold?.baseMs ?? CAPACITY_HOLD_BASE_MS, maxMs: options.hold?.maxMs ?? CAPACITY_HOLD_MAX_MS })
   const maxBodyBytes = options.maxBodyBytes ?? MAX_REQUEST_BODY_BYTES
   const renewalWaitMs = options.renewalWaitMs ?? RENEWAL_WAIT_MS
+  const lingerMs = options.tooLargeLingerMs ?? TOO_LARGE_LINGER_MS
   let open = 0
   let drainWaiters: Array<() => void> = []
 
@@ -158,7 +173,7 @@ export function createProxy(options: ProxyOptions): Proxy {
     const read = await readBody(req, maxBodyBytes, signal)
     if (read === 'too-large') {
       log.write('proxy_rejected', { reason: 'invalid', status: 413 })
-      send(res, { ...invalidRequest('The request body is larger than the kurmis proxy takes.'), status: 413 })
+      refuseTooLarge(req, res, maxBodyBytes, lingerMs)
       return
     }
     let body: unknown
@@ -171,7 +186,16 @@ export function createProxy(options: ProxyOptions): Proxy {
     }
     table.checkConfig()
     const sessionKey = info.sessionId !== null && isSessionId(info.sessionId) ? info.sessionId : NO_SESSION_KEY
-    const pinned = info.login ?? table.heldLogin(sessionKey)
+    /**
+     * The login the session was sent back to after a 400 (`replayDecision`'s `pin-back`) and is
+     * held to (`table.heldLogin`), or null. Never set for a request with `x-kurmis-login`.
+     */
+    let sentBack: string | null = info.login === null ? table.heldLogin(sessionKey) : null
+    /** Whether this request's own pin-back set `sentBack`, which tries that login once whatever its usage. */
+    let sentBackHere = false
+    /** The 400 of the login this request's pin-back left, passed on when no login serves the request after that. */
+    let leftAnswer: KeptRefusal | null = null
+    const pinned = info.login ?? sentBack
     const session: RouteSession = {
       homeAccountId: pinned ?? CLAUDE_DEFAULT_ACCOUNT_ID,
       currentAccountId: table.sessionLogin(sessionKey),
@@ -179,10 +203,13 @@ export function createProxy(options: ProxyOptions): Proxy {
     }
     const startedOn = info.startedOn
     const callerAuthorization = headerValue(req, 'authorization') ?? null
-    const rowsNow = (): RouteAccount[] => table.routeRows(startedOn, callerAuthorization !== null)
+    const rowsNow = (): RouteAccount[] => table.routeRows(startedOn, callerAuthorization !== null, info.login)
     /** Every login this request was sent on. */
     const attempted = new Set<string>()
-    /** Logins this request may not be sent on again: they refused it with a usage limit, or their token could not be renewed. */
+    /**
+     * Logins this request may not be sent on again: they refused it with a usage limit, their
+     * token could not be renewed, or Anthropic refused their token.
+     */
     const excluded = new Set<string>()
     /** Logins whose stale usage this request has probed. */
     const refreshed = new Set<string>()
@@ -192,22 +219,58 @@ export function createProxy(options: ProxyOptions): Proxy {
     /** When the capacity hold started, or null while the request is not held. */
     let holdSince: number | null = cooling.coolingOf(sessionKey, now()) === null ? null : arrived
 
+    // A token that is about to expire is no reason to pass a login over while it can still be
+    // renewed: the choice is made as if it were fresh, and the chosen login is renewed.
+    const renewable = (row: RouteAccount): boolean =>
+      !renewed.has(row.id) && tokens.read(row.id)?.hasRefreshToken === true
+
+    /** Ends the session's hold on `sentBack`: this request and the session's later ones are routed on Auto. */
+    const endPinBack = (): void => {
+      if (sentBack === null) return
+      table.releaseSession(sessionKey)
+      sentBack = null
+      sentBackHere = false
+      session.pinnedAccountId = null
+      session.homeAccountId = CLAUDE_DEFAULT_ACCOUNT_ID
+    }
+
+    /**
+     * Whether the hold on `sentBack` has to end because that login cannot serve: it is signed
+     * out, has no token the proxy can sign with, is cooling down after a usage limit, or has a
+     * window at 100% (a held session is measured like a pinned one, not to the login's own
+     * limits). A token about to expire that can be renewed does not end it.
+     */
+    const pinBackEnds = (rows: readonly RouteAccount[]): boolean => {
+      if (sentBack === null) return false
+      if (excluded.has(sentBack)) return true
+      // This request's pin-back tries the login once even when it is at a limit or cooling down.
+      if (sentBackHere) return false
+      const row = rows.find((each) => each.id === sentBack)
+      if (row === undefined) return true
+      const measured = { ...row, autoRoute: true, fiveHourLimitPercent: 100, weeklyLimitPercent: 100,
+        ...(renewable(row) ? { tokenExpiresAt: null } : {}) }
+      return routeBlock(measured, now()) !== null
+    }
+
     const pick = async (): Promise<RouteAccount | null> => {
       for (;;) {
         await abortable(tokens.prime(table.claudeLogins().map((login) => login.id)), signal)
         const rows = rowsNow()
-        const stale = staleUsageLogins(session, rows, now(), refreshed)
+        // A login probed for a stale reading in the last minute, by this request or another
+        // one, is not probed again: a probe that keeps failing would otherwise run every time.
+        const stale = staleUsageLogins(session, rows, now(), new Set([...refreshed, ...poller.recentStaleProbes()]))
         if (stale.length > 0) {
           for (const id of stale) refreshed.add(id)
           await abortable(poller.probeMany(stale, 'stale'), signal)
           continue
         }
+        if (sentBack !== null && pinBackEnds(rows)) {
+          log.write('session_hold_ended', { login: asLogin(sentBack) })
+          endPinBack()
+          continue
+        }
         const scope = new Set(accountsInScope(session, rows).map((row) => row.id))
         const blocked = new Set([...excluded, ...cooling.waitFor(sessionKey, scope, now()).cooling])
-        // A token that is about to expire is no reason to pass a login over while it can still
-        // be renewed: the choice is made as if it were fresh, and the chosen login is renewed.
-        const renewable = (row: RouteAccount): boolean =>
-          !renewed.has(row.id) && tokens.read(row.id)?.hasRefreshToken === true
         const candidates = rows.map((row) => (renewable(row) ? { ...row, tokenExpiresAt: null } : row))
         const chosen = chooseAccount(session, candidates, now(), blocked)
         if (chosen === null) return null
@@ -260,7 +323,14 @@ export function createProxy(options: ProxyOptions): Proxy {
           await waitForPool(table, Math.min(wakeAt, holdSince + holdMs), now, signal)
           continue
         }
-        answerRefusal(res, session, rows, refusals, attempted)
+        if (refusals.length === 0 && leftAnswer !== null) {
+          // The pin-back found no login to serve: the CLI gets the 400 that started it.
+          log.write('request_forwarded', { login: asLogin(leftAnswer.login), method: methodOf(req.method), status: leftAnswer.status,
+            ms: now() - arrived, attempt: attempted.size })
+          res.writeHead(leftAnswer.status, downstreamResponseHeaders(leftAnswer.headers)).end(leftAnswer.body)
+          return
+        }
+        answerRefusal(res, session, rows, refusals, attempted, excluded)
         return
       }
       const token = tokens.read(row.id)
@@ -273,16 +343,20 @@ export function createProxy(options: ProxyOptions): Proxy {
       }
       const outgoing = upstreamRequest(req.headers, body, authorization, identity.read(row.id)?.accountUuid ?? null)
       attempted.add(row.id)
-      // A held request's try ends where the hold does, and the request is given back then.
+      // A held request's wait for the answer's headers ends where the hold does, and the
+      // request is given back then. The timer stops once the headers are in: the body of an
+      // answer that started within the hold follows only the client's own signal.
       const holdLeft = holdSince === null ? null : holdSince + holdMs - now()
-      const attemptSignal = holdLeft === null ? signal : AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, holdLeft))])
+      const holdOver = new AbortController()
+      const holdTimer = holdLeft === null ? null : setTimeout(() => { holdOver.abort() }, Math.max(0, holdLeft))
+      const attemptSignal = holdLeft === null ? signal : AbortSignal.any([signal, holdOver.signal])
       let answer: UpstreamAnswer
       try {
         answer = await upstream.send({ method: req.method ?? 'GET', path: req.url ?? '/', headers: outgoing.headers,
           ...(outgoing.body === undefined ? {} : { body: outgoing.body }), signal: attemptSignal })
       } catch (error) {
         signal.throwIfAborted()
-        if (attemptSignal.aborted) {
+        if (holdOver.signal.aborted) {
           giveHoldBack()
           return
         }
@@ -292,6 +366,8 @@ export function createProxy(options: ProxyOptions): Proxy {
           ? 'The kurmis proxy got no answer from Anthropic in time.'
           : "The kurmis proxy could not reach Anthropic's API."))
         return
+      } finally {
+        if (holdTimer !== null) clearTimeout(holdTimer)
       }
       const status = answer.status
       const get = (name: string): string | null => answer.get(name)
@@ -313,6 +389,17 @@ export function createProxy(options: ProxyOptions): Proxy {
           attempted.delete(row.id)
           continue
         }
+        // Still refused, or no refresh token to renew it with. Only the CLI started on this login
+        // can sign it in again, and a session pinned to it with `x-kurmis-login` asked for it: they
+        // get the 401. Any other request goes on to the next login, and Auto passes this login over
+        // until a probe of it succeeds (`markRefused`).
+        if (row.id !== startedOn && info.login === null) {
+          answer.discard()
+          excluded.add(row.id)
+          table.markRefused(row.id)
+          log.write('retry_other_login', { login: asLogin(row.id), reason: 'unauthorized', status })
+          continue
+        }
       }
       const capacity = capacityRefusal(status, isDefinitiveQuotaRejection(status, get))
       if (capacity !== null) {
@@ -323,6 +410,12 @@ export function createProxy(options: ProxyOptions): Proxy {
         continue
       }
       cooling.noteAnswered(sessionKey)
+      // A usage limit on the login the session is held to ends the hold, and the 429 is sent
+      // again on another login like any Auto request's.
+      if (until !== null && sentBack !== null && row.id === sentBack) {
+        log.write('session_hold_ended', { login: asLogin(sentBack), reason: 'usage_limit' })
+        endPinBack()
+      }
       const decision = replayDecision({ status, get, servedBy: row.id, session, attempted })
       if (decision.kind === 'replay') {
         refusals.push({ login: row.id, until: decision.cooldownUntil, status, headers: answer.headers, body: await keepBody(answer, signal) })
@@ -331,9 +424,14 @@ export function createProxy(options: ProxyOptions): Proxy {
         continue
       }
       if (decision.kind === 'pin-back') {
-        answer.discard()
+        // The login that answered 400 cannot take this conversation, so it is not tried again.
+        // When the previous login cannot serve either, the CLI gets this 400 (`leftAnswer`).
+        leftAnswer = { login: row.id, until: Infinity, status, headers: answer.headers, body: await keepBody(answer, signal) }
+        excluded.add(row.id)
         session.pinnedAccountId = decision.to
         session.homeAccountId = decision.to
+        sentBack = decision.to
+        sentBackHere = true
         table.holdSession(sessionKey, decision.to)
         log.write('retry_other_login', { login: asLogin(decision.to), fromLogin: asLogin(row.id), reason: 'pinned', status })
         continue
@@ -362,14 +460,17 @@ export function createProxy(options: ProxyOptions): Proxy {
    * The answer for a request no login is left for. When the request met usage limits, the CLI
    * gets the real 429 of the login that is back first, as it would from a single account that
    * ran out, unless a login it was not sent on is back earlier: the proxy's own 429 then names
-   * that time. Without a real 429 in hand the proxy answers itself (`refusalAnswer`).
+   * that time. A login the request may not be sent on for another reason (`excluded`, such as
+   * the login that answered 400 before a pin-back) does not count as back. Without a real 429 in
+   * hand the proxy answers itself (`refusalAnswer`).
    */
   function answerRefusal(res: ServerResponse, session: RouteSession, rows: RouteAccount[], refusals: KeptRefusal[],
-    attempted: ReadonlySet<string>): void {
+    attempted: ReadonlySet<string>, excluded: ReadonlySet<string>): void {
     const fields: LogFields = { count: attempted.size }
     if (refusals.length > 0) {
       const first = [...refusals].sort((a, b) => a.until - b.until)[0]!
-      const pool = poolLimitAnswer(session, rows, now())
+      const refused = new Set(refusals.map((refusal) => refusal.login))
+      const pool = poolLimitAnswer(session, rows.filter((row) => !excluded.has(row.id) || refused.has(row.id)), now())
       if (pool.resetAt !== null && pool.resetAt < first.until) {
         log.write('pool_exhausted', { ...fields, reason: 'usage_limit', status: pool.status, until: pool.resetAt })
         send(res, pool)
@@ -425,21 +526,71 @@ function apiError(status: number, message: string): ProxyAnswer {
   }
 }
 
-/** The whole request body, or `too-large` once it passes `max` (the rest is not read). */
-async function readBody(req: IncomingMessage, max: number, signal: AbortSignal): Promise<Buffer | 'too-large'> {
-  const chunks: Buffer[] = []
-  let size = 0
-  for await (const chunk of req) {
-    signal.throwIfAborted()
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string)
-    size += bytes.length
-    if (size > max) {
-      req.resume()
-      return 'too-large'
+/**
+ * The whole request body, or `too-large` once it passes `max`. After `too-large` the request
+ * stays readable and nothing keeps what arrives (`refuseTooLarge` drops it). Rejects when
+ * `signal` aborts or the request breaks off.
+ */
+function readBody(req: IncomingMessage, max: number, signal: AbortSignal): Promise<Buffer | 'too-large'> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    const settle = (): void => {
+      req.off('data', onData)
+      req.off('end', onEnd)
+      req.off('error', onError)
+      req.off('close', onClose)
+      signal.removeEventListener('abort', onAbort)
     }
-    chunks.push(bytes)
-  }
-  return Buffer.concat(chunks)
+    const onData = (chunk: Buffer | string): void => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      size += bytes.length
+      if (size > max) {
+        settle()
+        chunks.length = 0
+        resolve('too-large')
+        return
+      }
+      chunks.push(bytes)
+    }
+    const onEnd = (): void => { settle(); resolve(Buffer.concat(chunks)) }
+    const onError = (error: Error): void => { settle(); reject(error) }
+    const onClose = (): void => { settle(); reject(new Error('the request ended before its body was complete')) }
+    const onAbort = (): void => { settle(); reject(signal.reason as Error) }
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    req.on('data', onData)
+    req.once('end', onEnd)
+    req.once('error', onError)
+    req.once('close', onClose)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * Answers 413 for a body that passed the limit, in the shape of Anthropic's own (the CLI does
+ * not retry a 413). The rest of the body is read and dropped for at most `lingerMs` after the
+ * answer is written, and the connection is closed then: closing it at once, with unread data
+ * still arriving, would reset it, and a client that is still sending would see the reset
+ * rather than the answer.
+ */
+function refuseTooLarge(req: IncomingMessage, res: ServerResponse, max: number, lingerMs: number): void {
+  if (res.headersSent || res.destroyed) return
+  const socket = req.socket
+  req.resume()
+  res.once('finish', () => {
+    // No more answers on this connection: end the server's side, and stop reading at the latest after `lingerMs`.
+    socket.end()
+    const timer = setTimeout(() => { socket.destroy() }, lingerMs)
+    timer.unref()
+    socket.once('close', () => { clearTimeout(timer) })
+  })
+  res.writeHead(413, { 'content-type': 'application/json' }).end(JSON.stringify({
+    type: 'error',
+    error: { type: 'request_too_large', message: `The request body is larger than the ${String(Math.round(max / 1024 / 1024))} MB the kurmis proxy takes.` }
+  }))
 }
 
 /** Up to `MAX_KEPT_ANSWER_BYTES` of an answer's body; the rest is dropped. */

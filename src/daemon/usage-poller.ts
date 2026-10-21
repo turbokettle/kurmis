@@ -3,8 +3,13 @@
 // renewal of an expiring token, which a Claude probe does because its CLI renews the token).
 //
 // A probe's answer goes into the login table: the usage snapshot, whether the login is signed
-// in, and the end of a cooldown that had no known end (`cooldownAfterProbe`). A failed probe
-// keeps the previous windows and records the error on the snapshot.
+// in, and the end of a cooldown that had no known end (`cooldownAfterProbe`). A successful
+// probe that finds the login signed in also ends `markRefused` (a token Anthropic refused). A
+// failed probe keeps the previous windows and records the error on the snapshot.
+//
+// A probe for a stale reading is not started again for the same login within
+// `STALE_PROBE_INTERVAL_MS` of the last one (`recentStaleProbes`), so a probe that keeps
+// failing does not run before every request.
 import { emptyCodexUsage } from '../core/codex-usage.ts'
 import { cooldownAfterProbe } from '../core/proxy-rules.ts'
 import { emptyAccountUsage } from '../core/usage.ts'
@@ -17,6 +22,9 @@ import type { TokenSource } from './tokens.ts'
 
 /** How often every signed-in login is probed. */
 export const POLL_INTERVAL_MS = 15 * 60_000
+
+/** How long after a probe for a stale reading the proxy does not ask for another one of the same login. */
+export const STALE_PROBE_INTERVAL_MS = 60_000
 
 /** What one probe answered: `probeClaudeUsage` and `probeCodexUsage` return it. */
 export type ProbeAnswer = ProbeResult
@@ -35,10 +43,14 @@ export interface UsagePollerOptions {
   probeClaude: ProbeFunction
   probeCodex: ProbeFunction
   intervalMs?: number
+  /** Default `STALE_PROBE_INTERVAL_MS`. */
+  staleProbeIntervalMs?: number
 }
 
 export class UsagePoller {
   private readonly running = new Map<string, Promise<void>>()
+  /** When each login was last asked for a probe because its reading was stale. */
+  private readonly staleProbedAt = new Map<string, number>()
   private readonly controller = new AbortController()
   private timer: ReturnType<typeof setInterval> | null = null
   private closed = false
@@ -77,6 +89,20 @@ export class UsagePoller {
       .map((login) => login.id)
   }
 
+  /**
+   * The logins a probe for a stale reading was asked for within the last
+   * `STALE_PROBE_INTERVAL_MS`, whether that probe succeeded or not.
+   */
+  recentStaleProbes(): Set<string> {
+    const since = this.options.now() - (this.options.staleProbeIntervalMs ?? STALE_PROBE_INTERVAL_MS)
+    const recent = new Set<string>()
+    for (const [id, at] of this.staleProbedAt) {
+      if (at > since) recent.add(id)
+      else this.staleProbedAt.delete(id)
+    }
+    return recent
+  }
+
   /** Probes these logins, each once at a time, and resolves when all have finished. Never rejects. */
   async probeMany(ids: readonly string[], cause: ProbeCause): Promise<void> {
     await Promise.all([...new Set(ids)].map((id) => this.probe(id, cause)))
@@ -87,6 +113,7 @@ export class UsagePoller {
    * again. Never rejects.
    */
   probe(id: string, cause: ProbeCause): Promise<void> {
+    if (cause === 'stale') this.staleProbedAt.set(id, this.options.now())
     const running = this.running.get(id)
     if (running !== undefined) return running
     if (this.closed) return Promise.resolve()
@@ -122,6 +149,7 @@ export class UsagePoller {
     if (answer.ok) {
       table.setUsage(id, answer.usage)
       table.setSignedIn(id, answer.signedIn)
+      if (answer.signedIn) table.clearRefused(id)
       const before = table.cooldown(id)
       const after = cooldownAfterProbe(before, answer.usage)
       if (after !== before) {

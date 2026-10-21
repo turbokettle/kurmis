@@ -10,7 +10,9 @@
 // - **No limit of its own on the whole request or on the wait for headers.** The CLI has its
 //   own request timeout (`API_TIMEOUT_MS`, 10 minutes by default) and aborts its request when
 //   it gives up. The proxy turns that into `UpstreamRequest.signal`, which destroys this request
-//   at once. The CLI is the one that knows how long it is willing to wait.
+//   at once. The CLI is the one that knows how long it is willing to wait. The proxy's capacity
+//   hold also ends the wait for the headers of a request it holds, through the same signal, but
+//   never an answer whose headers have arrived.
 // - **The idle timeout** (`UPSTREAM_IDLE_TIMEOUT_MS`, 20 minutes): the request fails when its
 //   connection carries no data in either direction for that long, from the moment it is
 //   connected until the body ends, the wait for the headers included. It is twice the CLI's

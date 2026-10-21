@@ -136,9 +136,16 @@ older version, after that daemon finishes the requests it has open.
   403 with no body. It may also carry `x-kurmis-login: claude:<name>`, which pins it to that
   login, and `x-kurmis-started-on: claude:<name>`, the login the CLI was started on. Either one
   naming no Claude login is a 400. None of them is forwarded upstream. The body is read whole
-  (at most 64 MB), because a request may have to be sent more than once.
+  (at most 64 MB), because a request may have to be sent more than once. A larger body gets a
+  413 with an error in the shape of Anthropic's own (`request_too_large`), which the CLI does
+  not retry. The proxy then goes on reading the rest of the body and throws it away, for at most
+  5 s after the answer (`TOO_LARGE_LINGER_MS`), and closes the connection, for the same reason
+  as the control API above.
 - **Choosing a login** follows the order in the header of `src/core/proxy-rules.ts`. Logins
-  whose usage reading belongs to a window that has ended are probed first. A login whose token
+  whose usage reading belongs to a window that has ended are probed first. Such a probe of a
+  login is not started again within a minute of the last one (`STALE_PROBE_INTERVAL_MS` in
+  `usage-poller.ts`), by any request, so a probe that keeps failing does not run before every
+  request; meanwhile the stale reading counts as empty, as it does anyway. A login whose token
   is about to expire is chosen as if it were fresh and then renewed by a usage probe; on Auto,
   when another login could take the request, the request waits at most 5 s
   (`RENEWAL_WAIT_MS`) for that and then goes to the other login. A login whose record has no
@@ -146,8 +153,18 @@ older version, after that daemon finishes the requests it has open.
 - **Signing.** The proxy signs with `Bearer <token>` for the token it read for the chosen login.
   When the chosen login is the one the CLI was started on and no token was read for it, the
   CLI's own `authorization` header is forwarded instead. No other login is ever signed with the
-  CLI's header. A 401 on a token the proxy read makes it read the token again, renew it once
-  through a probe when the record has a refresh token, and send the request again.
+  CLI's header. A 401 is handled this way:
+  - A 401 on the CLI's own header goes to the CLI as it is: the CLI owns that token.
+  - A 401 on a token the proxy read makes it read the token again. When the record has a
+    refresh token, the proxy renews it once through a probe (the probe's CLI renews a refused
+    token) and sends the request again on the same login. A record without a refresh token is
+    not renewed.
+  - When that login still answers 401, or could not be renewed, the 401 goes to the CLI only if
+    the login is the one the CLI was started on (the CLI can sign it in again) or the session
+    is pinned to it with `x-kurmis-login`. Otherwise the request goes on to the next login, and
+    Auto treats the login as signed out (`markRefused` in `logins.ts`, in memory only) until a
+    usage probe of it succeeds and finds it signed in, at the latest the next 15-minute poll.
+    With no login left, the CLI gets the proxy's own 599 below, never that 401.
 - **Sessions** are told apart by the `X-Claude-Code-Session-Id` header the CLI sends. That is
   what a session stays on its login by. The CLI's subagents and small-model requests share it.
   Requests without one share a single placement, stored under the key `:no-session`. A session
@@ -163,19 +180,28 @@ older version, after that daemon finishes the requests it has open.
   another login at once when the session may use one that is not cooling. Otherwise it waits for
   the first login to come out of its backoff, for any change in the logins (usage, cooldown,
   config), or for the client to close the request. After `CAPACITY_HOLD_MS` (two minutes) the
-  proxy answers 529 itself, and the CLI sends the request again.
+  proxy answers 529 itself, and the CLI sends the request again. The two minutes also end the
+  wait for the headers of a request sent during the hold, but only until the headers arrive:
+  the body of an answer that started within the hold is passed on to its end.
 - **Moving a session back.** When an Auto session has just moved to another login and that login
-  answers 400, the request is sent again on the login that served the session before, and the
-  session stays on that login from then on. Some conversations cannot be continued on another
-  login. "From then on" lasts until the daemon restarts: `state.json` keeps only the login each
-  session was last on.
+  answers 400, the request is sent again on the login that served the session before, whatever
+  that login's usage, and the session is held to that login for its later requests. Some
+  conversations cannot be continued on another login. The login that answered 400 is not tried
+  again for this request; when the previous login cannot take the request either, the CLI gets
+  that 400. The hold lasts while the held login can serve. It ends, and the request is routed on
+  Auto, when the held login is signed out, has no token the proxy can sign with, is cooling down
+  after a usage limit, or has a window at 100% (the held login is measured like a pinned one,
+  not to its own limits), or when it answers a usage-limit 429, which is then sent again on
+  another login as on Auto. The hold is kept in memory only, so a daemon restart ends it too:
+  `state.json` keeps only the login each session was last on.
 - **No login can sign** (none signed in, no token readable and no header of the CLI's own for
   the login it was started on): the proxy's own 599 (`noSignerAnswer`), which the CLI retries.
 - **The upstream connection** (`src/daemon/upstream.ts`) uses `node:https`, not `fetch`, because
   `fetch` gives up after 300 s waiting for headers or between two chunks, which a long thinking
   turn can exceed. There is no limit on the whole request: the CLI aborts its request when it
-  gives up, and that aborts the upstream request at once. A connection that carries no data in
-  either direction for 20 minutes fails; a new connection must be ready within 30 s; TCP
+  gives up, and that aborts the upstream request at once. The only other end set on a request is
+  the capacity hold's, and only until the answer's headers arrive. A connection that carries no
+  data in either direction for 20 minutes fails; a new connection must be ready within 30 s; TCP
   keep-alive probes start after 30 s of silence; idle connections are kept for reuse for 30 s,
   and a request that meets a reset on a reused connection before any answer is sent once more.
   Answers are passed on byte for byte as they arrive, with backpressure: a CLI that reads slowly

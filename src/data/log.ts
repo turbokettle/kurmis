@@ -40,6 +40,7 @@ export const LOG_EVENTS = [
   'cooldown_ended',
   'session_placed',
   'session_moved',
+  'session_hold_ended',
   'token_read_failed',
   'token_renewal_started',
   'token_renewal_finished',

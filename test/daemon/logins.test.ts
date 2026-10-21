@@ -67,6 +67,23 @@ describe('the routing rows', () => {
     expect(logins.routeRows('claude:default', false)[0]).toMatchObject({ loggedIn: true, credentialsReadable: false })
   })
 
+  test('count a login whose token Anthropic refused as signed out, except for the started-on and the pinned login', () => {
+    writeLogins({ logins: { 'claude:work': {} } })
+    tokens.set('claude:default', { accessToken: 'd', expiresAt: null, hasRefreshToken: true })
+    tokens.set('claude:work', { accessToken: 'w', expiresAt: null, hasRefreshToken: true })
+    const logins = table()
+    let changes = 0
+    logins.onChange(() => { changes++ })
+    logins.markRefused('claude:work')
+    expect(changes).toBe(1)
+    expect(logins.routeRows('claude:default', false).map((row) => row.loggedIn)).toEqual([true, false])
+    expect(logins.routeRows('claude:work', false).map((row) => row.loggedIn)).toEqual([true, true])
+    expect(logins.routeRows('claude:default', false, 'claude:work').map((row) => row.loggedIn)).toEqual([true, true])
+    logins.clearRefused('claude:work')
+    expect(logins.isRefused('claude:work')).toBe(false)
+    expect(logins.routeRows('claude:default', false).map((row) => row.loggedIn)).toEqual([true, true])
+  })
+
   test('drop a cooldown that has run out', () => {
     writeLogins({})
     const logins = table()
@@ -92,6 +109,14 @@ describe('sessions', () => {
     const saved = JSON.parse(readFileSync(statePath(), 'utf8')) as { sessions: Record<string, unknown> }
     expect(Object.keys(saved.sessions)).toEqual(['s-1', NO_SESSION_KEY])
     expect(table().sessionLogin('s-1')).toBe('claude:work')
+  })
+  test('a hold after a pin-back lasts until it is released', () => {
+    writeLogins({})
+    const logins = table()
+    logins.holdSession('s-1', 'claude:default')
+    expect(logins.heldLogin('s-1')).toBe('claude:default')
+    logins.releaseSession('s-1')
+    expect(logins.heldLogin('s-1')).toBeNull()
   })
 })
 
