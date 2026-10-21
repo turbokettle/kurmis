@@ -150,7 +150,9 @@ older version, after that daemon finishes the requests it has open.
   login is not started again within a minute of the last one (`STALE_PROBE_INTERVAL_MS` in
   `usage-poller.ts`), by any request, so a probe that keeps failing does not run before every
   request; meanwhile the stale reading counts as empty, as it does anyway. A login whose token
-  is about to expire is chosen as if it were fresh and then renewed by a usage probe; on Auto,
+  is about to expire is chosen as if it were fresh. Its token is then read again, past the
+  minute a Keychain answer is kept, since the CLI may have renewed it, and only a token that is
+  still about to expire is renewed by a usage probe; on Auto,
   when another login could take the request, the request waits at most 5 s
   (`RENEWAL_WAIT_MS`) for that and then goes to the other login. A login whose record has no
   refresh token is never renewed: it just becomes unusable when its token is about to expire.

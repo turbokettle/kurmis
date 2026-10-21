@@ -2,17 +2,19 @@
 // CLI was not started on, the hold after a pin-back, stale usage probes that keep failing, and
 // a body that is too large. Most tests run the whole daemon app in process (`harness.ts`)
 // against the fake Anthropic API; the body test runs the proxy alone.
-import { rmSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { connect, type AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
 import { loadConfig, saveConfig, updateLogin } from '../../src/data/config.ts'
 import { loginFolder } from '../../src/data/paths.ts'
 import { createProxy } from '../../src/daemon/proxy.ts'
 import type { ProbeFunction } from '../../src/daemon/usage-poller.ts'
 import { fakeToken, reply, writeClaudeCredentials } from '../fakes/index.ts'
+import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
@@ -234,6 +236,33 @@ describe('a refusal whose body stalls', () => {
     expect(answer.status).toBe(429)
     expect(answer.text).toBe('{"type":"error"')
   }, 15_000)
+})
+
+describe('a token about to expire', () => {
+  test('is read from the Keychain again before the proxy decides to renew it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'kurmis-keychain-'))
+    try {
+      const keychain = new FakeKeychain(dir)
+      vi.stubEnv('FAKE_SECURITY_DIR', keychain.dir)
+      const item = (token: string, expiresAt: number): string =>
+        JSON.stringify({ claudeAiOauth: { accessToken: token, refreshToken: 'sk-ant-ort01-fake-refresh', expiresAt } })
+      // Fresh for eight more seconds by the five-minute margin, which is room for a slow start.
+      const expiresAt = Date.now() + 5 * 60_000 + 8_000
+      keychain.setItem('Claude Code-credentials', item(DEFAULT, expiresAt))
+      const h = harness = await startHarness({ tuning: { platform: 'darwin', poll: false }, env: { KURMIS_SECURITY_PROGRAM: FAKE_SECURITY } })
+      expect((await messages(h, S1)).status).toBe(200)
+      // The CLI renews the token; the daemon's Keychain answer is less than a minute old.
+      const renewed = fakeToken('renewed')
+      keychain.setItem('Claude Code-credentials', item(renewed, Date.now() + 8 * 3_600_000))
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, expiresAt - 5 * 60_000 - Date.now() + 300)))
+      expect((await messages(h, S1)).status).toBe(200)
+      expect(bearers(h)).toEqual([DEFAULT, renewed])
+      expect(events(h, 'token_renewal_started')).toBe(0)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 30_000)
 })
 
 describe('stale usage', () => {

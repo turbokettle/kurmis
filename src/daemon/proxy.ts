@@ -225,6 +225,8 @@ export function createProxy(options: ProxyOptions): Proxy {
     const refreshed = new Set<string>()
     /** Logins whose token this request has tried to renew. */
     const renewed = new Set<string>()
+    /** Logins whose token this request has read again because the one held was about to expire. */
+    const reread = new Set<string>()
     const refusals: KeptRefusal[] = []
     /** When the capacity hold started, or null while the request is not held. */
     let holdSince: number | null = cooling.coolingOf(sessionKey, now()) === null ? null : arrived
@@ -286,6 +288,14 @@ export function createProxy(options: ProxyOptions): Proxy {
         if (chosen === null) return null
         const row = rows.find((each) => each.id === chosen.id) ?? chosen
         if (tokenIsFresh(row.tokenExpiresAt, now())) return row
+        // A Keychain answer is kept for up to a minute, and the CLI may have renewed the token
+        // since: read it again before deciding that it has to be renewed.
+        if (!reread.has(row.id)) {
+          reread.add(row.id)
+          tokens.invalidate(row.id)
+          await abortable(tokens.prime([row.id]), signal)
+          continue
+        }
         if (!renewable(row)) {
           // No refresh token, or a renewal that did not help: the login just expires.
           excluded.add(row.id)
