@@ -8,6 +8,8 @@
 // Every one of them removes the variables a routed session puts in its environment, because a
 // kurmis CLI or daemon may itself have been started from inside a routed session (a shell in a
 // `kurmis claude` session), and a probe or a login sent through the proxy would loop back into it.
+import { homedir } from 'node:os'
+import { resolve } from 'node:path'
 import { CLAUDE_DEFAULT_ACCOUNT_ID, CODEX_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import { isKurmisCodexHome } from '../core/codex-choice.ts'
 import { claudeDefaultProbeFolder, loginFolder, providerFolder } from './paths.ts'
@@ -79,6 +81,22 @@ export function codexLoginEnv(id: string, inherited: Readonly<Record<string, str
   return isKurmisCodexHome(home, providerFolder('codex'), windows)
     ? { CODEX_HOME: undefined, ...NOT_INHERITED }
     : { ...NOT_INHERITED }
+}
+
+/**
+ * Whether a Claude CLI started with `env` and without `CLAUDE_SECURESTORAGE_CONFIG_DIR` reads
+ * credentials other than `claude:default`'s, because `env` sets `CLAUDE_CONFIG_DIR`. The CLI then
+ * names its Keychain item (and on Windows its Credential Manager entry) after that value, so any
+ * value that is not empty is another store on macOS and Windows. On Linux only the file counts,
+ * which is the same one when the folder is `~/.claude` itself (Claude Code 2.1.306, read from its
+ * bundled source: `keychain-service.ts`).
+ */
+export function configDirHasOwnCredentials(env: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform = process.platform, home: string = homedir()): boolean {
+  const value = env['CLAUDE_CONFIG_DIR']
+  if (value === undefined || value === '') return false
+  if (platform === 'darwin' || platform === 'win32') return true
+  return resolve(value) !== resolve(home, '.claude')
 }
 
 /**

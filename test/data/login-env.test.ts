@@ -1,7 +1,7 @@
 // The environment kurmis runs a CLI with on one login for itself.
 import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { applyEnvPatch, claudeLoginEnv, claudeProbeEnv, codexLoginEnv } from '../../src/data/login-env.ts'
+import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, codexLoginEnv } from '../../src/data/login-env.ts'
 import { claudeDefaultProbeFolder, kurmisHome } from '../../src/data/paths.ts'
 
 const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
@@ -50,5 +50,22 @@ describe('applying a patch', () => {
   test('matches names without case on Windows', () => {
     expect(applyEnvPatch({ Anthropic_Api_Key: 'x', Path: 'p' }, { ANTHROPIC_API_KEY: undefined, PATH: 'q' }, true))
       .toEqual({ PATH: 'q' })
+  })
+})
+
+describe('whether CLAUDE_CONFIG_DIR gives a CLI credentials of its own', () => {
+  test('unset or empty: no, the CLI reads the default ones', () => {
+    expect(configDirHasOwnCredentials({}, 'darwin', '/Users/example')).toBe(false)
+    expect(configDirHasOwnCredentials({ CLAUDE_CONFIG_DIR: '' }, 'linux', '/home/example')).toBe(false)
+  })
+
+  test('on macOS and Windows any value names another Keychain or Credential Manager item, ~/.claude included', () => {
+    expect(configDirHasOwnCredentials({ CLAUDE_CONFIG_DIR: '/Users/example/.claude' }, 'darwin', '/Users/example')).toBe(true)
+    expect(configDirHasOwnCredentials({ CLAUDE_CONFIG_DIR: 'C:\\Users\\example\\work' }, 'win32', 'C:\\Users\\example')).toBe(true)
+  })
+
+  test('on Linux only a folder other than ~/.claude does', () => {
+    expect(configDirHasOwnCredentials({ CLAUDE_CONFIG_DIR: '/home/example/.claude/' }, 'linux', '/home/example')).toBe(false)
+    expect(configDirHasOwnCredentials({ CLAUDE_CONFIG_DIR: '/home/example/work' }, 'linux', '/home/example')).toBe(true)
   })
 })

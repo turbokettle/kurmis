@@ -106,7 +106,7 @@ describe('kurmis claude on Auto', () => {
     expect(h.specs).toEqual([{
       command: '/fake/claude',
       args: ['--from-find', '--settings', '/kurmis-settings/0.json', '-p', 'hi', '--login', 'x'],
-      env: { PATH: '/usr/bin', ...routing }
+      env: { PATH: '/usr/bin', ...routing, CLAUDE_SECURESTORAGE_CONFIG_DIR: '' }
     }])
     expect(storedSettings.get('/kurmis-settings/0.json')).toBe(JSON.stringify({ env: routing }))
     // The key is in the settings file, never on claude's command line.
@@ -115,11 +115,19 @@ describe('kurmis claude on Auto', () => {
     expect(h.finished).toEqual([{ end: { kind: 'exit', code: 3 }, options: { stderr: out.context.stderr, name: 'claude', platform: 'darwin' } }])
   })
 
+  test('with CLAUDE_CONFIG_DIR set, claude starts on the default login\'s own credentials, with a note', async () => {
+    const h = harness()
+    const out = collect({ CLAUDE_CONFIG_DIR: '/Users/example/other-claude' })
+    await createClaudeCommand(h.deps).run([], out.context)
+    expect(h.specs[0]?.env).toMatchObject({ CLAUDE_CONFIG_DIR: '/Users/example/other-claude', CLAUDE_SECURESTORAGE_CONFIG_DIR: '' })
+    expect(out.stderr()).toContain('CLAUDE_CONFIG_DIR is set, but claude:default is the login in ~/.claude')
+  })
+
   test('the default login\'s unknown sign-in state counts as signed in', async () => {
     const h = harness({ status: statusAnswer([loginStatus('claude:default', { signedIn: null }), loginStatus('claude:work')]) })
     await createClaudeCommand(h.deps).run([], collect().context)
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain('x-kurmis-started-on: claude:default')
-    expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBeUndefined()
+    expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
   })
 
   test('with the default login signed out, claude starts on a signed-in pool login, whose folder stays out of --settings', async () => {
@@ -213,7 +221,7 @@ describe('kurmis claude --login', () => {
     })
     expect(await createClaudeCommand(h.deps).run(['--login', 'default'], collect({ CLAUDE_SECURESTORAGE_CONFIG_DIR: '/x' }).context)).toBe(3)
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain('x-kurmis-login: claude:default')
-    expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBeUndefined()
+    expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
   })
 
   test('a login that is not in config.json is an error, before the daemon is asked', async () => {
@@ -351,7 +359,8 @@ describe('kurmis claude, other cases', () => {
       ANTHROPIC_BASE_URL: BASE_URL,
       ANTHROPIC_CUSTOM_HEADERS: routedHeaders(`x-kurmis-key: ${KEY}`, 'x-kurmis-started-on: claude:default'),
       ENABLE_TOOL_SEARCH: 'true',
-      CLAUDE_CODE_MAX_RETRIES: '15'
+      CLAUDE_CODE_MAX_RETRIES: '15',
+      CLAUDE_SECURESTORAGE_CONFIG_DIR: ''
     })
     expect(h.runOptions).toEqual([{ platform: 'win32' }])
     expect(h.finished[0]?.options.platform).toBe('win32')

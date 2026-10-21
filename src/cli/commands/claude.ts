@@ -16,6 +16,7 @@ import { CLAUDE_DEFAULT_ACCOUNT_ID } from '../../core/accounts.ts'
 import type { StatusAnswer } from '../../core/control-api.ts'
 import { applyRoutedEnv, routedClaudeEnv } from '../../core/routed-env.ts'
 import { ConfigError, findLogin, loadConfig, type KurmisConfig } from '../../data/config.ts'
+import { configDirHasOwnCredentials } from '../../data/login-env.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
 import { EXIT_FAILURE, EXIT_OK, usageError, writeLine, type CliContext, type Command } from '../command.ts'
@@ -160,6 +161,12 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     if (!deps.folderExists(secureStorageDir)) {
       return fail(`the folder of ${startedOn} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${startedOn}".`)
     }
+  }
+
+  if (startedOn === CLAUDE_DEFAULT_ACCOUNT_ID && configDirHasOwnCredentials(context.env, deps.platform)) {
+    writeLine(context.stderr, `kurmis claude: CLAUDE_CONFIG_DIR is set, but ${CLAUDE_DEFAULT_ACCOUNT_ID} is the login in ` +
+      '~/.claude, so claude signs in with that login\'s credentials, not with those in CLAUDE_CONFIG_DIR. ' +
+      'Settings and transcripts still come from CLAUDE_CONFIG_DIR.')
   }
 
   const headers = customHeaders(userSettings, context.env, deps)

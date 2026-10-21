@@ -58,8 +58,11 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   it is renamed to `daemon.log.1`, replacing the previous one.
 
 The machine's own logins are `claude:default` and `codex:default`. They are always listed and
-cannot be removed, and they have no folder here. A CLI on them runs with the environment left as
-it was inherited, apart from the routing variables.
+cannot be removed, and they have no folder here. `claude:default` is the login in `~/.claude`:
+`~/.claude/.credentials.json` and the Keychain item with the plain name, whatever
+`CLAUDE_CONFIG_DIR` says (see "`claude:default` and `CLAUDE_CONFIG_DIR`" below). A CLI on a
+default login runs with the environment left as it was inherited, apart from the routing
+variables and, for Claude, `CLAUDE_SECURESTORAGE_CONFIG_DIR`.
 
 **Login ids** are `claude:<name>` and `codex:<name>`. A name is 1 to 32 lowercase letters,
 digits, `-` and `_`, starting with a letter or digit, and not a Windows device name such as
@@ -442,8 +445,9 @@ since `process.execPath` names a versioned folder that a Homebrew upgrade remove
 - `ENABLE_TOOL_SEARCH=true`, because the CLI turns tool search off for any base URL that is not
   Anthropic's, and the proxy passes it through;
 - `CLAUDE_CODE_MAX_RETRIES=15`, so a request outlasts a daemon restart;
-- `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the login's folder when a login other than the
-  default was named;
+- `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the folder of the login it starts on, or set to the
+  empty string on `claude:default`, which the CLI reads as the default credentials, so that also
+  a CLI with `CLAUDE_CONFIG_DIR` set signs in as `claude:default`;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
   itself and no subscription would be billed.
 
