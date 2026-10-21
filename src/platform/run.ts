@@ -69,7 +69,7 @@ export function runProgram(program: string, args: readonly string[], options: Ru
   if ('refused' in invocation) {
     return Promise.resolve({ stdout: '', stderr: '', code: null, timedOut: false, outputTooLarge: false, error: invocation.refused })
   }
-  const guarded = refusedByGuard(invocation.command, options.env)
+  const guarded = refusedByGuard(invocation.command, options.env, invocation.args)
   if (guarded !== null) {
     return Promise.resolve({ stdout: '', stderr: '', code: null, timedOut: false, outputTooLarge: false, error: guarded })
   }

@@ -56,10 +56,12 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   aside and checked again there before it is deleted, and one that names another pid by then is
   linked back, so a file written between the check and the removal is kept. The CLI removes a
   `daemon.json` whose pid no longer exists, and one that is damaged.
-- `launchd/` holds the plists of the short-lived launchd jobs that start the daemon from an ssh
-  login on macOS. Each is removed once its job has run.
+- `launchd/` holds the plists of the short-lived launchd jobs that start the daemon on macOS
+  from an ssh login or wherever the login Keychain cannot be read. Each is removed once its job
+  has run.
 - `autostart.js` is the script the Windows logon entry runs (see "Starting at login"). An
-  `autostart.vbs` an older kurmis wrote is removed by `setup` and `setup --undo`.
+  `autostart.vbs` an older kurmis wrote is removed by `setup --undo`, and by `setup` once the
+  logon entry names `autostart.js`.
 - `key` holds the secret every proxied and control request carries. It is created once and
   kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
   of it and must keep working after the daemon restarts. Only the user can read it.
@@ -267,22 +269,34 @@ older version, after that daemon finishes the requests it has open.
   (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read
   when the Keychain gives no token: the CLI falls back to the file when it cannot use the
   Keychain, for example in an ssh session. On Linux only the file is read. On Windows, newer
-  Claude Code versions (seen from 2.1.150, behind a flag) keep the record in Windows Credential
-  Manager instead, read it first, and delete the file once it is there. So for a login without
-  a `.credentials.json` the daemon reads Credential Manager (`src/daemon/credential-manager.ts`,
-  `src/platform/windows-credentials.ts`): the generic credential
-  `<Keychain item name>/claude-code-user`, whose blob is the same JSON as the file, or, when
-  `…/claude-code-user#m` holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the
-  CLI writes a record longer than 2400 bytes. Node cannot call `CredReadW`, so a PowerShell
-  script declares it with `Add-Type` and prints each blob as base64; one run reads every such
-  login. That needs PowerShell's full language mode: under Constrained Language Mode `Add-Type`
-  is refused, the read fails (logged once as `token_read_failed`), and only the file is used. A
-  login with the file is never read from Credential Manager. An extra login's file is in its
-  folder, the default login's is `~/.claude/.credentials.json`. A Keychain or Credential Manager
-  answer is kept for a minute (an old Credential Manager answer is read again in the
-  background, since starting PowerShell takes a second or two); the file is read again when its
-  size or modification time changes. Tokens are never written anywhere. Only whether a record has a refresh token is
-  kept, never the refresh token itself.
+  Claude Code versions (seen from 2.1.150) keep the record in Windows Credential Manager
+  instead, when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag
+  `tengu_windows_credman` is on in the `.claude.json` of the config folder the CLI runs with.
+  Such a CLI reads Credential Manager first and the file only when Credential Manager has
+  nothing, and deletes the file when it first writes the record to Credential Manager. The
+  daemon reads in the same order (`src/daemon/credential-manager.ts`,
+  `src/platform/windows-credentials.ts`). It lists the generic credentials named
+  `<Keychain item name>/<account>` and takes the account name Claude Code uses on macOS (the
+  user's name), else `claude-code-user`, else the only one there is, since the Windows build's
+  account name could not be checked. The blob is the same JSON as the file, or, when
+  `…#m` holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes a
+  record longer than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script
+  declares it with `Add-Type` and prints each name and blob as base64; one run reads up to a
+  few hundred logins, and more are split into runs that keep the command line within Windows'
+  32,767 characters. That needs PowerShell's full language mode: under Constrained Language
+  Mode `Add-Type` is refused, the read fails (logged once as `token_read_failed` for a login
+  without the file), and only the file is used. The first request after the daemon starts waits
+  for that read only for a login without the file. A usage probe of a login whose record was
+  found in Credential Manager runs with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`
+  (`probeEnvironment`): the probe's config folder is not the one a routed CLI runs with, so its
+  feature flag may be off, and then it would not see the record and would report the login
+  signed out. An extra login's file is in its folder, the default login's is
+  `~/.claude/.credentials.json`. A Keychain or Credential Manager answer is kept for a minute;
+  an old Credential Manager answer, and one after a usage probe, is read again in the
+  background while it goes on being used, since starting PowerShell takes a second or two, and
+  after a renewal the next request waits for the new read. The file is read again when its size
+  or modification time changes. Tokens are never written anywhere. Only whether a record has a
+  refresh token is kept, never the refresh token itself.
 - **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when
   a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
   does not read leaves the config the daemon has.
@@ -408,13 +422,19 @@ the Windows logon script and the command line of a start through WMI. How it is 
   answers, the CLI runs `launchctl bootout gui/<uid>/<label>` and deletes the plist; unloading
   the job does not end the daemon. The CLI waits at most 5 seconds for that answer
   (`LAUNCHD_ANSWER_TIMEOUT_MS`), and reads the job's `last exit code` from
-  `launchctl print` every half second meanwhile. When the job's program exits with a code other
-  than 0, or no daemon answers in the 5 seconds, it removes the job and starts the daemon
-  directly with the warning below. A job launchd cannot start exits 78 (EX_CONFIG); seen when
-  Node, the bundle or the data folder is on an external volume, which a launchd job may not be
-  allowed to read, and a job can also hang there. A job that exited 0 has started a daemon, so
-  then the CLI waits the full 30 seconds for it. The job's environment is only `HOME`, the caller's `PATH` (so
-  the daemon finds `claude` and `codex`), `KURMIS_HOME` as an absolute path, and the program
+  `launchctl print` every half second meanwhile. Each status request and each `launchctl print`
+  in that wait is given only the time left until the deadline (at least a quarter of a second),
+  so a daemon or a launchctl that does not answer holds the wait only a little past it; a
+  `launchctl print` that is still running is waited for again rather than started a second
+  time. When the job's program exits with a code other than 0, or no daemon answers in the 5
+  seconds, it removes the job and starts the daemon directly with the warning below. That
+  daemon runs in the CLI's own session (the ssh session, or the one where the Keychain check
+  failed), so it cannot read the login Keychain either. A job launchd cannot start exits 78
+  (EX_CONFIG); seen when Node, the bundle or the data folder is on an external volume, which a
+  launchd job may not be allowed to read, and a job can also hang there. A job that exited 0
+  has started a daemon, so then the CLI waits the full 30 seconds for it. The job's environment
+  is only `HOME`, the caller's `PATH` (so the daemon finds `claude` and `codex`), `KURMIS_HOME`
+  as an absolute path, and the program
   variables and test hooks when they are set; never an `ANTHROPIC_*`, `SSH_*` or `CLAUDE_*`
   variable. The GUI domain exists only while the user is logged in at the screen (or through
   Screen Sharing). Without it `bootstrap` fails, and the CLI starts the daemon directly with a
@@ -471,9 +491,11 @@ removing the entry never ends a running daemon. Both are idempotent: what is alr
 compared first. The Node is the first `node` on PATH when it is the same file as the running one,
 since `process.execPath` names a versioned folder that a Homebrew upgrade removes. A `node` on
 PATH in a temporary folder (`os.tmpdir()`, `TMPDIR`, `TEMP`, `TMP`, `/tmp`, `/var/folders`) or
-in fnm's per-shell `fnm_multishells` folder, which fnm deletes later, is passed over, and setup
-warns when the Node it registers is in such a folder (`nodeForJobs`, `isTemporaryPath` in
-`src/platform/detach.ts`). The one-shot launchd job uses the same choice.
+in fnm's per-shell `fnm_multishells` folder, which fnm deletes later, is passed over. On
+Windows `process.execPath` is the path Node was started by, without its links resolved, which
+under fnm is in `fnm_multishells`; then the resolved path is used when it is not in such a
+folder. Setup warns when the Node it registers is still in such a folder (`nodeForJobs`,
+`isTemporaryPath` in `src/platform/detach.ts`). The one-shot launchd job uses the same choice.
 
 - **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist`, the same shape and environment as
   the one-shot job (`KURMIS_HOME` as an absolute path; mode 0644; it holds no secret). It is
@@ -493,6 +515,17 @@ warns when the Node it registers is in such a folder (`nodeForJobs`, `isTemporar
   as an absolute path, and the test hooks that are set) go on that command line as
   `daemon start --no-launchd --env NAME=VALUE …`, which `daemon start` puts into its own
   environment and the daemon's, as `daemon run --env` does. `//B` stops error dialogs at logon.
+  - *A `%` in the command line.* `shell.Run` replaces `%NAME%` in its command line with the
+    variable NAME (ExpandEnvironmentStrings, which has no escape), so a path or value with a `%`
+    could change at logon. When the command line has one, the script sets the process variable
+    `KURMIS_PERCENT_SIGN` to `%` (`shell.Environment("Process")`), writes each `%` as
+    `%KURMIS_PERCENT_SIGN%`, and runs the command only when `shell.ExpandEnvironmentStrings`
+    gives back the command line as it was; otherwise it starts nothing and the next kurmis
+    command starts the daemon. A command line without `%` is run as it is. The daemon inherits
+    `KURMIS_PERCENT_SIGN`, which nothing reads.
+  - *Replacing the VBScript.* An `autostart.vbs` an older kurmis wrote is removed only once the
+    Run value names `autostart.js` (it already did, or `reg add` succeeded), so a failed write
+    leaves the old entry working.
   - *Why JScript.* The script was VBScript before. Microsoft has deprecated VBScript: since
     Windows 11 24H2 it is an optional feature, to be turned off by default and later removed.
     JScript runs in the same Windows Script Host and is not part of that deprecation, so the
@@ -505,9 +538,12 @@ warns when the Node it registers is in such a folder (`nodeForJobs`, `isTemporar
     Otherwise it writes no entry and warns, and setup exits 0; the next kurmis command starts
     the daemon anyway.
   - *Comparing the value.* reg.exe prints in the console's OEM code page, which Node reads as
-    UTF-8, so a value with letters outside ASCII does not read back as written. The comparison
-    counts each run of letters outside ASCII as matching any other such run (`sameRunData`); a
-    value that still looks different is written again.
+    UTF-8, so a value with letters outside ASCII does not read back as written: such a letter
+    can come out as a replacement character, as a best-fit ASCII letter (`ā` as `a`), as `?`,
+    or in a double-byte code page as two characters, the second of which can be ASCII. The
+    comparison lets each run of letters outside ASCII in the value setup writes match any run of
+    1 to twice as many characters in what was read, and the ASCII parts must be the same
+    (`sameRunData`); a value that still looks different is written again.
 - **Other platforms:** a warning (setup still exits 0); the next kurmis command starts the
   daemon.
 
@@ -978,8 +1014,9 @@ needs them.
   ("Starting it from the CLI").
 - `KURMIS_CLAUDE_BIN`, `KURMIS_CODEX_BIN` name the programs (also usable by a person).
   `test/setup.ts` points both at `test/no-real-program.mjs`, which only fails, so no test can
-  start the real CLIs from PATH by accident; a test that needs a CLI names a fake, and a test of
-  the PATH search removes them from the environment it passes.
+  start the real CLIs from PATH by accident; a test that needs a CLI names a fake. While the
+  guard below is on, `findProgram` takes them from the process's environment when the
+  environment it is given lacks them, so a test of the PATH search sets them to empty values.
 - `KURMIS_UPSTREAM_URL` is Anthropic's API base URL, `https://api.anthropic.com` by default.
 - **The system programs.** Every program of the operating system kurmis runs has a variable
   that names a stand-in (`src/platform/system-programs.ts`): `KURMIS_LAUNCHCTL_PROGRAM`
@@ -992,7 +1029,9 @@ needs them.
   in the process's own environment, so a test that passes an empty or partial environment
   still gets the stand-in `test/setup.ts` set. For the same reason a daemon kurmis starts gets
   these variables, the guard and its log from the process's environment when the environment it
-  is started with lacks them (`inheritedTestHooks`). A stand-in that is a `.mjs` file runs
+  is started with lacks them (`inheritedTestHooks`), and while the guard is on also `HOME`,
+  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN`, so it uses the test's
+  temporary home and not the real one. A stand-in that is a `.mjs` file runs
   through Node, as every `.js` program does (`invocationFor` in `src/platform/run.ts`), since
   Windows cannot start such a file itself. `test/setup.ts` points them at:
   - `test/daemon/fake-security/security.mjs`, with its Keychain items in `$FAKE_SECURITY_DIR`;
@@ -1013,9 +1052,14 @@ needs them.
   source tree, where there is no bundle to start.
 - **The guard.** `KURMIS_REFUSE_SYSTEM_PROGRAMS=1`, which `test/setup.ts` and the integration
   harness set, makes `runProgram`, `startFrameProcess`, `spawnDetached` and the wrapper refuse
-  the real system programs and the real `claude` and `codex`
-  (`src/platform/system-program-guard.ts`). It is passed on to every program kurmis starts. Each
-  refusal is also written to the file `KURMIS_REFUSED_PROGRAMS_LOG` names, and `test/setup.ts`
+  (`src/platform/system-program-guard.ts`): a program whose file name, or that of the file its
+  links lead to, is one of the system programs above, `cmd`, `cscript`, `wmic`, `schtasks`,
+  `claude` or `codex`; a program inside the Claude Code or Codex npm packages or the native
+  installer's `~/.local/share/claude/versions`; and Node running a script that is one of these,
+  such as `node …/@openai/codex/bin/codex.js`, which is how a `codex` on PATH that links to a
+  `.js` file is started. It is passed on to every program kurmis starts, together with `HOME`,
+  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN` from the process's
+  environment where that program's environment lacks them. Each refusal is also written to the file `KURMIS_REFUSED_PROGRAMS_LOG` names, and `test/setup.ts`
   fails any test after which that file is not empty: a test whose code reached a real program
   fails even when the refusal let it pass.
 

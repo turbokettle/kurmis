@@ -230,7 +230,8 @@ test('the last snapshot decides whether a status the probe cannot measure still 
 test('a claude that cannot be found is an error with a fixed sentence', async () => {
   const empty = mkdtempSync(join(homedir(), 'empty-path-'))
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: empty, Path: empty }
-  delete env.KURMIS_CLAUDE_BIN
+  // Empty rather than removed: in the tests a missing variable is taken from test/setup.ts.
+  env.KURMIS_CLAUDE_BIN = ''
   const result = await probeClaudeUsage('claude:missing', { env })
   expect(result).toMatchObject({ ok: false, signedIn: null, reason: 'missing' })
   expectFixedError(result)

@@ -100,11 +100,14 @@ export function isTemporaryPath(path: string, folders: readonly string[], platfo
 }
 
 /**
- * The Node a launchd job or a logon entry should run. `process.execPath` is the resolved path,
- * which on Homebrew names one versioned folder that an upgrade removes. So the first `node` on
- * PATH is taken instead when it resolves to the same file, since that path survives upgrades;
- * otherwise `process.execPath`. A `node` on PATH in a temporary folder, or in fnm's per-shell
- * `fnm_multishells` folder, is passed over, since it may be gone at the next login.
+ * The Node a launchd job or a logon entry should run. `process.execPath` is the resolved path
+ * on macOS, which on Homebrew names one versioned folder that an upgrade removes. So the first
+ * `node` on PATH is taken instead when it resolves to the same file, since that path survives
+ * upgrades; otherwise `process.execPath`. A `node` on PATH in a temporary folder, or in fnm's
+ * per-shell `fnm_multishells` folder, is passed over, since it may be gone at the next login.
+ * On Windows `process.execPath` is the path Node was started by, links not resolved, which under
+ * fnm is in `fnm_multishells`; when it is in such a folder and its resolved path is not, the
+ * resolved path is used.
  */
 export function nodeForJobs(options: NodeForJobsOptions = {}): string {
   const env = options.env ?? process.env
@@ -118,6 +121,7 @@ export function nodeForJobs(options: NodeForJobsOptions = {}): string {
   } catch {
     return execPath
   }
+  const running = isTemporaryPath(execPath, temporary, platform) && !isTemporaryPath(target, temporary, platform) ? target : execPath
   const windows = platform === 'win32'
   const folders = windows ? windowsPathFolders(windowsEnv(env, 'PATH')) : posixPathFolders(env.PATH)
   for (const folder of folders) {
@@ -129,12 +133,12 @@ export function nodeForJobs(options: NodeForJobsOptions = {}): string {
     }
     if (isTemporaryPath(candidate, temporary, platform)) continue
     try {
-      return realpath(candidate) === target ? candidate : execPath
+      return realpath(candidate) === target ? candidate : running
     } catch {
       continue
     }
   }
-  return execPath
+  return running
 }
 
 /** Whether this process runs in an ssh session: the ssh server sets these, and children inherit them. */
@@ -162,7 +166,7 @@ export interface DetachedChild {
  */
 export function spawnDetached(start: DetachedStart): Promise<DetachedChild> {
   return new Promise((resolve, reject) => {
-    const guarded = refusedByGuard(start.command, start.env)
+    const guarded = refusedByGuard(start.command, start.env, start.args)
     if (guarded !== null) {
       reject(new Error(guarded))
       return

@@ -257,7 +257,9 @@ describe('why a login was passed over, for the log', () => {
   })
 
   test('says which token source did not read', () => {
-    expect(routeBlockText({ kind: 'no-credentials' })).toBe('no token, its .credentials.json did not read')
+    expect(routeBlockText({ kind: 'no-credentials' }, false, false, 'linux')).toBe('no token, its .credentials.json did not read')
+    expect(routeBlockText({ kind: 'no-credentials' }, false, false, 'win32'))
+      .toBe('no token, neither Windows Credential Manager nor its .credentials.json gave one')
     expect(whyPassedOver(account('claude:default', { credentialsReadable: false }), { ...context, keychain: true }, NOW))
       .toContain('carried no authorization header of its own')
     expect(whyPassedOver(account('claude:work', { credentialsReadable: false }), { ...context, keychain: true }, NOW))

@@ -1,5 +1,7 @@
 // Every test passes its own `env` with a PATH of temporary or made-up folders, so no test can
 // find the real claude or codex on this machine. The Windows tests use a made-up file system.
+// The tests of the PATH search go through `search`, which sets KURMIS_CLAUDE_BIN and
+// KURMIS_CODEX_BIN to empty values: in the tests a missing one is taken from test/setup.ts.
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -14,11 +16,15 @@ import {
 } from '../../src/platform/programs.ts'
 import type { FindProgramOptions, ProgramFiles, ToolName } from '../../src/platform/programs.ts'
 
+function search(tool: ToolName, options: FindProgramOptions): ReturnType<typeof findProgram> {
+  return findProgram(tool, { ...options, env: { KURMIS_CLAUDE_BIN: '', KURMIS_CODEX_BIN: '', ...options.env } })
+}
+
 const fixture = (name: string): string => readFileSync(resolve('test/platform/fixtures', name), 'utf8')
 
 function notFound(tool: ToolName, options: FindProgramOptions): ProgramNotFoundError {
   try {
-    findProgram(tool, options)
+    search(tool, options)
   } catch (error) {
     if (error instanceof ProgramNotFoundError) return error
     throw error
@@ -29,8 +35,8 @@ function notFound(tool: ToolName, options: FindProgramOptions): ProgramNotFoundE
 describe('the explicit variables', () => {
   test('KURMIS_CLAUDE_BIN and KURMIS_CODEX_BIN win over PATH, and a .js runs through Node', () => {
     const env = { KURMIS_CLAUDE_BIN: '/opt/fake/claude', KURMIS_CODEX_BIN: '/opt/fake/codex.mjs', PATH: '/usr/bin' }
-    expect(findProgram('claude', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: '/opt/fake/claude', args: [], source: 'env' })
-    expect(findProgram('codex', { env, platform: 'linux', nodePath: '/node' })).toEqual({ command: '/node', args: ['/opt/fake/codex.mjs'], source: 'env' })
+    expect(search('claude', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: '/opt/fake/claude', args: [], source: 'env' })
+    expect(search('codex', { env, platform: 'linux', nodePath: '/node' })).toEqual({ command: '/node', args: ['/opt/fake/codex.mjs'], source: 'env' })
   })
 
   test('a batch file is refused', () => {
@@ -41,7 +47,7 @@ describe('the explicit variables', () => {
   })
 
   test('on Windows the variable name is case-insensitive', () => {
-    const found = findProgram('codex', { env: { kurmis_codex_bin: 'C:\\x\\codex.exe' }, platform: 'win32', files: windowsFiles({}) })
+    const found = search('codex', { env: { kurmis_codex_bin: 'C:\\x\\codex.exe' }, platform: 'win32', files: windowsFiles({}) })
     expect(found).toEqual({ command: 'C:\\x\\codex.exe', args: [], source: 'env' })
   })
 
@@ -76,7 +82,7 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
     const later = folder('d')
     program(join(later, 'claude'))
     const env = { PATH: ['', 'relative/bin', notExecutable, aFolder, found, later].join(':') }
-    expect(findProgram('claude', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: claude, args: [], source: 'path' })
+    expect(search('claude', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: claude, args: [], source: 'path' })
   })
 
   test('goes on past a PATH entry that is a file or a folder it may not open', () => {
@@ -88,7 +94,7 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
       const found = folder('g')
       const codex = program(join(found, 'codex'))
       const env = { PATH: [aFile, closed, found].join(':') }
-      expect(findProgram('codex', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: codex, args: [], source: 'path' })
+      expect(search('codex', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: codex, args: [], source: 'path' })
     } finally {
       chmodSync(closed, 0o755)
     }
@@ -99,7 +105,7 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
     const real = program(join(versions, '2.1.0'))
     const bin = folder('local-bin')
     symlinkSync(real, join(bin, 'claude'))
-    expect(findProgram('claude', { env: { PATH: bin }, platform: 'linux', nodePath: '/node' }))
+    expect(search('claude', { env: { PATH: bin }, platform: 'linux', nodePath: '/node' }))
       .toEqual({ command: join(bin, 'claude'), args: [], source: 'path' })
   })
 
@@ -108,7 +114,7 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
     const entry = program(join(packageBin, 'codex.js'))
     const bin = folder('prefix-bin')
     symlinkSync('../lib/node_modules/@openai/codex/bin/codex.js', join(bin, 'codex'))
-    const found = findProgram('codex', { env: { PATH: bin }, platform: 'darwin', nodePath: '/node' })
+    const found = search('codex', { env: { PATH: bin }, platform: 'darwin', nodePath: '/node' })
     expect(found).toEqual({ command: '/node', args: [expect.stringMatching(/codex\.js$/)], source: 'path' })
     expect(readFileSync(found.args[0] as string, 'utf8')).toBe(readFileSync(entry, 'utf8'))
   })
@@ -119,19 +125,19 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
     symlinkSync(bundle, join(linked, 'claude'))
     const real = program(join(folder('real-bin'), 'claude'))
     const env = { PATH: [linked, join(root, 'real-bin')].join(':') }
-    expect(findProgram('claude', { env, platform: 'darwin', nodePath: '/node', ownEntry: bundle }))
+    expect(search('claude', { env, platform: 'darwin', nodePath: '/node', ownEntry: bundle }))
       .toEqual({ command: real, args: [], source: 'path' })
     // Without anything else on PATH the skipped hit is named in the message.
     const error = notFound('claude', { env: { PATH: linked }, platform: 'darwin', nodePath: '/node', ownEntry: bundle })
     expect(error.message).toContain(`${join(linked, 'claude')}: it is kurmis itself, not the real program`)
     // Not knowing its own bundle, kurmis would run it through Node.
-    expect(findProgram('claude', { env: { PATH: linked }, platform: 'darwin', nodePath: '/node', ownEntry: null }).command).toBe('/node')
+    expect(search('claude', { env: { PATH: linked }, platform: 'darwin', nodePath: '/node', ownEntry: null }).command).toBe('/node')
   })
 
   test('Claude Code from its native installer when it is not on PATH', () => {
     const home = folder('home')
     const native = program(join(folder('home/.local/bin'), 'claude'))
-    expect(findProgram('claude', { env: { PATH: folder('empty'), HOME: home }, platform: 'darwin' }))
+    expect(search('claude', { env: { PATH: folder('empty'), HOME: home }, platform: 'darwin' }))
       .toEqual({ command: native, args: [], source: 'native-installer' })
     // Codex has no such place.
     expect(notFound('codex', { env: { PATH: folder('empty'), HOME: home }, platform: 'darwin' }).message).not.toContain('.local')
@@ -183,7 +189,7 @@ describe('PATH on Windows', () => {
   const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 
   const find = (tool: ToolName, env: NodeJS.ProcessEnv, files: Record<string, string | Uint8Array>) =>
-    findProgram(tool, { env, platform: 'win32', nodePath: NODE, files: windowsFiles(files) })
+    search(tool, { env, platform: 'win32', nodePath: NODE, files: windowsFiles(files) })
 
   test('an .exe on PATH is started directly, and the Path spelling of the variable works', () => {
     expect(find('claude', { Path: 'C:\\empty;C:\\tools' }, { 'C:\\tools\\claude.exe': NATIVE }))
@@ -201,7 +207,7 @@ describe('PATH on Windows', () => {
       [CODEX_ENTRY]: '',
       'C:\\tools\\codex.exe': NATIVE
     }
-    expect(findProgram('codex', { env: { PATH: `${NPM};C:\\tools` }, platform: 'win32', nodePath: NODE, files: windowsFiles(files),
+    expect(search('codex', { env: { PATH: `${NPM};C:\\tools` }, platform: 'win32', nodePath: NODE, files: windowsFiles(files),
       ownEntry: CODEX_ENTRY.toUpperCase() })).toEqual({ command: 'C:\\tools\\codex.exe', args: [], source: 'path' })
   })
 

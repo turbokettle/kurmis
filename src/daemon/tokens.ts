@@ -7,9 +7,12 @@
 //   first, and the login's `.credentials.json` when there is no item, so the daemon does the
 //   same: the item first, and the file whenever the item gives no token.
 // - Windows: in `.credentials.json`, or, in newer CLI versions, in Windows Credential Manager,
-//   which the CLI reads first. The CLI deletes the file once the record is in Credential
-//   Manager, so for a login without the file the daemon reads Credential Manager
-//   (`CredentialManagerReader` in `credential-manager.ts`), and the file otherwise.
+//   which the CLI reads first, and the file only when Credential Manager has nothing. The
+//   daemon does the same (`CredentialManagerReader` in `credential-manager.ts`). A probe of a
+//   login whose record is in Credential Manager runs with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`
+//   (`probeEnvironment`), because the CLI's feature flag for it is read from the config folder
+//   the CLI runs with, and a probe's folder is not the one a routed CLI uses: with the flag off
+//   there, the probe would not see the record, and would report the login signed out.
 // - Linux: in `.credentials.json` only.
 //
 // The two kinds of login:
@@ -56,6 +59,25 @@ export interface TokenSourceOptions {
 export interface TokenSource extends CredentialsSource {
   /** True when tokens come from the macOS Keychain (with the file as fallback). For whyPassedOver's `keychain`. */
   readonly keychain: boolean
+  /**
+   * Has the next `prime` read the login again, as `invalidate` does, except that a Credential
+   * Manager answer goes on being used while it is read again rather than waited for.
+   */
+  markStale(id: string): void
+  /** Whether the last read found the login's record in Windows Credential Manager. */
+  inCredentialManager(id: string): boolean
+}
+
+/** The variable that makes Claude Code on Windows keep its record in Credential Manager. */
+export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CREDMAN'
+
+/**
+ * The environment a usage probe of `id` gets: `env`, with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`
+ * when the login's record was found in Credential Manager, so the probe's CLI reads it there
+ * and writes a renewed token back there.
+ */
+export function probeEnvironment(tokens: Pick<TokenSource, 'inCredentialManager'>, id: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return tokens.inCredentialManager(id) ? { ...env, [FORCE_CREDENTIAL_MANAGER_VARIABLE]: '1' } : env
 }
 
 /**
@@ -130,6 +152,16 @@ export function createTokenSource(options: TokenSourceOptions): TokenSource {
       keychain?.invalidate(id)
       credentialManager?.invalidate(id)
       file.invalidate(id)
+    },
+    markStale(id: string): void {
+      if (!isClaudeLoginId(id)) return
+      // A Keychain read takes a moment, so the Keychain answer is simply read again.
+      keychain?.invalidate(id)
+      credentialManager?.markStale(id)
+      file.invalidate(id)
+    },
+    inCredentialManager(id: string): boolean {
+      return isClaudeLoginId(id) && credentialManager !== null && credentialManager.holds(id)
     },
     clear(): void {
       keychain?.clear()

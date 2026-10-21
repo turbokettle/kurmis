@@ -141,7 +141,7 @@ export function startFrameProcess(program: string, args: readonly string[], opti
   const platform = options.platform ?? process.platform
   const invocation = invocationFor(program, args)
   if ('refused' in invocation) return endedBeforeStart('refused', null)
-  if (refusedByGuard(invocation.command, options.env) !== null) return endedBeforeStart('refused', null)
+  if (refusedByGuard(invocation.command, options.env, invocation.args) !== null) return endedBeforeStart('refused', null)
   if (options.signal?.aborted === true) return endedBeforeStart('aborted', null)
 
   let child: ChildProcess
@@ -311,7 +311,7 @@ function killTree(child: ChildProcess, platform: NodeJS.Platform, env: NodeJS.Pr
   // Through `invocationFor`, so a stand-in script that a test names runs through Node; Windows
   // cannot start a `.mjs` file itself.
   const invocation = invocationFor(command.command, command.args)
-  if ('refused' in invocation || refusedByGuard(invocation.command, env) !== null) {
+  if ('refused' in invocation || refusedByGuard(invocation.command, env, invocation.args) !== null) {
     fallback()
     return
   }

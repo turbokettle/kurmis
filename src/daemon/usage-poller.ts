@@ -165,8 +165,13 @@ export class UsagePoller {
       answer = { ok: false, signedIn: null, reason: 'other', error: 'The usage probe failed unexpectedly.' }
     }
     if (this.closed) return
-    // A Claude probe's CLI may have renewed the token, so the next read looks again.
-    if (login.provider === 'claude') this.options.tokens.invalidate(id)
+    // A Claude probe's CLI may have renewed the token, so the next read looks again. After a
+    // renewal the next request waits for that read; after any other probe it goes on with the
+    // token it has while Credential Manager is read again.
+    if (login.provider === 'claude') {
+      if (cause === 'renewal') this.options.tokens.invalidate(id)
+      else this.options.tokens.markStale(id)
+    }
     const ms = now() - startedAt
     if (answer.ok) {
       // The probe measured the login as it was when it started. What an answer said since then

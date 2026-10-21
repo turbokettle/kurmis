@@ -286,9 +286,12 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   daemon answered within 5 seconds …)".** A launchd job may be unable to reach a program or a
   folder on an external volume: launchd then answers exit 78, or the job hangs. This happens when
   Node, the kurmis install or the kurmis data folder (`KURMIS_HOME`) is on such a volume. Kurmis
-  then starts the daemon from the ssh session, which cannot read the Keychain. Give the program
-  that runs the job access to the volume (System Settings, Privacy & Security, Files and Folders
-  or Full Disk Access), or keep Node, kurmis and its data folder on the internal disk.
+  then starts the daemon directly from the command you ran (an ssh session, or another session
+  where the login Keychain could not be read), and such a daemon cannot read the Keychain either,
+  so logins whose token is in the Keychain are not routed until the daemon is started from a
+  login at the screen. Give the program that runs the job access to the volume (System
+  Settings, Privacy & Security, Files and Folders or Full Disk Access), or keep Node, kurmis and
+  its data folder on the internal disk.
 - **Windows: PowerShell says running `kurmis.ps1` is disabled on this system.** PowerShell's
   default execution policy blocks the `kurmis.ps1` script npm installs next to `kurmis.cmd`.
   Run `kurmis.cmd` instead (it takes the same arguments), or allow local scripts for your user

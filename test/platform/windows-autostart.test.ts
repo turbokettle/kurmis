@@ -3,6 +3,7 @@ import { join, win32 } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { windowsCommandLine } from '../../src/platform/detach.ts'
 import {
+  PERCENT_SIGN_VARIABLE,
   RUN_ENTRY_DESCRIPTION,
   RUN_KEY,
   autostartCommandLine,
@@ -62,6 +63,32 @@ function splitWindowsCommandLine(line: string): string[] {
   }
   if (started) args.push(current)
   return args
+}
+
+/**
+ * What Windows' ExpandEnvironmentStrings does: left to right, `%NAME%` becomes the variable's
+ * value when NAME is set (names compared without case), and stays as it is otherwise. The
+ * result is not expanded again.
+ */
+function expandEnvironmentStrings(text: string, variables: Record<string, string>): string {
+  const byName = new Map(Object.entries(variables).map(([name, value]) => [name.toUpperCase(), value]))
+  let out = ''
+  let i = 0
+  while (i < text.length) {
+    const end = text[i] === '%' ? text.indexOf('%', i + 1) : -1
+    const value = end === -1 ? undefined : byName.get(text.slice(i + 1, end).toUpperCase())
+    if (value !== undefined) {
+      out += value
+      i = end + 1
+    } else if (end !== -1) {
+      out += text.slice(i, end)
+      i = end
+    } else {
+      out += text[i] ?? ''
+      i++
+    }
+  }
+  return out
 }
 
 const NODE = 'C:\\Program Files\\nodejs\\node.exe'
@@ -130,6 +157,25 @@ describe('the Run value', () => {
     expect(sameRunData('C:\\ab', 'C:\\aüb')).toBe(false)
   })
 
+  it('matches a value whose letters outside ASCII came out as ASCII or as two characters', () => {
+    const written = 'C:\\Windows\\System32\\wscript.exe //B //Nologo //E:JScript "C:\\Users\\Jānis Bērziņš\\.kurmis\\autostart.js"'
+    // Best-fit mapping prints ā as a, or a code page without the letter prints ?.
+    expect(sameRunData(written.replace('ā', 'a').replace('ē', 'e').replace('ņ', 'n').replace('š', 's'), written)).toBe(true)
+    expect(sameRunData(written.replace(/[ā-ž]/g, '?'), written)).toBe(true)
+    // A double-byte code page: a lead byte that is not UTF-8 and a second byte that is ASCII.
+    expect(sameRunData('C:\\\ufffd\\x', 'C:\\日x')).toBe(true)
+    expect(sameRunData('C:\\\ufffd\\\ufffd\\x', 'C:\\日本x')).toBe(true)
+    // More characters than such a run can turn into, or a change in the ASCII parts, is a different value.
+    expect(sameRunData('C:\\abcx', 'C:\\日x')).toBe(false)
+    expect(sameRunData(written.replace('ā', 'a').replace('Users', 'Usr'), written)).toBe(false)
+    expect(sameRunData(written.replace('ā', ''), written)).toBe(false)
+    expect(sameRunData('C:\\x.js', 'C:\\x.js ')).toBe(false)
+    expect(sameRunData('C:\\aüb', 'C:\\ab')).toBe(false)
+    // The ASCII parts are compared as text, not as a pattern.
+    expect(sameRunData('C:\\a+b', 'C:\\a.b')).toBe(false)
+    expect(sameRunData('C:\\(x)[y]$', 'C:\\(x)[y]$')).toBe(true)
+  })
+
   it('reads whether Windows Script Host is turned off', () => {
     const answer = (stdout: string, code = 0) => ({ stdout, stderr: '', code, timedOut: false, outputTooLarge: false, error: null })
     const key = '\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows Script Host\\Settings\r\n'
@@ -160,6 +206,26 @@ describe('the logon script', () => {
       `shell.Run(${jscriptString(command)}, 0, false);`,
       ''
     ])
+  })
+
+  it('writes each percent sign as a variable set to %, since shell.Run expands %NAME% in its command line', () => {
+    const script = { programArguments: PROGRAM, environment: { KURMIS_HOME: 'D:\\100%\\%PATH%\\%%' }, cwd: 'C:\\Users\\Example User' }
+    const command = autostartCommandLine(script)
+    const lines = autostartScript(script).split('\r\n')
+    expect(lines.slice(0, 4)).toEqual([
+      '// Written by kurmis setup: starts the kurmis daemon at logon without a console window.',
+      '// kurmis setup --undo removes it.',
+      'var shell = new ActiveXObject("WScript.Shell");',
+      'shell.CurrentDirectory = "C:\\\\Users\\\\Example User";'
+    ])
+    expect(lines).toContain(`shell.Environment("Process").Item("${PERCENT_SIGN_VARIABLE}") = "%";`)
+    const escaped = command.replaceAll('%', `%${PERCENT_SIGN_VARIABLE}%`)
+    expect(lines).toContain(`var command = ${jscriptString(escaped)};`)
+    expect(lines).toContain(`if (shell.ExpandEnvironmentStrings(command) == ${jscriptString(command)}) shell.Run(command, 0, false);`)
+    expect(lines.filter((line) => line.startsWith('shell.Run('))).toEqual([])
+    // Expanded the way Windows does, with PATH set as well, the command line comes back as it was.
+    expect(expandEnvironmentStrings(escaped, { [PERCENT_SIGN_VARIABLE]: '%', PATH: 'C:\\Windows' })).toBe(command)
+    expect(splitWindowsCommandLine(command).at(-1)).toBe('KURMIS_HOME=D:\\100%\\%PATH%\\%%')
   })
 
   it('carries only the kurmis variables', () => {
@@ -249,15 +315,30 @@ describe('registering through reg.exe', () => {
     expect(existsSync(scriptPath())).toBe(false)
   })
 
-  it('removes the VBScript an older kurmis wrote', async () => {
+  it('removes the VBScript an older kurmis wrote once the Run value names the new script', async () => {
     const old = join(join(process.env.HOME ?? '', 'win', 'Zoë Example'), 'autostart.vbs')
     mkdirSync(join(process.env.HOME ?? '', 'win', 'Zoë Example'), { recursive: true })
     writeFileSync(old, 'old')
     expect((await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })).changed).toBe(true)
     expect(existsSync(old)).toBe(false)
+    // The value already names the new script: only the VBScript changes.
+    writeFileSync(old, 'old')
+    expect(await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() }))
+      .toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
+    expect(existsSync(old)).toBe(false)
     writeFileSync(old, 'old')
     await unregisterWindowsAutostart({ env: env(), scriptPath: scriptPath() })
     expect(existsSync(old)).toBe(false)
+  })
+
+  it('keeps the VBScript an older kurmis wrote when the Run value could not be changed to the new script', async () => {
+    const old = join(join(process.env.HOME ?? '', 'win', 'Zoë Example'), 'autostart.vbs')
+    mkdirSync(join(process.env.HOME ?? '', 'win', 'Zoë Example'), { recursive: true })
+    writeFileSync(old, 'old')
+    const result = await registerWindowsAutostart({ env: { ...env(), FAKE_REG_FAIL: '1' }, programArguments: PROGRAM, scriptPath: scriptPath() })
+    expect(result.where).toBeNull()
+    expect(result.warning).toMatch(/reg\.exe could not write the logon entry/)
+    expect(readFileSync(old, 'utf8')).toBe('old')
   })
 
   it('answers a warning when reg.exe refuses', async () => {
