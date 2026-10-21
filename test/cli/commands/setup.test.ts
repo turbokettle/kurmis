@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createSetupCommand } from '../../../src/cli/commands/setup.ts'
 import { backupPathFor } from '../../../src/cli/global-settings.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
-import type { AutostartOptions, AutostartResult } from '../../../src/platform/autostart.ts'
+import { registerAutostart, unregisterAutostart, type AutostartOptions, type AutostartResult } from '../../../src/platform/autostart.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
 import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
@@ -256,6 +256,19 @@ describe('kurmis setup', () => {
     expect(result.stderr).toBe(`Warning: ${warning}\n`)
     expect(result.stderr).not.toContain('run "kurmis setup" again')
     expect(existsSync(settingsPath)).toBe(true)
+  })
+
+  it('counts a login item that starts a Node in a temporary folder as done, with a warning', async () => {
+    // The real registration, on the fake launchctl, with fnm's per-shell Node.
+    const node = '/Users/example/.local/state/fnm_multishells/4242_1/bin/node'
+    const register = (given: AutostartOptions): Promise<AutostartResult> =>
+      registerAutostart({ ...given, env: process.env, entry: '/opt/example/kurmis/dist/kurmis.cjs', nodePath: node })
+    const { command } = setup({}, { calls: [], registerAutostart: register, unregisterAutostart })
+    const result = await run(command, [])
+    expect(result.code).toBe(0)
+    expect(result.stderr).toContain(`Warning: The login item starts Node from ${node}, which is in a temporary folder`)
+    expect(result.stderr).not.toContain('Could not make the daemon start at login')
+    expect(result.stderr).not.toContain('run "kurmis setup" again to finish')
   })
 
   it('counts a platform without autostart as done, with a warning', async () => {

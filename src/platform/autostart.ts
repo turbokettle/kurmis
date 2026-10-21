@@ -65,6 +65,11 @@ export interface AutostartResult {
    * counts this as done: the daemon runs, and the next kurmis command starts it after a restart.
    */
   noEntryPossible?: boolean
+  /**
+   * The entry is written and loaded, and `warning` is only advice for the person (the Node it
+   * starts is in a temporary folder). Setup prints it and counts the step as done.
+   */
+  warningOnly?: boolean
 }
 
 const UNSUPPORTED = 'Starting the daemon at login is not supported on this platform; the next kurmis command starts it.'
@@ -109,7 +114,10 @@ export async function registerAutostart(options: AutostartOptions): Promise<Auto
     })
     : await registerLaunchAgent(options, programArguments)
   if (temporary === null) return result
-  return { ...result, warning: result.warning === undefined ? temporary : `${result.warning} ${temporary}` }
+  // Added to a warning the entry already has, the advice leaves that result as it was: a
+  // failure stays a failure.
+  if (result.warning !== undefined) return { ...result, warning: `${result.warning} ${temporary}` }
+  return { ...result, warning: temporary, warningOnly: true }
 }
 
 /** Removes what `registerAutostart` registered. Doing it twice is not an error. */

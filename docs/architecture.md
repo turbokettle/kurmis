@@ -497,8 +497,8 @@ PATH in a temporary folder (`os.tmpdir()`, `TMPDIR`, `TEMP`, `TMP`, `/tmp`, `/va
 in fnm's per-shell `fnm_multishells` folder, which fnm deletes later, is passed over. On
 Windows `process.execPath` is the path Node was started by, without its links resolved, which
 under fnm is in `fnm_multishells`; then the resolved path is used when it is not in such a
-folder. Setup warns when the Node it registers is still in such a folder (`nodeForJobs`,
-`isTemporaryPath` in `src/platform/detach.ts`). The one-shot launchd job uses the same choice.
+folder. Setup warns when the Node it registers is still in such a folder, and still exits 0
+(`nodeForJobs`, `isTemporaryPath` in `src/platform/detach.ts`). The one-shot launchd job uses the same choice.
 
 - **macOS:** `~/Library/LaunchAgents/kurmis.daemon.plist`, the same shape and environment as
   the one-shot job (`KURMIS_HOME` as an absolute path; mode 0644; it holds no secret). It is
@@ -691,11 +691,12 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   is written and setup exits 1. When autostart then fails, the settings change stands and setup
   exits 1; running it again is safe. A launchd agent that is written but can be loaded only at
   the next login, a Windows machine where no logon entry can be written because Windows Script
-  Host is missing or turned off (`noEntryPossible` in `src/platform/autostart.ts`), and a
-  platform without autostart (Linux) are warnings with exit 0: the daemon runs now, and the
-  next kurmis command starts it after a restart. When the daemon cannot be started and the file
-  already holds kurmis' settings from an earlier setup, setup says so rather than that Claude
-  Code does not use kurmis yet.
+  Host is missing or turned off (`noEntryPossible` in `src/platform/autostart.ts`), an entry
+  that starts a Node in a temporary folder (`warningOnly`), and a platform without autostart
+  (Linux) are warnings with exit 0: the daemon runs now, and the next kurmis command starts it
+  after a restart. When the daemon cannot be started and the file already holds kurmis'
+  settings from an earlier setup, setup says so rather than that Claude Code does not use
+  kurmis yet.
 
 `kurmis setup --undo` removes only the values that are still kurmis': a key the person changed is
 left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the

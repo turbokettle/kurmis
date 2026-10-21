@@ -11,9 +11,9 @@
 // When the daemon cannot be started, nothing is written. When autostart then fails, the command
 // says so and exits with 1; running it again is safe, since every step does nothing when it is
 // already done. An autostart entry that loads only at the next login (macOS with nobody at the
-// screen), a machine where no entry can be written (Windows without Windows Script Host) and a
-// platform without autostart are warnings: the daemon runs, and the next kurmis command starts
-// it again after a restart.
+// screen), a machine where no entry can be written (Windows without Windows Script Host), an
+// entry that starts a Node in a temporary folder and a platform without autostart are warnings:
+// the daemon runs, and the entry or the next kurmis command starts it again after a restart.
 //
 // Setup refuses to run while `CLAUDE_CONFIG_DIR` names `~/.claude` itself on macOS and Windows
 // (`defaultFolderRefusal`).
@@ -131,7 +131,8 @@ async function autostartStep(
     result = { changed: false, where: null, warning: errorText(error) }
   }
   const supported = deps.platform === 'darwin' || deps.platform === 'win32'
-  const warnsOnly = result.loadsAtNextLogin === true || result.noEntryPossible === true || !supported
+  const warnsOnly = result.warningOnly === true || result.loadsAtNextLogin === true ||
+    result.noEntryPossible === true || !supported
   if (!undo && result.warning !== undefined && warnsOnly) {
     // The daemon runs now, and the entry, or the next kurmis command, starts it after a restart.
     writeLine(context.stderr, `Warning: ${result.warning}`)

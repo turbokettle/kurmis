@@ -116,7 +116,16 @@ describe('a Node in a temporary folder', () => {
       nodePath: '/Users/example/.local/state/fnm_multishells/4242_1/bin/node' })
     expect(result.changed).toBe(true)
     expect(result.warning).toContain('which is in a temporary folder and may be gone at your next login')
+    expect(result.warningOnly).toBe(true)
     expect((await registerAutostart(mac())).warning).toBeUndefined()
+  })
+
+  it('keeps a load that failed what it was, with the advice added to its warning', async () => {
+    const result = await registerAutostart({ env: { ...process.env, FAKE_LAUNCHCTL_FAIL_BOOTSTRAP: '125' }, platform: 'darwin',
+      entry: ENTRY, nodePath: '/Users/example/.local/state/fnm_multishells/4242_1/bin/node' })
+    expect(result.loadsAtNextLogin).toBe(true)
+    expect(result.warningOnly).toBeUndefined()
+    expect(result.warning).toMatch(/could not be loaded now: .*which is in a temporary folder/s)
   })
 })
 
