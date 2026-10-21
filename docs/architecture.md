@@ -121,6 +121,13 @@ older version, after that daemon finishes the requests it has open.
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
   itself and no subscription would be billed.
 
+**Kurmis' own options come first.** `kurmis claude` and `kurmis codex` read their options
+(`--login <id>`, `--help`) from the front of the argument list and stop at the first argument
+they do not know. That argument and everything after it go to the CLI unchanged. `--` also ends
+kurmis' options and is dropped, so `kurmis claude -- --help` shows claude's own help, while
+`kurmis claude --help` shows kurmis'. `--login` takes a full id or just the name, so
+`--login work` means `claude:work` under `kurmis claude`. The code is `src/cli/wrapper-args.ts`.
+
 On Auto, the CLI is started on a login that has credentials here, normally `claude:default`.
 The proxy signs each request with the login it picks. When that is the login the CLI was
 started on, the proxy forwards the CLI's own `Authorization` header.
@@ -163,7 +170,15 @@ the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it 
   holds most of the code copied from the original router.
 - `src/daemon/` holds the proxy, the control API, the token readers, the usage probes and the
   daemon's lifecycle.
-- `src/cli/` holds the commands and the wrapper.
+- `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and
+  `dispatch.ts` picks the command and handles `--help`, `--version` and `help <command>`. Each
+  command is one module in `src/cli/commands/` exporting a `Command`: its name, a one-line
+  summary, its help text and `run(args, context)`, which returns the exit code (0 done, 1
+  failed, 2 wrong command line). The commands are `claude`, `codex`, `status [--json]`,
+  `list [--json]`, `login <id>`, `logout <id>`, `setup [--undo]` and
+  `daemon start|stop|status|run`, where `daemon run` runs the daemon in the foreground and is
+  what `daemon start` launches in the background.
+- `src/version.ts` holds the version, which the build takes from `package.json`.
 - `src/platform/` holds what differs per OS: finding programs, junctions, detaching, autostart,
   and the file rename retry and file modes.
 - `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude`, `codex app-server` and

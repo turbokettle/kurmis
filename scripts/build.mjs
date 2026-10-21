@@ -1,7 +1,7 @@
 // Bundles the CLI and everything it imports into one CommonJS file, so the installed package
 // needs no runtime dependencies and no build step.
 import { build } from 'esbuild'
-import { readFileSync } from 'node:fs'
+import { chmodSync, readFileSync } from 'node:fs'
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
@@ -17,3 +17,6 @@ await build({
   legalComments: 'none',
   logLevel: 'warning'
 })
+
+// Executable, so a clone can run it directly. npm also marks a bin executable when it links it.
+chmodSync('dist/kurmis.cjs', 0o755)
