@@ -190,10 +190,10 @@ older version, after that daemon finishes the requests it has open.
   left, the CLI gets the real 429 of the login that is back first, so it behaves exactly as with
   one exhausted account. The proxy answers its own 429 (`poolLimitAnswer`) instead when it holds
   no real one (logins skipped for limits it already knew about), or when a login it did not try
-  is back earlier than every one that refused. A pinned session gets its login's 429 as it is. The body of a 429 the proxy keeps
-  to pass on later, and of the 400 before a move back (below), is read for at most 5 s
-  (`KEPT_ANSWER_TIMEOUT_MS`), so a body that stalls does not hold the request back from the next
-  login; what came by then is what the CLI gets.
+  is back earlier than every one that refused. A pinned session gets its login's 429 as it is.
+  The body of a 429 the proxy keeps to pass on later, and of the 400 before a move back (below),
+  is read for at most 5 s (`KEPT_ANSWER_TIMEOUT_MS`), so a body that stalls does not hold the
+  request back from the next login; what came by then is what the CLI gets.
 - **No capacity.** A 529, or a 429 without usage-limit headers, puts that login into the
   session's backoff (`CapacityCooling` in `src/core/capacity-hold.ts`) and the request goes to
   another login at once when the session may use one that is not cooling. Otherwise it waits for
@@ -320,7 +320,8 @@ requests and exits 1. The next kurmis command starts a new one.
 new daemon does the handover: it sends the old one a control `stop` and tries the bind every
 100 ms for up to 10 seconds. While the old daemon closes, its port may answer the status request
 with nothing or with an error; once the stop is sent that counts as the old daemon going away,
-not as another program, and the bind is tried again. The old daemon frees the port as soon as it has answered, and
+not as another program, and the bind is tried again. The old daemon frees the port as soon as
+it has answered, and
 finishes its open requests in the background while the new one serves. A routed Claude CLI
 retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
 in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older
@@ -510,7 +511,8 @@ So the wrapper passes exactly one `--settings`, first, ahead of the person's arg
 **Global mode** is `kurmis setup` (`src/cli/global-settings.ts`, `src/cli/commands/setup.ts`). It
 puts the routing variables in the `env` block of the user settings file, so a plain `claude` and
 the IDE extensions are routed too. The values are those of an Auto CLI with no started-on
-header, so a plain `claude` runs on `claude:default`. It also registers the daemon to start at
+header, so a plain `claude` runs on `claude:default`, except in a `$CLAUDE_CONFIG_DIR/settings.json`
+whose CLIs have credentials of their own (below). It also registers the daemon to start at
 login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon.
 
 - The file is `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set and not empty, as the

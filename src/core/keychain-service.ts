@@ -18,8 +18,11 @@
 // the machine's own login, whose item has the plain name, is reached only by leaving the
 // variable unset.
 //
-// When `CLAUDE_SECURESTORAGE_CONFIG_DIR` is unset but `CLAUDE_CONFIG_DIR` is set, the CLI hashes
-// its config folder instead. Kurmis runs `claude auth login` and the usage probes of an extra
+// When `CLAUDE_SECURESTORAGE_CONFIG_DIR` is unset but `CLAUDE_CONFIG_DIR` is set and not empty,
+// the CLI hashes the value of `CLAUDE_CONFIG_DIR` the same way instead (checked again in the
+// bundled JavaScript of 2.1.306), and reads `.credentials.json` from that folder. So a CLI with
+// `CLAUDE_CONFIG_DIR` set has credentials of its own; see "`claude:default` and
+// `CLAUDE_CONFIG_DIR`" in `docs/architecture.md`. Kurmis runs `claude auth login` and the usage probes of an extra
 // login that way (`claudeLoginEnv` in `src/data/login-env.ts`), with `CLAUDE_CONFIG_DIR` set to
 // the same string a routed CLI gets as `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so both name the same
 // item.
