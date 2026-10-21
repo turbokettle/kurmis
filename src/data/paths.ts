@@ -72,6 +72,19 @@ export function probeWorkFolder(): string {
   return join(kurmisHome(), 'probe', 'cwd')
 }
 
+/**
+ * The plists of the short-lived launchd jobs that start the daemon from an ssh login on macOS
+ * (`src/platform/launchd.ts`). Each is removed once its job has run.
+ */
+export function launchdJobFolder(): string {
+  return join(kurmisHome(), 'launchd')
+}
+
+/** The script the Windows logon entry runs to start the daemon without a console window. */
+export function windowsAutostartScriptPath(): string {
+  return join(kurmisHome(), 'autostart.vbs')
+}
+
 /** The folder that holds the extra logins of one provider: `claude/` or `codex/`. */
 export function providerFolder(provider: LoginProvider): string {
   return join(kurmisHome(), provider)
