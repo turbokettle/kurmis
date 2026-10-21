@@ -72,7 +72,8 @@ describe('dispatch', () => {
     expect(status.stderr).toContain('kurmis status:')
     expect((await run('claude', '--login', '../x')).code).toBe(2)
     expect((await run('daemon')).code).toBe(2)
-    expect((await run('daemon', 'restart')).code).toBe(2)
+    expect((await run('daemon', 'nope')).code).toBe(2)
+    expect((await run('daemon', 'stop', '--nope')).code).toBe(2)
     expect((await run('daemon', 'constructor')).code).toBe(2)
   })
 
@@ -82,11 +83,7 @@ describe('dispatch', () => {
     ['status', '--json'],
     ['login', 'claude:work'],
     ['logout', 'claude:work'],
-    ['setup', '--undo'],
-    ['daemon', 'start'],
-    ['daemon', 'stop'],
-    ['daemon', 'status'],
-    ['daemon', 'run']
+    ['setup', '--undo']
   ])('stubs %s for now', async (...argv) => {
     const result = await run(...argv)
     expect(result.code).toBe(1)
