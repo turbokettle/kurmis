@@ -193,13 +193,13 @@ reported) and the start at login. The daemon keeps running until you stop it, be
 ### `kurmis daemon`
 
 ```sh
-kurmis daemon start|stop|status|run
+kurmis daemon start|stop|restart|status|run
 ```
 
 You seldom need these: the other commands start the daemon when they need it, and a newer
 kurmis replaces an older daemon by itself. `kurmis daemon status` shows whether it runs, its pid
-and port; `stop` stops it after it finishes the requests it has open; `run` runs it in the
-terminal, which helps when looking into a problem.
+and port; `stop` stops it after it finishes the requests it has open; `restart` stops it and
+starts a new one; `run` runs it in the terminal, which helps when looking into a problem.
 
 ## Uninstall
 
@@ -219,12 +219,12 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
 - **What is the daemon doing?** Its log is `~/.kurmis/daemon.log` (the previous one is
   `daemon.log.1`). It names logins, status codes and timings, never tokens, request contents or
   emails. `kurmis status` shows what it knows about each login.
-- **Restarting the daemon.** `kurmis daemon stop`, then `kurmis daemon start`. Claude Code
+- **Restarting the daemon.** `kurmis daemon restart`. Claude Code
   sessions that are open retry their requests for a few minutes and carry on once it is back.
 - **The daemon cannot start because its port is in use.** Another program has kurmis' port
   (28411 unless you changed it). Pick a free one by adding
   `"port": 28412` (any number from 1024 to 65535) to `~/.kurmis/config.json`, then run
-  `kurmis daemon stop` and `kurmis daemon start`. If you ran `kurmis setup`, run it again so
+  `kurmis daemon restart`. If you ran `kurmis setup`, run it again so
   `settings.json` names the new port.
 - **"Not logged in" in Claude Code, or a login shown as signed out.** Sign it in again with
   `kurmis login <id>`, for example `kurmis login claude:work`.
@@ -232,9 +232,11 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
   login's token, which the macOS `security` program fetches. Choose "Always Allow" so it does
   not ask again for that login.
 - **Working over ssh on a Mac.** A program started from an ssh session cannot read the login
-  Keychain, which is where Claude Code keeps its tokens on macOS. Start the daemon from a session
-  at the Mac itself, or run `kurmis setup` there once so it starts at login; `kurmis claude` over
-  ssh then uses that daemon.
+  Keychain, which is where Claude Code keeps its tokens on macOS. So when kurmis has to start the
+  daemon from an ssh session, it starts it through launchd in your desktop session instead,
+  which works while you are logged in at the Mac (the screen may be locked). If nobody is logged
+  in at the Mac, start the daemon there once, or run `kurmis setup` there so it starts at login;
+  `kurmis claude` over ssh then uses that daemon.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
   now; try again. If no kurmis command is running, delete `~/.kurmis/config.json.lock`.
 - **A command says the daemon could not be reached.** Look at the end of `daemon.log`, or run
