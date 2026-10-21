@@ -67,6 +67,15 @@ export function claudeDefaultProbeFolder(): string {
   return join(kurmisHome(), 'probe', 'claude-default')
 }
 
+/**
+ * The settings files `kurmis claude` passes to claude with `--settings`. They hold the daemon's
+ * key, so they live here, readable by the user only, rather than on claude's command line, where
+ * other users of the machine could read it in the process list.
+ */
+export function wrapperSettingsFolder(): string {
+  return join(kurmisHome(), 'settings')
+}
+
 /** An empty folder the usage probes run in, so they read no project's settings. */
 export function probeWorkFolder(): string {
   return join(kurmisHome(), 'probe', 'cwd')

@@ -64,7 +64,10 @@ signs the request with that login's token.
 - `kurmis claude …` and `kurmis codex …` start the CLI with the terminal attached, pass Ctrl-C
   on, and exit with the CLI's exit code.
 - `kurmis status`, with `--json`, shows each login's usage.
-- `kurmis login`, `logout` and `list` manage logins.
+- `kurmis login`, `logout` and `list` manage logins, and `kurmis set` changes a login's routing
+  opt-in, limits, use-first and label.
+- `kurmis setup` routes every Claude Code on the machine through kurmis by editing the user's
+  `settings.json`, and `kurmis setup --undo` takes that back.
 - There are also commands to start and stop the background process and show its state.
 
 ## Not in kurmis

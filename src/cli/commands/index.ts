@@ -6,6 +6,7 @@ import { daemonCommand } from './daemon.ts'
 import { listCommand } from './list.ts'
 import { loginCommand } from './login.ts'
 import { logoutCommand } from './logout.ts'
+import { setCommand } from './set.ts'
 import { setupCommand } from './setup.ts'
 import { statusCommand } from './status.ts'
 
@@ -14,6 +15,7 @@ export const COMMANDS: readonly Command[] = [
   codexCommand,
   statusCommand,
   listCommand,
+  setCommand,
   loginCommand,
   logoutCommand,
   setupCommand,

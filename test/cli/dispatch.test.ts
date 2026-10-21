@@ -16,7 +16,7 @@ async function run(...argv: string[]): Promise<{ code: number; stdout: string; s
   return { code, stdout, stderr }
 }
 
-const NAMES = ['claude', 'codex', 'status', 'list', 'login', 'logout', 'setup', 'daemon']
+const NAMES = ['claude', 'codex', 'status', 'list', 'set', 'login', 'logout', 'setup', 'daemon']
 
 describe('dispatch', () => {
   it('has every command from the docs', () => {
@@ -61,9 +61,11 @@ describe('dispatch', () => {
   })
 
   it('passes --help after a claude argument on to claude instead of showing kurmis help', async () => {
+    // The test environment is empty, so no claude is found and nothing is started.
     const result = await run('claude', '-p', '--help')
     expect(result.stdout).toBe('')
-    expect(result.stderr).toContain('not implemented yet')
+    expect(result.stderr).not.toContain('Usage: kurmis claude')
+    expect(result.code).toBe(127)
   })
 
   it('gives a usage error for a bad option', async () => {
@@ -75,19 +77,6 @@ describe('dispatch', () => {
     expect((await run('daemon', 'nope')).code).toBe(2)
     expect((await run('daemon', 'stop', '--nope')).code).toBe(2)
     expect((await run('daemon', 'constructor')).code).toBe(2)
-  })
-
-  it.each([
-    ['claude'],
-    ['codex'],
-    ['status', '--json'],
-    ['login', 'claude:work'],
-    ['logout', 'claude:work'],
-    ['setup', '--undo']
-  ])('stubs %s for now', async (...argv) => {
-    const result = await run(...argv)
-    expect(result.code).toBe(1)
-    expect(result.stderr).toMatch(/not implemented yet/)
   })
 })
 
@@ -101,9 +90,9 @@ describe('kurmis list', () => {
     expect(result.code).toBe(0)
     expect(result.stdout).toBe(
       [
-        'ID              LABEL    ROUTING  5H LIMIT  WEEKLY LIMIT  USE FIRST',
-        'claude:default  default  on       100%      100%          no',
-        'codex:default   default  on       100%      100%          no',
+        'ID              LABEL    AUTO  FIVE-HOUR  WEEKLY  USE-FIRST  CREDENTIALS',
+        'claude:default  default  on    100%       100%    off        no',
+        'codex:default   default  on    100%       100%    off        no',
         ''
       ].join('\n')
     )
@@ -114,10 +103,10 @@ describe('kurmis list', () => {
     config = updateLogin(config, 'codex:default', { routing: false, weeklyLimit: 75 })
     saveConfig(config)
     const table = await run('list')
-    expect(table.stdout).toContain('claude:work     Work account  on       100%      100%          yes')
-    expect(table.stdout).toContain('codex:default   default       off      100%      75%           no')
+    expect(table.stdout).toContain('claude:work     Work account  on    100%       100%    on         no')
+    expect(table.stdout).toContain('codex:default   default       off   100%       75%     off        no')
     const json = await run('list', '--json')
-    expect(JSON.parse(json.stdout)).toEqual(config.logins)
+    expect(JSON.parse(json.stdout)).toEqual(config.logins.map((login) => ({ ...login, credentials: false })))
   })
 
   it('reports a broken config.json', async () => {

@@ -25,6 +25,16 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 - `config.json` holds the daemon's port and the logins with their settings: id, provider, label,
   opt-in, the two limits and use-first. The CLI writes it, and the daemon reloads it when its
   contents change (`configStamp`, a hash of the file).
+- `config.json.lock` exists while a command changes `config.json` (`changeConfig` in
+  `src/data/config.ts`, `src/data/lock.ts`). It is created with exclusive create and holds
+  `{pid, createdAt, token}`. Another command waits for it, up to 15 seconds, and then fails
+  with a message naming the pid that holds it. A lock whose pid is dead, or that is older than
+  10 seconds, is stale and is removed; `config.json.lock.break` exists for a moment while that
+  happens, so two waiters never remove each other's new lock. A lock is released only by the
+  process whose token it holds.
+- `settings/` holds the settings files `kurmis claude` passes to claude with `--settings`
+  (below). Each is named after a hash of its contents, mode 0600, and removed once no start has
+  used it for 30 days.
 - `claude/<name>/` is the config folder of the extra Claude login `claude:<name>`. On Windows
   it holds the login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain,
   under a name derived from this folder's path (`keychainService` in
@@ -345,29 +355,127 @@ kurmis' options and is dropped, so `kurmis claude -- --help` shows claude's own 
 `kurmis claude --help` shows kurmis'. `--login` takes a full id or just the name, so
 `--login work` means `claude:work` under `kurmis claude`. The code is `src/cli/wrapper-args.ts`.
 
-On Auto, the CLI is started on a login that has credentials here, normally `claude:default`.
-The proxy signs each request with the login it picks. When that is the login the CLI was
-started on, the proxy forwards the CLI's own `Authorization` header.
-
-**Global mode** is `kurmis setup`. It puts the same variables in the `env` block of
-`~/.claude/settings.json`, so a plain `claude` and the IDE extensions are routed too. It also
-registers the daemon to start at login: a launchd agent on macOS, and a logon entry on Windows.
-`kurmis setup --undo` removes both.
+**The login the CLI starts on** (`src/cli/commands/claude.ts`). The wrapper starts the daemon
+when it is not running and reads its status. With `--login`, the CLI starts on that login, which
+must be a Claude login in `config.json` and, unless it is `claude:default`, must have its folder.
+On Auto, `autoStartLogin` picks the login: `claude:default` while it is signed in (an unknown
+sign-in state counts as signed in for it, and only for it), otherwise a signed-in login of the
+pool, with a note on stderr. The proxy signs each request with the login it picks. When that is
+the login the CLI was started on, the proxy forwards the CLI's own `Authorization` header. The
+wrapper sends `x-kurmis-started-on` with that login. When the daemon cannot be reached, the
+wrapper does not start claude unrouted; it fails with a message naming `kurmis daemon start`
+and the log.
 
 **The `env` of `settings.json` beats the process environment, and the `--settings` flag beats
 `settings.json`.** Measured with Claude Code 2.1.301 against two local servers. In global mode
 a variable the wrapper puts in the process environment is therefore ignored, so the wrapper
-passes its routing variables in a `--settings` argument instead. When the user's own arguments
-already carry `--settings`, the wrapper merges its `env` into that one.
+also passes its routing variables (`ROUTING_VARIABLES`: the base URL, the custom headers,
+`ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_MAX_RETRIES`) in a `--settings` argument
+(`src/cli/settings-arg.ts`). `CLAUDE_SECURESTORAGE_CONFIG_DIR` stays in the process environment
+only.
+
+How Claude Code 2.1.301 reads `--settings`, from its bundled source: before it parses the
+command line it scans the arguments up to the first `--` and loads only the last `--settings
+<value>` or `--settings=<value>`. Its parser has positional options on, so a root option such as
+`--settings` must come before a subcommand (`claude --settings X mcp list`). A value whose
+trimmed text starts with `{` and ends with `}` is inline JSON; anything else is a file path
+relative to the folder claude starts in.
+
+So the wrapper passes exactly one `--settings`, first, ahead of the person's arguments:
+
+- When the person's arguments carry `--settings` before claude's `--`, the last one is read
+  (inline JSON, or the file, relative to the current folder), kurmis' variables are merged into
+  its `env`, and every `--settings` of theirs is taken out. Their other keys and variables are
+  kept; for the four routing variables kurmis' values win. Their file is never changed.
+  Settings that cannot be read, are not a JSON object, or have an `env` that is not an object
+  stop the start with a message.
+- The merged settings go to claude as a file in the data folder's `settings/`, not inline,
+  because they hold the key and a command line is visible to other users in the process list.
+  The file is not deleted when claude exits, because claude passes its `--settings` value on to
+  processes it starts itself, such as background sessions, which can outlive the wrapper.
+- `ANTHROPIC_CUSTOM_HEADERS` keeps the person's own header lines. They are taken from the
+  highest layer that sets the variable, as the CLI would: their `--settings`, then the user
+  settings file (`$CLAUDE_CONFIG_DIR/settings.json` when that is set, else
+  `~/.claude/settings.json`), then the process environment. Project settings files are not read,
+  so headers set only there are dropped. A user settings file that is not JSON is a warning.
+
+**Global mode** is `kurmis setup` (`src/cli/global-settings.ts`, `src/cli/commands/setup.ts`). It
+puts the routing variables in the `env` block of the user settings file, so a plain `claude` and
+the IDE extensions are routed too. The values are those of an Auto CLI with no started-on
+header, so a plain `claude` runs on `claude:default`. It also registers the daemon to start at
+login (a launchd agent on macOS, a logon entry on Windows) and starts the daemon.
+
+- The file is `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set and not empty, as the
+  CLI reads it, else `~/.claude/settings.json`; the path used is printed. A `CLAUDE_CONFIG_DIR`
+  inside kurmis' data folder is refused.
+- The file is edited as text: only the members of `env` change, and key order, indent, line
+  endings and a byte order mark stay as they were. A file that is not plain JSON (comments,
+  trailing commas), or whose top level or `env` is not an object, is refused and not written.
+  A symlinked file is written through the link.
+- Before the first change to an existing file, it is copied to `settings.json.kurmis-backup`
+  (mode 0600), which is never overwritten. A new file gets mode 0600; an existing one keeps its
+  mode.
+- An `ANTHROPIC_BASE_URL` that is not kurmis' (`http://127.0.0.1:<port>` with the port of
+  `config.json`, or with an `x-kurmis-key` in the same `env`'s headers) is refused, so another
+  proxy is not cut off silently. A value of the person's own for `ENABLE_TOOL_SEARCH` or
+  `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept.
+- When autostart or the daemon fails, the settings change stands and setup exits 1; running it
+  again is safe.
+
+`kurmis setup --undo` removes only the values that are still kurmis': a key the person changed is
+left and reported, and only the `x-kurmis-*` lines are taken out of the custom headers. An `env`
+that undo empties is removed. It unregisters autostart and leaves the daemon running, because
+`kurmis claude` still uses it. Both directions can be run again without changing anything more.
+Claude Code sessions that are already open keep the settings they started with.
 
 Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
 headers. The proxy answers that path itself.
 
+## The wrapper
+
+`kurmis claude`, `kurmis codex` and `kurmis login` start their CLI through `runInteractive` in
+`src/cli/wrapper.ts`: `stdio: 'inherit'`, no shell, and the wrapper waits for the child.
+
+- **macOS and Linux.** Ctrl-C (SIGINT) and Ctrl-\ (SIGQUIT) reach every process in the
+  terminal's foreground process group, so the child gets them itself; the wrapper ignores them
+  while the child runs, as `system(3)` does. SIGTERM and SIGHUP are usually sent to the wrapper
+  alone, so it forwards them to the child and keeps waiting.
+- **Windows.** Ctrl-C, Ctrl-Break and closing the console reach every process on the console
+  (Node reports closing as SIGHUP). The wrapper ignores all three and forwards nothing, because
+  `child.kill()` there ends the child at once with TerminateProcess.
+- **How the wrapper ends.** With the child's exit code. When the child was ended by a signal,
+  the wrapper removes its handlers and raises the same signal on itself, so the shell sees the
+  same end; for a signal whose default action writes a core dump, and on Windows, it exits with
+  128 + the signal number instead. A child that cannot be started gives a message and the code a
+  shell would give: 127 when there is no such program (also when `findProgram` finds none), 126
+  when it cannot be run (EACCES, EPERM, ENOEXEC, EISDIR), 1 otherwise.
+
+`test/cli/wrapper-pty.test.ts` checks this under a pseudo-terminal: `test/cli/pty-driver.py`
+(run with `python3 -I`) starts a bundled wrapper on the fake claude, sends Ctrl-C and SIGTERM, and
+kills whatever is left in the process group. It needs `python3` and is skipped on Windows.
+
 ## Codex
 
 There is no proxy for Codex. `kurmis codex …` picks a login when it starts, or uses the one named
-with `--login`, prepares that login's `CODEX_HOME` and starts `codex` with it. The choice uses
-the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it was inherited.
+with `--login`, prepares that login's `CODEX_HOME` and starts `codex` with it. `codex:default`
+runs with `CODEX_HOME` as it was inherited, except that an inherited `CODEX_HOME` inside kurmis'
+`codex/` folder (left by an outer `kurmis codex` session on an extra login) is removed.
+
+**Choosing the login** (`src/core/codex-choice.ts`, `src/cli/commands/codex.ts`). The wrapper
+starts the daemon when it is not running, reads its status, and ranks the Codex logins with
+`chooseAccount`, as Claude's Auto ranks a new session. The rows come from the status: routing,
+limits and use-first from the login, signed in unless the daemon says it is not (an unknown state
+counts as signed in), no token expiry. A login the server refused (its usage says `rejected`)
+is passed over until the reset it named, even when no window reads 100%.
+
+- When at least two Codex logins could be chosen and one of them has usage that is missing or
+  older than 20 minutes (the daemon's 15-minute probe interval plus 5), the wrapper asks the
+  daemon to probe those logins and waits up to 5 seconds, then goes on with what it has.
+- When every login routing may use is at a limit, it starts on the one whose usage comes back
+  first, with a note on stderr saying when.
+- When none of them is signed in, or the daemon cannot be reached, it starts on `codex:default`
+  with a note.
+- With more than one Codex login, it prints which one it starts on.
 
 **Preparing a login's home.** Before every start on an extra login, `prepareCodexHome`
 (`src/cli/codex-home-files.ts`) prepares `codex/<name>/` from the default Codex home: `CODEX_HOME`
@@ -427,7 +535,7 @@ would delete the folder of `~/.codex` it points to.
   back without the `\\?\` prefix some Node versions add, and paths are compared ignoring case.
   On macOS and Linux links are directory symlinks and paths are compared exactly.
 - **Ctrl-C** goes to every process on the console. The wrapper ignores it and waits for the
-  child to exit.
+  child to exit ("The wrapper" above).
 - **The daemon** is started detached with no console, through WMI from an ssh login, and at
   logon through a hidden `wscript` script ("Starting and stopping", "Starting at login").
 
@@ -496,8 +604,8 @@ bundle built with an older version, so no variable is needed to fake one. In-pro
 ## Code layout
 
 - `src/data/` holds the data folder: its paths, login ids, the JSON file helpers, the stores for
-  `config.json`, `state.json` and `daemon.json`, and the log writer. Both the CLI and the daemon
-  use it.
+  `config.json`, `state.json` and `daemon.json`, the lock file around `config.json` changes
+  (`lock.ts`), and the log writer. Both the CLI and the daemon use it.
 - `src/core/` holds pure logic with no I/O: routing, usage parsing, limits, the TOML merge. It
   holds most of the code copied from the original router.
   - `accounts.ts`: login ids and the defaults for a new login (both limits 100%, opted in).
@@ -515,23 +623,89 @@ bundle built with an older version, so no variable is needed to fake one. In-pro
     `account/rateLimits/read` and `account/read` answers.
   - `codex-account-config.ts`, `codex-home.ts`: the `config.toml` merge and what preparing an
     extra Codex home has to do.
+  - `codex-choice.ts`: which Codex login `kurmis codex` starts on.
   - `credentials.ts`, `keychain-service.ts`: the `.credentials.json` format and the Keychain
     item name.
 - `src/daemon/` holds the proxy, the control API, the token readers (`credentials.ts` for the
   file, `keychain.ts` for the macOS Keychain), the usage probes and the daemon's lifecycle.
 - `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and
-  `dispatch.ts` picks the command and handles `--help`, `--version` and `help <command>`. Each
+  `dispatch.ts` picks the command and handles `--help`, `--version` and `help <command>`.
+  `wrapper.ts` runs an interactive child, `wrapper-args.ts` splits the wrappers' arguments,
+  `settings-arg.ts` builds claude's `--settings`, `global-settings.ts` edits the user settings
+  file for `setup`, `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon and
+  `codex-home-files.ts` prepares a Codex home. Each
   command is one module in `src/cli/commands/` exporting a `Command`: its name, a one-line
   summary, its help text and `run(args, context)`, which returns the exit code (0 done, 1
-  failed, 2 wrong command line). The commands are `claude`, `codex`, `status [--json]`,
-  `list [--json]`, `login <id>`, `logout <id>`, `setup [--undo]` and
-  `daemon start|stop|restart|status|run`, where `daemon run` runs the daemon in the foreground
-  and is what `daemon start` launches in the background. `daemon status` exits 1 when no daemon
-  runs.
+  failed, 2 wrong command line, or the child's code for `claude` and `codex`). Each exports a
+  `create<Name>Command(deps)` too, which takes fakes of what it reaches outside itself (the
+  daemon client, the child runner, `findProgram`, `prepareCodexHome`; `command-deps.ts`), so
+  unit tests run without a daemon or a real CLI. The commands are:
+  - `claude` and `codex` (above).
+  - `status [--json]`: starts the daemon when needed and shows its status. When no signed-in
+    login has been read yet it asks for one probe and waits up to 15 seconds. The text shows
+    per login the label, the email the daemon read from the login's own profile (on the
+    terminal only), sign-in, routing, limits, use-first, sessions, each usage window with its
+    reset, and why routing passes the login over (`routeBlockText`), and last which login
+    `kurmis codex` would start on (`src/cli/status-format.ts`).
+  - `list [--json]`: the logins from `config.json` without the daemon, with the columns `ID LABEL
+    AUTO FIVE-HOUR WEEKLY USE-FIRST CREDENTIALS`. Credentials is a check of local files only: an
+    extra Claude login's `.credentials.json` or a `.claude.json` naming an account in its folder,
+    `~/.claude/.credentials.json` or `~/.claude.json` for `claude:default`, and the existence of
+    `auth.json` for Codex (its fields are never read). `--json` prints the login settings with
+    `credentials: boolean` added.
+  - `login claude|codex [--name <name>] [--label <text>]` adds a new login; without `--name` it
+    takes the first free name of `2`, `3`, ... (`claude:2`). `login <id> [--label <text>]` signs
+    an existing login in again, the default ones included (and adds an id that is new). The
+    login's folder is created first (mode 0700), and for Codex prepared with `prepareCodexHome`,
+    so the sign-in reads the same merged `config.toml` as later sessions. Then `claude auth login
+    --claudeai` runs with `claudeLoginEnv`, or `codex login` with `codexLoginEnv`, through the
+    wrapper. The login counts as signed in when the CLI exits 0 and an account (`.claude.json`) or
+    local credentials are there; otherwise a folder this run created is removed and nothing is
+    added. The email is printed and never stored; the label defaults to the name. A running
+    daemon is told to reload; none is started for this.
+  - `logout <id>`: refuses the default logins. It removes the login from `config.json`, tells a
+    running daemon to reload (so it stops probing the login), runs `claude auth logout` or
+    `codex logout` on it with a 30-second deadline (a failure is a warning, naming the Keychain
+    item that may be left on macOS, and the removal goes on), and deletes the folder with
+    `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
+    without following them.
+  - `set <id> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>] [--use-first on|off]
+    [--label <text>]`: needs at least one option, changes `config.json` under the lock, tells a
+    running daemon to reload and prints the login's settings. `<id>` may be a bare name when only
+    one login has it.
+  - `setup [--undo]` (above).
+  - `daemon start|stop|restart|status|run`, where `daemon run` runs the daemon in the foreground
+    and is what `daemon start` launches in the background. `daemon status` exits 1 when no daemon
+    runs.
+
+  **`kurmis status --json`** prints its own shape, not the control API's answer, so it can stay
+  stable while the daemon's usage snapshot changes. Times are ISO strings. `format` is raised
+  only when a field is removed or changes meaning; fields may be added.
+
+  ```json
+  { "format": 1,
+    "daemon": { "version": "0.1.0", "pid": 4242, "port": 28411, "startedAt": "<ISO>" },
+    "logins": [ {
+      "id": "claude:work", "provider": "claude", "label": "Work", "email": "<email or null>",
+      "signedIn": true, "probing": false, "routing": true, "fiveHourLimit": 90, "weeklyLimit": 100,
+      "useFirst": false,
+      "usage": { "fetchedAt": "<ISO>", "source": "probe", "plan": "max", "error": null,
+        "windows": [ { "key": "five_hour", "label": "5 hour", "durationMinutes": 300,
+          "utilization": 42, "resetsAt": "<ISO or null>", "plan": true, "limitPercent": 90 } ] },
+      "blocked": { "kind": "over-limit", "text": "<sentence>", "until": "<ISO or null>" },
+      "sessions": 2 } ],
+    "codexStart": { "login": "codex:default", "note": null } }
+  ```
+
+  `usage` and `blocked` may be null. A window whose reset has passed reads `utilization: 0`.
+  `limitPercent` is null for a window that meters one model rather than the plan. `sessions` is
+  null for Codex logins, and `codexStart` is null without Codex logins. A Claude login's
+  `blocked` comes from the daemon; a Codex login's is the Codex choice's rule.
 - `src/version.ts` holds the version, which the build takes from `package.json`.
 - `src/platform/` holds what differs per OS: finding programs and reading npm shims (`programs.ts`,
-  `npm-shim.ts`), folder links (`links.ts`), detaching and WMI starts (`detach.ts`), launchd jobs
-  (`launchd.ts`), autostart (`autostart.ts`, `windows-autostart.ts`), and the file rename retry and
+  `npm-shim.ts`), folder links (`links.ts`), deleting a folder without following its links
+  (`remove-tree.ts`), detaching and WMI starts (`detach.ts`), launchd jobs (`launchd.ts`),
+  autostart (`autostart.ts`, `windows-autostart.ts`), and the file rename retry and
   file modes (`files.ts`). Every short-lived program kurmis starts goes through `runProgram` in
   `run.ts`: no shell, stdin closed, a deadline and a cap on the output. The usage probes, whose
   stdin carries JSON frames, go through `startFrameProcess` in `frame-process.ts`: no shell, a
