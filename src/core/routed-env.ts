@@ -149,12 +149,15 @@ export function applyRoutedEnv(env: Readonly<Record<string, string | undefined>>
 }
 
 /**
- * The `OAUTH_TOKEN_VARIABLES` set in `env` (to any value, even an empty one), by the name as it
- * is spelled there. On Windows names are matched without regard to case.
+ * The `OAUTH_TOKEN_VARIABLES` set in `env` to a value that is not empty, by the name as it is
+ * spelled there. On Windows names are matched without regard to case. An empty value is left
+ * out: Claude Code reads it as unset, and the wrapper's `--settings` sets both to the empty
+ * string, which Claude Code puts into its own environment, so every shell in a routed session
+ * inherits them empty.
  */
 export function inheritedOAuthTokenVariables(env: Readonly<Record<string, string | undefined>>, windows = false): string[] {
   return Object.entries(env)
-    .filter(([name, value]) => value !== undefined &&
+    .filter(([name, value]) => value !== undefined && value !== '' &&
       OAUTH_TOKEN_VARIABLES.some((other) => (windows ? other.toUpperCase() === name.toUpperCase() : other === name)))
     .map(([name]) => name)
 }

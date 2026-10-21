@@ -90,7 +90,10 @@ export interface DaemonClientOptions {
   noLaunchd?: boolean
   /** How long a start may take before it is an error. */
   startTimeoutMs?: number
-  /** How long a start through launchd waits for an answer before it starts the daemon directly. `LAUNCHD_ANSWER_TIMEOUT_MS` by default. */
+  /**
+   * How long a start through launchd waits for an answer before it starts the daemon directly.
+   * `LAUNCHD_ANSWER_TIMEOUT_MS` by default.
+   */
   launchdAnswerTimeoutMs?: number
   /**
    * How long `stopDaemon` lets the daemon wait for its open requests (`maxWaitMs`), and waits
@@ -136,7 +139,10 @@ const STOP_TIMEOUT_MS = 30_000
  * itself to write `state.json` and exit, before it ends the process.
  */
 const STOP_GRACE_MS = 10_000
-/** After the signal: SIGTERM makes a stopping daemon skip the rest of its wait; on Windows it ends the process. */
+/**
+ * After the signal: SIGTERM makes a stopping daemon skip the rest of its wait; on Windows it
+ * ends the process.
+ */
 const KILL_WAIT_MS = 5_000
 /** How long a replaced or restarted daemon gets to close its port. */
 const PORT_FREE_TIMEOUT_MS = 5_000
@@ -176,7 +182,11 @@ export async function findDaemon(options: DaemonClientOptions, timeoutMs?: numbe
   } else if (read.status === 'ok') {
     const { pid, port } = read.info
     if (!processExists(pid)) {
-      removeDaemonFile(pid)
+      try {
+        removeDaemonFile(pid)
+      } catch {
+        // It could not be moved aside (on Windows, held open); the next command tries again.
+      }
     } else {
       triedPort = port
       const holder = await portHolder(port, key, requestTimeout())
@@ -312,7 +322,8 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
     if (refusing !== null) throw new DaemonError(keyRefusedMessage(refusing, options.platform ?? process.platform))
     const holder = await portHolder(port, key, FIND_TIMEOUT_MS)
     if (holder.kind === 'other') {
-      // daemon.json's daemon that holds the port but did not answer in time is not "another program".
+      // daemon.json's daemon that holds the port but did not answer in time is not "another
+      // program".
       const silent = silentDaemon()
       if (silent !== null && silent.port === port && holder.status === undefined) {
         throw new DaemonError(notAnsweringMessage(silent, holder.reason, options.platform ?? process.platform))
@@ -444,6 +455,8 @@ export async function waitForLaunchdJob(wait: WaitForLaunchdJob): Promise<{ conn
   // A `launchctl print` that has not answered in time is waited for again in the next round
   // rather than started a second time.
   let pendingState: Promise<JobState> | null = null
+  /** Whether the job's program exited 0, which made the wait `timeoutMs` long. */
+  let exitedOk = false
   for (;;) {
     const found = await findDaemon({ env: {} }, left())
     if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return { connection: found }
@@ -463,11 +476,17 @@ export async function waitForLaunchdJob(wait: WaitForLaunchdJob): Promise<{ conn
             (code === 78 ? ', which launchd answers when it cannot start the program, for example one on an external volume' : '')
         }
       }
-      if (code === 0) deadline = Math.max(deadline, started + wait.timeoutMs)
+      if (code === 0) {
+        exitedOk = true
+        deadline = Math.max(deadline, started + wait.timeoutMs)
+      }
     }
     if (Date.now() >= deadline) {
-      const seconds = wait.answerTimeoutMs / 1000
-      return { failure: `no daemon answered within ${String(seconds)} ${seconds === 1 ? 'second' : 'seconds'} of loading its job` }
+      const seconds = (deadline - started) / 1000
+      return {
+        failure: `no daemon answered within ${String(seconds)} ${seconds === 1 ? 'second' : 'seconds'} of loading its job` +
+          (exitedOk ? ', although the job exited with code 0' : '')
+      }
     }
     await delay(POLL_MS)
   }

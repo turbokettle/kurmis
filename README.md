@@ -184,14 +184,12 @@ change at once.
 kurmis logout <id>
 ```
 
-Removes a login: it signs the login out with `claude auth logout` or `codex logout` (on macOS
-this is what removes its Keychain item, on Windows its Windows Credential Manager record;
-kurmis warns when it could not), removes it from
-kurmis' settings and deletes its folder. Links
-in a Codex login's folder are removed, never what they point to, and so is kurmis' record of
-what it merged into that folder. The machine's own
-`claude:default` and `codex:default` cannot be removed; sign them out with `claude auth logout`
-or `codex logout` if you want to.
+Removes a login: it signs the login out with `claude auth logout` or `codex logout` (on macOS this
+is what removes its Keychain item, on Windows its Windows Credential Manager record; kurmis warns
+when it could not), removes it from kurmis' settings and deletes its folder. Links in a Codex
+login's folder are removed, never what they point to, and so is kurmis' record of what it merged
+into that folder. The machine's own `claude:default` and `codex:default` cannot be removed; sign
+them out with `claude auth logout` or `codex logout` if you want to.
 
 ### `kurmis setup` (route every Claude Code)
 
@@ -218,15 +216,21 @@ A plain `claude` then runs on Auto. Restart Claude Code sessions and editors tha
 open. If the file already points `ANTHROPIC_BASE_URL` at another proxy, setup stops and changes
 nothing.
 
-`claude:default` is the login in `~/.claude`. When `CLAUDE_CONFIG_DIR` is set, a plain `claude`
-signs in with the login in that folder instead, which kurmis does not know, so kurmis never
-signs its requests as `claude:default`: they go to your extra logins only. `kurmis claude` is
-not affected; it always starts claude on the login it names, `claude:default` included.
+`claude:default` is the login in `~/.claude`. When you run setup with `CLAUDE_CONFIG_DIR` set,
+it writes `$CLAUDE_CONFIG_DIR/settings.json`, which only a `claude` with that variable reads.
+Such a `claude` signs in with the login in that folder, which kurmis does not know, so kurmis
+never signs its requests as `claude:default`: they go to your extra logins only. A `claude` with
+`CLAUDE_CONFIG_DIR` naming `~/.claude` itself, after a setup run without the variable, reads
+`~/.claude/settings.json` and counts as a plain `claude` on `claude:default` (see "Known
+limits" in [docs/architecture.md](docs/architecture.md)); unset the variable for it.
+`kurmis claude` is not affected; it always starts claude on the login it names,
+`claude:default` included.
 
 On macOS and Windows, setup stops when `CLAUDE_CONFIG_DIR` names `~/.claude` itself: Claude
 Code keeps separate credentials for a `claude` started with the variable set, even to that
-folder, and both kinds of `claude` read `~/.claude/settings.json`. Unset the variable and run
-setup again.
+folder, and both kinds of `claude` read `~/.claude/settings.json`. On every platform it also
+stops when `$CLAUDE_CONFIG_DIR/settings.json` is a link to `~/.claude/settings.json`, for the
+same reason. Unset the variable and run setup again.
 
 Setup also warns when the file's `env` sets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
 `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, which make a plain
@@ -266,13 +270,12 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
 - **What is the daemon doing?** Its log is `~/.kurmis/daemon.log` (the previous one is
   `daemon.log.1`). It names logins, status codes and timings, never tokens, request contents or
   emails. `kurmis status` shows what it knows about each login.
-- **Restarting the daemon.** `kurmis daemon restart`. Claude Code
-  sessions that are open retry their requests for a few minutes and carry on once it is back.
-- **The daemon cannot start because its port is in use.** Another program has kurmis' port
-  (28411 unless you changed it). Pick a free one by adding
-  `"port": 28412` (any number from 1024 to 65535) to `~/.kurmis/config.json`, then run
-  `kurmis daemon restart`. If you ran `kurmis setup`, run it again so
-  `settings.json` names the new port.
+- **Restarting the daemon.** `kurmis daemon restart`. Claude Code sessions that are open retry their
+  requests for a few minutes and carry on once it is back.
+- **The daemon cannot start because its port is in use.** Another program has kurmis' port (28411
+  unless you changed it). Pick a free one by adding `"port": 28412` (any number from 1024 to 65535)
+  to `~/.kurmis/config.json`, then run `kurmis daemon restart`. If you ran `kurmis setup`, run it
+  again so `settings.json` names the new port.
 - **"Not logged in" in Claude Code, or a login shown as signed out.** Sign it in again with
   `kurmis login <id>`, for example `kurmis login claude:work`.
 - **macOS asks whether `security` may use a Keychain item.** That is the daemon reading a
@@ -281,22 +284,22 @@ credentials are in the Keychain; `kurmis logout <id>` removes them, deleting the
 - **Working over ssh on a Mac.** A program started from an ssh session cannot read the login
   Keychain, which is where Claude Code keeps its tokens on macOS. So when kurmis has to start the
   daemon from an ssh session, it starts it through launchd in your desktop session instead,
-  which works while you are logged in at the Mac. If nobody is logged
-  in at the Mac, start the daemon there once, or run `kurmis setup` there so it starts at login;
-  `kurmis claude` over ssh then uses that daemon.
+  which works while you are logged in at the Mac. If nobody is logged in at the Mac, start the
+  daemon there once, or run `kurmis setup` there so it starts at login; `kurmis claude` over ssh
+  then uses that daemon.
 - **"kurmis was started by the program it started".** The `claude` or `codex` that kurmis found
   on your `PATH` is a script or alias that runs kurmis again. Take it off `PATH`, or set
   `KURMIS_CLAUDE_BIN` (or `KURMIS_CODEX_BIN`) to the full path of the real program.
 - **"The daemon could not be started through launchd (its job exited with code 78 …)" or "(no
-  daemon answered within 5 seconds …)".** A launchd job may be unable to reach a program or a
-  folder on an external volume: launchd then answers exit 78, or the job hangs. This happens when
-  Node, the kurmis install or the kurmis data folder (`KURMIS_HOME`) is on such a volume. Kurmis
-  then starts the daemon directly from the command you ran (an ssh session, or another session
-  where the login Keychain could not be read), and such a daemon cannot read the Keychain either,
-  so logins whose token is in the Keychain are not routed until the daemon is started from a
-  login at the screen. Give the program that runs the job access to the volume (System
-  Settings, Privacy & Security, Files and Folders or Full Disk Access), or keep Node, kurmis and
-  its data folder on the internal disk.
+  daemon answered within 5 seconds …)" (30 seconds when the job exited with code 0).** A
+  launchd job may be unable to reach a program or a folder on an external volume: launchd then
+  answers exit 78, or the job hangs. This happens when Node, the kurmis install or the kurmis data
+  folder (`KURMIS_HOME`) is on such a volume. Kurmis then starts the daemon directly from the
+  command you ran (an ssh session, or another session where the login Keychain could not be read),
+  and such a daemon cannot read the Keychain either, so logins whose token is in the Keychain are
+  not routed until the daemon is started from a login at the screen. Give the program that runs the
+  job access to the volume (System Settings, Privacy & Security, Files and Folders or Full Disk
+  Access), or keep Node, kurmis and its data folder on the internal disk.
 - **Windows: PowerShell says running `kurmis.ps1` is disabled on this system.** PowerShell's
   default execution policy blocks the `kurmis.ps1` script npm installs next to `kurmis.cmd`.
   Run `kurmis.cmd` instead (it takes the same arguments), or allow local scripts for your user

@@ -12,9 +12,9 @@
 // they inherit from `%USERPROFILE%`, which grants the user, SYSTEM and Administrators only. A
 // `KURMIS_HOME` outside the profile gets that folder's access list instead.
 import { randomBytes } from 'node:crypto'
-import { existsSync, linkSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, linkSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { makePrivateDirSync, PRIVATE_FILE_MODE } from '../platform/files.ts'
+import { makePrivateDirSync, PRIVATE_FILE_MODE, retryWhileLockedSync } from '../platform/files.ts'
 import { readJsonFileSync, writeFileAtomicSync, writeJsonFileSync } from './json-file.ts'
 import { daemonFilePath, keyPath } from './paths.ts'
 import { isPlainObject } from './validate.ts'
@@ -50,28 +50,54 @@ export function readKey(path = keyPath()): string | null {
 /**
  * The key, created first when there is none. Two processes that start at the same moment get
  * the same key: the new key is written to a temporary file and hard-linked to `key`, which
- * fails when another process got there first, and that process's key is read instead. A
- * damaged file is replaced.
+ * fails when another process got there first, and that process's key is read instead. On a
+ * file system without hard links (exFAT, FAT) the key is written with an exclusive create
+ * instead, which fails the same way; another process may then see the file for a moment before
+ * its text is in it, so a key file that does not read as a key is read again for a little
+ * while before it counts as damaged. A damaged file is replaced.
  */
 export function readOrCreateKey(path = keyPath()): string {
   const existing = readKey(path)
   if (existing !== null) return existing
   makePrivateDirSync(dirname(path))
   const key = generateDaemonSecret()
+  if (!createKeyFile(path, key)) {
+    const theirs = readKeySettled(path)
+    if (theirs !== null) return theirs
+    // The file there is damaged, so it is replaced with this process's key.
+    writeFileAtomicSync(path, `${key}\n`, { mode: PRIVATE_FILE_MODE })
+  }
+  return key
+}
+
+/** Creates `path` holding `key`. Answers false when a file is there already. */
+function createKeyFile(path: string, key: string): boolean {
   const temporary = join(dirname(path), `.key-${process.pid}-${randomBytes(4).toString('hex')}`)
   writeFileAtomicSync(temporary, `${key}\n`, { mode: PRIVATE_FILE_MODE })
   try {
     linkSync(temporary, path)
-    return key
+    return true
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-    const theirs = readKey(path)
-    if (theirs !== null) return theirs
-    // The file there is damaged, so it is replaced with this process's key.
-    writeFileAtomicSync(path, `${key}\n`, { mode: PRIVATE_FILE_MODE })
-    return key
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
   } finally {
     rmSync(temporary, { force: true })
+  }
+  // No hard link could be made: an exclusive create, in one write.
+  try {
+    writeFileSync(path, `${key}\n`, { flag: 'wx', mode: PRIVATE_FILE_MODE })
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+    throw error
+  }
+}
+
+/** `readKey`, tried again for about 200 ms while the file does not hold a key. */
+function readKeySettled(path: string): string | null {
+  for (let attempt = 0; ; attempt++) {
+    const key = readKey(path)
+    if (key !== null || attempt >= 10) return key
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)
   }
 }
 
@@ -122,8 +148,9 @@ export function writeDaemonFile(info: DaemonInfo, path = daemonFilePath()): void
  * pid is linked back, unless a newer one has been written in the meantime. Where a hard link
  * cannot be made (a file system without them, such as exFAT), it is renamed back instead when
  * no file has taken its place; a file written in the short time between that check and the
- * rename would be replaced. `afterCheck` runs between the first check and the rename; tests use
- * it to write a file there.
+ * rename would be replaced. When that rename fails too, the file is left under its `.removing`
+ * name rather than deleted, and no error is thrown. `afterCheck` runs between the first check
+ * and the rename; tests use it to write a file there.
  */
 export function removeDaemonFile(pid: number, path = daemonFilePath(), afterCheck?: () => void): boolean {
   const read = readDaemonFile(path)
@@ -132,11 +159,12 @@ export function removeDaemonFile(pid: number, path = daemonFilePath(), afterChec
   afterCheck?.()
   const aside = `${path}.${String(process.pid)}-${randomBytes(4).toString('hex')}.removing`
   try {
-    renameSync(path, aside)
+    retryWhileLockedSync(() => { renameSync(path, aside) })
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
     throw error
   }
+  let keepAside = false
   try {
     const moved = readDaemonFile(aside)
     if (moved.status === 'ok' && moved.info.pid !== pid) {
@@ -144,12 +172,19 @@ export function removeDaemonFile(pid: number, path = daemonFilePath(), afterChec
         linkSync(aside, path)
       } catch (error) {
         // EEXIST: a newer daemon has written its file since, which stays.
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && !existsSync(path)) renameSync(aside, path)
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && !existsSync(path)) {
+          try {
+            retryWhileLockedSync(() => { renameSync(aside, path) })
+          } catch {
+            // The file names a daemon that runs, so it is kept where it is rather than deleted.
+            keepAside = true
+          }
+        }
       }
       return false
     }
     return true
   } finally {
-    rmSync(aside, { force: true })
+    if (!keepAside) rmSync(aside, { force: true })
   }
 }

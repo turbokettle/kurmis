@@ -26,8 +26,15 @@ function table(): LoginTable {
   const created = new LoginTable({ tokens: source, log: { write: (event) => { events.push(event) } }, now: () => clock,
     configCheckMs: 2_000, stateWriteMs: 0 })
   created.load()
+  tables.push(created)
   return created
 }
+
+/**
+ * The tables a test made. They are flushed before the test's home is removed: a state write
+ * still waiting would otherwise create the folder again.
+ */
+const tables: LoginTable[] = []
 
 beforeEach(() => {
   home = freshHome()
@@ -36,7 +43,8 @@ beforeEach(() => {
   clock = 1_000_000
 })
 
-afterEach(() => {
+afterEach(async () => {
+  for (const created of tables.splice(0)) await created.flush()
   rmSync(home, { recursive: true, force: true, maxRetries: 10 })
 })
 
@@ -120,6 +128,17 @@ describe('sessions', () => {
     expect(logins.heldLogin('s-1')).toBe('claude:default')
     logins.releaseSession('s-1')
     expect(logins.heldLogin('s-1')).toBeNull()
+  })
+
+  test('a hold unused for a week has ended when it is read, though no new hold pruned it', () => {
+    writeLogins({})
+    const logins = table()
+    logins.holdSession('s-1', 'claude:default')
+    clock += SESSION_MAX_AGE_MS - 1_000
+    expect(logins.heldLogin('s-1')).toBe('claude:default')
+    clock += SESSION_MAX_AGE_MS + 1_000
+    expect(logins.heldLogin('s-1')).toBeNull()
+    expect(logins.heldCount()).toBe(0)
   })
 
   test('holds are dropped after a week unused, and beyond the 2000 most recently used', () => {

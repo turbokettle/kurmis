@@ -8,9 +8,9 @@
 // Every one of them removes the variables a routed session puts in its environment, because a
 // kurmis CLI or daemon may itself have been started from inside a routed session (a shell in a
 // `kurmis claude` session), and a probe or a login sent through the proxy would loop back into it.
-import { realpathSync } from 'node:fs'
+import { lstatSync, readlinkSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { CLAUDE_DEFAULT_ACCOUNT_ID, CODEX_DEFAULT_ACCOUNT_ID } from '../core/accounts.ts'
 import { isKurmisCodexHome } from '../core/codex-choice.ts'
 import { claudeDefaultProbeFolder, loginFolder, providerFolder } from './paths.ts'
@@ -134,6 +134,40 @@ export function namesDefaultClaudeFolder(value: string, platform: NodeJS.Platfor
   const comparable = (path: string): string =>
     platform === 'darwin' || platform === 'win32' ? real(path).normalize('NFC').toLowerCase() : real(path)
   return comparable(value) === comparable(join(home, '.claude'))
+}
+
+/**
+ * Whether `$CLAUDE_CONFIG_DIR/settings.json`, for this `value`, is the default settings file
+ * `~/.claude/settings.json` through a link: the folder is another one, but its `settings.json`
+ * leads to the default file (or to where it would be created). Both paths have their links
+ * resolved, a link whose target does not exist yet included; case is ignored as in
+ * `namesDefaultClaudeFolder`.
+ */
+export function sharesDefaultSettingsFile(value: string, platform: NodeJS.Platform = process.platform,
+  home: string = homedir()): boolean {
+  if (value === '') return false
+  const comparable = (path: string): string => {
+    const real = realFilePath(resolve(path))
+    return platform === 'darwin' || platform === 'win32' ? real.normalize('NFC').toLowerCase() : real
+  }
+  return comparable(join(value, 'settings.json')) === comparable(join(home, '.claude', 'settings.json'))
+}
+
+/**
+ * The path of `path` with every link resolved. A file that does not exist is its folder's real
+ * path joined with its name, and a link that leads nowhere yet is followed to its target.
+ */
+function realFilePath(path: string, hops = 0): string {
+  try {
+    return realpathSync.native(path)
+  } catch { /* Missing, or a link that leads nowhere yet. */ }
+  if (hops < 40) {
+    try {
+      if (lstatSync(path).isSymbolicLink()) return realFilePath(resolve(dirname(path), readlinkSync(path)), hops + 1)
+    } catch { /* The path itself does not exist. */ }
+  }
+  const parent = dirname(path)
+  return parent === path ? path : join(realFilePath(parent, hops + 1), basename(path))
 }
 
 /**

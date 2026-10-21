@@ -265,9 +265,9 @@ function configDirNote(value: string, deps: ClaudeDeps): string {
 }
 
 /**
- * One note for each place that sets one of `OAUTH_TOKEN_VARIABLES`: the process environment (to
- * any value), and the `env` of the user settings file and of the person's `--settings` (to a
- * value that is not empty). The routed environment leaves them out and the wrapper's
+ * One note for each place that sets one of `OAUTH_TOKEN_VARIABLES` to a value that is not
+ * empty: the process environment, and the `env` of the user settings file and of the person's
+ * `--settings`. The routed environment leaves them out and the wrapper's
  * `--settings` sets them to the empty string (`settingsEnv`), so claude does not use them; the
  * note says so and where to remove them. Never shows a value.
  */

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createSetupCommand } from '../../../src/cli/commands/setup.ts'
 import { backupPathFor } from '../../../src/cli/global-settings.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
-import type { AutostartOptions, AutostartResult } from '../../../src/platform/autostart.ts'
+import { registerAutostart, unregisterAutostart, type AutostartOptions, type AutostartResult } from '../../../src/platform/autostart.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
 import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
@@ -258,6 +258,19 @@ describe('kurmis setup', () => {
     expect(existsSync(settingsPath)).toBe(true)
   })
 
+  it('counts a login item that starts a Node in a temporary folder as done, with a warning', async () => {
+    // The real registration, on the fake launchctl, with fnm's per-shell Node.
+    const node = '/Users/example/.local/state/fnm_multishells/4242_1/bin/node'
+    const register = (given: AutostartOptions): Promise<AutostartResult> =>
+      registerAutostart({ ...given, env: process.env, entry: '/opt/example/kurmis/dist/kurmis.cjs', nodePath: node })
+    const { command } = setup({}, { calls: [], registerAutostart: register, unregisterAutostart })
+    const result = await run(command, [])
+    expect(result.code).toBe(0)
+    expect(result.stderr).toContain(`Warning: The login item starts Node from ${node}, which is in a temporary folder`)
+    expect(result.stderr).not.toContain('Could not make the daemon start at login')
+    expect(result.stderr).not.toContain('run "kurmis setup" again to finish')
+  })
+
   it('counts a platform without autostart as done, with a warning', async () => {
     const unsupported = 'Starting the daemon at login is not supported on this platform; the next kurmis command starts it.'
     const { command } = setup({}, fakeAutostart({ warning: unsupported }), 'linux')
@@ -326,6 +339,33 @@ describe('kurmis setup', () => {
       // Removes the link, not the folder it points to; a junction is removed like a folder.
       if (process.platform === 'win32') rmdirSync(link)
       else unlinkSync(link)
+    }
+  })
+
+  it.runIf(canCreateSymlinks())('refuses a CLAUDE_CONFIG_DIR whose settings.json is a link to ~/.claude/settings.json', async () => {
+    const dir = join(home, '.claude-work')
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    mkdirSync(dir, { recursive: true })
+    try {
+      for (const exists of [true, false]) {
+        // A link whose target does not exist yet counts too: setup would create that target.
+        rmSync(settingsPath, { force: true })
+        if (exists) writeFileSync(settingsPath, '{}\n')
+        rmSync(join(dir, 'settings.json'), { force: true })
+        symlinkSync(join('..', '.claude', 'settings.json'), join(dir, 'settings.json'))
+        for (const platform of ['darwin', 'win32', 'linux'] as const) {
+          const { client, autostart, command } = setup({}, fakeAutostart(), platform)
+          const result = await run(command, [], { CLAUDE_CONFIG_DIR: dir })
+          expect(result.code).toBe(1)
+          expect(result.stderr).toContain(`${join(dir, 'settings.json')} is a link to the default Claude Code settings file ${settingsPath}.`)
+          expect(result.stderr).toContain('Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again')
+          expect(client.calls).toEqual([])
+          expect(autostart.calls).toEqual([])
+          expect(existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : null).toBe(exists ? '{}\n' : null)
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
     }
   })
 

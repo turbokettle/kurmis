@@ -14,16 +14,18 @@
 // passes one.
 //
 // When the test ends, the world's kurmis commands that still run are killed, and every daemon
-// they started is stopped (`kurmis daemon stop`). After that, any pid that a `daemon.json` of the
-// world named and that still runs a bundle the world's commands ran (its own, or one passed in
-// `RunOptions.bundle`) is killed, and so is any other `daemon run` of those bundles.
-import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+// they started is stopped (`kurmis daemon stop`). After that, a daemon that still runs is killed
+// when it is shown to be the world's (`OwnDaemons` in `test/daemon/own-daemons.ts`): it answers
+// the world's key on the world's port, or, off Windows, its command line names a bundle the
+// world's commands ran (its own, or one passed in `RunOptions.bundle`).
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { afterEach } from 'vitest'
 import { buildTestBundle } from '../daemon/bundle.ts'
 import { freePort, waitUntil } from '../daemon/helpers.ts'
+import { OwnDaemons } from '../daemon/own-daemons.ts'
 import {
   FAKE_CLAUDE_SCRIPT,
   FAKE_CODEX_SCRIPT,
@@ -218,16 +220,14 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
   }
   if (process.platform === 'win32' && process.env.SystemRoot !== undefined) env.SystemRoot = process.env.SystemRoot
 
-  /** Every daemon pid a `daemon.json` of this world has named. */
-  const daemonPids = new Set<number>()
-  /** Every bundle this world's commands ran, so a daemon of an older bundle is stopped too. */
-  const bundlesRun = new Set<string>([bundle])
+  /**
+   * The daemons of this world: every pid its `daemon.json` and `daemon.log` named, and every
+   * bundle its commands ran, so a daemon of an older bundle is stopped too.
+   */
+  const daemons = new OwnDaemons(data, [bundle])
   /** The kurmis processes that have not ended yet. */
   const running = new Set<ChildProcess>()
-  const noteDaemon = (): void => {
-    const info = readDaemonInfo()
-    if (info !== null) daemonPids.add(info.pid)
-  }
+  const noteDaemon = (): void => { daemons.note() }
   const readDaemonInfo = (): DaemonInfo | null => {
     try {
       return JSON.parse(readFileSync(join(data, 'daemon.json'), 'utf8')) as DaemonInfo
@@ -243,7 +243,7 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
       else childEnv[name] = value
     }
     return new Promise((resolve, reject) => {
-      bundlesRun.add(runOptions.bundle ?? bundle)
+      daemons.addBundle(runOptions.bundle ?? bundle)
       const child = spawn(process.execPath, [runOptions.bundle ?? bundle, ...args], {
         env: childEnv,
         cwd: runOptions.cwd ?? work,
@@ -319,66 +319,18 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
       // A command a failed test left running could still start a daemon.
       for (const child of running) child.kill('SIGKILL')
       noteDaemon()
-      if (daemonPids.size > 0) {
+      if (daemons.seen) {
         await run(['daemon', 'stop'], { timeoutMs: 45_000 }).catch(() => undefined)
-        noteDaemon()
-      }
-      for (const pid of daemonPids) {
-        if ([...bundlesRun].some((ran) => runsBundle(pid, ran))) {
-          try {
-            process.kill(pid, 'SIGKILL')
-          } catch { /* Gone already. */ }
-          await waitUntil(() => !processAlive(pid), 5_000, `daemon ${String(pid)} to exit`).catch(() => undefined)
-        }
       }
       // A daemon that lost the port to another one started at the same moment exits once it finds
       // the port taken; one that was still starting when the stop freed the port would bind it
-      // and outlive the test. Each test file has bundles of its own and runs its tests one after
-      // another, so every `daemon run` of these bundles still running is this world's.
-      for (const pid of daemonRunPids([...bundlesRun])) {
-        try {
-          process.kill(pid, 'SIGKILL')
-        } catch { /* Gone already. */ }
-      }
+      // and outlive the test. On Windows such a daemon also holds the world's home as its working
+      // folder, so the folder could not be removed.
+      await daemons.stop()
       await api.close()
       rmSync(root, { recursive: true, force: true, maxRetries: 10 })
     }
   }
   worlds.add(world)
   return world
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
-
-/** The pids of the `daemon run` processes of these bundles. Empty on Windows, which has no `ps`. */
-function daemonRunPids(bundles: string[]): number[] {
-  if (process.platform === 'win32') return []
-  const names = bundles.flatMap((bundle) => [bundle, realpathSync(bundle)])
-  const listed = spawnSync('ps', ['-ax', '-ww', '-o', 'pid=,command='], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stdout
-  return listed.split('\n')
-    .filter((line) => names.some((name) => line.includes(`${name} daemon run`)))
-    .map((line) => Number(line.trim().split(/\s+/)[0]))
-}
-
-/**
- * Whether `pid` is alive and its command line names `bundle`, so a reused pid is never killed.
- * Kurmis starts the daemon from the bundle's path with symlinks resolved (`/private/tmp/…` for
- * `/tmp/…` on macOS), so both forms count.
- */
-function runsBundle(pid: number, bundle: string): boolean {
-  if (!processAlive(pid)) return false
-  if (process.platform === 'win32') return true
-  try {
-    const command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
-    return command.includes(bundle) || command.includes(realpathSync(bundle))
-  } catch {
-    return false
-  }
 }

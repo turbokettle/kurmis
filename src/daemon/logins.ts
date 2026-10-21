@@ -327,11 +327,19 @@ export class LoginTable {
     return count
   }
 
-  /** The login a session is held to after a pin-back, or null. */
+  /**
+   * The login a session is held to after a pin-back, or null. A hold unused for
+   * `SESSION_MAX_AGE_MS` has ended, even when no new hold has pruned it yet.
+   */
   heldLogin(key: string): LoginId | null {
     const hold = this.held.get(key)
     if (hold === undefined) return null
-    hold.lastUsed = this.options.now()
+    const now = this.options.now()
+    if (hold.lastUsed < now - SESSION_MAX_AGE_MS) {
+      this.held.delete(key)
+      return null
+    }
+    hold.lastUsed = now
     return hold.login
   }
 

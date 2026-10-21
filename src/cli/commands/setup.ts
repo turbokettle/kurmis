@@ -11,17 +11,18 @@
 // When the daemon cannot be started, nothing is written. When autostart then fails, the command
 // says so and exits with 1; running it again is safe, since every step does nothing when it is
 // already done. An autostart entry that loads only at the next login (macOS with nobody at the
-// screen), a machine where no entry can be written (Windows without Windows Script Host) and a
-// platform without autostart are warnings: the daemon runs, and the next kurmis command starts
-// it again after a restart.
+// screen), a machine where no entry can be written (Windows without Windows Script Host), an
+// entry that starts a Node in a temporary folder and a platform without autostart are warnings:
+// the daemon runs, and the entry or the next kurmis command starts it again after a restart.
 //
-// Setup refuses to run while `CLAUDE_CONFIG_DIR` names `~/.claude` itself on macOS and Windows
+// Setup refuses to run while `CLAUDE_CONFIG_DIR` names `~/.claude` itself on macOS and Windows,
+// or names another folder whose `settings.json` is a link to `~/.claude/settings.json`
 // (`defaultFolderRefusal`).
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigError, loadConfig } from '../../data/config.ts'
 import { readOrCreateKey } from '../../data/daemon-file.ts'
-import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data/login-env.ts'
+import { configDirHasOwnCredentials, namesDefaultClaudeFolder, sharesDefaultSettingsFile } from '../../data/login-env.ts'
 import {
   registerAutostart,
   unregisterAutostart,
@@ -131,7 +132,8 @@ async function autostartStep(
     result = { changed: false, where: null, warning: errorText(error) }
   }
   const supported = deps.platform === 'darwin' || deps.platform === 'win32'
-  const warnsOnly = result.loadsAtNextLogin === true || result.noEntryPossible === true || !supported
+  const warnsOnly = result.warningOnly === true || result.loadsAtNextLogin === true ||
+    result.noEntryPossible === true || !supported
   if (!undo && result.warning !== undefined && warnsOnly) {
     // The daemon runs now, and the entry, or the next kurmis command, starts it after a restart.
     writeLine(context.stderr, `Warning: ${result.warning}`)
@@ -198,19 +200,29 @@ async function daemonRuns(deps: SetupDeps, context: CliContext): Promise<boolean
  * `~/.claude` itself makes the CLI keep credentials apart from the default ones on macOS and
  * Windows (`configDirHasOwnCredentials`), while `~/.claude/settings.json` is the file every
  * plain `claude` reads. Setup cannot write one file that is right for both, so it asks for the
- * variable to be unset.
+ * variable to be unset. The same holds, on every platform, for another folder whose
+ * `settings.json` is a link to `~/.claude/settings.json`.
  */
 function defaultFolderRefusal(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | null {
   const value = env['CLAUDE_CONFIG_DIR']
   const home = homedir()
-  if (value === undefined || !configDirHasOwnCredentials(env, platform) || !namesDefaultClaudeFolder(value, platform, home)) {
-    return null
-  }
+  if (value === undefined || !configDirHasOwnCredentials(env, platform)) return null
   const folder = join(home, '.claude')
-  return `CLAUDE_CONFIG_DIR is set to ${value}, which is the default Claude Code folder ${folder}. A claude started ` +
-    'with CLAUDE_CONFIG_DIR set keeps its credentials apart from one started without it, even when the variable names ' +
-    `that folder, and both read ${join(folder, 'settings.json')}, so kurmis cannot write settings there ` +
-    'that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again.'
+  const defaultFile = join(folder, 'settings.json')
+  if (namesDefaultClaudeFolder(value, platform, home)) {
+    return `CLAUDE_CONFIG_DIR is set to ${value}, which is the default Claude Code folder ${folder}. A claude started ` +
+      'with CLAUDE_CONFIG_DIR set keeps its credentials apart from one started without it, even when the variable names ' +
+      `that folder, and both read ${defaultFile}, so kurmis cannot write settings there ` +
+      'that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again.'
+  }
+  if (sharesDefaultSettingsFile(value, platform, home)) {
+    return `CLAUDE_CONFIG_DIR is set to ${value}, and ${join(value, 'settings.json')} is a link to the default Claude Code ` +
+      `settings file ${defaultFile}. A claude started with CLAUDE_CONFIG_DIR set signs in with the credentials in ` +
+      `${value}, a plain claude with those in ${folder}, and both read that one file, so kurmis cannot write settings ` +
+      'there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again, or give that folder a ' +
+      'settings.json of its own.'
+  }
+  return null
 }
 
 async function runSetup(undo: boolean, deps: SetupDeps, context: CliContext): Promise<number> {

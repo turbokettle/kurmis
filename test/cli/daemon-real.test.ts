@@ -11,6 +11,7 @@ import { createDaemonApp } from '../../src/daemon/app.ts'
 import { CONTROL_PATHS } from '../../src/core/control-api.ts'
 import { controlRequest, processExists } from '../../src/daemon/lifecycle.ts'
 import { buildTestBundle } from '../daemon/bundle.ts'
+import { OwnDaemons } from '../daemon/own-daemons.ts'
 import { call, messagesBody } from '../daemon/harness.ts'
 import { dataFolderWithPort, freePort, waitUntil } from '../daemon/helpers.ts'
 import { FAKE_CLAUDE_SCRIPT, FAKE_CODEX_SCRIPT, reply, startFakeAnthropic, type FakeAnthropic } from '../fakes/index.ts'
@@ -29,13 +30,11 @@ beforeAll(async () => {
   api = await startFakeAnthropic()
 })
 
-const homes: string[] = []
+/** The daemons of each data folder the tests used; one shown to be the test's is killed after them. */
+const daemons: OwnDaemons[] = []
 afterAll(async () => {
+  await Promise.all(daemons.map((each) => each.stop()))
   await api.close()
-  for (const home of homes) {
-    const read = readDaemonFile(join(home, 'daemon.json'))
-    if (read.status === 'ok' && processExists(read.info.pid)) process.kill(read.info.pid, 'SIGKILL')
-  }
 })
 
 function kurmis(bundle: string, home: string, args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
@@ -59,7 +58,7 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     const bundle = await buildTestBundle({ version: '0.5.0', entry: 'real' })
     const port = await freePort()
     const home = dataFolderWithPort(port)
-    homes.push(home)
+    daemons.push(new OwnDaemons(home, [bundle]))
     const started = await kurmis(bundle, home, ['daemon', 'start'])
     expect(started).toMatchObject({ code: 0, stderr: '' })
     const status = await kurmis(bundle, home, ['daemon', 'status', '--json'])
@@ -78,7 +77,7 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     const bundle = await buildTestBundle({ version: '0.5.0', entry: 'real' })
     const port = await freePort()
     const home = dataFolderWithPort(port)
-    homes.push(home)
+    daemons.push(new OwnDaemons(home, [bundle]))
     const other = dataFolderWithPort(await freePort())
     const env: NodeJS.ProcessEnv = { ...process.env, KURMIS_HOME: other, KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT, KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT, KURMIS_UPSTREAM_URL: api.url }
     delete env.NODE_OPTIONS
@@ -102,7 +101,7 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     ])
     const port = await freePort()
     const home = dataFolderWithPort(port)
-    homes.push(home)
+    daemons.push(new OwnDaemons(home, [older, newer]))
     expect((await kurmis(older, home, ['daemon', 'start'])).code).toBe(0)
     const read = readDaemonFile(join(home, 'daemon.json'))
     const oldPid = read.status === 'ok' ? read.info.pid : 0

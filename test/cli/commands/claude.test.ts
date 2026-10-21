@@ -140,6 +140,15 @@ describe('kurmis claude on Auto', () => {
     expect(out.stderr()).not.toContain('fake-token')
   })
 
+  test('says nothing about token variables that are set to the empty string, as a shell in a routed session has them', async () => {
+    const h = harness()
+    const out = collect({ PATH: '/usr/bin', ...NO_TOKEN })
+    await createClaudeCommand(h.deps).run([], out.context)
+    expect(h.specs[0]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    expect(h.specs[0]?.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR).toBeUndefined()
+    expect(out.stderr()).not.toContain('token')
+  })
+
   test('a subscription token in the person\'s --settings or settings.json is set to an empty value, with a note for each', async () => {
     mkdirSync(join(home, '.claude'))
     const userFile = join(home, '.claude', 'settings.json')

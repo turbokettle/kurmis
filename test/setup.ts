@@ -1,7 +1,7 @@
 // Every test file runs with HOME and KURMIS_HOME pointing at a fresh temporary folder, so no
 // test can read or write the real ~/.claude, ~/.codex or ~/.kurmis by accident.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, afterEach } from 'vitest'
@@ -10,6 +10,13 @@ const home = mkdtempSync(join(tmpdir(), 'kurmis-test-home-'))
 process.env.HOME = home
 process.env.USERPROFILE = home
 process.env.KURMIS_HOME = join(home, '.kurmis')
+// os.homedir() must follow HOME (USERPROFILE on Windows). It does in a process of its own, but
+// not in a worker thread, so a test file run with --pool=threads would reach the real home.
+if (homedir() !== home) {
+  rmSync(home, { recursive: true, force: true })
+  throw new Error(`os.homedir() is ${homedir()}, not the temporary home ${home}, so the tests would reach the real ` +
+    'home folder. Run them in processes of their own (pool: \'forks\' in vitest.config.ts).')
+}
 delete process.env.CODEX_HOME
 delete process.env.CLAUDE_CONFIG_DIR
 delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR
@@ -17,7 +24,11 @@ delete process.env.ANTHROPIC_BASE_URL
 delete process.env.ANTHROPIC_API_KEY
 delete process.env.ANTHROPIC_AUTH_TOKEN
 delete process.env.ANTHROPIC_CUSTOM_HEADERS
-delete process.env.KURMIS_UPSTREAM_URL
+delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+delete process.env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR
+// A daemon a test starts without naming the fake API sends its requests to a loopback port
+// nothing listens on (port 1 needs root to bind), never to Anthropic.
+process.env.KURMIS_UPSTREAM_URL = 'http://127.0.0.1:1'
 delete process.env.SSH_CONNECTION
 delete process.env.SSH_CLIENT
 delete process.env.SSH_TTY
@@ -60,9 +71,10 @@ process.env.KURMIS_TASKKILL_PROGRAM = join(fakeWindows, 'taskkill.mjs')
 process.env.FAKE_TASKKILL_DIR = join(home, 'fake-taskkill')
 process.env.KURMIS_WSCRIPT_PROGRAM = join(fakeWindows, 'wscript.mjs')
 
-// No test may start a real launchctl, security, PowerShell, reg, taskkill, wscript, claude or
-// codex, even through an environment it built itself: kurmis refuses them while this is set
-// (src/platform/system-program-guard.ts), and passes it on to every program it starts.
+// No test may start a real launchctl, security, PowerShell, reg, taskkill, wscript, cscript,
+// wmic, schtasks, cmd, claude or codex, even through an environment it built itself: kurmis
+// refuses them while this is set (`GUARDED_PROGRAMS` in src/platform/system-program-guard.ts),
+// and passes it on to every program it starts.
 process.env.KURMIS_REFUSE_SYSTEM_PROGRAMS = '1'
 
 // The guard writes every program it refused to this file, and a test after which it is not

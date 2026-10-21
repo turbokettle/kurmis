@@ -49,6 +49,21 @@ describe('removeTreeSync on this machine', () => {
     expect(readFileSync(join(outside, 'config.toml'), 'utf8')).toBe('kept')
   })
 
+  // A junction (or directory symlink) whose folder was deleted afterwards: this needs no
+  // Developer Mode on Windows, so it runs everywhere.
+  it('removes a folder holding a folder link whose target was deleted', () => {
+    const gone = join(root, 'gone')
+    mkdirSync(gone)
+    const home = join(root, 'home')
+    mkdirSync(home)
+    linkFolder(gone, join(home, 'sessions'))
+    rmSync(gone, { recursive: true })
+
+    removeTreeSync(home)
+
+    expect(existsSync(home)).toBe(false)
+  })
+
   it('removes a link given as the folder itself, not its target', () => {
     const target = join(root, 'target')
     mkdirSync(target)

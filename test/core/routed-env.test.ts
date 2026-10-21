@@ -86,6 +86,7 @@ describe('the subscription token variables', () => {
     expect(applyRoutedEnv(env, routed)).toEqual({ PATH: '/bin', ...routed.set })
     expect(inheritedOAuthTokenVariables(env)).toEqual(['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'])
     expect(inheritedOAuthTokenVariables({ PATH: '/bin' })).toEqual([])
+    expect(inheritedOAuthTokenVariables({ CLAUDE_CODE_OAUTH_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '' })).toEqual([])
     expect(inheritedOAuthTokenVariables({ Claude_Code_OAuth_Token: 'x' }, true)).toEqual(['Claude_Code_OAuth_Token'])
     expect(inheritedOAuthTokenVariables({ Claude_Code_OAuth_Token: 'x' }, false)).toEqual([])
   })

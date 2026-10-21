@@ -379,6 +379,13 @@ describe('waitForLaunchdJob', () => {
     expect(Date.now() - startedAt).toBeLessThan(5_000)
     expect(asked).toBe(1)
   }, 30_000)
+
+  it('names the longer wait when the job exited 0 and still no daemon answered', async () => {
+    const exited: JobState = { loaded: true, path: null, pid: null, lastExitCode: 0 }
+    const outcome = await waitForLaunchdJob({ port: 1, version: '1.2.3', job: { state: () => Promise.resolve(exited) },
+      answerTimeoutMs: 500, timeoutMs: 1_500 })
+    expect(outcome).toEqual({ failure: 'no daemon answered within 1.5 seconds of loading its job, although the job exited with code 0' })
+  }, 30_000)
 })
 
 describe('restartDaemon', () => {

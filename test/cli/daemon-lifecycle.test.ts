@@ -1,6 +1,7 @@
 // `kurmis daemon start|stop|restart|status` as the user runs them: each command is a process of
 // a test bundle (`test/daemon/bundle.ts`), and the daemons it starts run `daemon run` around the
-// fake request handling. Every daemon a test started is killed after it.
+// fake request handling. Every daemon a test started is killed after it, once it is shown to be
+// one (`test/daemon/own-daemons.ts`).
 import { execFile, spawn, spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -9,6 +10,7 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { readDaemonFile, readOrCreateKey } from '../../src/data/daemon-file.ts'
 import { controlRequest, processExists } from '../../src/daemon/lifecycle.ts'
 import { buildTestBundle } from '../daemon/bundle.ts'
+import { OwnDaemons } from '../daemon/own-daemons.ts'
 import { HOLD_PATH } from '../daemon/fake-app.ts'
 import { dataFolderWithPort, freePort, waitUntil } from '../daemon/helpers.ts'
 
@@ -19,8 +21,6 @@ interface Run {
 }
 
 let bundles: { older: string; newer: string }
-/** The data folders the tests used, whose daemons are killed after each test. */
-let homes: string[] = []
 let servers: Server[] = []
 
 beforeAll(async () => {
@@ -32,37 +32,31 @@ beforeAll(async () => {
 }, 30_000)
 
 afterEach(async () => {
-  for (const home of homes) {
-    for (const pid of pidsStartedIn(home)) {
-      try {
-        process.kill(pid, 'SIGKILL')
-      } catch {
-        // Already gone.
-      }
-    }
-  }
-  homes = []
+  // Only a pid shown to be a daemon of the test's data folder is killed (`OwnDaemons`).
+  await Promise.all([...daemonsOf.values()].map((daemons) => daemons.stop()))
+  daemonsOf.clear()
   await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
   servers = []
 })
 
-/** Every daemon pid seen in a data folder: daemon.json now, and the ones the tests noted. */
-const seenPids = new Map<string, Set<number>>()
-function notePid(home: string, pid: number): void {
-  const pids = seenPids.get(home) ?? new Set<number>()
-  pids.add(pid)
-  seenPids.set(home, pids)
+/** The daemons of each data folder the tests used. */
+const daemonsOf = new Map<string, OwnDaemons>()
+function daemonsIn(home: string): OwnDaemons {
+  let daemons = daemonsOf.get(home)
+  if (daemons === undefined) {
+    daemons = new OwnDaemons(home, [bundles.older, bundles.newer])
+    daemonsOf.set(home, daemons)
+  }
+  return daemons
 }
-function pidsStartedIn(home: string): number[] {
-  const read = readDaemonFile(join(home, 'daemon.json'))
-  if (read.status === 'ok') notePid(home, read.info.pid)
-  return [...(seenPids.get(home) ?? [])].filter((pid) => pid !== process.pid)
+function notePid(home: string, pid: number): void {
+  daemonsIn(home).notePid(pid)
 }
 
 async function newHome(): Promise<{ home: string; port: number }> {
   const port = await freePort()
   const home = dataFolderWithPort(port)
-  homes.push(home)
+  daemonsIn(home)
   return { home, port }
 }
 
@@ -76,6 +70,7 @@ function kurmis(bundle: string, home: string, args: string[], extra: NodeJS.Proc
   return new Promise((resolve) => {
     execFile(process.execPath, [bundle, ...args], { env: envFor(home, extra), timeout: 40_000 }, (error, stdout, stderr) => {
       const code = error === null ? 0 : typeof error.code === 'number' ? error.code : null
+      daemonsIn(home).note()
       resolve({ code, stdout, stderr })
     })
   })
@@ -83,8 +78,8 @@ function kurmis(bundle: string, home: string, args: string[], extra: NodeJS.Proc
 
 function daemonInfo(home: string): { pid: number; port: number; version: string } | null {
   const read = readDaemonFile(join(home, 'daemon.json'))
+  daemonsIn(home).note()
   if (read.status !== 'ok') return null
-  notePid(home, read.info.pid)
   return read.info
 }
 
@@ -261,6 +256,19 @@ describe('kurmis daemon', () => {
     // PowerShell is the stand-in of test/setup.ts, which records the call and fails.
     expect(started.stderr).toContain('could not be started outside this ssh session')
     expect(readFileSync(join(powershellDir, 'calls.jsonl'), 'utf8')).toContain('Win32_Process')
+    expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
+  }, 60_000)
+
+  it.runIf(process.platform === 'linux')('starts the daemon directly from an ssh login on Linux, with no launchd or WMI', async () => {
+    const { home } = await newHome()
+    const launchctlDir = join(home, 'fake-launchctl')
+    const powershellDir = join(home, 'fake-powershell')
+    const extra = { SSH_CONNECTION: '192.0.2.1 50000 192.0.2.2 22', FAKE_LAUNCHCTL_DIR: launchctlDir, FAKE_POWERSHELL_DIR: powershellDir }
+    const started = await kurmis(bundles.newer, home, ['daemon', 'start'], extra)
+    expect(started).toMatchObject({ code: 0, stderr: '' })
+    expect(started.stdout).toContain('Started the kurmis daemon 0.5.0 on')
+    expect(existsSync(join(launchctlDir, 'calls.jsonl'))).toBe(false)
+    expect(existsSync(join(powershellDir, 'calls.jsonl'))).toBe(false)
     expect(processExists(daemonInfo(home)?.pid ?? 0)).toBe(true)
   }, 60_000)
 

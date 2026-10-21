@@ -1,11 +1,12 @@
 // The environment kurmis runs a CLI with on one login for itself.
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, codexLoginEnv, namesDefaultClaudeFolder } from '../../src/data/login-env.ts'
+import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, codexLoginEnv, namesDefaultClaudeFolder,
+  sharesDefaultSettingsFile } from '../../src/data/login-env.ts'
 import { claudeDefaultProbeFolder, kurmisHome } from '../../src/data/paths.ts'
-import { linkFolder } from '../host.ts'
+import { canCreateSymlinks, linkFolder } from '../host.ts'
 
 const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
 
@@ -101,5 +102,35 @@ describe('whether CLAUDE_CONFIG_DIR names ~/.claude itself', () => {
 
   test('on Linux case counts', () => {
     expect(namesDefaultClaudeFolder('/home/example/.CLAUDE', 'linux', '/home/example')).toBe(false)
+  })
+})
+
+describe.runIf(canCreateSymlinks())('whether $CLAUDE_CONFIG_DIR/settings.json is ~/.claude/settings.json through a link', () => {
+  test('a link, a chain of links and a link whose target does not exist yet count; a file of its own does not', () => {
+    const home = mkdtempSync(join(tmpdir(), 'kurmis-shares-'))
+    try {
+      mkdirSync(join(home, '.claude'))
+      const work = join(home, '.claude-work')
+      mkdirSync(work)
+      // The default file does not exist yet.
+      symlinkSync(join(home, '.claude', 'settings.json'), join(work, 'settings.json'))
+      expect(sharesDefaultSettingsFile(work, 'darwin', home)).toBe(true)
+      writeFileSync(join(home, '.claude', 'settings.json'), '{}')
+      expect(sharesDefaultSettingsFile(work, 'linux', home)).toBe(true)
+      // Through a second link, and with the case changed where case is ignored.
+      const chained = join(home, '.claude-chained')
+      mkdirSync(chained)
+      symlinkSync(join('..', '.claude-work', 'settings.json'), join(chained, 'settings.json'))
+      expect(sharesDefaultSettingsFile(chained, 'linux', home)).toBe(true)
+      expect(sharesDefaultSettingsFile(join(home, '.CLAUDE-WORK'), 'darwin', home)).toBe(true)
+      const own = join(home, '.claude-own')
+      mkdirSync(own)
+      writeFileSync(join(own, 'settings.json'), '{}')
+      expect(sharesDefaultSettingsFile(own, 'darwin', home)).toBe(false)
+      expect(sharesDefaultSettingsFile(join(home, '.claude-missing'), 'darwin', home)).toBe(false)
+      expect(sharesDefaultSettingsFile('', 'darwin', home)).toBe(false)
+    } finally {
+      rmSync(home, { recursive: true, force: true, maxRetries: 10 })
+    }
   })
 })
