@@ -9,14 +9,15 @@
 // - every real folder of `~/.codex` is linked into the login's home (a symlink on macOS, a
 //   directory junction on Windows), so rollouts, skills and the like are shared, except
 //   scratch folders and anything whose name says it holds a credential or a database;
-// - `config.toml` is merged in without its secrets (`codexConfigRefresh`);
+// - `config.toml` is merged in without its secrets, keeping the login's own hook and folder
+//   trust (`codexConfigRefresh`, and `codex-account-config.ts` for the trust rules);
 // - `AGENTS.md` is copied in (`codexAgentsCopy`);
 // - every other file, `auth.json` first of all, is neither copied nor linked. Each login's
 //   sign-in stays in its own home.
 //
-// A link or copy that fails is logged and the start goes on. A `config.toml` whose trust
-// cannot be checked stops the start (`refuse`), because the login would otherwise run with
-// trust nobody checked.
+// A link, copy or merge that fails is reported and the start goes on. the original router refuses the
+// start when the login's own `config.toml` cannot be checked for trust; kurmis keeps the
+// login's own trust, so there is nothing to check and nothing to refuse.
 //
 // Two rules for the code doing the file work, which no function here can enforce:
 //
@@ -26,8 +27,8 @@
 //   `CODEX_CONFIG_MERGE_ATTEMPTS` times in all.
 // - Removing a login's home must unlink the links first. A recursive delete that followed
 //   one would delete the folder of `~/.codex` it points to.
-import { resolve } from 'node:path'
-import { filterAccountTrust, mergeAccountConfig, sameTomlSettings } from './codex-account-config.ts'
+import { posix, win32 } from 'node:path'
+import { mergeAccountConfig, sameTomlSettings, validToml } from './codex-account-config.ts'
 
 /** The default home's file that is merged into each login's home: `codexConfigRefresh`. */
 export const CODEX_CONFIG_FILE = 'config.toml'
@@ -37,7 +38,8 @@ export const CODEX_AGENTS_FILE = 'AGENTS.md'
 
 /**
  * How many times in all the `config.toml` refresh is decided and written when the login's
- * file keeps changing while it is written. After the last, the start is refused.
+ * file keeps changing while it is written. After the last, the file is left as it is and the
+ * start goes on.
  */
 export const CODEX_CONFIG_MERGE_ATTEMPTS = 3
 
@@ -71,7 +73,9 @@ export type CodexHomeEntryAction = 'link' | 'merge' | 'copy' | 'skip'
 
 /**
  * What to do with one entry of `~/.codex`. Only real folders are linked: a link in the
- * default home is not followed. The two files are matched by their exact names.
+ * default home is not followed. The two files are matched by their exact names. The code
+ * that prepares a home uses this for the folders only: it reads `config.toml` and `AGENTS.md`
+ * by path, so a file that is a symlink (into a dotfiles folder, say) is still merged or copied.
  */
 export function codexHomeEntryAction(name: string, kind: CodexHomeEntryKind): CodexHomeEntryAction {
   if (kind === 'directory') return PRIVATE_DIRS.has(name) || codexPrivateName(name) ? 'skip' : 'link'
@@ -93,12 +97,25 @@ export type CodexLinkPlace =
  * What to do at one link's place: `create` the link, leave it because it is `linked` to
  * `source` already, or leave it because it is a `conflict` (a real folder, or a link that
  * points elsewhere), which is logged. A conflict is never replaced: it may hold the login's
- * own files. Targets are compared as absolute paths, ignoring case.
+ * own files.
+ *
+ * Targets are compared as absolute paths of `platform`. On Windows that is with `path.win32`
+ * and ignoring case, as Windows does; on macOS and Linux exactly. A link kurmis made reads
+ * back with the same spelling it was given, so an exact comparison finds it.
  */
-export function codexLinkAction(place: CodexLinkPlace, source: string): 'create' | 'linked' | 'conflict' {
+export function codexLinkAction(
+  place: CodexLinkPlace,
+  source: string,
+  platform: NodeJS.Platform = process.platform
+): 'create' | 'linked' | 'conflict' {
   if (place.kind === 'missing') return 'create'
-  if (place.kind === 'link' && resolve(place.target).toLowerCase() === resolve(source).toLowerCase()) return 'linked'
+  if (place.kind === 'link' && sameFolderPath(place.target, source, platform)) return 'linked'
   return 'conflict'
+}
+
+function sameFolderPath(a: string, b: string, platform: NodeJS.Platform): boolean {
+  if (platform !== 'win32') return posix.resolve(a) === posix.resolve(b)
+  return win32.resolve(a).toLowerCase() === win32.resolve(b).toLowerCase()
 }
 
 /**
@@ -112,28 +129,23 @@ export function codexAgentsCopy(source: string | null, current: string | null): 
 }
 
 /** What to do with a login's `config.toml` before a start. */
-export type CodexConfigRefresh =
-  | {
-      /** `write`: put `content` in place. `keep`: the file holds the right settings already. */
-      action: 'write' | 'keep'
-      /** The text to write; null for `keep`. */
-      content: string | null
-      /**
-       * The default home has a secret the login lacks, such as an MCP server's `env` table.
-       * Worth one log line: the user has to set it up on that login if it needs it.
-       */
-      missingSecrets: boolean
-      /**
-       * Why the default home's file could not be merged, so that only the login's own trust
-       * was checked; null when it merged or there was none. Worth one log line.
-       */
-      mergeFailure: string | null
-    }
-  | {
-      /** The login's own file cannot be checked: do not start Codex on this login. */
-      action: 'refuse'
-      reason: string
-    }
+export interface CodexConfigRefresh {
+  /** `write`: put `content` in place. `keep`: leave the login's file as it is. */
+  action: 'write' | 'keep'
+  /** The text to write; null for `keep`. */
+  content: string | null
+  /**
+   * The default home has a secret the login lacks, such as an MCP server's `env` table.
+   * Worth one warning: the user has to set it up on that login if it needs it.
+   */
+  missingSecrets: boolean
+  /**
+   * Why the two files could not be merged, so that the login's file was left as it is; null
+   * when they merged or there was nothing to merge. Worth one warning. Never repeats a value
+   * from either file.
+   */
+  mergeFailure: string | null
+}
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -144,37 +156,30 @@ function errorText(error: unknown): string {
  * and `current` that of the login's, each null when the file does not exist.
  *
  * - With a default file, the login's becomes `mergeAccountConfig` of the two.
- * - With no default file, or one that cannot be merged, the login keeps its own settings
- *   and only its trust is checked (`filterAccountTrust`). A login with no file of its own
- *   then gets none.
+ * - With no default file, the login's file stays as it is, or absent.
+ * - When the login's file is not valid TOML, or the default file cannot be merged, the
+ *   login's file stays as it is, and `mergeFailure` says why. A broken login file is not
+ *   replaced, because it may hold the login's own secrets.
  * - A result that holds the same settings as the login's file is not written, so a file
  *   laid out by hand stays as it is.
  *
- * Never throws. No `reason` or `mergeFailure` repeats a value from either file.
+ * Never throws.
  */
 export function codexConfigRefresh(source: string | null, current: string | null): CodexConfigRefresh {
+  const keep = (missingSecrets: boolean, mergeFailure: string | null): CodexConfigRefresh =>
+    ({ action: 'keep', content: null, missingSecrets, mergeFailure })
+  if (source === null) return keep(false, null)
+  if (current !== null && !validToml(current)) return keep(false, "the login's config.toml is not valid TOML, so it was left as it is")
+  let merged: { content: string; missingSecrets: boolean }
   try {
-    let next: string | null = null
-    let missingSecrets = false
-    let mergeFailure: string | null = null
-    if (source !== null) {
-      try {
-        const merged = mergeAccountConfig(source, current ?? '')
-        next = merged.content
-        missingSecrets = merged.missingSecrets
-      } catch (error) {
-        mergeFailure = errorText(error)
-      }
-    }
-    if (next === null) {
-      if (current === null) return { action: 'keep', content: null, missingSecrets, mergeFailure }
-      next = filterAccountTrust(current)
-    }
-    if (current !== null && sameTomlSettings(current, next)) {
-      return { action: 'keep', content: null, missingSecrets, mergeFailure }
-    }
-    return { action: 'write', content: next, missingSecrets, mergeFailure }
+    merged = mergeAccountConfig(source, current ?? '')
   } catch (error) {
-    return { action: 'refuse', reason: `the hook and folder trust in the login's config.toml could not be checked: ${errorText(error)}` }
+    return keep(false, `the default home's config.toml could not be merged in: ${errorText(error)}`)
   }
+  try {
+    if (current !== null && sameTomlSettings(current, merged.content)) return keep(merged.missingSecrets, null)
+  } catch (error) {
+    return keep(merged.missingSecrets, `the merged config.toml could not be compared: ${errorText(error)}`)
+  }
+  return { action: 'write', content: merged.content, missingSecrets: merged.missingSecrets, mergeFailure: null }
 }

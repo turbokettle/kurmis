@@ -172,14 +172,96 @@ There is no proxy for Codex. `kurmis codex …` picks a login when it starts, or
 with `--login`, prepares that login's `CODEX_HOME` and starts `codex` with it. The choice uses
 the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it was inherited.
 
+**Preparing a login's home.** Before every start on an extra login, `prepareCodexHome`
+(`src/cli/codex-home-files.ts`) prepares `codex/<name>/` from the default Codex home: `CODEX_HOME`
+of the starting environment, or `~/.codex`. A `CODEX_HOME` inside kurmis' own `codex/` folder is
+a login's home, inherited by a `kurmis codex` run from inside a session on that login; it is
+ignored and `~/.codex` is used. The decisions are the pure functions of `src/core/codex-home.ts`:
+
+- Each real folder of the default home is linked into the login's home, except scratch folders
+  (`tmp`, `.tmp`), links, and names that say they hold a credential or a database.
+- `AGENTS.md` is copied, and `config.toml` is merged without its secrets
+  (`src/core/codex-account-config.ts`). Both are read through a link, so a file that is a
+  symlink into a dotfiles folder still counts.
+- `auth.json` and every other file stay out, so each login keeps its own sign-in.
+
+A real folder, or a link to somewhere else, where a link should go is left as it is, with a
+warning. Every step that fails adds a warning to stderr and the start goes on. Only a home that
+cannot be created stops it. A login's `config.toml` that is not valid TOML is left as it is,
+because it may hold the login's own secrets.
+
+The login's `config.toml` is written to a temporary file beside it, and the file is read again
+just before the rename. When a Codex process changed it in the meantime, the merge is made
+again from the new contents, up to three times in all (`CODEX_CONFIG_MERGE_ATTEMPTS`); after
+that the file is left alone until the next start. The home is created with mode 0700 and
+`config.toml` written with 0600, because it may hold the login's own secrets.
+
+**Hook and folder trust.** Codex keeps trust in the `config.toml` of the home it runs with:
+`hooks.state."<hook key>"` (`trusted_hash`, `enabled`) for a hook and `projects."<folder>"`
+(`trust_level`) for a folder. A session on a login asks for trust and Codex writes it into
+that login's file. The merge keeps those values across refreshes; the default home's values
+fill in the fields the login has not set. Where both have a value for the same hook or folder,
+`enabled = false` beats `true` and `"untrusted"` beats any other `trust_level`. For
+`trusted_hash` the login's own hash stays: a hash trusts exactly the version of the hook that
+hashes to it, so neither hash trusts more than the other. Taking the default home's would undo
+the login's own approval on every refresh, and dropping both would last only until the next
+refresh filled the default home's hash in.
+
+This differs from the original router, which drops trust the login's file widened, because a model in a
+session could have written it. Kurmis has no window in which a person gives trust, and a model
+that can write a login's `config.toml` could as well write `~/.codex/config.toml`, whose trust
+reaches every login. One consequence: a folder marked untrusted or a hook switched off in a
+login's file stays so after the default home trusts it again. It has to be trusted again in a
+session on that login.
+
+Removing a login's home must unlink its links first. A recursive delete that followed one
+would delete the folder of `~/.codex` it points to.
+
 ## Windows
 
 - **Never start a `.cmd` or `.bat` shim.** Node will not start one without a shell, and
   through `cmd.exe` the user's arguments can be changed or run. Kurmis finds the real program
-  behind the npm shim instead: `claude.exe` for Claude, and `node <entry>.js` for Codex.
-- **Directory junctions** link the Codex folders. They need no admin rights.
+  behind the shim instead (below).
+- **Directory junctions** link the Codex folders (`src/platform/links.ts`). They need no admin
+  rights or Developer Mode, but they need an absolute target on a local NTFS volume. Where a
+  junction cannot be made (a FAT or exFAT drive, a target on a network share), kurmis tries a
+  directory symlink instead, which works with Developer Mode on or as an administrator; when
+  that fails too, that folder is not shared and a warning says so. A junction's target is read
+  back without the `\\?\` prefix some Node versions add, and paths are compared ignoring case.
+  On macOS and Linux links are directory symlinks and paths are compared exactly.
 - **Ctrl-C** goes to every process on the console. The wrapper ignores it and waits for the
   child to exit.
+
+**Finding `claude` and `codex`** (`src/platform/programs.ts`). `KURMIS_CLAUDE_BIN` /
+`KURMIS_CODEX_BIN` name the program explicitly (a `.js` path runs through Node). Otherwise
+kurmis searches PATH. On Windows it tries each PATH folder with each extension in PATHEXT, in
+order, as `cmd.exe` does, and reads `Path` and `PATHEXT` whatever the case of their names. The
+current folder and relative PATH entries are skipped on every OS. An `.exe` or `.com` is started
+directly. A `.cmd` or `.bat` is read as a package manager's shim and its target is started.
+`.ps1` and extensionless shims are never used. When nothing is found, Claude Code is looked for
+where its native installer puts it: `%USERPROFILE%\.local\bin\claude.exe`
+(`~/.local/bin/claude` on macOS and Linux). On macOS and Linux a PATH hit that is a symlink to a
+`.js` file (Homebrew's `codex`) runs that file through Node, so a PATH without `node` on it
+still works.
+
+**Reading npm, pnpm and yarn shims** (`src/platform/npm-shim.ts`). Each generator writes a line
+that ends in the quoted target path, relative to `%~dp0` or `%dp0%` (the shim's own folder),
+followed by `%*`. Kurmis finds that line, resolves the folder variables against the shim's
+folder, and refuses anything else (other variables, relative paths, pipes, redirections). It
+reads npm's cmd-shim 2 to 8 and pnpm's `@zkochan/cmd-shim`; yarn 1 wrote the same form as
+npm's cmd-shim 2. A `.js` target runs through the `node.exe` next to the shim if there is one,
+otherwise through the Node that runs kurmis. An `.exe` target is started directly. A shim
+kurmis cannot read is skipped and the search goes on; the not-found message lists every skipped
+shim and why. The fixtures in `test/platform/fixtures/` were generated by running npm's and
+pnpm's generators, except the older npm forms, which are written by hand from their source.
+
+**What the packages contain.** `@anthropic-ai/claude-code`'s bin is `bin/claude.exe`; its
+postinstall step replaces a placeholder script with the native program. When that step did
+not run, the file does not start with `MZ`, and kurmis runs the package's `cli-wrapper.cjs`
+through Node instead. Older versions had `cli.js`, which runs through Node. `@openai/codex`'s
+bin is `bin/codex.js`, which kurmis runs through Node, so the launcher still sets its
+`CODEX_MANAGED_BY_*` variables. Kurmis does not take over the `NODE_PATH` that pnpm's shims
+set, because Node finds a package's dependencies from its real folder.
 
 ## Code layout
 
@@ -216,7 +298,8 @@ the same ranking as Claude's Auto. `codex:default` runs with `CODEX_HOME` as it 
   `daemon start|stop|status|run`, where `daemon run` runs the daemon in the foreground and is
   what `daemon start` launches in the background.
 - `src/version.ts` holds the version, which the build takes from `package.json`.
-- `src/platform/` holds what differs per OS: finding programs, junctions, detaching, autostart,
+- `src/platform/` holds what differs per OS: finding programs and reading npm shims (`programs.ts`,
+  `npm-shim.ts`), folder links (`links.ts`), detaching, autostart,
   and the file rename retry and file modes (`files.ts`). Every program kurmis starts goes
   through `runProgram` in `run.ts`: no shell, stdin closed, a deadline and a cap on the output.
 - `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude`, `codex app-server` and

@@ -78,14 +78,31 @@ describe('a link in the login home', () => {
     expect(codexLinkAction({ kind: 'missing' }, source)).toBe('create')
   })
 
-  test('is left as it is when it already points at the folder, whatever the case or trailing slash', () => {
-    expect(codexLinkAction({ kind: 'link', target: source }, source)).toBe('linked')
-    expect(codexLinkAction({ kind: 'link', target: '/HOME/someone/.codex/sessions/' }, source)).toBe('linked')
+  test('is left as it is when it already points at the folder, whatever the trailing slash or dots', () => {
+    expect(codexLinkAction({ kind: 'link', target: source }, source, 'darwin')).toBe('linked')
+    expect(codexLinkAction({ kind: 'link', target: '/home/someone/.codex/sessions/' }, source, 'linux')).toBe('linked')
+    expect(codexLinkAction({ kind: 'link', target: '/home/someone/x/../.codex/sessions' }, source, 'darwin')).toBe('linked')
+  })
+
+  test('compares paths exactly on macOS and Linux', () => {
+    expect(codexLinkAction({ kind: 'link', target: '/HOME/someone/.codex/sessions' }, source, 'darwin')).toBe('conflict')
+    expect(codexLinkAction({ kind: 'link', target: '/HOME/someone/.codex/sessions' }, source, 'linux')).toBe('conflict')
+  })
+
+  test('compares Windows paths ignoring case, slashes and a trailing separator', () => {
+    const windows = 'C:\\Users\\someone\\.codex\\sessions'
+    expect(codexLinkAction({ kind: 'link', target: windows }, windows, 'win32')).toBe('linked')
+    expect(codexLinkAction({ kind: 'link', target: 'c:\\users\\SOMEONE\\.Codex\\Sessions\\' }, windows, 'win32')).toBe('linked')
+    expect(codexLinkAction({ kind: 'link', target: 'C:/Users/someone/.codex/sessions' }, windows, 'win32')).toBe('linked')
+    expect(codexLinkAction({ kind: 'link', target: 'D:\\Users\\someone\\.codex\\sessions' }, windows, 'win32')).toBe('conflict')
+    expect(codexLinkAction({ kind: 'link', target: '\\\\server\\share\\sessions' }, '\\\\SERVER\\Share\\sessions', 'win32'))
+      .toBe('linked')
   })
 
   test('is a conflict, never replaced, where a real folder or a link elsewhere is', () => {
     expect(codexLinkAction({ kind: 'other' }, source)).toBe('conflict')
     expect(codexLinkAction({ kind: 'link', target: '/somewhere/else' }, source)).toBe('conflict')
+    expect(codexLinkAction({ kind: 'other' }, 'C:\\x', 'win32')).toBe('conflict')
   })
 })
 
@@ -138,29 +155,31 @@ describe("the login's config.toml", () => {
       .toEqual({ action: 'keep', content: null, missingSecrets: false, mergeFailure: null })
   })
 
-  // A session can write its login's config.toml. The trust is checked whether or not the
-  // default home has anything to copy.
-  test('loses widening trust when the default home has no config.toml', () => {
-    expect(written(codexConfigRefresh(null, `model = "gpt-old"\n${hook}[projects.'e:\\a']\ntrust_level = "untrusted"\n`)))
-      .toEqual({ model: 'gpt-old', hooks: { state: { k: {} } }, projects: { 'e:\\a': { trust_level: 'untrusted' } } })
-  })
-
-  test('is left alone when neither home has one, or the login has no trust to drop', () => {
+  // The login's own trust is kept, so with nothing to merge in the file is not touched.
+  test('is left as it is, trust included, when the default home has no config.toml', () => {
+    const own = `model = "gpt-old"\n${hook}[projects.'e:\\a']\ntrust_level = "trusted"\n`
+    expect(codexConfigRefresh(null, own)).toEqual({ action: 'keep', content: null, missingSecrets: false, mergeFailure: null })
     expect(codexConfigRefresh(null, null)).toEqual({ action: 'keep', content: null, missingSecrets: false, mergeFailure: null })
-    expect(codexConfigRefresh(null, 'model = "m" # mine\n')).toMatchObject({ action: 'keep' })
   })
 
-  test('loses widening trust, and says why, when the default home cannot be merged', () => {
-    const refresh = codexConfigRefresh('model = [\n', hook)
-    expect(written(refresh)).toEqual({ hooks: { state: { k: {} } } })
-    expect(refresh).toMatchObject({ mergeFailure: 'config.toml is not valid TOML' })
+  test("keeps the login's own hook trust when the default home has a file", () => {
+    expect(written(codexConfigRefresh('model = "gpt-b"\n', `model = "gpt-a"\n${hook}`)))
+      .toEqual({ model: 'gpt-b', hooks: { state: { k: { trusted_hash: 'sha256:own' } } } })
   })
 
-  test("refuses the start when the login's own file cannot be checked, without repeating it", () => {
+  test('leaves the login file as it is, and says why, when the default home cannot be merged', () => {
+    expect(codexConfigRefresh('model = [\n', hook)).toEqual({
+      action: 'keep',
+      content: null,
+      missingSecrets: false,
+      mergeFailure: "the default home's config.toml could not be merged in: config.toml is not valid TOML"
+    })
+  })
+
+  test('leaves a login file that is not TOML as it is, without repeating it', () => {
     const refresh = codexConfigRefresh('model = "gpt-a"\n', 'hooks = [\nSECRET_CANARY')
-    expect(refresh.action).toBe('refuse')
-    expect(refresh.action === 'refuse' && refresh.reason).toMatch(/could not be checked/)
+    expect(refresh).toMatchObject({ action: 'keep', content: null, mergeFailure: expect.stringMatching(/login's config\.toml is not valid TOML/) })
     expect(JSON.stringify(refresh)).not.toContain('CANARY')
-    expect(codexConfigRefresh(null, 'hooks = [\n').action).toBe('refuse')
+    expect(codexConfigRefresh(null, 'hooks = [\n')).toMatchObject({ action: 'keep', mergeFailure: null })
   })
 })
