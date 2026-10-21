@@ -12,9 +12,14 @@
 // (its owner may have been stopped between creating it and writing it) is stale once its
 // modification time is older than `staleMs`.
 //
-// Two waiting processes could both find the same stale lock. If both removed "the lock" one of
-// them could remove the new lock the other had just taken, so removing a stale lock takes a
-// second lock file (`<path>.break`) and reads the lock again while holding it.
+// Reading a lock, checking its owner and removing it are separate steps, and the lock can be
+// replaced between them: two waiting processes could both find the same stale lock, or an owner
+// could release its lock and exit after a waiter read it, so the waiter finds its pid gone and
+// would remove the new lock another process had just taken. On Windows, where opening a file can
+// take tens of milliseconds while a virus scanner looks at it, that happened in tests. So every
+// removal of the lock, a release as well as the removal of a stale lock, holds a second lock file
+// (`<path>.break`), and a waiter reads the lock again while holding it: the lock it reads then
+// stays in place until it lets go of `.break`.
 import { randomBytes } from 'node:crypto'
 import { closeSync, openSync, readFileSync, rmSync, statSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -176,20 +181,25 @@ function isStale(path: string, contents: LockContents | null, options: Required<
 }
 
 /**
- * Removes the lock at `path` if it is stale, holding `<path>.break` while it reads the lock again
- * and removes it. A `.break` file is held for microseconds, so one older than `staleMs` was left
- * by a process that died and is removed.
+ * Takes `<path>.break`, which every removal of the lock at `path` holds. Returns false when
+ * another process holds it. A `.break` file is held for milliseconds, so one older than `staleMs`
+ * was left by a process that died and is removed, for the next attempt to take.
  */
+function tryTakeBreakLock(path: string, options: Required<Pick<FileLockOptions, 'staleMs' | 'now' | 'platform'>>): boolean {
+  const breakPath = `${path}.break`
+  if (createExclusive(breakPath, String(process.pid), options.platform)) return true
+  try {
+    if (options.now() - statSync(breakPath).mtimeMs > options.staleMs) removeFile(breakPath, options.platform)
+  } catch {
+    // Gone already.
+  }
+  return false
+}
+
+/** Removes the lock at `path` if it is stale, holding `<path>.break` while it reads the lock again and removes it. */
 function breakIfStale(path: string, options: Required<Pick<FileLockOptions, 'staleMs' | 'isAlive' | 'now' | 'platform'>>): void {
   const breakPath = `${path}.break`
-  if (!createExclusive(breakPath, String(process.pid), options.platform)) {
-    try {
-      if (options.now() - statSync(breakPath).mtimeMs > options.staleMs) removeFile(breakPath, options.platform)
-    } catch {
-      // Gone already.
-    }
-    return
-  }
+  if (!tryTakeBreakLock(path, options)) return
   try {
     let contents: LockContents | null
     try {
@@ -237,14 +247,26 @@ export function acquireFileLockSync(path: string, options: FileLockOptions = {})
       if (released) return
       released = true
       heldByThisProcess.delete(path)
-      let current: LockContents | null
-      try {
-        // On Windows a waiter reading the file at this moment can make the read fail briefly.
-        current = retryWhileLockedSync(() => readLock(path), settings.platform)
-      } catch {
-        return
+      // Wait for a waiter that is checking this lock to finish (see the top of this file). A
+      // `.break` that cannot be taken within `timeoutMs` does not keep the lock forever.
+      const waitUntil = Date.now() + timeoutMs
+      let holdsBreak = tryTakeBreakLock(path, settings)
+      while (!holdsBreak && Date.now() < waitUntil) {
+        sleepSync(1 + Math.floor(Math.random() * retryMs))
+        holdsBreak = tryTakeBreakLock(path, settings)
       }
-      if (current?.token === token) removeFile(path, settings.platform)
+      try {
+        let current: LockContents | null
+        try {
+          // On Windows a waiter reading the file at this moment can make the read fail briefly.
+          current = retryWhileLockedSync(() => readLock(path), settings.platform)
+        } catch {
+          return
+        }
+        if (current?.token === token) removeFile(path, settings.platform)
+      } finally {
+        if (holdsBreak) removeFile(`${path}.break`, settings.platform)
+      }
     }
   }
 }

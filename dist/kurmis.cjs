@@ -4655,15 +4655,18 @@ function isStale(path, contents, options) {
   if (!options.isAlive(contents.pid)) return true;
   return options.now() - contents.createdAt > options.staleMs;
 }
+function tryTakeBreakLock(path, options) {
+  const breakPath = `${path}.break`;
+  if (createExclusive(breakPath, String(process.pid), options.platform)) return true;
+  try {
+    if (options.now() - (0, import_node_fs3.statSync)(breakPath).mtimeMs > options.staleMs) removeFile(breakPath, options.platform);
+  } catch {
+  }
+  return false;
+}
 function breakIfStale(path, options) {
   const breakPath = `${path}.break`;
-  if (!createExclusive(breakPath, String(process.pid), options.platform)) {
-    try {
-      if (options.now() - (0, import_node_fs3.statSync)(breakPath).mtimeMs > options.staleMs) removeFile(breakPath, options.platform);
-    } catch {
-    }
-    return;
-  }
+  if (!tryTakeBreakLock(path, options)) return;
   try {
     let contents;
     try {
@@ -4706,13 +4709,23 @@ function acquireFileLockSync(path, options = {}) {
       if (released) return;
       released = true;
       heldByThisProcess.delete(path);
-      let current;
-      try {
-        current = retryWhileLockedSync(() => readLock(path), settings.platform);
-      } catch {
-        return;
+      const waitUntil = Date.now() + timeoutMs;
+      let holdsBreak = tryTakeBreakLock(path, settings);
+      while (!holdsBreak && Date.now() < waitUntil) {
+        sleepSync2(1 + Math.floor(Math.random() * retryMs));
+        holdsBreak = tryTakeBreakLock(path, settings);
       }
-      if (current?.token === token) removeFile(path, settings.platform);
+      try {
+        let current;
+        try {
+          current = retryWhileLockedSync(() => readLock(path), settings.platform);
+        } catch {
+          return;
+        }
+        if (current?.token === token) removeFile(path, settings.platform);
+      } finally {
+        if (holdsBreak) removeFile(`${path}.break`, settings.platform);
+      }
     }
   };
 }
