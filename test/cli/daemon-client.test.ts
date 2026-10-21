@@ -10,17 +10,19 @@ import { CONTROL_API_VERSION, type StatusAnswer } from '../../src/core/control-a
 import { saveConfig, defaultConfig } from '../../src/data/config.ts'
 import { readOrCreateKey, writeDaemonFile } from '../../src/data/daemon-file.ts'
 import { daemonFilePath, keyPath, kurmisHome } from '../../src/data/paths.ts'
-import { processExists } from '../../src/daemon/lifecycle.ts'
+import { processExists, STOP_FINISH_MAX_MS } from '../../src/daemon/lifecycle.ts'
 import {
   daemonEnvironment,
   DaemonError,
   findDaemon,
   keyRefusedProblem,
+  NOW_STOP_TIMEOUT_MS,
   readStatus,
   requestProbe,
   requestReload,
   restartDaemon,
   startDaemon,
+  STOP_GRACE_MS,
   stopDaemon
 } from '../../src/cli/daemon-client.ts'
 
@@ -136,7 +138,7 @@ describe('findDaemon', () => {
     const daemon = await fakeDaemon(key)
     usePort(daemon.port)
     writeDaemonFile({ pid: process.pid, port: daemon.port, version: '1.2.3', startedAt: 1 })
-    expect(await findDaemon({ env: {} })).toEqual({ port: daemon.port, key, pid: process.pid, version: '1.2.3' })
+    expect(await findDaemon({ env: {} })).toEqual({ port: daemon.port, key, pid: process.pid, version: '1.2.3', apiVersion: CONTROL_API_VERSION })
     expect(daemon.requests[0]?.key).toBe(key)
   })
 
@@ -196,6 +198,28 @@ describe('startDaemon', () => {
     const result = await startDaemon({ env: {}, version: '1.2.3', entry: '/nonexistent/kurmis.cjs' })
     expect(result).toMatchObject({ started: false, replaced: null })
     expect(result.connection.version).toBe('1.2.3')
+  })
+
+  it('replaces a running daemon of the same version whose control API version is another one, or missing', async () => {
+    const key = readOrCreateKey()
+    for (const apiVersion of [CONTROL_API_VERSION - 1, undefined]) {
+      const daemon = await fakeDaemon(key, { version: '1.2.3', apiVersion })
+      usePort(daemon.port)
+      // The bundle does not exist, so the daemon node starts exits at once. That it was started
+      // at all shows the running daemon was not kept.
+      const failure = startDaemon({ env: {}, version: '1.2.3', entry: join(kurmisHome(), 'no-such-bundle.cjs') })
+      await expect(failure).rejects.toThrow(/exited at start/)
+      await daemon.close()
+    }
+  }, 30_000)
+
+  it('keeps a running daemon of the same version whose control API version is another one when told this CLI has that one', async () => {
+    const key = readOrCreateKey()
+    const daemon = await fakeDaemon(key, { version: '1.2.3', apiVersion: CONTROL_API_VERSION + 1 })
+    usePort(daemon.port)
+    const result = await startDaemon({ env: {}, version: '1.2.3', apiVersion: CONTROL_API_VERSION + 1, entry: '/nonexistent/kurmis.cjs' })
+    expect(result).toMatchObject({ started: false, replaced: null })
+    expect(result.connection.apiVersion).toBe(CONTROL_API_VERSION + 1)
   })
 
   it('uses a running daemon of a newer version and never replaces it', async () => {
@@ -334,6 +358,13 @@ describe('stopDaemon', () => {
     expect(processExists(pid)).toBe(false)
     const stop = daemon.requests.find((request) => request.url === '/_kurmis/stop')
     expect(JSON.parse(stop?.body ?? '')).toEqual({ maxWaitMs: 0 })
+  })
+
+  it('waits longer than a daemon can take to exit after its wait, before it ends the process on Windows', () => {
+    // A daemon whose wait is over waits for its start to finish and then for its close, before
+    // it writes state.json.
+    expect(NOW_STOP_TIMEOUT_MS).toBeGreaterThan(STOP_FINISH_MAX_MS)
+    expect(STOP_GRACE_MS).toBeGreaterThan(STOP_FINISH_MAX_MS)
   })
 
   it('sends SIGTERM at the deadline on macOS and Linux', async () => {

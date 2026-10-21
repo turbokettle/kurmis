@@ -65,6 +65,13 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   `setup` once the logon entry names `autostart.js`.
 - `paused.json` exists while global routing is paused (`kurmis setup --pause`, see "Pausing and
   removing global routing"). It holds the time of the pause.
+- `settings-files.json` lists the Claude Code settings files `kurmis setup` put kurmis' settings
+  into: `{ "version": 1, "files": ["<absolute path>", …] }`. Setup adds a file before it writes
+  it, under the lock `settings-files.json.lock` (`recordSettingsFile` in
+  `src/cli/global-routing.ts`). `setup --pause`, `setup --uninstall-and-logout` and
+  `kurmis status` look at each file it names besides the one of the current environment, so a
+  setup run with `CLAUDE_CONFIG_DIR` set is found from a shell without it, and the other way
+  round. A damaged file is reported; setup then writes one that names only its own file.
 - `key` holds the secret every proxied and control request carries. It is created once and
   kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
   of it and must keep working after the daemon restarts. Only the user can read it. It is
@@ -140,7 +147,9 @@ SYSTEM and Administrators.
 
 **Reading files.** `loadConfig` adds the login of plain claude or plain codex, with a new id, when
 the config has none, a missing `config.json` included, and saves the file under its lock, so every
-reader sees the same id from then on. A `config.json` that is not JSON or has a wrong field is an
+reader sees the same id from then on. `readConfig` reads the file without writing it, for the
+commands that must change nothing: `kurmis status`, `findDaemon` (which `status` calls) and the
+part of `setup --pause` and `--uninstall-and-logout` that reads before anything is removed. A `config.json` that is not JSON or has a wrong field is an
 error that names the file and the field. So is one whose `version` is not 2: a version-1 file is
 refused with a message that says to delete it and add the extra logins again with `kurmis login
 claude` and `kurmis login codex`. Two logins with the same id, a second `machineOwn` login of a
@@ -382,7 +391,10 @@ daemon finishes the requests it has open.
   itself.
 - **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when
   a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
-  does not read leaves the config the daemon has.
+  does not read leaves the config the daemon has. A file that could not be read because another
+  process held its lock for more than 500 ms is read again at the next check, even when its
+  contents stay the same. Until a config has been read, the daemon uses a stand-in with the
+  logins of plain claude and plain codex under new random ids, which it never saves.
 - **Test hooks.** `KURMIS_UPSTREAM_URL` replaces the Anthropic API origin
   (`https://api.anthropic.com`), `KURMIS_SECURITY_PROGRAM` the `security` program
   (`/usr/bin/security`) and `KURMIS_POWERSHELL_PROGRAM` PowerShell (see "Test hooks" below).
@@ -401,9 +413,13 @@ daemon both need: a keyed control request, who holds a port, version comparison)
 `daemon.log`. Then it listens on `127.0.0.1:<port>`. The port is the lock that keeps one daemon
 per user. When the port is busy, the daemon asks the holder for its status with the key:
 
-- a kurmis daemon of an older version is replaced (below);
-- a kurmis daemon of the same or a newer version, or of a version that cannot be compared
-  (`dev`, which code run from the source tree reports), keeps the port, and the new process
+- a kurmis daemon of an older version is replaced (below). So is one of the same version whose
+  control API version (`apiVersion` in its status answer) is another one, or missing: it was
+  built from other code of that version, and its answers may be misread (`shouldReplaceDaemon`
+  in `src/daemon/lifecycle.ts`);
+- any other kurmis daemon (the same version and control API version, a newer version, or a
+  version that cannot be compared, such as `dev`, which code run from the source tree reports)
+  keeps the port, and the new process
   prints that it already runs and exits 0. Two CLIs that start a daemon at the same moment rely
   on this: the bind decides, and both CLIs connect to the one that won;
 - any other program is an error, exit 1, that says to set `"port"` in `config.json` (1024 to
@@ -433,17 +449,20 @@ at once there. So on Windows only a control `stop`, and Ctrl-C or closing the co
    signal ends the wait. A control `stop` with a body `{ "maxWaitMs": <n> }` ends it after n
    milliseconds instead (`kurmis daemon stop` sends its own 30-second deadline this way); a
    `stop` without a body waits the whole 15 minutes;
-4. kills the usage probes that still run and waits for their processes to exit, writes
+4. closes the client connections of the requests still open, when the wait ended before they
+   finished or a `stop` named a wait of 0, so their clients see a dropped connection. Then it
+   kills the usage probes that still run and waits for their processes to exit, writes
    `state.json`, closes the remaining connections, removes `daemon.json` and exits 0.
 
 An uncaught error is logged by its error code only, and the daemon stops without waiting for its
 requests and exits 1. The next `kurmis claude` or `kurmis codex` starts a new one.
 
-**Version handover.** A CLI that finds a daemon of an older version starts a new daemon, and the
-new daemon does the handover: it sends the old one a control `stop` and tries the bind every
-100 ms for up to 10 seconds. While the old daemon closes, its port may answer the status request
-with nothing or with an error; once the stop is sent that counts as the old daemon going away,
-not as another program, and the bind is tried again. The old daemon frees the port as soon as it has
+**Version handover.** A CLI that finds a daemon of an older version, or of the same version with
+another control API version, starts a new daemon, and the new daemon does the handover: it
+sends the old one a control `stop` and tries the bind every 100 ms for up to 10 seconds. While
+the old daemon closes, its port may answer the status request with nothing or with an error;
+once the stop is sent that counts as the old daemon going away, not as another program, and the
+bind is tried again. The old daemon frees the port as soon as it has
 answered, and finishes its open requests in the background while the new one serves. A routed Claude
 CLI retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
 in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older kurmis
@@ -504,19 +523,21 @@ older than `maxWaitMs`, which ignores the field) depends on the platform:
 - **macOS and Linux:** the CLI sends SIGTERM, which, as the second stop signal, ends the
   daemon's wait, and waits 5 more seconds.
 - **Windows:** `process.kill` ends the process at once there (TerminateProcess), without
-  `state.json` being written or `daemon.json` removed. So the CLI first waits 10 seconds more,
-  for a daemon that ended its wait by itself to finish, and only then ends the process and waits
-  5 more seconds.
+  `state.json` being written or `daemon.json` removed. So the CLI first waits 25 seconds more,
+  for a daemon that ended its wait by itself to finish step 4 below, which takes at most 20
+  seconds, and only then ends the process and waits 5 more seconds.
 
 When the signal is refused with EPERM (a daemon of another user, or on Windows one started as
 administrator while this command is not), the stop is an error that names the pid and says to
 end it from there; only ESRCH (no such process) counts as stopped.
 
 `kurmis daemon stop --now` sends `{ "maxWaitMs": 0 }`, so the daemon skips step 3 and closes the
-connections of its open requests in step 4. A Claude CLI whose request was cut sees a dropped
-connection and retries it. The CLI waits up to 15 seconds for the pid to exit, since step 4
-gives the probes and `state.json` at most 10 seconds, and then signals it as above, on Windows
-without the extra 10 seconds.
+client connections of its open requests before anything else in step 4. A Claude CLI whose
+request was cut sees a dropped connection, not an answer from the proxy, and retries it. The
+log line `drain_cut_short` then has `reason=stop_now`. The CLI waits up to 25 seconds for the
+pid to exit and then signals it as above, on Windows without the extra wait. A daemon may take
+20 seconds for step 4: up to 10 seconds for its request handling to finish starting, and up to
+10 seconds for the probes and `state.json` (`STOP_FINISH_MAX_MS` in `src/daemon/lifecycle.ts`).
 
 Only a pid that answered the keyed status request as the daemon's own is ever signalled.
 `kurmis daemon restart` sends `stop` without a body, waits until the port is free, and starts a
@@ -647,6 +668,14 @@ it picks. When that is the login the CLI was started on, the proxy forwards the 
 wrapper does not start claude unrouted; it fails with a message naming `kurmis daemon start`
 and the log.
 
+When `config.json` cannot be read (it is damaged, or its lock stays busy), `--login` is an
+error, since the login cannot be looked up. Without `--login` the wrapper prints the reason
+and starts claude on the login plain claude uses, as `kurmis codex` starts on the login plain
+codex uses. It takes that login's id from the daemon's status, and sends no
+`x-kurmis-started-on` when the status names none, which the daemon reads as the same login.
+A daemon that runs is used as it is, because the port it belongs on is in the config. When
+none runs, `ensureDaemon` reads the config again, and the start fails when it still cannot.
+
 **The `env` of `settings.json` beats the process environment, and the `--settings` flag beats
 `settings.json`.** Measured with Claude Code 2.1.301 against two local servers. In global mode
 a variable the wrapper puts in the process environment is therefore ignored, so the wrapper
@@ -705,7 +734,8 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
 
 - The file is `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set and not empty, as the
   CLI reads it, else `~/.claude/settings.json`; the path used is printed. A `CLAUDE_CONFIG_DIR`
-  inside kurmis' data folder is refused.
+  inside kurmis' data folder is refused. Before the daemon is started, the path is added to
+  `settings-files.json`; when that cannot be written, setup stops and changes nothing.
 - The file is edited as text: only the members of `env` change, and key order, indent, line
   endings and a byte order mark stay as they were. A file that is not plain JSON (comments,
   trailing commas), or whose top level or `env` is not an object, is refused and not written.
@@ -738,8 +768,8 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` in the same `env` is
   kept, with a warning when its value is not empty, since a plain `claude` then signs with that
   key or token (`KEY_VARIABLES` in `src/cli/global-settings.ts`).
-- When the daemon cannot be started, or runs on another port than `config.json` names, nothing
-  is written and setup exits 1. When autostart then fails, the settings change stands and setup
+- When the daemon cannot be started, or runs on another port than `config.json` names, the
+  settings file is not written and setup exits 1. When autostart then fails, the settings change stands and setup
   exits 1; running it again is safe. A launchd agent that is written but can be loaded only at
   the next login, a Windows machine where no logon entry can be written because Windows Script
   Host is missing or turned off (`noEntryPossible` in `src/platform/autostart.ts`), an entry
@@ -763,54 +793,79 @@ changes the file says to start them again.
 **Pausing and removing global routing.** `src/cli/global-routing.ts` answers whether global
 routing is on, paused or off from the files alone, without the daemon (`globalRoutingState`):
 
-- **on:** the settings file setup edits, for the environment it is asked with, sets kurmis'
-  `ANTHROPIC_BASE_URL` (`routesThroughKurmis` in `src/cli/global-settings.ts`);
-- **paused:** it does not, and `paused.json` is in the data folder;
+- **on:** the settings file setup edits, for the environment it is asked with, or a file
+  `settings-files.json` names, sets kurmis' `ANTHROPIC_BASE_URL` (`routesThroughKurmis` in
+  `src/cli/global-settings.ts`);
+- **paused:** none does, and `paused.json` is in the data folder;
 - **off:** neither.
+
+It reads `config.json` with `readConfig` and writes nothing.
 
 The start at login is not part of the answer, because Linux has none and a pause leaves it in
 place. A settings file that is missing or not JSON counts as not on, and so does a
 `CLAUDE_CONFIG_DIR` inside the data folder, for which the default file is read instead.
 
-`kurmis setup --pause` takes kurmis' settings out of the file and writes `paused.json`. The
-daemon, its start at login, the logins and the backup stay, so `kurmis claude` keeps working. A
-pause when the file holds none of kurmis' settings and nothing is paused writes nothing and says
-global routing is not on. `kurmis setup` deletes `paused.json` once the settings are back in the
-file. That setup finds a file without kurmis' settings, so it replaces the backup with the file
-as it is then, which includes what the person changed while routing was paused.
+`kurmis setup --pause` takes kurmis' settings out of the file of the current environment and of
+every file `settings-files.json` names, and writes `paused.json`. It reports the file of the
+current environment, and another file only when it changed. The daemon, its start at login, the
+logins and the backups stay, so `kurmis claude` keeps working. A pause when no file holds
+kurmis' settings and nothing is paused writes nothing and says global routing is not on. When a
+file cannot be changed, the others are still changed, no `paused.json` is written and the pause
+exits 1. When `paused.json` cannot be written after a file was changed, the pause says so and
+exits 1. A file system error (EACCES, EISDIR, …) that setup did not expect is reported as a
+sentence with its code, and the command exits 1. `kurmis setup` deletes `paused.json` once the
+settings are back in the file. That setup finds a file without kurmis' settings, so it replaces
+the backup with the file as it is then, which includes what the person changed while routing was
+paused.
 
-`kurmis setup --uninstall-and-logout` first lists what it will remove: kurmis' settings in the
-file (when it has any), the backup, the start at login (on macOS when the plist is there, on
-Windows always), the logins kurmis added, the running daemon and the data folder. It says that
-the logins of plain claude and plain codex are not signed out. At a terminal it then asks, and
+`kurmis setup --uninstall-and-logout` first lists what it will remove: kurmis' settings in each
+settings file that has them (the current environment's and those `settings-files.json` names),
+their backups, the start at login (on macOS when the plist is there, on Windows always), the
+logins kurmis added (when there are any), the other entries of the data folder's `claude/` and
+`codex/` folders, which are deleted without a logout, the running daemon and the data folder. It
+says that the logins of plain claude and plain codex are not signed out. At a terminal it then asks, and
 anything but `y` or `yes` removes nothing. `--yes` skips the question. Without a terminal on
 stdin and without `--yes` it refuses. A `config.json` it cannot read, or a settings file it
-cannot change, stops it before the list, with nothing removed. Then, in this order:
+cannot read or change, stops it before the list, with nothing removed. Up to there it writes
+nothing. Then, in this order:
 
-1. Kurmis' settings come out of the file, and the backup is deleted. When the file cannot be
-   written, nothing else is removed, since the Claude Code that reads it still needs the daemon.
-2. The start at login is removed (`unregisterAutostart`). On Windows that also deletes
-   `autostart.js` and an old `autostart.vbs`.
+1. Kurmis' settings come out of each settings file, and the backups are deleted. When a file
+   cannot be written, nothing else is removed, since the Claude Code that reads it still needs
+   the daemon.
+2. The start at login is removed (`unregisterAutostart`). On Windows the Run value is removed
+   first, and `autostart.js` and an old `autostart.vbs` are deleted only once it is gone. When
+   `reg query` of the value fails, `reg query` of the whole Run key tells a missing value (the
+   key lists its values without kurmis') from one that cannot be read. When the value cannot be
+   read or `reg delete` fails, the scripts are kept, since a Run value that names a missing
+   script makes wscript show an error at every logon.
 3. The daemon is stopped as `kurmis daemon stop` stops it, so it uses no login and probes none
    while they are signed out.
 4. Each login kurmis added is removed through the code of `kurmis logout` (`createLoginLogout` in
-   `src/cli/commands/logout.ts`). The logins are the extra ones in `config.json` and every
-   folder under `claude/` and `codex/` whose name is a login id, so a second run finds the
-   logins a first run removed from `config.json` but could not finish. A folder named by the id
-   of the login plain claude or plain codex uses is left out, and those logins are never
-   signed out. Here a logout CLI that fails keeps the login's folder,
-   since the folder's path names the Keychain item and Credential Manager record that a second
-   run's logout CLI removes.
+   `src/cli/commands/logout.ts`), with `keepWhenSignOutFails`. The logins are the extra ones in
+   `config.json` and every folder under `claude/` and `codex/` whose name is a login id, so a
+   second run finds a folder a removal that stopped half-way left. A folder named by the id of
+   the login plain claude or plain codex uses is left out, and those logins are never signed
+   out. Here the logout CLI runs before the login is taken out of `config.json`. When it fails,
+   nothing of that login is removed: it stays in `config.json` and its folder stays, since the
+   folder's path names the Keychain item and Credential Manager record that a second run's
+   logout CLI removes. That holds for a Claude login without a folder too. The message names the
+   way out when the logout CLI can never finish (for example, the CLI is not installed):
+   `kurmis logout <id>`, which removes the login and its folder anyway and may leave the item it
+   names. Messages of this step start with `kurmis setup:`.
 5. The data folder is deleted (`removeDataFolder` in `src/data/remove-data-folder.ts`). Only the
-   names kurmis writes are deleted, with their temporary, lock and rotated forms, each through
-   `removeTreeSync`, so a link or junction inside is removed and its target is left. When the
-   folder then holds anything else, it is left and the names are printed. A data folder that is
-   itself a link is emptied through it, the folder it points to is removed, and then the link.
+   names kurmis gives its files and folders are deleted, with their temporary, lock and rotated
+   forms, each with everything in it and each through `removeTreeSync`, so a link or junction
+   inside is removed and its target is left. On Windows `removeTreeSync` gets the data folder's
+   real path as the folder it must stay inside, so an entry that is a mount point is removed as
+   a link, the entries at the top included. When the folder then holds anything else, it is left
+   and the names are printed. `.DS_Store`, `Thumbs.db` and `desktop.ini` are deleted when
+   nothing else is left, and are not printed. A data folder that is itself a link is emptied
+   through it, the folder it points to is removed, and then the link.
 
 A failed step is reported and the later steps still run, except that the data folder is kept
-when the daemon could not be stopped or a login could not be removed. The command then exits 1
-and says to run it again. When every step worked, its last line says to run
-`npm uninstall -g kurmis`.
+when the start at login could not be removed, the daemon could not be stopped or a login could
+not be removed. The command then exits 1 and says to run it again. When every step worked, its
+last line says to run `npm uninstall -g kurmis`.
 
 Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
 headers. The proxy answers that path itself.
@@ -1349,7 +1404,8 @@ These are known and left as they are.
   picks the command and handles `--help`, `--version` and `help <command>`. `wrapper.ts` runs an
   interactive child, `wrapper-args.ts` splits the wrappers' arguments, `settings-arg.ts` builds
   claude's `--settings`, `global-settings.ts` edits the user settings file for `setup`,
-  `global-routing.ts` answers whether global routing is on, paused or off,
+  `global-routing.ts` answers whether global routing is on, paused or off and keeps
+  `settings-files.json`,
   `local-credentials.ts` checks whether a login's credentials are on this machine,
   `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon,
   `codex-home-files.ts` prepares a Codex home, `login-names.ts` names a login to the person and
@@ -1368,8 +1424,9 @@ These are known and left as they are.
     connection, so the command exits at once while the daemon finishes the probe. `kurmis codex`
     does the same with its 5-second wait. A daemon of an older kurmis is shown as it is, with a
     line that says the next command that starts the daemon replaces it; `status` replaces
-    nothing. When no daemon runs, or the one that runs answers in another control API version,
-    the logins come from `config.json` and `state.json`: the settings, the last usage snapshot
+    nothing. When no daemon runs, the one that runs does not answer its status request (a note
+    on stderr says so), or it answers in another control API version, the logins come from
+    `config.json` and `state.json`: the settings, the last usage snapshot
     with its age, the sessions counted from the placements, and a Claude login's email from its
     profile files (`readClaudeIdentity`). A Codex login's email is then unknown, because only a
     daemon keeps it. The sign-in is not known then either; instead each login shows whether its
@@ -1384,19 +1441,30 @@ These are known and left as they are.
     blocks and the Codex start are left out then, because they depend on the sign-in and on
     usage the daemon reads again when it starts.
 
+    `status` writes nothing in the data folder: it reads `config.json` with `readConfig`, so
+    after an uninstall, or before any other command ran, no data folder is created. While
+    `config.json` has no entry for the login plain claude or plain codex uses, that login is
+    shown as "the login plain claude uses (Claude, no id yet)", with default settings and its
+    credentials and email from the files, and the JSON gives `id` and `alias` null for it
+    (`noIdYet` in `src/cli/status-format.ts`). The first other command that reads `config.json`
+    gives it an id.
+
     The text starts with the daemon's version, pid, port and uptime, or a line that says the
     daemon is not running and names the commands that start it (`kurmis claude`, `kurmis codex`
     without `--login`, `kurmis setup`, `kurmis daemon start`). The next line says whether global
     routing is on, paused or off (`globalRoutingState`) and which `kurmis setup` command changes
-    it. Then it shows per login the alias, the provider, the id, the email (on the terminal only),
+    it. Then it shows per login the alias, the provider, the id (left out while the alias is the
+    id), the email (on the terminal only),
     a line for the login plain claude or plain codex uses, sign-in or credentials, routing,
     limits, use-first, sessions, each usage window with its reset, how long ago the usage was
     read, and why routing passes the login over (`routeBlockText`), and last which login
     `kurmis codex` would start on (`src/cli/status-format.ts`). Above the logins it warns about
-    each extra login whose email is that of the login plain claude or plain codex uses, of its
-    provider, compared without regard to case, because both then use one subscription
-    (`sameAccountWarnings`), and about global routing that is on while no daemon runs, because a
-    plain `claude` then cannot reach Anthropic. Resets are shown as the time left; a cooldown's
+    any two logins of one provider with the same email, compared without regard to case,
+    because both then use one subscription (`sameAccountWarnings`): of each group with one email
+    the login plain claude or plain codex uses, else the first, is compared with each of the
+    others, and the warning names the `kurmis logout` that removes the other one. It also warns
+    about global routing that is on while no daemon runs, because a plain `claude` then cannot
+    reach Anthropic. Resets are shown as the time left; a cooldown's
     end is shown in local time (`02:10`, with the date when it is on another day) with the time
     left after it.
   - `login claude|codex [--alias <alias>]` adds a new login, and `login <login> [--alias <alias>]`
@@ -1423,9 +1491,16 @@ These are known and left as they are.
     login's email is that of another login of the same provider, compared without regard to
     case, the login plain claude or plain codex uses included, the new folder is signed out again
     (`signOutLogin` in `src/cli/sign-out.ts`) and deleted, the command names that login and says
-    that `kurmis login <alias>` signs it in again, and it exits 0. The other Claude logins'
+    that `kurmis login <alias>` signs it in again, and it exits 0. A given `--alias` is then not
+    used, and the command says so on stderr. The other Claude logins'
     emails come from their profile files; the other Codex logins' emails from a running daemon's
-    status where it knows them, and from `codex app-server` for the rest. Otherwise the login is
+    status where it knows them, and from `codex app-server` for the rest. For a new Claude login
+    the comparison is made again with the config read under the config lock, just before the
+    login is added, so two `kurmis login claude` runs of one account at the same moment add it
+    once. A Codex email takes a `codex app-server` run, which is too slow to wait for under the
+    lock, so two such Codex runs can both add the account. When an existing login is signed in
+    to an account that another login of the same provider has, the command prints a warning that
+    the two logins are now the same account and signs neither out. Otherwise the login is
     added or updated under the config lock, with `--alias` as a user alias, and `followEmail`
     makes an automatic alias from the email. A running daemon is told to reload and
     asked to probe the login, waiting up to 15 seconds, because it may still hold the login as
@@ -1442,8 +1517,10 @@ These are known and left as they are.
     without following them. For a Codex login it also deletes `codex-merged/<id>.json`. A bare id
     that names no login in `config.json` but has a folder in `claude/` or `codex/` (a removal or a
     sign-in that stopped half-way) is cleaned up the same way, and when only a Codex id's
-    `codex-merged/` record is left, deleting it is all logout does. The removal itself is
-    `createLoginLogout`, which `setup --uninstall-and-logout` calls for each login.
+    `codex-merged/` record is left, deleting it is all logout does. What the person typed is read
+    without the spaces around it and without regard to case, as `resolveLogin` reads it. The
+    removal itself is `createLoginLogout`, which `setup --uninstall-and-logout` calls for each
+    login with `keepWhenSignOutFails` (above, step 4).
   - `set <login> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>] [--use-first on|off]
     [--alias <alias>]`: needs at least one option, changes `config.json` under the lock, tells a
     running daemon to reload and prints the login's settings, with where its alias comes from.
@@ -1455,10 +1532,11 @@ These are known and left as they are.
 
   **`kurmis status --json`** prints its own shape, not the control API's answer, so it can stay
   stable while the daemon's usage snapshot changes. Times are ISO strings. `format` is raised
-  only when a field is removed or changes meaning; fields may be added.
+  only when a field is removed or changes meaning; fields may be added. Format 4 lets `id` and
+  `alias` be null.
 
   ```json
-  { "format": 3,
+  { "format": 4,
     "daemon": { "version": "0.1.0", "pid": 4242, "port": 28411, "startedAt": "<ISO>", "older": false },
     "source": "daemon",
     "globalRouting": "on",
@@ -1478,14 +1556,14 @@ These are known and left as they are.
   `daemon` is null while no daemon runs. `older` is true when the daemon runs an older kurmis
   than this one, so the next command that starts the daemon replaces it. `source` is `daemon`
   when the logins come from the daemon's status answer, and `files` when they come from
-  `config.json` and `state.json`: no daemon runs, or the one that runs answers in another
-  control API version, and then `daemon` is not null. `globalRouting` is `on`, `paused` or `off`.
+  `config.json` and `state.json`: no daemon runs or answers its status request, or the one that
+  runs answers in another control API version, and then `daemon` is not null. `globalRouting` is `on`, `paused` or `off`.
   The logins come in `config.json` order, those of plain claude and plain codex first. `id` never
-  changes; `alias` is what the person types. `email` is shown, never stored. For a Codex login it
+  changes; `alias` is what the person types. Both are null for the login plain claude or plain
+  codex uses while `config.json` has no entry for it (`status` writes nothing). `email` is shown, never stored. For a Codex login it
   comes from the daemon's last probe, so it is null with `source` `files`. `codexStart.login` is
-  an id. `warnings` holds a sentence for each extra login that is the same account as the login
-  plain claude or plain codex uses, of its provider, and one when `globalRouting` is `on` and
-  `daemon` is null. `signedIn` is what the daemon found: null when the daemon has not looked yet,
+  an id. `warnings` holds a sentence for each login that is the same account as another login of
+  its provider, and one when `globalRouting` is `on` and `daemon` is null. `signedIn` is what the daemon found: null when the daemon has not looked yet,
   and always null with `source` `files`. `credentials` is whether the login's credentials are on
   this machine (`hasCredentials`) with `source` `files`, and null with `source` `daemon`. With
   `source` `files`, `usage` is the last snapshot the daemon wrote to `state.json`, `probing` is

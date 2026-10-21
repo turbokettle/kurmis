@@ -18,9 +18,8 @@ machine after each larger change. Linux works where it costs nothing extra.
   `work@example.com` becomes `work-example`. The person can set an alias of their own instead.
   A Claude login and a Codex login of the same account can have the same alias.
 - **One login per account.** Signing in to an account that is already a login of the same
-  provider adds nothing, and kurmis says which login it is. `kurmis status` warns when an extra
-  login is the same account as the login plain `claude` or plain `codex` uses, because both
-  then use one subscription.
+  provider adds nothing, and kurmis says which login it is. `kurmis status` warns when two
+  logins of one provider are the same account, because both then use one subscription.
 - **Claude:** each extra login keeps only its credentials in a folder of its own. A CLI started
   on it gets `CLAUDE_SECURESTORAGE_CONFIG_DIR` and nothing else, so settings, CLAUDE.md, skills,
   plugins and transcripts stay those of `~/.claude`. The only thing a login changes is which
@@ -80,12 +79,13 @@ signs the request with that login's token.
   on, and exit with the CLI's exit code.
 - `kurmis status`, with `--json`, shows every login with its settings and usage, whether the
   background process runs, and whether global routing (`kurmis setup`) is on, paused or off. It
-  never starts the background process. Without it, the usage is the last that process read.
+  never starts the background process and changes no file. While that process is not running,
+  the usage shown is the last it read.
 - `kurmis login` and `logout` manage logins, and `kurmis set` changes a login's routing opt-in,
   limits, use-first and alias. Every command takes a login by its alias or its id.
 - `kurmis setup` routes every Claude Code on the machine through kurmis by editing the user's
-  `settings.json`. `kurmis setup --pause` takes kurmis' settings out of that file and keeps the
-  rest. `kurmis setup --uninstall-and-logout` removes everything kurmis set up, signs out every
+  `settings.json`. `kurmis setup --pause` takes kurmis' settings out of every settings file setup
+  changed and keeps the rest. `kurmis setup --uninstall-and-logout` removes everything kurmis set up, signs out every
   login added to kurmis and leaves the logins plain `claude` and plain `codex` use alone.
 - There are also commands to start and stop the background process and show its state.
   `kurmis daemon stop --now` stops it without waiting for its open requests.

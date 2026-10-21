@@ -8,6 +8,8 @@
 //
 // **Starting.** `ensureDaemon` starts `<node> <bundle> daemon run` detached
 // (`src/platform/detach.ts`) and waits until a daemon of this version or a newer one answers.
+// A daemon of the same version counts as older when its control API version is another one
+// (`shouldReplaceDaemon`), since then it was built from other code.
 // The start is the same from an ssh session as from a terminal at the screen. Two CLIs that
 // start one at the same moment both start a process; the port decides which one stays, the
 // other exits at once, and both CLIs connect to the one that stayed. A daemon of an
@@ -29,12 +31,12 @@
 // the daemon takes as a second stop signal. On Windows `process.kill` ends the process at once
 // (TerminateProcess), so there the CLI first waits `STOP_GRACE_MS` more for the daemon to write
 // `state.json` and exit by itself. A stop with `now` sends `maxWaitMs` 0, so the daemon cuts its
-// open requests at once; the CLI then waits `NOW_STOP_TIMEOUT_MS` for the daemon to kill its
-// probes, write `state.json` and exit.
+// open requests at once; the CLI then waits `NOW_STOP_TIMEOUT_MS` (25 seconds) for the daemon to
+// kill its probes, write `state.json` and exit.
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
-import { CONTROL_PATHS, type StatusAnswer, type StopRequest } from '../core/control-api.ts'
-import { ConfigError, loadConfig } from '../data/config.ts'
+import { CONTROL_API_VERSION, CONTROL_PATHS, type StatusAnswer, type StopRequest } from '../core/control-api.ts'
+import { ConfigError, loadConfig, readConfig } from '../data/config.ts'
 import { readDaemonFile, readKey, readOrCreateKey, removeDaemonFile, type DaemonInfo } from '../data/daemon-file.ts'
 import { configPath, keyPath, logPath } from '../data/paths.ts'
 import { isPlainObject } from '../data/validate.ts'
@@ -46,7 +48,8 @@ import {
   portAcceptsConnections,
   portHolder,
   processExists,
-  shouldReplace,
+  shouldReplaceDaemon,
+  STOP_FINISH_MAX_MS,
   type ControlResult
 } from '../daemon/lifecycle.ts'
 import { kurmisEntry, spawnDetached, type DetachedChild } from '../platform/detach.ts'
@@ -59,6 +62,8 @@ export interface DaemonConnection {
   key: string
   pid: number
   version: string
+  /** The daemon's control API version (`CONTROL_API_VERSION`); absent when its status answer has none. */
+  apiVersion?: number
 }
 
 /** A control request that failed, with a sentence a person can read. */
@@ -76,6 +81,11 @@ export interface DaemonClientOptions {
   entry?: string
   /** This CLI's version, which decides whether a running daemon is replaced. Defaults to `kurmisVersion`. */
   version?: string
+  /**
+   * This CLI's control API version, which decides whether a running daemon of the same version is
+   * replaced (`shouldReplaceDaemon`). Defaults to `CONTROL_API_VERSION`.
+   */
+  apiVersion?: number
   /** How long a start may take before it is an error. */
   startTimeoutMs?: number
   /**
@@ -110,15 +120,18 @@ export const PROBE_TIMEOUT_MS = 90_000
 /** `stopDaemon` waits this long for the daemon to finish its open requests and exit. */
 const STOP_TIMEOUT_MS = 30_000
 /**
- * How long `stopDaemon` with `now` waits for the daemon to exit. The daemon gives its last step
- * (killing the probes that still run and writing `state.json`) at most 10 seconds.
+ * How long `stopDaemon` with `now` waits for the daemon to exit: the longest the daemon takes
+ * once its wait for open requests is over (`STOP_FINISH_MAX_MS`, 20 seconds), and 5 seconds more.
+ * On Windows the process is ended after this, so a shorter wait could end it before `state.json`
+ * is written.
  */
-const NOW_STOP_TIMEOUT_MS = 15_000
+export const NOW_STOP_TIMEOUT_MS = STOP_FINISH_MAX_MS + 5_000
 /**
  * Windows: how long after its deadline `stopDaemon` waits for a daemon that ended its wait by
- * itself to write `state.json` and exit, before it ends the process.
+ * itself to write `state.json` and exit, before it ends the process. The same as
+ * `NOW_STOP_TIMEOUT_MS`, for the same reason.
  */
-const STOP_GRACE_MS = 10_000
+export const STOP_GRACE_MS = STOP_FINISH_MAX_MS + 5_000
 /**
  * After the signal: SIGTERM makes a stopping daemon skip the rest of its wait; on Windows it
  * ends the process.
@@ -139,7 +152,10 @@ function configuredPort(): number {
 }
 
 function connectionOf(status: StatusAnswer, key: string): DaemonConnection {
-  return { port: status.port, key, pid: status.pid, version: status.version }
+  const connection: DaemonConnection = { port: status.port, key, pid: status.pid, version: status.version }
+  // An older daemon's status answer may have no `apiVersion`.
+  if (typeof status.apiVersion === 'number') connection.apiVersion = status.apiVersion
+  return connection
 }
 
 /**
@@ -175,7 +191,8 @@ export async function findDaemon(options: DaemonClientOptions, timeoutMs?: numbe
   }
   let port: number
   try {
-    port = loadConfig().port
+    // Read without writing: `kurmis status` looks for the daemon and must change no file.
+    port = readConfig().port
   } catch {
     return null
   }
@@ -233,16 +250,18 @@ export interface StartResult {
 }
 
 /**
- * The running daemon, started first when none runs, or replacing one of an older version or on
- * another port than `config.json` names. The longer form of `ensureDaemon`.
+ * The running daemon, started first when none runs, or replacing one of an older version, one of
+ * the same version with another control API version (`shouldReplaceDaemon`), or one on another
+ * port than `config.json` names. The longer form of `ensureDaemon`.
  */
 export async function startDaemon(options: DaemonClientOptions): Promise<StartResult> {
   const version = options.version ?? kurmisVersion
+  const apiVersion = options.apiVersion ?? CONTROL_API_VERSION
   const port = configuredPort()
   const found = await findDaemon(options)
   let replaced: string | null = null
   if (found !== null) {
-    if (found.port === port && !shouldReplace(found.version, version)) {
+    if (found.port === port && !shouldReplaceDaemon(found, version, apiVersion)) {
       return { connection: found, started: false, replaced: null }
     }
     replaced = found.version
@@ -279,7 +298,7 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
       }
       throw new DaemonError(portBusyMessage(port, holder.reason))
     }
-    if (holder.kind === 'kurmis' && !shouldReplace(holder.status.version, version)) {
+    if (holder.kind === 'kurmis' && !shouldReplaceDaemon(holder.status, version, apiVersion)) {
       return { connection: connectionOf(holder.status, key), started: false, replaced: null }
     }
   }
@@ -295,18 +314,19 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
   } catch (error) {
     throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`)
   }
-  const connection = await waitForDaemon({ port, version, child, timeoutMs: options.startTimeoutMs ?? START_TIMEOUT_MS })
+  const connection = await waitForDaemon({ port, version, apiVersion, child, timeoutMs: options.startTimeoutMs ?? START_TIMEOUT_MS })
   return { connection, started: true, replaced }
 }
 
 interface WaitForDaemon {
   port: number
   version: string
+  apiVersion: number
   child: DetachedChild
   timeoutMs: number
 }
 
-/** Waits until a daemon of `version` or newer answers on `port`. */
+/** Waits until a daemon answers on `port` that `shouldReplaceDaemon` keeps: of `version` or newer. */
 async function waitForDaemon(wait: WaitForDaemon): Promise<DaemonConnection> {
   const deadline = Date.now() + wait.timeoutMs
   let exitCode: number | null | undefined
@@ -315,7 +335,7 @@ async function waitForDaemon(wait: WaitForDaemon): Promise<DaemonConnection> {
   })
   for (;;) {
     const found = await findDaemon({ env: {} })
-    if (found !== null && found.port === wait.port && compareVersions(found.version, wait.version) !== -1) return found
+    if (found !== null && found.port === wait.port && !shouldReplaceDaemon(found, wait.version, wait.apiVersion)) return found
     // A child that exited 0 lost the port to another daemon starting at the same moment, which
     // this loop finds next. Any other exit is a failure.
     if (exitCode !== undefined && exitCode !== 0) {
@@ -330,7 +350,10 @@ async function waitForDaemon(wait: WaitForDaemon): Promise<DaemonConnection> {
   }
 }
 
-/** The running daemon, started first when none runs, or replacing one of an older version. */
+/**
+ * The running daemon, started first when none runs, or replacing one of an older version or of
+ * the same version with another control API version.
+ */
 export async function ensureDaemon(options: DaemonClientOptions): Promise<DaemonConnection> {
   return (await startDaemon(options)).connection
 }

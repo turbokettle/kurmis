@@ -16,8 +16,14 @@
 //   query <key> /v <name>                        prints the key and the value line
 //                                                (`    <name>    <type>    <data>`); exits 1
 //                                                when there is none.
+//   query <key>                                  prints the key and a line for each of its
+//                                                values; exits 1 for a key that does not
+//                                                exist. The Run key exists from the start,
+//                                                as on Windows; another key exists once a
+//                                                value was added to it.
 //
-// FAKE_REG_FAIL=1 makes every call fail with "ERROR: Access is denied." and exit 1.
+// FAKE_REG_FAIL=1 makes every call fail with "ERROR: Access is denied." and exit 1. A list of
+// commands instead (FAKE_REG_FAIL=delete or FAKE_REG_FAIL=query,delete) makes only those fail.
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import process from 'node:process'
@@ -66,17 +72,27 @@ function option(flag) {
 
 const has = (flag) => argv.some((arg) => arg.toLowerCase() === flag)
 
-if (process.env.FAKE_REG_FAIL === '1') fail('ERROR: Access is denied.')
-
 const command = (argv[0] ?? '').toLowerCase()
+const failing = (process.env.FAKE_REG_FAIL ?? '').toLowerCase().split(',')
+if (failing.includes('1') || failing.includes(command)) fail('ERROR: Access is denied.')
+
 const key = argv[1]
 const name = option('/v')
-if (!['add', 'delete', 'query'].includes(command) || key === undefined || name === undefined) {
+if (!['add', 'delete', 'query'].includes(command) || key === undefined || (name === undefined && command !== 'query')) {
   fail(`ERROR: Invalid syntax.\r\nType "REG ${argv[0] ?? ''} /?" for usage.`)
 }
 const keyId = fullKey(key).toUpperCase()
-const nameId = name.toLowerCase()
 const values = readValues()
+
+if (command === 'query' && name === undefined) {
+  const runKey = 'HKEY_CURRENT_USER\\SOFTWARE\\MICROSOFT\\WINDOWS\\CURRENTVERSION\\RUN'
+  if (values[keyId] === undefined && keyId !== runKey) fail(NOT_FOUND)
+  const held = Object.values(values[keyId] ?? {})
+  const lines = held.map((value) => `    ${value.name}    ${value.type}    ${value.data}\r\n`).join('')
+  process.stdout.write(`\r\n${fullKey(key)}\r\n${lines}\r\n`)
+  process.exit(0)
+}
+const nameId = name.toLowerCase()
 
 if (command === 'add') {
   const type = option('/t') ?? 'REG_SZ'

@@ -30,9 +30,10 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis statu
 
 1. **The logins plain claude and plain codex use get their alias.** Start from an empty data
    folder, with no daemon running. Run `kurmis status` first: it says the daemon is not running
-   and starts none (`kurmis daemon status` still says so after it). Those two logins are there,
-   each with its id as its alias and a line that says which plain CLI uses it. Each shows
-   `credentials on this machine` when plain `claude` or plain `codex` is signed in. Then run `kurmis daemon start` and `kurmis status`, which waits
+   and starts none (`kurmis daemon status` still says so after it), and the data folder is still
+   empty or missing after it. Those two logins are there, each shown as "the login plain claude
+   uses (Claude, no id yet)" or the same for Codex. Each shows `credentials on this machine` when
+   plain `claude` or plain `codex` is signed in. Then run `kurmis daemon start` and `kurmis status`, which waits
    for the daemon's first usage probe. After it, each of them should have the alias made from
    its email (`me@example.com` gives `me-example`).
 2. **A new login gets its alias from the email.** `kurmis login claude` opens the browser. Sign
@@ -121,6 +122,9 @@ because a renewal replaces the refresh token.
    `claude -p` routed again.
 8. Run `kurmis setup` with `CLAUDE_CONFIG_DIR` set to the default `.claude` folder. It should
    refuse and explain why.
+9. Run `kurmis setup --pause` with `CLAUDE_CONFIG_DIR` set to an empty folder of your own. It
+   should still take kurmis' settings out of `~/.claude/settings.json`, and `kurmis status`
+   without the variable should say global routing is paused. Run `kurmis setup` again.
 
 ### Uninstall
 Run this last, since it removes the logins added above.
@@ -136,6 +140,8 @@ Run this last, since it removes the logins added above.
    on the logins they used before.
 5. The extra logins' Keychain items (macOS) or Credential Manager records (Windows) are gone,
    and every file in `~/.codex` is still there.
+6. `kurmis status` exits 0, shows the logins plain claude and plain codex use without an id, and
+   creates no data folder.
 
 ### Codex
 1. `kurmis codex exec "Reply ok"` answers, on the login `kurmis status` named in its last line.
@@ -159,7 +165,7 @@ Run this last, since it removes the logins added above.
 3. Close the terminal that started the daemon. The daemon keeps running.
 4. Start `kurmis claude -p --model haiku "Write the numbers from 1 to 400 as words"` and, while
    it streams, run `kurmis daemon stop --now` in another terminal. The stop should return
-   within a few seconds and `daemon.log` should show `drain_cut_short`. Run
+   within a few seconds and `daemon.log` should show `drain_cut_short` with `reason=stop_now`. Run
    `kurmis daemon start` right after: the session should retry its request and carry on.
 
 ## macOS only

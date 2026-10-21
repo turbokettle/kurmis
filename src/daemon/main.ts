@@ -5,13 +5,14 @@
 //
 // The port is the lock that keeps one daemon per user. When the port is busy:
 //
-// - a kurmis daemon of an older version is asked to stop (the version handover). It stops
+// - a kurmis daemon of an older version, or of the same version with another control API
+//   version (`shouldReplaceDaemon`), is asked to stop (the version handover). It stops
 //   accepting at once, which frees the port, and finishes its open requests in the background
 //   while this daemon binds the port and serves new ones. A routed Claude CLI retries a
 //   request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment in
 //   between.
-// - a kurmis daemon of the same or a newer version, or of a version that cannot be compared
-//   (`dev`), keeps the port and this process exits 0. Two CLIs that start a daemon at the same
+// - any other kurmis daemon (the same version and control API version, a newer version, or a
+//   version that cannot be compared, such as `dev`) keeps the port and this process exits 0. Two CLIs that start a daemon at the same
 //   moment rely on this: the bind decides, and the loser exits.
 // - any other program is an error that says how to change the port.
 //
@@ -26,7 +27,9 @@ import { errorCodeOf, openDaemonLog, type DaemonLog, type LogReason } from '../d
 import { configPath } from '../data/paths.ts'
 import { kurmisVersion } from '../version.ts'
 import { createDaemonApp, type DaemonApp, type DaemonAppOptions } from './app.ts'
-import { controlRequest, DAEMON_HOST, delay, portHolder, shouldReplace, type PortHolder } from './lifecycle.ts'
+import {
+  CLOSE_WAIT_MS, controlRequest, DAEMON_HOST, delay, portHolder, shouldReplaceDaemon, START_WAIT_MS, type PortHolder
+} from './lifecycle.ts'
 
 /** The part of `process` the daemon listens on: signals and uncaught errors. Tests pass an EventEmitter. */
 export interface ProcessEvents {
@@ -84,15 +87,6 @@ const BIND_RETRY_MS = 100
  * request has finished opens its next connection to the daemon that took the port.
  */
 const IDLE_CLOSE_INTERVAL_MS = 1_000
-
-/** How long a stop waits for `app.start()` to finish before it gives up on `app.close()`. */
-const START_WAIT_MS = 10_000
-
-/**
- * How long a stop waits for `app.close()`, which kills the usage probes that still run, waits for
- * their processes to exit and writes `state.json`.
- */
-const CLOSE_WAIT_MS = 10_000
 
 const STOP_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'] as const
 const ERROR_EVENTS = ['uncaughtException', 'unhandledRejection'] as const
@@ -256,6 +250,9 @@ async function serve(options: ServeOptions): Promise<number> {
   } finally {
     clearInterval(idleTimer)
   }
+  // Requests that are cut lose their client connection before `app.close()` ends their upstream
+  // requests, so the client sees a dropped connection, not the proxy's 502 answer.
+  if (stop.cutAtOnce || app.openRequests() > 0) server.closeAllConnections()
 
   if (started !== null) {
     const outcome = await waitAtMost(started, START_WAIT_MS)
@@ -325,7 +322,7 @@ async function bindPort(server: Server, options: ServeOptions): Promise<number |
     }
     if (holder.kind === 'kurmis') {
       const other = holder.status
-      if (!shouldReplace(other.version, version)) {
+      if (!shouldReplaceDaemon(other, version)) {
         say(`kurmis daemon ${other.version} already runs on port ${String(port)} (pid ${String(other.pid)})`)
         return 0
       }
@@ -407,6 +404,8 @@ class StopControl {
   requested = false
   reason: LogReason | null = null
   skipReason: LogReason | null = null
+  /** A request named a wait of 0 (`kurmis daemon stop --now`): the open requests are cut at once. */
+  cutAtOnce = false
   exitCode = 0
   readonly firstRequest: Promise<void>
   readonly drainSkipped: Promise<void>
@@ -424,9 +423,12 @@ class StopControl {
 
   request(reason: LogReason, maxWaitMs?: number): void {
     if (reason === 'error') this.exitCode = 1
-    if (maxWaitMs !== undefined) {
+    if (maxWaitMs !== undefined && maxWaitMs <= 0) {
+      this.cutAtOnce = true
+      this.skip('stop_now')
+    } else if (maxWaitMs !== undefined) {
       // Unref'd, so a daemon that has finished stopping does not wait for it.
-      setTimeout(() => this.skip('timeout'), Math.max(0, maxWaitMs)).unref()
+      setTimeout(() => this.skip('timeout'), maxWaitMs).unref()
     }
     if (!this.requested) {
       this.requested = true

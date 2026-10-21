@@ -193,6 +193,26 @@ describe('the config', () => {
     expect(events).toContain('config_invalid')
   })
 
+  test('that could not be read because its lock was busy is read again at the next check, though the file did not change', () => {
+    // A file without the logins of plain claude and plain codex has to be written to get them,
+    // which needs the lock.
+    mkdirSync(kurmisHome(), { recursive: true })
+    writeFileSync(configPath(), '{"version": 2, "logins": []}')
+    writeFileSync(configLockPath(), JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: 'held-by-a-test' }))
+    let logins: LoginTable
+    try {
+      logins = table()
+    } finally {
+      rmSync(configLockPath(), { force: true })
+    }
+    expect(lines.find((line) => line.includes('config_invalid'))).toMatch(/ config_invalid reason=timeout\n$/)
+    expect(events).not.toContain('config_loaded')
+    clock += 2_000
+    logins.checkConfig()
+    expect(events).toContain('config_loaded')
+    expect(loadConfig().logins.map((login) => login.id)).toEqual([logins.ownLogin('claude').id, logins.ownLogin('codex').id])
+  })
+
   test('tells listeners about a change', () => {
     writeLogins({})
     const logins = table()

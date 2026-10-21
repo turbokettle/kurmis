@@ -2,13 +2,14 @@
 // (docs/architecture.md, "How a Claude CLI reaches the daemon").
 //
 // The CLI is started on one login's credentials: the pinned one with `--login`, otherwise the
-// one `autoStartLogin` picks from the daemon's status (normally plain claude's login). The proxy
-// signs each request with the login it picks, so on Auto this only has to be a login the CLI
-// can send with at all. The routing variables go into the process environment and, because a
-// `settings.json` in global mode would beat that, into a `--settings` argument too
-// (`settings-arg.ts`). `CLAUDE_SECURESTORAGE_CONFIG_DIR` stays in the process environment only:
-// the settings layers are about the requests, while that variable says where the CLI's own
-// credentials are.
+// one `autoStartLogin` picks from the daemon's status (normally plain claude's login). When
+// config.json cannot be read, a CLI without `--login` starts on plain claude's login, with the id
+// the daemon's status gives it, and a warning. The proxy signs each request with the login it
+// picks, so on Auto this only has to be a login the CLI can send with at all. The routing
+// variables go into the process environment and, because a `settings.json` in global mode would
+// beat that, into a `--settings` argument too (`settings-arg.ts`).
+// `CLAUDE_SECURESTORAGE_CONFIG_DIR` stays in the process environment only: the settings layers
+// are about the requests, while that variable says where the CLI's own credentials are.
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { autoStartLogin, type StartableLogin } from '../../core/account-router.ts'
@@ -74,6 +75,8 @@ Options (only before the first argument kurmis does not know):
                     the login's alias or its id, as "kurmis status" shows them, for example
                     --login work-example. Only Claude logins are looked at, so a Codex login
                     with the same alias does not count. Without --login the session is on Auto.
+                    When config.json cannot be read, --login is an error. Without --login
+                    claude then starts on the login plain claude uses, with a warning.
   -h, --help        Show this help.
   --                Pass everything after it to claude, even arguments kurmis knows.
 
@@ -106,9 +109,12 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
 
 export const claudeCommand: Command = createClaudeCommand()
 
-/** The login a CLI is started on, as the config or the daemon's status has it. */
+/**
+ * The login a CLI is started on, as the config or the daemon's status has it. `id` is null only
+ * for the login plain claude uses when neither the config nor the daemon names its id.
+ */
 interface StartedOn {
-  id: string
+  id: string | null
   alias: string
   machineOwn: boolean
 }
@@ -137,15 +143,19 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     return fail(messageOf(error))
   }
 
-  let config: KurmisConfig
+  // Null when config.json cannot be read: then claude starts on the login plain claude uses.
+  let config: KurmisConfig | null
   try {
     config = deps.loadConfig()
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error
-    return fail(error.message)
+    // A pinned login cannot be looked up without the config.
+    if (parsed.login !== null) return fail(error.message)
+    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${machineOwnText('claude')}.`)
+    config = null
   }
   let pinned: StartedOn | null = null
-  if (parsed.login !== null) {
+  if (parsed.login !== null && config !== null) {
     const resolved = resolveLogin(config, parsed.login, 'claude')
     if ('error' in resolved) {
       return fail(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login claude" adds one.`)
@@ -155,7 +165,11 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
 
   let connection: DaemonConnection
   try {
-    connection = await deps.daemon.ensureDaemon({ env: context.env })
+    // Without the config `ensureDaemon` cannot tell which port the daemon belongs on, so a daemon
+    // that runs is used as it is. When none runs, `ensureDaemon` reads the config again, which
+    // works when the config only had its lock taken a moment ago.
+    connection = (config === null ? await deps.daemon.findDaemon({ env: context.env }) : null) ??
+      await deps.daemon.ensureDaemon({ env: context.env })
   } catch (error) {
     return fail(daemonUnreachable(error))
   }
@@ -170,21 +184,30 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     } catch (error) {
       return fail(daemonUnreachable(error))
     }
-    const startId = autoStartLogin(startableLogins(status))
-    startedOn = status.logins.find((login) => login.id === startId) ?? machineOwnLogin(config, 'claude')
-    if (!startedOn.machineOwn) {
-      const own = status.logins.find((login) => login.provider === 'claude' && login.machineOwn) ?? machineOwnLogin(config, 'claude')
-      writeLine(context.stderr, `kurmis claude: ${own.alias}, ${machineOwnText('claude')}, is not signed in, so claude starts on ` +
-        `${startedOn.alias}'s credentials; requests are still routed on Auto.`)
+    const ownRow = status.logins.find((login) => login.provider === 'claude' && login.machineOwn)
+    if (config === null) {
+      // The daemon's id for the login plain claude uses. Without one, no started-on header is
+      // sent, which the daemon reads as that login too.
+      startedOn = ownRow ?? { id: null, alias: machineOwnText('claude'), machineOwn: true }
+    } else {
+      const startId = autoStartLogin(startableLogins(status))
+      startedOn = status.logins.find((login) => login.id === startId) ?? machineOwnLogin(config, 'claude')
+      if (!startedOn.machineOwn) {
+        const own = ownRow ?? machineOwnLogin(config, 'claude')
+        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${machineOwnText('claude')}, is not signed in, so claude starts on ` +
+          `${startedOn.alias}'s credentials; requests are still routed on Auto.`)
+      }
     }
   }
 
   let secureStorageDir: string | null = null
-  if (!startedOn.machineOwn) {
+  if (!startedOn.machineOwn && startedOn.id !== null) {
     secureStorageDir = loginFolder({ id: startedOn.id as LoginId, provider: 'claude', machineOwn: false })
     if (!deps.folderExists(secureStorageDir)) {
+      const argument = config === null ? startedOn.alias
+        : loginArgument(config, { id: startedOn.id, provider: 'claude', alias: startedOn.alias })
       return fail(`the folder of ${startedOn.alias} is missing (${secureStorageDir}). Sign it in again with ` +
-        `"kurmis login ${loginArgument(config, { id: startedOn.id, provider: 'claude', alias: startedOn.alias })}".`)
+        `"kurmis login ${argument}".`)
     }
   }
 

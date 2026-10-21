@@ -192,7 +192,9 @@ describe('runDaemon', () => {
   }, 30_000)
 
   it('cuts its open requests at once on a control stop that names a wait of 0', async () => {
-    const daemon = await startListening()
+    // The app answers what is still open with 502 when it closes, as the proxy does once its
+    // upstream requests end; the connection is closed before that, so the client sees it dropped.
+    const daemon = await startListening({ behaviour: { closeAnswers502: true } })
     const open = hold(20_000)
     await waitUntil(() => daemon.factory.apps[0]?.openRequests() === 1, 2_000, 'the open request')
     const stoppedAt = Date.now()
@@ -203,7 +205,7 @@ describe('runDaemon', () => {
     expect((await open).kind).toBe('failed')
     expect(readDaemonFile().status).toBe('missing')
     expect(daemon.factory.apps[0]?.calls.close).toBe(1)
-    expect(logText()).toMatch(/drain_cut_short count=1 reason=timeout/)
+    expect(logText()).toMatch(/drain_cut_short count=1 reason=stop_now/)
   }, 30_000)
 
   it('closes idle keep-alive connections when it stops', async () => {
@@ -340,6 +342,25 @@ describe('runDaemon', () => {
     // and the old one removed it when it stopped. A test with two processes checks the pids.
     expect(replacement.stdout.text()).toContain('Replacing kurmis daemon 0.1.0')
     expect(logText()).toMatch(/daemon_replacing_older pid=\d+ port=\d+/)
+  })
+
+  it('replaces a daemon of the same version whose control API version is another one', async () => {
+    const old = await startListening({ version: '0.2.0', behaviour: { version: '0.2.0', apiVersion: CONTROL_API_VERSION - 1 } })
+    const replacement = start({ version: '0.2.0', behaviour: { version: '0.2.0' } })
+    await waitUntil(async () => {
+      const answer = await status()
+      return answer.kind === 'answered' && (answer.body as StatusAnswer | null)?.apiVersion === CONTROL_API_VERSION
+    }, 5_000, 'the new daemon to answer')
+    expect(await old.exit).toBe(0)
+    expect(replacement.exited).toBe(false)
+    expect(replacement.stdout.text()).toContain('Replacing kurmis daemon 0.2.0')
+  })
+
+  it('keeps a daemon of the same version and control API version', async () => {
+    await startListening({ version: '0.2.0', behaviour: { version: '0.2.0' } })
+    const second = start({ version: '0.2.0', behaviour: { version: '0.2.0' } })
+    expect(await second.exit).toBe(0)
+    expect(second.stdout.text()).toContain('kurmis daemon 0.2.0 already runs')
   })
 
   it('goes on trying the port when the older daemon it asked to stop answers nothing while it closes', async () => {

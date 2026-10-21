@@ -300,6 +300,36 @@ describe('registering through reg.exe', () => {
     expect(await unregisterWindowsAutostart({ env: env(), scriptPath: scriptPath() })).toEqual({ changed: false, where: RUN_ENTRY_DESCRIPTION })
   })
 
+  it('keeps the script, with a warning, when reg delete fails, so the Run value never names a missing script', async () => {
+    await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })
+    const result = await unregisterWindowsAutostart({ env: { ...env(), FAKE_REG_FAIL: 'delete' }, scriptPath: scriptPath() })
+    expect(result.changed).toBe(false)
+    expect(result.warning).toMatch(/^reg\.exe could not remove the logon entry .*Access is denied.*autostart\.js, which that entry runs, is kept\.$/)
+    expect(existsSync(scriptPath())).toBe(true)
+    expect((await regFor()(regQueryArgs())).code).toBe(0)
+    // Once reg delete works, both go.
+    expect(await unregisterWindowsAutostart({ env: env(), scriptPath: scriptPath() })).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
+    expect(existsSync(scriptPath())).toBe(false)
+  })
+
+  it('keeps the script, with a warning, when reg query cannot read the Run key', async () => {
+    await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })
+    const result = await unregisterWindowsAutostart({ env: { ...env(), FAKE_REG_FAIL: 'query' }, scriptPath: scriptPath() })
+    expect(result.changed).toBe(false)
+    expect(result.warning).toMatch(/^reg\.exe could not read the logon entry .*Access is denied.*so it may still be there\./)
+    expect(existsSync(scriptPath())).toBe(true)
+    expect(regCalls().filter((call) => call[0] === 'delete')).toEqual([])
+  })
+
+  it('reads a failed query of the value as no entry only when the Run key lists its values without it', async () => {
+    await regFor()(['add', RUN_KEY, '/v', 'OtherProgram', '/t', 'REG_SZ', '/d', 'C:\\other.exe', '/f'])
+    mkdirSync(join(process.env.HOME ?? '', 'win', 'Zoë Example'), { recursive: true })
+    writeFileSync(scriptPath(), 'left by a setup that stopped half-way')
+    expect(await unregisterWindowsAutostart({ env: env(), scriptPath: scriptPath() })).toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
+    expect(existsSync(scriptPath())).toBe(false)
+    expect(regCalls().filter((call) => call[1] === RUN_KEY).map((call) => call.length === 2 ? 'list' : call[0])).toEqual(['add', 'query', 'list'])
+  })
+
   it('writes no entry, and says so, when wscript.exe is missing or Windows Script Host is turned off', async () => {
     const missing = await registerWindowsAutostart({ env: { ...env(), KURMIS_WSCRIPT_PROGRAM: join(process.env.HOME ?? '', 'no-wscript.exe') },
       programArguments: PROGRAM, scriptPath: scriptPath() })

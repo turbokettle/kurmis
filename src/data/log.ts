@@ -71,6 +71,8 @@ export const LOG_REASONS = [
   'corrupt',
   'wrong_version',
   'shutdown',
+  /** A control `stop` named a wait of 0 (`kurmis daemon stop --now`). */
+  'stop_now',
   'signal',
   'replaced',
   'error',

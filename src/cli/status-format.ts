@@ -17,9 +17,13 @@ import { routeBlockText } from '../core/proxy-rules.ts'
 import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '../core/usage-rules.ts'
 import { shouldReplace } from '../daemon/lifecycle.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
+import { loginArgument, machineOwnText, PROVIDER_NAMES } from './login-names.ts'
 
-/** Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added. */
-export const STATUS_JSON_FORMAT = 3
+/**
+ * Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added.
+ * Format 4: a login's `id` and `alias` may be null.
+ */
+export const STATUS_JSON_FORMAT = 4
 
 export interface StatusJsonWindow {
   /** The provider's key for the window: `five_hour`, `seven_day`, `codex:primary`, ... */
@@ -62,10 +66,13 @@ export interface StatusJsonBlock {
 }
 
 export interface StatusJsonLogin {
-  /** The login's id, which never changes. */
-  id: string
-  /** The name the person sees and types for the login. */
-  alias: string
+  /**
+   * The login's id, which never changes. Null for the login plain claude or plain codex uses
+   * while `config.json` has no entry for it yet (`ReportLogin.noIdYet`).
+   */
+  id: string | null
+  /** The name the person sees and types for the login. Null when `id` is null. */
+  alias: string | null
   provider: AccountProvider
   /** Whether this is the login a plain `claude` or a plain `codex` uses. */
   machineOwn: boolean
@@ -119,14 +126,30 @@ export interface StatusJson {
    */
   codexStart: { login: string; alias: string; note: string | null } | null
   /**
-   * Sentences about something the person may want to change: an extra login signed in to the
-   * same account as the login plain claude or plain codex uses, which makes both use one
-   * subscription, and global routing that is on while no daemon runs.
+   * Sentences about something the person may want to change: two logins of one provider signed
+   * in to the same account, which makes both use one subscription, and global routing that is
+   * on while no daemon runs.
    */
   warnings: string[]
 }
 
 export type StatusSource = 'daemon' | 'files'
+
+/** A login of a `StatusReport`. */
+export interface ReportLogin extends LoginStatus {
+  /**
+   * True for the login plain claude or plain codex uses while `config.json` has no entry for it,
+   * so it has no id yet: `kurmis status` reads the file without writing it, and the first other
+   * command that reads it adds the entry with a new id. `id` and `alias` are then a stand-in
+   * (`noIdYetStandIn`) that no login id or alias can be, and the JSON gives null for both.
+   */
+  noIdYet?: boolean
+}
+
+/** The stand-in id and alias of a `ReportLogin` with `noIdYet`: `-claude` or `-codex`. */
+export function noIdYetStandIn(provider: AccountProvider): string {
+  return `-${provider}`
+}
 
 /** What `kurmis status` shows, put together from the daemon or from the files. */
 export interface StatusReport {
@@ -134,7 +157,7 @@ export interface StatusReport {
   daemon: { version: string; pid: number; port: number; startedAt: number } | null
   /** Where `logins` come from (`StatusJson.source`). */
   source: StatusSource
-  logins: LoginStatus[]
+  logins: ReportLogin[]
   /** With `source` `files`: whether each login's credentials are on this machine, by login id. */
   credentials: ReadonlyMap<string, boolean>
   globalRouting: GlobalRoutingState
@@ -177,8 +200,8 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
     source: report.source,
     globalRouting: report.globalRouting,
     logins: report.logins.map((login) => ({
-      id: login.id,
-      alias: login.alias,
+      id: login.noIdYet === true ? null : login.id,
+      alias: login.noIdYet === true ? null : login.alias,
       provider: login.provider,
       machineOwn: login.machineOwn,
       email: login.email ?? null,
@@ -201,32 +224,34 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
 const NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, so a plain claude and the Claude Code ' +
   'editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.'
 
-/** How to name a login of the status on a command line: its alias, or `<provider>:<alias>` when another login has it too. */
-function loginArgument(answer: Pick<StatusAnswer, 'logins'>, login: LoginStatus): string {
-  const shared = answer.logins.some((other) => other.id !== login.id && other.alias === login.alias)
-  return shared ? `${login.provider}:${login.alias}` : login.alias
-}
-
 /**
- * A warning for each extra Claude login whose email is that of the login plain claude uses, and
- * the same for Codex, compared without regard to case: both are then signed in to one account
- * and use one subscription.
+ * A warning for each pair of logins of one provider whose emails are the same, compared without
+ * regard to case: both are then signed in to one account and use one subscription. Of each group
+ * of logins with one email, the login plain claude or plain codex uses is the one the others are
+ * compared with, else the first; the warning says how to remove the other one.
  */
-export function sameAccountWarnings(answer: Pick<StatusAnswer, 'logins'>): string[] {
+export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }): string[] {
   const warnings: string[] = []
-  for (const own of answer.logins.filter((login) => login.machineOwn && login.email !== null)) {
-    const email = own.email!.trim().toLowerCase()
-    for (const extra of answer.logins) {
-      if (extra.machineOwn || extra.provider !== own.provider || extra.email?.trim().toLowerCase() !== email) continue
-      const product = PRODUCT_NAMES[own.provider]
-      warnings.push(`${extra.alias} and ${own.alias}, the login plain ${own.provider} uses, are the same ${product} account ` +
-        `(${own.email!}), so they use one subscription. "kurmis logout ${loginArgument(answer, extra)}" removes ${extra.alias}.`)
+  const groups = new Map<string, ReportLogin[]>()
+  for (const login of answer.logins) {
+    if (login.email === null || login.email.trim() === '') continue
+    const key = `${login.provider} ${login.email.trim().toLowerCase()}`
+    groups.set(key, [...(groups.get(key) ?? []), login])
+  }
+  const named = answer.logins.filter((login) => login.noIdYet !== true)
+  for (const group of groups.values()) {
+    const kept = group.find((login) => login.machineOwn) ?? group[0]!
+    for (const other of group) {
+      if (other === kept) continue
+      const keptName = !kept.machineOwn ? kept.alias
+        : kept.noIdYet === true ? machineOwnText(kept.provider)
+          : `${kept.alias}, ${machineOwnText(kept.provider)},`
+      warnings.push(`${other.alias} and ${keptName} are the same ${PROVIDER_NAMES[other.provider]} account (${kept.email!}), ` +
+        `so they use one subscription. "kurmis logout ${loginArgument({ logins: named }, other)}" removes ${other.alias}.`)
     }
   }
   return warnings
 }
-
-const PRODUCT_NAMES: Record<AccountProvider, string> = { claude: 'Claude', codex: 'Codex' }
 
 /** The status as `kurmis status` prints it, ending in a newline. Fits 80 columns. */
 export function formatStatus(report: StatusReport, now: number, options: StatusFormatOptions): string {
@@ -288,13 +313,26 @@ const WIDTH = 80
 /** Window names longer than this are cut, so the columns after them stay on the line. */
 const MAX_LABEL_WIDTH = 24
 
+/**
+ * The first line of a login: its alias, its product and its id, without the id while the alias
+ * is the id. The login plain claude or plain codex uses without an id yet is named as such.
+ */
+function loginTitle(login: StatusJsonLogin): string {
+  const product = PROVIDER_NAMES[login.provider]
+  if (login.id === null || login.alias === null) return `${machineOwnText(login.provider)} (${product}, no id yet)`
+  return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`
+}
+
 function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): string[] {
-  const title = `${login.alias} (${PRODUCT_NAMES[login.provider]}, id ${login.id})`
+  const title = loginTitle(login)
   const lines = login.email === null ? [title]
     : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`]
       : [title, `  ${login.email}`]
-  if (login.machineOwn) {
-    lines.push(`  the login plain ${login.provider} uses`)
+  if (login.id === null) {
+    lines.push(...wrap('config.json has no entry for it yet. The first kurmis command other than "kurmis status" that ' +
+      'reads config.json adds one, with an id.', '  ', '  '))
+  } else if (login.machineOwn) {
+    lines.push(`  ${machineOwnText(login.provider)}`)
   }
   const facts = [
     login.credentials !== null

@@ -85,6 +85,15 @@ export function pausedFilePath(): string {
   return join(kurmisHome(), 'paused.json')
 }
 
+/**
+ * The Claude Code settings files `kurmis setup` put kurmis' settings into, so that
+ * `setup --pause`, `setup --uninstall-and-logout` and `kurmis status` look at each of them,
+ * whatever `CLAUDE_CONFIG_DIR` says in the shell they run in.
+ */
+export function setupSettingsRecordPath(): string {
+  return join(kurmisHome(), 'settings-files.json')
+}
+
 /** The folder that holds the extra logins of one provider: `claude/` or `codex/`. */
 export function providerFolder(provider: LoginProvider): string {
   return join(kurmisHome(), provider)

@@ -153,6 +153,19 @@ describe('choosing the login', () => {
     expect(loginTarget('none-example', config)).toEqual({ error: expect.stringContaining('there is no login called "none-example"') as unknown })
   })
 
+  it('reads the provider in any case', () => {
+    const config = testConfig()
+    expect(loginTarget('Claude', config)).toEqual({ kind: 'new', provider: 'claude' })
+    expect(loginTarget(' CODEX ', config)).toEqual({ kind: 'new', provider: 'codex' })
+  })
+
+  it('says what is missing when a provider prefix names no login', () => {
+    const config = testConfig()
+    expect(loginTarget('claude:', config)).toEqual({ error: '"claude:" names no login. Put the alias or id of a Claude login ' +
+      'after "claude:", for example claude:work-example, or run "kurmis login claude" to add a new Claude login' })
+    expect(loginTarget('Codex:', config)).toEqual({ error: expect.stringContaining('"kurmis login codex" to add a new Codex login') as unknown })
+  })
+
   it('makes a new id of 10 letters and digits that no folder has', () => {
     const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
     for (let index = 0; index < 20; index++) {
@@ -447,6 +460,65 @@ describe('kurmis login of an account that is already a kurmis login', () => {
       'No login was added, and the new sign-in was signed out again.')
     expect(out.stdout()).toContain('"kurmis login work-example" signs work-example in again.')
     expect(daemon.calls).toEqual([])
+  })
+
+  it('says that --alias was not used', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
+    const { login } = command(fakeRunner(claudeSignsIn('work@example.com')), { runProgram: fakeRun().runProgram })
+    const out = collect()
+    expect(await login.run(['claude', '--alias', 'job'], out.context)).toBe(0)
+    expect(out.stderr()).toBe('kurmis login: --alias job was not used, because no login was added. ' +
+      '"kurmis set work-example --alias job" gives work-example that alias.\n')
+    expect(findLogin(loadConfig(), 'workclaude')?.alias).toBe('work-example')
+  })
+
+  it('adds a Claude account once when another run added it after the first check', async () => {
+    writeTestConfig()
+    const signOut = fakeRun()
+    // The second look at the home folder is the check before the config is changed. Another
+    // `kurmis login claude` of the same account saves its login just then.
+    let calls = 0
+    const homeWithRace = (): string => {
+      calls++
+      if (calls === 2) {
+        writeTestConfig({ extras: [{ id: 'raceclaude', provider: 'claude', alias: 'same-example' }] })
+        writeClaudeIdentity(join(loginFolder(claudeRef('raceclaude')), '.claude.json'), { email: 'same@example.com' })
+      }
+      return home
+    }
+    const { login } = command(fakeRunner(claudeSignsIn('same@example.com')), { runProgram: signOut.runProgram, home: homeWithRace })
+    const out = collect()
+    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['raceclaude'])
+    expect(folders('claude')).toEqual(['raceclaude'])
+    expect(signOut.runs).toHaveLength(1)
+    expect(out.stdout()).toContain('same@example.com is already a kurmis Claude login: same-example (id raceclaude).')
+  })
+
+  it('warns, and signs nothing out, when an existing login is signed in to the account of another login', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }, { id: 'homeclaude', provider: 'claude', alias: 'home-example' }] })
+    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
+    const signOut = fakeRun()
+    const { login } = command(fakeRunner(claudeSignsIn('work@example.com')), { runProgram: signOut.runProgram })
+    const out = collect()
+    expect(await login.run(['home-example'], out.context)).toBe(0)
+    expect(out.stderr()).toBe('kurmis login: warning: work@example.com is also the account of work-example (id workclaude). ' +
+      'home-example and work-example are now the same account and share its limits. Neither was signed out. ' +
+      '"kurmis login home-example" signs home-example in to another account.\n')
+    expect(signOut.runs).toEqual([])
+    expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workclaude', 'homeclaude'])
+    expect(folders('claude').sort()).toEqual(['homeclaude', 'workclaude'])
+  })
+
+  it('warns when the login plain codex uses is signed in to the account of an extra Codex login', async () => {
+    writeTestConfig({ extras: [{ id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
+    writeCodexAuth(loginFolder(codexRef('workcodex1')), { email: 'work@example.com' })
+    const { login } = command(fakeRunner(codexSignsIn('work@example.com')),
+      { runProgram: fakeRun().runProgram, daemon: fakeDaemonClient({ running: false }) })
+    const out = collect()
+    expect(await login.run([OWN_CODEX], out.context)).toBe(0)
+    expect(out.stderr()).toContain('kurmis login: warning: work@example.com is also the account of work-example (id workcodex1).')
   })
 
   it('finds the login plain claude uses, and signs out with CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1 on Windows', async () => {

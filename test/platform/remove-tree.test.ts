@@ -157,6 +157,26 @@ describe('removeTreeSync on Windows', () => {
     expect(Object.keys(entries)).toEqual([onVolume])
   })
 
+  it('with root, removes a top-level mount point as an entry, without going into it', () => {
+    // The data folder's entries are removed one by one, so the entry itself is the top of the walk.
+    const mounted = join(home, 'mounted')
+    const onVolume = join(mounted, 'data.bin')
+    const { fs, calls, entries } = fakeWindowsFs({
+      [mounted]: { kind: 'dir', children: ['data.bin'], real: '\\\\?\\Volume{00000000-0000-0000-0000-000000000001}\\' },
+      [onVolume]: { kind: 'file' }
+    })
+    removeTreeSync(mounted, { fs, platform: 'win32', root: home })
+    expect(calls).toEqual([`rmdir ${mounted}`])
+    expect(Object.keys(entries)).toEqual([onVolume])
+    // Without root the entry's own real path is the folder to stay inside, so the walk goes in.
+    const second = fakeWindowsFs({
+      [mounted]: { kind: 'dir', children: ['data.bin'], real: '\\\\?\\Volume{00000000-0000-0000-0000-000000000001}\\' },
+      [onVolume]: { kind: 'file' }
+    })
+    removeTreeSync(mounted, { fs: second.fs, platform: 'win32' })
+    expect(second.calls).toEqual([`readdir ${mounted}`, `unlink ${onVolume}`, `rmdir ${mounted}`])
+  })
+
   it('goes into a folder whose real path differs only in case', () => {
     const sub = join(home, 'Sub')
     const file = join(sub, 'f')

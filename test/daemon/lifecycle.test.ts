@@ -11,7 +11,8 @@ import {
   portAcceptsConnections,
   portHolder,
   processExists,
-  shouldReplace
+  shouldReplace,
+  shouldReplaceDaemon
 } from '../../src/daemon/lifecycle.ts'
 import { freePort } from './helpers.ts'
 
@@ -78,6 +79,22 @@ describe('shouldReplace', () => {
   it('never replaces when either version is not a version', () => {
     expect(shouldReplace('dev', '0.2.0')).toBe(false)
     expect(shouldReplace('0.1.0', 'dev')).toBe(false)
+  })
+})
+
+describe('shouldReplaceDaemon', () => {
+  it('also replaces a daemon of the same version with another control API version, or none', () => {
+    expect(shouldReplaceDaemon({ version: '0.1.0', apiVersion: CONTROL_API_VERSION }, '0.2.0')).toBe(true)
+    expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION }, '0.2.0')).toBe(false)
+    expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION - 1 }, '0.2.0')).toBe(true)
+    expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION + 1 }, '0.2.0')).toBe(true)
+    expect(shouldReplaceDaemon({ version: '0.2.0' }, '0.2.0')).toBe(true)
+    expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: 7 }, '0.2.0', 7)).toBe(false)
+  })
+
+  it('never replaces a newer daemon, or one whose version cannot be compared, whatever its control API version', () => {
+    expect(shouldReplaceDaemon({ version: '0.3.0', apiVersion: CONTROL_API_VERSION - 1 }, '0.2.0')).toBe(false)
+    expect(shouldReplaceDaemon({ version: 'dev', apiVersion: CONTROL_API_VERSION - 1 }, 'dev')).toBe(false)
   })
 })
 

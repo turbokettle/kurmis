@@ -6,7 +6,7 @@
 // - `POST /_kurmis/stop`: `{ ok: true }`, then calls `onStopRequested` with the body's
 //   `maxWaitMs`, as `control.ts` does.
 // - `GET /_test/hold?ms=<n>`: counts as an open proxied request and answers
-//   `{ ok: true, pid }` after n milliseconds.
+//   `{ ok: true, pid }` after n milliseconds (with `closeAnswers502`, 502 at `close()`).
 // - anything else: 404.
 //
 // Every path but `/api/hello` needs the key in `x-kurmis-key` and answers 403 without it.
@@ -25,6 +25,13 @@ export interface FakeAppBehaviour {
   startDelayMs?: number
   /** The version the status answer reports. `kurmisVersion` by default. */
   version?: string
+  /** The control API version the status answer reports. `CONTROL_API_VERSION` by default. */
+  apiVersion?: number
+  /**
+   * `close()` answers each held request that is still open with 502, as the proxy does when
+   * closing ends its upstream requests.
+   */
+  closeAnswers502?: boolean
 }
 
 export interface FakeDaemonApp extends DaemonApp {
@@ -35,6 +42,8 @@ export interface FakeDaemonApp extends DaemonApp {
 export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAppBehaviour = {}): FakeDaemonApp {
   let open = 0
   let waiters: Array<() => void> = []
+  /** The held requests that have not been answered or closed. */
+  const holding = new Set<ServerResponse>()
   const calls = { start: 0, stopPolling: 0, close: 0 }
 
   const settle = (): void => {
@@ -54,10 +63,12 @@ export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAp
     const ms = Number(url.searchParams.get('ms') ?? '0')
     open++
     let done = false
+    holding.add(response)
     const finish = (): void => {
       if (done) return
       done = true
       clearTimeout(timer)
+      holding.delete(response)
       open--
       settle()
     }
@@ -106,7 +117,7 @@ export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAp
       if (url.pathname === CONTROL_PATHS.status && method === 'GET') {
         const status: StatusAnswer = {
           ok: true,
-          apiVersion: CONTROL_API_VERSION,
+          apiVersion: behaviour.apiVersion ?? CONTROL_API_VERSION,
           version: behaviour.version ?? kurmisVersion,
           pid: options.pid,
           port: options.port,
@@ -130,6 +141,10 @@ export function createFakeDaemonApp(options: DaemonAppOptions, behaviour: FakeAp
     },
     async close() {
       calls.close++
+      if (behaviour.closeAnswers502 !== true) return
+      for (const response of [...holding]) {
+        if (!response.destroyed) answerJson(response, 502, { ok: false })
+      }
     }
   }
 }

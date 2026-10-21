@@ -110,7 +110,7 @@ describe('kurmis status, end to end', () => {
     // Nothing has started a daemon yet, and `status` starts none: it shows the files.
     const offline = await statusJson(world)
     expect(world.daemonInfo()).toBeNull()
-    expect(offline).toMatchObject({ format: 3, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
+    expect(offline).toMatchObject({ format: 4, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
     expect(offline.logins.map((login) => [login.id, login.signedIn, login.credentials, login.usage, login.blocked])).toEqual([
       [OWN_CLAUDE, null, true, null, null], [OWN_CODEX, null, true, null, null], [work.id, null, true, null, null], [spare.id, null, true, null, null]
     ])
@@ -126,7 +126,7 @@ describe('kurmis status, end to end', () => {
     const daemon = world.daemonInfo()
     expect(daemon).not.toBeNull()
 
-    expect(status).toMatchObject({ format: 3, source: 'daemon', globalRouting: 'off' })
+    expect(status).toMatchObject({ format: 4, source: 'daemon', globalRouting: 'off' })
     expect(status.daemon).toEqual({
       version: PACKAGE_VERSION, pid: daemon?.pid, port: world.port, startedAt: new Date(daemon?.startedAt ?? 0).toISOString(), older: false
     })
@@ -253,7 +253,7 @@ describe('kurmis status, end to end', () => {
     expect(loginOf(afterQuota, spare.id)).toMatchObject({ sessions: 1, blocked: null, usage: { source: 'session', error: null } })
 
     const text = await world.kurmis(['status'])
-    expect(text.stdout).toContain(`${OWN_CLAUDE} (Claude, id ${OWN_CLAUDE})\n${ownLine('claude')}  signed out, routing on`)
+    expect(text.stdout).toContain(`${OWN_CLAUDE} (Claude)\n${ownLine('claude')}  signed out, routing on`)
     expect(text.stdout).toMatch(new RegExp(`work-example \\(Claude, id ${work.id}\\) {2}work@example\\.com\\n[^\\n]*1 session[^\\n]*\\n` +
       '(?: {2}[^\\n]*\\n)*? {2}usage read just now from a forwarded answer\\n {2}passed over: '))
     // The text gives the cooldown's end in local time; the JSON above keeps it as ISO.

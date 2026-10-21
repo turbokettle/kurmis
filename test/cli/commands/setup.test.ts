@@ -1,16 +1,17 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createLoginLogout } from '../../../src/cli/commands/logout.ts'
+import { createLoginLogout, createLogoutCommand } from '../../../src/cli/commands/logout.ts'
 import { createSetupCommand } from '../../../src/cli/commands/setup.ts'
 import { DaemonError } from '../../../src/cli/daemon-client.ts'
 import { globalRoutingState } from '../../../src/cli/global-routing.ts'
 import { backupPathFor } from '../../../src/cli/global-settings.ts'
 import { keychainService } from '../../../src/core/keychain-service.ts'
-import { addLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
+import { addLogin, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
 import type { LoginRef } from '../../../src/data/login-id.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
-import { loginFolder, pausedFilePath } from '../../../src/data/paths.ts'
+import { loginFolder, pausedFilePath, setupSettingsRecordPath } from '../../../src/data/paths.ts'
+import { ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { registerAutostart, unregisterAutostart, type AutostartOptions, type AutostartResult } from '../../../src/platform/autostart.ts'
 import { claudeRef, codexRef, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
@@ -490,6 +491,55 @@ describe('kurmis setup --pause', () => {
     expect(result.stdout).toContain('Left CLAUDE_CODE_MAX_RETRIES as it is: its value (6) is not the one kurmis sets.')
   })
 
+  it('pauses a file setup wrote without CLAUDE_CONFIG_DIR from a shell that has it set, and the other way round', async () => {
+    const dir = join(home, 'other-claude')
+    const other = join(dir, 'settings.json')
+    try {
+      expect((await run(setup().command, [])).code).toBe(0)
+      const fromOther = await run(setup().command, ['--pause'], { CLAUDE_CONFIG_DIR: dir })
+      expect(fromOther.code).toBe(0)
+      expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis')
+      expect(fromOther.stdout).toContain(`Claude Code settings: ${settingsPath}`)
+      expect(fromOther.stdout).toContain('Paused global routing')
+      expect(globalRoutingState({})).toBe('paused')
+
+      expect((await run(setup().command, [], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+      expect(globalRoutingState({})).toBe('on')
+      const fromDefault = await run(setup().command, ['--pause'])
+      expect(fromDefault.code).toBe(0)
+      expect(readFileSync(other, 'utf8')).not.toContain('x-kurmis')
+      expect(globalRoutingState({ CLAUDE_CONFIG_DIR: dir })).toBe('paused')
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+
+  it('reports a settings file it cannot read as a sentence and exits 1', async () => {
+    // A folder where the file should be: EISDIR.
+    mkdirSync(settingsPath, { recursive: true })
+    for (const args of [[], ['--pause'], ['--uninstall-and-logout', '--yes']]) {
+      const result = await run(setup().command, args)
+      expect(result.code).toBe(1)
+      expect(result.stderr).toMatch(new RegExp(`kurmis setup: ${settingsPath.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')} (was not changed|cannot be read)`))
+      expect(result.stderr).toMatch(/EISDIR/)
+      expect(result.stderr).not.toContain('    at ')
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('says so when paused.json cannot be written after the file was changed, and exits 1', async () => {
+    expect((await run(setup().command, [])).code).toBe(0)
+    chmodSync(kurmisHome, 0o500)
+    try {
+      const result = await run(setup().command, ['--pause'])
+      expect(result.code).toBe(1)
+      expect(result.stderr).toContain(`kurmis setup: kurmis' settings were taken out of the file, but ${pausedFilePath()} could not be written`)
+      expect(result.stderr).not.toContain('    at ')
+      expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis')
+    } finally {
+      chmodSync(kurmisHome, 0o700)
+    }
+  })
+
   it('still pauses with a broken config.json, by the key header', async () => {
     const { command } = setup()
     await run(command, [])
@@ -506,13 +556,32 @@ describe('globalRoutingState', () => {
   it('reads the file a CLAUDE_CONFIG_DIR names, and the default file for one inside the data folder', async () => {
     const dir = join(home, 'other-claude')
     try {
-      expect((await run(setup().command, [], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(PORT)}` } }))
       expect(globalRoutingState({ CLAUDE_CONFIG_DIR: dir })).toBe('on')
       expect(globalRoutingState({})).toBe('off')
       expect(globalRoutingState({ CLAUDE_CONFIG_DIR: join(kurmisHome, 'probe', 'claude-default') })).toBe('off')
       mkdirSync(join(home, '.claude'), { recursive: true })
       writeFileSync(settingsPath, 'not json')
       expect(globalRoutingState({})).toBe('off')
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+
+  it('reads every settings file setup recorded, whatever CLAUDE_CONFIG_DIR is', async () => {
+    const dir = join(home, 'other-claude')
+    try {
+      expect((await run(setup().command, [], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+      expect(JSON.parse(readFileSync(setupSettingsRecordPath(), 'utf8'))).toEqual({ version: 1, files: [join(dir, 'settings.json')] })
+      expect(globalRoutingState({ CLAUDE_CONFIG_DIR: dir })).toBe('on')
+      expect(globalRoutingState({})).toBe('on')
+      // Recorded once, however often setup runs.
+      expect((await run(setup().command, [], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+      expect((await run(setup().command, [])).code).toBe(0)
+      expect(JSON.parse(readFileSync(setupSettingsRecordPath(), 'utf8'))).toEqual({
+        version: 1, files: [join(dir, 'settings.json'), settingsPath]
+      })
     } finally {
       rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
     }
@@ -535,6 +604,8 @@ describe('kurmis setup --uninstall-and-logout', () => {
     running?: boolean
     stopFails?: string
     failSignOutOf?: LoginRef
+    /** The logout CLIs are not installed. */
+    cliMissing?: boolean
     platform?: NodeJS.Platform
     autostart?: FakeAutostart
   } = {}): UninstallWorld {
@@ -550,7 +621,10 @@ describe('kurmis setup --uninstall-and-logout', () => {
     const logOutLogin = createLoginLogout({
       daemon,
       platform,
-      findProgram: (tool) => ({ command: `/fake/bin/${tool}`, args: [], source: 'env' }),
+      findProgram: (tool) => {
+        if (options.cliMissing === true) throw new ProgramNotFoundError(tool, `${tool} was not found on PATH.`)
+        return { command: `/fake/bin/${tool}`, args: [], source: 'env' }
+      },
       async runProgram(program, args, run) {
         const folder = run.env?.['CLAUDE_CONFIG_DIR'] ?? run.env?.['CODEX_HOME'] ?? ''
         world.signOuts.push(`${program} ${args.join(' ')} ${folder}`)
@@ -607,9 +681,9 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(result.code).toBe(0)
     expect(world.questions).toEqual(['Remove all of this? [y/N] '])
     expect(result.stdout).toContain(`  - kurmis' settings in ${settingsPath}`)
-    expect(result.stdout).toContain(`  - ${backupPathFor(settingsPath)}, the copy of that file kurmis made`)
+    expect(result.stdout).toContain(`  - ${backupPathFor(settingsPath)}, the copy of ${settingsPath} that kurmis made`)
     expect(result.stdout).toContain('  - the logins added to kurmis, each signed out first: work-example, spare-example')
-    expect(result.stdout).toContain(`  - the running daemon (pid ${String(FAKE_CONNECTION.pid)}), which is stopped`)
+    expect(result.stdout).toContain(`  - the running daemon (pid ${String(FAKE_CONNECTION.pid)}), which it stops`)
     expect(result.stdout).toContain(`  - the kurmis data folder ${kurmisHome}`)
     expect(result.stdout).toContain('The logins plain claude and plain codex use are not signed out')
 
@@ -686,14 +760,17 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(existsSync(kurmisHome)).toBe(false)
   })
 
-  it('keeps the data folder and the login\'s folder when a login cannot be signed out, and a second run finishes', async () => {
+  it('keeps the data folder and the login when a login cannot be signed out, and a second run finishes', async () => {
     await installed()
     const first = uninstaller({ failSignOutOf: WORK })
     const result = await run(first.command, ['--uninstall-and-logout', '--yes'])
     expect(result.code).toBe(1)
-    expect(result.stderr).toContain('"claude auth logout" did not finish (exit code 1).')
+    expect(result.stderr).toContain('kurmis setup: "claude auth logout" did not finish (exit code 1).')
+    expect(result.stderr).not.toContain('kurmis logout:')
     expect(result.stderr).toContain(`Its Keychain item "${keychainService(loginFolder(WORK))}" may be left`)
-    expect(result.stderr).toContain(`so that "kurmis setup --uninstall-and-logout" runs it again`)
+    expect(result.stderr).toContain(`work-example stays in kurmis with its folder ${loginFolder(WORK)}, so that ` +
+      '"kurmis setup --uninstall-and-logout" runs it again.')
+    expect(result.stderr).toContain('"kurmis logout workclaude" removes work-example and its folder without signing it out')
     expect(result.stderr).toContain('Could not remove work-example; see above.')
     expect(result.stderr).toContain(`Kept the kurmis data folder ${kurmisHome}`)
     expect(result.stdout).not.toContain('npm uninstall')
@@ -701,12 +778,112 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(existsSync(loginFolder(SPARE))).toBe(false)
     expect(globalRoutingState({})).toBe('off')
 
-    // The login is out of config.json, and its folder is what the second run finds.
+    // The login is still in config.json, and the second run finds it there.
     const second = uninstaller({ running: false })
     const again = await run(second.command, ['--uninstall-and-logout', '--yes'])
     expect(again.code).toBe(0)
+    expect(again.stdout).toContain('  - the logins added to kurmis, each signed out first: work-example\n')
     expect(second.signOuts).toEqual([`/fake/bin/claude auth logout ${loginFolder(WORK)}`])
     expect(again.stdout).toContain('The daemon was not running.')
+    expect(existsSync(kurmisHome)).toBe(false)
+  })
+
+  it('names "kurmis logout <id>" as the way out when the logout CLI is missing, which lets a second run finish', async () => {
+    await installed()
+    const first = uninstaller({ cliMissing: true })
+    const result = await run(first.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('claude was not found on PATH.')
+    expect(result.stderr).toContain('If that cannot work, for example because claude is not installed, "kurmis logout workclaude" ' +
+      'removes work-example and its folder without signing it out, which leaves the item named above.')
+    expect(result.stderr).toContain('If that cannot work, for example because codex is not installed, "kurmis logout sparecodex" ' +
+      'removes spare-example and its folder without signing it out.')
+    expect(result.stdout).not.toContain('npm uninstall')
+    expect(existsSync(kurmisHome)).toBe(true)
+
+    // The way out, with the CLIs still missing.
+    const missing = (tool: 'claude' | 'codex') => {
+      throw new ProgramNotFoundError(tool, `${tool} was not found on PATH.`)
+    }
+    const logout = createLogoutCommand({ daemon: fakeDaemonClient({ running: false }), findProgram: missing, platform: 'darwin' })
+    expect(await logout.run(['workclaude'], collect().context)).toBe(0)
+    expect(await logout.run(['sparecodex'], collect().context)).toBe(0)
+    const second = await run(uninstaller({ cliMissing: true, running: false }).command, ['--uninstall-and-logout', '--yes'])
+    expect(second.code).toBe(0)
+    expect(existsSync(kurmisHome)).toBe(false)
+    expect(second.stdout).toContain('npm uninstall -g kurmis')
+  })
+
+  it('counts a failed logout of a Claude login in config.json without a folder as a failure', async () => {
+    await installed()
+    rmSync(loginFolder(WORK), { recursive: true, force: true })
+    const world = uninstaller({ failSignOutOf: WORK })
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('work-example stays in kurmis, so that "kurmis setup --uninstall-and-logout" runs it again.')
+    expect(result.stdout).not.toContain('npm uninstall')
+    expect(existsSync(kurmisHome)).toBe(true)
+    expect(findLogin(loadConfig(), WORK.id)).toBeDefined()
+  })
+
+  it('takes kurmis\' settings out of a file setup wrote with another CLAUDE_CONFIG_DIR before it deletes the data folder', async () => {
+    const dir = join(home, 'other-claude')
+    const other = join(dir, 'settings.json')
+    try {
+      await installed()
+      expect((await run(setup().command, [], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+      const world = uninstaller()
+      const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+      expect(result.code).toBe(0)
+      expect(result.stdout).toContain(`  - kurmis' settings in ${settingsPath}\n`)
+      expect(result.stdout).toContain(`  - kurmis' settings in ${other}\n`)
+      expect(result.stdout).toContain(`Claude Code settings: ${other}`)
+      expect(readFileSync(other, 'utf8')).not.toContain('x-kurmis')
+      expect(readFileSync(settingsPath, 'utf8')).not.toContain('x-kurmis')
+      expect(existsSync(kurmisHome)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+
+  it('stops before removing anything when a recorded settings file cannot be changed', async () => {
+    const dir = join(home, 'other-claude')
+    const other = join(dir, 'settings.json')
+    try {
+      await installed()
+      expect((await run(setup().command, [], { CLAUDE_CONFIG_DIR: dir })).code).toBe(0)
+      writeFileSync(other, '{ "env": ')
+      const world = uninstaller()
+      const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+      expect(result.code).toBe(1)
+      expect(result.stderr).toContain(`${other} cannot be changed`)
+      expect(result.stderr).toContain('Nothing was removed.')
+      expect(world.signOuts).toEqual([])
+      expect(globalRoutingState({})).toBe('on')
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
+    }
+  })
+
+  it('lists the entries of the login folders that are no login kurmis added, which go without a logout', async () => {
+    writeTestConfig({ port: PORT })
+    await installed()
+    mkdirSync(join(kurmisHome, 'claude', 'Not-An-Id'), { recursive: true })
+    mkdirSync(join(kurmisHome, 'claude', OWN_CLAUDE_REF.id), { recursive: true })
+    const world = uninstaller()
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('which are deleted without a logout: ' +
+      `${join('claude', 'Not-An-Id')}, ${join('claude', OWN_CLAUDE_REF.id)}`)
+    expect(existsSync(kurmisHome)).toBe(false)
+  })
+
+  it('creates nothing when there is nothing to remove, and lists no logins', async () => {
+    rmSync(kurmisHome, { recursive: true, force: true, maxRetries: 10 })
+    const world = uninstaller({ running: false })
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(0)
+    expect(result.stdout).not.toContain('logins added')
     expect(existsSync(kurmisHome)).toBe(false)
   })
 
@@ -720,13 +897,32 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(world.signOuts).toHaveLength(2)
   })
 
-  it('goes on when the start at login cannot be removed, and exits 1', async () => {
+  it('goes on when the start at login cannot be removed, keeps the data folder, and exits 1', async () => {
     await installed()
     const world = uninstaller({ autostart: fakeAutostart({ warning: 'the entry is locked' }), platform: 'win32' })
     const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
     expect(result.code).toBe(1)
     expect(result.stderr).toContain('Could not remove the daemon\'s start at login: the entry is locked')
-    expect(existsSync(kurmisHome)).toBe(false)
+    // On Windows the logon entry runs autostart.js in the data folder.
+    expect(result.stderr).toContain(`Kept the kurmis data folder ${kurmisHome}`)
+    expect(existsSync(kurmisHome)).toBe(true)
+    expect(world.signOuts).toHaveLength(2)
+  })
+
+  it('keeps the data folder when the real logon entry cannot be removed, on the fake reg', async () => {
+    await installed()
+    const reg = { ...process.env, FAKE_REG_FAIL: 'delete' }
+    await registerAutostart({ env: reg, platform: 'win32', entry: 'C:\\kurmis\\dist\\kurmis.cjs', nodePath: 'C:\\node\\node.exe' })
+    const autostart: FakeAutostart = {
+      calls: [],
+      registerAutostart: async (given) => await registerAutostart({ ...given, env: reg }),
+      unregisterAutostart: async (given) => await unregisterAutostart({ ...given, env: reg })
+    }
+    const world = uninstaller({ autostart, platform: 'win32' })
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('reg.exe could not remove the logon entry')
+    expect(existsSync(join(kurmisHome, 'autostart.js'))).toBe(true)
   })
 
   it('removes nothing when the settings file cannot be changed', async () => {

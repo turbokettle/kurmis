@@ -18,6 +18,7 @@ import {
   machineOwnLogin,
   newLoginIdFor,
   parseConfig,
+  readConfig,
   removeLogin,
   resolveLogin,
   saveConfig,
@@ -70,6 +71,18 @@ beforeEach(() => {
 })
 
 describe('loading', () => {
+  it('reads without writing with readConfig: no file, and a file without the logins of plain claude and plain codex', () => {
+    expect(readConfig()).toEqual({ version: CONFIG_VERSION, port: DEFAULT_PORT, logins: [] })
+    expect(existsSync(configPath())).toBe(false)
+    const text = JSON.stringify({ version: 2, port: 30001, logins: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    saveRawText(text)
+    expect(readConfig().logins.map((login) => login.id)).toEqual(['workclaude'])
+    expect(readFileSync(configPath(), 'utf8')).toBe(text)
+    expect(existsSync(configLockPath())).toBe(false)
+    saveRawText('{')
+    expect(() => readConfig()).toThrow(ConfigError)
+  })
+
   it("creates the logins of plain claude and plain codex with new ids when there is no file, and saves them", () => {
     const config = loadConfig()
     expect(config.version).toBe(CONFIG_VERSION)

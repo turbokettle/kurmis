@@ -22,7 +22,9 @@
 // nowhere. It gives the login's automatic alias (`followEmail`) unless `--alias` sets one. When
 // a new sign-in is an account that is already a kurmis login of the same provider, the login
 // plain claude or plain codex uses included, the new folder is signed out again and deleted,
-// and the command says which login that account already is.
+// and the command says which login that account already is. For Claude this is checked again
+// under the config lock, before the login is added. When an existing login is signed in to an
+// account that another login of its provider already has, the command warns and signs nothing out.
 //
 // The run holds the login's lock (`login-lock.ts`) from before it creates the folder until it is
 // done, so a `kurmis logout` of the same login stops at once instead of deleting the folder.
@@ -104,9 +106,18 @@ export const LOGIN_PROBE_WAIT_MS = 15_000
 /** What the command line asks for: a new login of a provider, or an existing login. */
 export type LoginTarget = { kind: 'new'; provider: LoginProvider } | { kind: 'existing'; login: LoginSettings } | { error: string }
 
-/** Reads `kurmis login <claude|codex|login>` against the current config. */
+/**
+ * Reads `kurmis login <claude|codex|login>` against the current config. The provider's name may
+ * be in any case, as aliases and ids may (`resolveLogin`).
+ */
 export function loginTarget(argument: string, config: KurmisConfig): LoginTarget {
-  if (isLoginProvider(argument)) return { kind: 'new', provider: argument }
+  const typed = argument.trim().toLowerCase()
+  if (isLoginProvider(typed)) return { kind: 'new', provider: typed }
+  const prefix = typed.endsWith(':') ? typed.slice(0, -1).trim() : null
+  if (prefix !== null && isLoginProvider(prefix)) {
+    return { error: `"${argument}" names no login. Put the alias or id of a ${PROVIDER_NAMES[prefix]} login after ` +
+      `"${prefix}:", for example ${prefix}:work-example, or run "kurmis login ${prefix}" to add a new ${PROVIDER_NAMES[prefix]} login` }
+  }
   const resolved = resolveLogin(config, argument)
   if ('error' in resolved) {
     return { error: `${resolved.error}. "kurmis login claude" or "kurmis login codex" adds a new login, and "kurmis status" shows the logins there are` }
@@ -150,10 +161,8 @@ function sameEmail(a: string | null, b: string | null): boolean {
  */
 async function sameAccount(config: KurmisConfig, login: LoginRef, email: string, env: NodeJS.ProcessEnv,
   deps: LoginDeps): Promise<LoginSettings | null> {
+  if (login.provider === 'claude') return sameClaudeAccount(config, login, email, deps.home())
   const others = config.logins.filter((other) => other.provider === login.provider && other.id !== login.id)
-  if (login.provider === 'claude') {
-    return others.find((other) => sameEmail(readClaudeIdentity(other, deps.home())?.email ?? null, email)) ?? null
-  }
   const known = new Map<string, string>()
   try {
     const connection = await deps.daemon.findDaemon({ env })
@@ -163,6 +172,26 @@ async function sameAccount(config: KurmisConfig, login: LoginRef, email: string,
   } catch { /* Without the daemon every email is read from Codex. */ }
   const emails = await Promise.all(others.map(async (other) => known.get(other.id) ?? await deps.readCodexEmail(other, env)))
   return others.find((_, index) => sameEmail(emails[index] ?? null, email)) ?? null
+}
+
+/**
+ * The other Claude login signed in to the account `email`, by each login's `.claude.json`, or
+ * null. It reads files only, so it can run while the config lock is held.
+ */
+function sameClaudeAccount(config: KurmisConfig, login: LoginRef, email: string, home: string): LoginSettings | null {
+  return config.logins.find((other) => other.provider === 'claude' && other.id !== login.id &&
+    sameEmail(readClaudeIdentity(other, home)?.email ?? null, email)) ?? null
+}
+
+/**
+ * Thrown inside `changeConfig` when the config read under the lock has a login of the new
+ * sign-in's account: another `kurmis login` of the same account added it meanwhile.
+ */
+class AddedMeanwhile extends Error {
+  constructor(readonly existing: LoginSettings, readonly config: KurmisConfig) {
+    super(`${existing.id} has the same account`)
+    this.name = 'AddedMeanwhile'
+  }
 }
 
 /**
@@ -287,12 +316,18 @@ async function signIn(run: SignInRun): Promise<number> {
   let saved: KurmisConfig
   try {
     saved = changeConfig((config) => {
+      // A Claude account is checked again from the config read under the lock, so two runs of
+      // `kurmis login claude` that sign in to one account at the same moment add it once.
+      // A Codex email is read from `codex app-server`, which is too slow to run under the lock.
+      const meanwhile = isNew && provider === 'claude' && email !== null ? sameClaudeAccount(config, ref, email, deps.home()) : null
+      if (meanwhile !== null) throw new AddedMeanwhile(meanwhile, config)
       let next = isNew ? addLogin(config, ref, alias === undefined ? {} : { alias }) : config
       if (!isNew && alias !== undefined) next = updateLogin(next, ref.id, { alias })
       // Without an email the alias stays as it is.
       return followEmail(next, ref.id, email)
     })
   } catch (error) {
+    if (error instanceof AddedMeanwhile && email !== null) return await dropDuplicate(run, error.config, error.existing, email)
     if (!(error instanceof ConfigError)) throw error
     // The login is signed in, so its credentials are kept; logout removes them.
     return fail(context, isNew
@@ -308,6 +343,16 @@ async function signIn(run: SignInRun): Promise<number> {
       `both limits at 100%. "kurmis set ${argument}" changes that.`)
   } else if (login.alias !== name) {
     writeLine(context.stdout, `${name} is now called ${login.alias}.`)
+  }
+  if (!isNew && email !== null) {
+    // Nothing is signed out: the person may have meant either login, and both still work.
+    const other = await sameAccount(saved, ref, email, context.env, deps)
+    if (other !== null) {
+      const which = other.machineOwn ? `${other.alias}, ${machineOwnText(other.provider)},` : other.alias
+      writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ` +
+        `${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. ` +
+        `"kurmis login ${argument}" signs ${login.alias} in to another account.`)
+    }
   }
   for (const line of await tellDaemon(deps.daemon, login, context.env, deps.probeWaitMs)) writeLine(context.stdout, line)
   return EXIT_OK
@@ -334,6 +379,10 @@ async function dropDuplicate(run: SignInRun, config: KurmisConfig, existing: Log
   writeLine(context.stdout, `${email} is already a kurmis ${PROVIDER_NAMES[ref.provider]} login: ${which} (id ${existing.id}). ` +
     'No login was added, and the new sign-in was signed out again.')
   writeLine(context.stdout, `"kurmis login ${loginArgument(config, existing)}" signs ${existing.alias} in again.`)
+  if (run.alias !== undefined) {
+    writeLine(context.stderr, `kurmis login: --alias ${run.alias} was not used, because no login was added. ` +
+      `"kurmis set ${loginArgument(config, existing)} --alias ${run.alias}" gives ${existing.alias} that alias.`)
+  }
   return EXIT_OK
 }
 
@@ -363,7 +412,8 @@ the sign-in page in the browser.
                               at 100%; "kurmis set" changes that.
   kurmis login codex          Adds a new Codex login.
   kurmis login work-example   Signs the login work-example in again, for example after it was
-                              signed out. This works for the logins of plain claude and plain codex too.
+                              signed out. This works for the logins of plain claude and plain
+                              codex too.
 
 <login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
 Codex login have the same alias, put claude: or codex: in front, for example
@@ -373,8 +423,11 @@ Each login gets an id of random letters and digits, which never changes. Its ali
 you see and type. Kurmis makes the alias from the account's email: work@example.com gives
 work-example. Without --alias, the alias follows the email when the account changes.
 
-When the account you sign in to is already a kurmis login, kurmis signs the new sign-in out
-again, adds nothing and says which login the account is.
+When the account you sign in to with "kurmis login claude" or "kurmis login codex" is already
+a kurmis login, kurmis signs the new sign-in out again, adds nothing and says which login the
+account is. --alias is then not used. When "kurmis login <login>" signs a login in to an
+account that another login of the same provider already has, kurmis warns that the two logins
+are now the same account and signs neither out.
 
 Each extra login keeps its own credentials in its folder in the kurmis data folder (on macOS in
 the Keychain). Kurmis prints the account's email and does not store it.

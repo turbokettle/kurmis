@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, test } from 'vitest'
 import { createStatusCommand, nothingProbedYet, type StatusDeps } from '../../../src/cli/commands/status.ts'
@@ -44,7 +44,8 @@ describe('kurmis status with the daemon running', () => {
     expect(out.stdout()).toContain('kurmis daemon 0.1.0, pid 4242, port 40123')
     expect(out.stdout()).toContain('Global routing is off: only Claude Code started with "kurmis claude" goes\nthrough kurmis. "kurmis setup" turns it on.\n')
     expect(out.stdout()).toContain('  Codex 5h    7%')
-    expect(out.stdout()).toContain('ownclaude1 (Claude, id ownclaude1)\n  the login plain claude uses\n  signed in')
+    // The alias is the id, so the id is not repeated.
+    expect(out.stdout()).toContain('ownclaude1 (Claude)\n  the login plain claude uses\n  signed in')
     expect(out.stderr()).toBe('')
   })
 
@@ -53,7 +54,7 @@ describe('kurmis status with the daemon running', () => {
     const out = collect()
     expect(await command({ daemon, globalRouting: () => 'paused' }).run(['--json'], out.context)).toBe(0)
     const json = JSON.parse(out.stdout()) as StatusJson
-    expect(json).toMatchObject({ format: 3, source: 'daemon', globalRouting: 'paused', daemon: { version: '0.1.0', pid: 4242, older: false } })
+    expect(json).toMatchObject({ format: 4, source: 'daemon', globalRouting: 'paused', daemon: { version: '0.1.0', pid: 4242, older: false } })
     expect(json.logins.map((login) => [login.id, login.alias, login.machineOwn, login.signedIn, login.credentials])).toEqual([
       ['ownclaude1', 'ownclaude1', true, true, null], ['owncodex01', 'owncodex01', true, true, null]
     ])
@@ -118,12 +119,35 @@ describe('kurmis status with the daemon running', () => {
     expect(json.logins.map((login) => [login.id, login.signedIn, login.credentials])).toEqual([[OWN_CLAUDE, null, false], [OWN_CODEX, null, false]])
   })
 
-  test('a daemon that does not answer the status request is an error', async () => {
+  test('shows the files, with a note on stderr, when the daemon does not answer the status request', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
     const daemon = fakeDaemonClient({ readFails: 'the request timed out' })
     const out = collect()
-    expect(await command({ daemon }).run([], out.context)).toBe(1)
-    expect(out.stderr()).toContain('kurmis status: the kurmis daemon (pid 4242) did not answer: the request timed out')
-    expect(out.stdout()).toBe('')
+    expect(await command({ daemon }).run([], out.context)).toBe(0)
+    expect(out.stderr()).toContain('kurmis status: the kurmis daemon (pid 4242) did not answer the status request: the request timed out')
+    expect(out.stderr()).toContain('Showing the logins from config.json instead.')
+    expect(out.stdout()).toContain('The kurmis daemon is not running.')
+    expect(out.stdout()).toContain('work-example (Claude, id workclaude)')
+    const json = collect()
+    expect(await command({ daemon }).run(['--json'], json.context)).toBe(0)
+    expect(JSON.parse(json.stdout())).toMatchObject({ source: 'files', daemon: null })
+  })
+
+  test('warns about two extra logins of one provider with the same email, and says how to remove the second', async () => {
+    const status = statusAnswer([
+      loginStatus(OWN_CLAUDE_REF, { email: 'own@example.com', usage: PROBED.logins[1]!.usage }),
+      loginStatus(OWN_CODEX_REF),
+      loginStatus({ ...claudeRef('workclaude'), alias: 'work-example' }, { email: 'work@example.com' }),
+      loginStatus({ ...claudeRef('workagain'), alias: 'work-example-2' }, { email: 'Work@Example.com' }),
+      // The same email on another provider is another account.
+      loginStatus({ ...codexRef('workcodex1'), alias: 'work-example' }, { email: 'work@example.com' })
+    ])
+    const out = collect()
+    expect(await command({ daemon: fakeDaemonClient({ status }) }).run(['--json'], out.context)).toBe(0)
+    expect((JSON.parse(out.stdout()) as StatusJson).warnings).toEqual([
+      'work-example-2 and work-example are the same Claude account (work@example.com), so they use one subscription. ' +
+        '"kurmis logout work-example-2" removes work-example-2.'
+    ])
   })
 
   test('an unknown option is a usage error', async () => {
@@ -154,18 +178,18 @@ describe('kurmis status with the daemon not running', () => {
     expect(out.stderr()).toBe('')
     const text = out.stdout()
     expect(text).toMatch(/^The kurmis daemon is not running\. "kurmis claude", "kurmis codex" without\n--login, "kurmis setup" and "kurmis daemon start" each start it\./)
-    expect(text).toContain(`${OWN_CLAUDE} (Claude, id ${OWN_CLAUDE})\n  the login plain claude uses\n  no credentials on this machine, routing on`)
+    expect(text).toContain(`${OWN_CLAUDE} (Claude)\n  the login plain claude uses\n  no credentials on this machine, routing on`)
     expect(text).toContain('work-example (Claude, id workclaude)  work@example.com\n' +
       '  credentials on this machine, routing on, limits 90% 5 hour, 100% weekly,\n  use first, 1 session, plan max\n')
     expect(text).toContain('  usage read 3h ago\n')
-    expect(text).toContain('sidecodex1 (Codex, id sidecodex1)\n  no credentials on this machine, routing off')
+    expect(text).toContain('sidecodex1 (Codex)\n  no credentials on this machine, routing off')
     expect(text).not.toContain('kurmis codex would start on')
     expect(text).not.toContain('passed over')
 
     const json = collect({})
     expect(await command({ daemon }).run(['--json'], json.context)).toBe(0)
     const parsed = JSON.parse(json.stdout()) as StatusJson
-    expect(parsed).toMatchObject({ format: 3, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
+    expect(parsed).toMatchObject({ format: 4, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
     expect(parsed.logins.map((login) => [login.id, login.alias, login.machineOwn, login.signedIn, login.credentials, login.sessions])).toEqual([
       [OWN_CLAUDE, OWN_CLAUDE, true, null, false, 0], [OWN_CODEX, OWN_CODEX, true, null, false, null],
       ['workclaude', 'work-example', false, null, true, 1], ['sidecodex1', 'sidecodex1', false, null, false, null]
@@ -203,6 +227,35 @@ describe('kurmis status with the daemon not running', () => {
     expect(await command({ daemon: fakeDaemonClient({ findFails: 'the key file cannot be read' }) }).run([], out.context)).toBe(0)
     expect(out.stderr()).toBe('kurmis status: could not look for the kurmis daemon: the key file cannot be read\n')
     expect(out.stdout()).toContain('The kurmis daemon is not running.')
+  })
+
+  test('writes nothing in a data folder that is gone, and shows the logins of plain claude and plain codex without an id', async () => {
+    writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
+    const out = collect({ HOME: home })
+    // The real globalRoutingState, which reads config.json for the port.
+    expect(await createStatusCommand({ daemon: fakeDaemonClient({ running: false }), home: () => home, now: () => NOW })
+      .run([], out.context)).toBe(0)
+    expect(existsSync(kurmisHome())).toBe(false)
+    expect(out.stdout()).toContain('the login plain claude uses (Claude, no id yet)  own@example.com\n' +
+      '  config.json has no entry for it yet. The first kurmis command other than\n  "kurmis status" that reads config.json adds one, with an id.\n')
+    expect(out.stdout()).toContain('the login plain codex uses (Codex, no id yet)')
+    const json = collect({ HOME: home })
+    expect(await command({ daemon: fakeDaemonClient({ running: false }) }).run(['--json'], json.context)).toBe(0)
+    expect((JSON.parse(json.stdout()) as StatusJson).logins.map((login) => [login.id, login.alias, login.provider, login.machineOwn]))
+      .toEqual([[null, null, 'claude', true], [null, null, 'codex', true]])
+    expect(existsSync(kurmisHome())).toBe(false)
+  })
+
+  test('leaves a config.json without the logins of plain claude and plain codex as it is', async () => {
+    mkdirSync(kurmisHome(), { recursive: true })
+    const text = JSON.stringify({ version: 2, port: 30001, logins: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeFileSync(configPath(), text)
+    const out = collect({})
+    expect(await createStatusCommand({ daemon: fakeDaemonClient({ running: false }), home: () => home, now: () => NOW })
+      .run(['--json'], out.context)).toBe(0)
+    expect(readFileSync(configPath(), 'utf8')).toBe(text)
+    expect(readdirSync(kurmisHome())).toEqual(['config.json'])
+    expect((JSON.parse(out.stdout()) as StatusJson).logins.map((login) => login.id)).toEqual([null, null, 'workclaude'])
   })
 
   test('a broken config.json is an error', async () => {

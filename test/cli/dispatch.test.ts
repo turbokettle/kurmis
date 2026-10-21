@@ -1,4 +1,4 @@
-import { rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { COMMANDS } from '../../src/cli/commands/index.ts'
 import { runCli } from '../../src/cli/dispatch.ts'
@@ -86,15 +86,14 @@ describe('kurmis status without a daemon', () => {
     rmSync(configPath(), { force: true })
   })
 
-  it('shows the logins of plain claude and plain codex, with new ids, when there is no config', async () => {
+  it('shows the logins of plain claude and plain codex without an id, and writes no config, when there is none', async () => {
     const result = await run('status')
     expect(result.code).toBe(0)
     expect(result.stdout).toMatch(/^The kurmis daemon is not running\./)
-    // Each of the logins of plain claude and plain codex has a new id of 10 letters and digits, which is also its alias.
-    const ids = [...result.stdout.matchAll(/^([a-z0-9]{10}) \((Claude|Codex), id \1\)$/gm)].map((match) => match[2])
-    expect(ids).toEqual(['Claude', 'Codex'])
-    expect(result.stdout).toContain('  the login plain claude uses\n  no credentials on this machine, routing on')
-    expect(result.stdout).toContain('  the login plain codex uses\n  no credentials on this machine, routing on')
+    expect(result.stdout).toContain('the login plain claude uses (Claude, no id yet)\n')
+    expect(result.stdout).toContain('the login plain codex uses (Codex, no id yet)\n')
+    expect(result.stdout).toContain('"kurmis status" that reads config.json adds one, with an id.\n  no credentials on this machine, routing on')
+    expect(existsSync(configPath())).toBe(false)
   })
 
   it('shows stored logins and settings, also as JSON', async () => {
@@ -104,7 +103,7 @@ describe('kurmis status without a daemon', () => {
     })
     const text = await run('status')
     expect(text.stdout).toContain('work-example (Claude, id workclaude)\n  no credentials on this machine, routing on, limits 100% 5 hour, 100% weekly,\n  use first')
-    expect(text.stdout).toContain(`${OWN_CODEX} (Codex, id ${OWN_CODEX})\n  the login plain codex uses\n  no credentials on this machine, routing off, limits 100% 5 hour, 75% weekly`)
+    expect(text.stdout).toContain(`${OWN_CODEX} (Codex)\n  the login plain codex uses\n  no credentials on this machine, routing off, limits 100% 5 hour, 75% weekly`)
     const json = JSON.parse((await run('status', '--json')).stdout) as { daemon: unknown; logins: Array<{ id: string; credentials: boolean }> }
     expect(json.daemon).toBeNull()
     expect(json.logins.map((login) => [login.id, login.credentials])).toEqual([[OWN_CLAUDE, false], [OWN_CODEX, false], ['workclaude', false]])

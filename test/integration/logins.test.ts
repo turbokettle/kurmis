@@ -79,8 +79,8 @@ describe('kurmis login, set, status and logout', () => {
     const text = await world.kurmis(['status'])
     expect(text.code, text.stderr).toBe(0)
     expect(text.stdout).toContain(`work-example (Claude, id ${id!})  work@example.com\n  credentials on this machine, routing on`)
-    expect(text.stdout).toContain(`${OWN_CLAUDE} (Claude, id ${OWN_CLAUDE})\n  the login plain claude uses\n  no credentials on this machine`)
-    expect(text.stdout).toContain(`${OWN_CODEX} (Codex, id ${OWN_CODEX})\n  the login plain codex uses\n`)
+    expect(text.stdout).toContain(`${OWN_CLAUDE} (Claude)\n  the login plain claude uses\n  no credentials on this machine`)
+    expect(text.stdout).toContain(`${OWN_CODEX} (Codex)\n  the login plain codex uses\n`)
 
     // None of these commands needs or starts the daemon.
     expect(world.daemonInfo()).toBeNull()
@@ -202,6 +202,15 @@ describe('kurmis login, set, status and logout', () => {
 
   it("gives the logins of plain claude and plain codex new ids when config.json has none, and refuses a config.json of an older version", async () => {
     const world = await createWorld({ ownLogins: false })
+    const before = configText(world)
+    // Status writes nothing, so it shows them without an id.
+    const unsaved = (await world.status()).logins
+    expect(unsaved.map((login) => [login.provider, login.machineOwn, login.id, login.alias])).toEqual([
+      ['claude', true, null, null], ['codex', true, null, null]
+    ])
+    expect(configText(world)).toBe(before)
+    // Any other command that reads config.json gives them ids; this one then fails on the unknown login.
+    expect((await world.kurmis(['set', 'nobody-example', '--auto', 'on'])).code).toBe(2)
     const logins = (await world.status()).logins
     expect(logins.map((login) => [login.provider, login.machineOwn])).toEqual([['claude', true], ['codex', true]])
     for (const login of logins) {

@@ -30,6 +30,26 @@ describe('fake reg', () => {
     expect((await reg(['delete', KEY, '/v', 'example', '/f'])).code).toBe(1)
   })
 
+  it('lists the values of a key, and knows the Run key without any', async () => {
+    const empty = await reg(['query', KEY])
+    expect(empty.code).toBe(0)
+    expect(empty.stdout).toBe('\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n\r\n')
+    expect((await reg(['query', 'HKCU\\Software\\Example'])).code).toBe(1)
+    await reg(['add', KEY, '/v', 'one', '/t', 'REG_SZ', '/d', 'C:\\one.exe', '/f'])
+    await reg(['add', KEY, '/v', 'two', '/t', 'REG_SZ', '/d', 'C:\\two.exe', '/f'])
+    expect((await reg(['query', KEY])).stdout).toBe('\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n' +
+      '    one    REG_SZ    C:\\one.exe\r\n    two    REG_SZ    C:\\two.exe\r\n\r\n')
+  })
+
+  it('fails only the commands FAKE_REG_FAIL names', async () => {
+    const failing = regFor({ ...process.env, FAKE_REG_FAIL: 'delete' })
+    expect((await failing(['add', KEY, '/v', 'one', '/t', 'REG_SZ', '/d', 'x', '/f'])).code).toBe(0)
+    const deleted = await failing(['delete', KEY, '/v', 'one', '/f'])
+    expect(deleted.code).toBe(1)
+    expect(deleted.stderr).toContain('ERROR: Access is denied.')
+    expect((await failing(['query', KEY, '/v', 'one'])).code).toBe(0)
+  })
+
   it('fails every call on request, and records every call', async () => {
     const failed = await regFor({ ...process.env, FAKE_REG_FAIL: '1' })(['query', KEY, '/v', 'example'])
     expect(failed.code).toBe(1)

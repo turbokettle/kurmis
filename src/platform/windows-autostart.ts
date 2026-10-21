@@ -142,13 +142,19 @@ export function regQueryArgs(): string[] {
   return ['query', RUN_KEY, '/v', RUN_VALUE_NAME]
 }
 
+/** `reg query` of the whole Run key, which lists every value in it. */
+export function regListArgs(): string[] {
+  return ['query', RUN_KEY]
+}
+
 export function regDeleteArgs(): string[] {
   return ['delete', RUN_KEY, '/v', RUN_VALUE_NAME, '/f']
 }
 
 /**
- * The value `name` in what `reg query <key> /v <name>` printed: the lines are the key, then
- * `    <name>    <type>    <data>` with four spaces between the parts. Null when it is not there.
+ * The value `name` in what `reg query <key> /v <name>` or `reg query <key>` printed: the lines
+ * are the key, then `    <name>    <type>    <data>` with four spaces between the parts for each
+ * value, and the subkeys without the spaces in front. Null when it is not there.
  */
 export function parseRegQuery(stdout: string, name: string): { type: string; data: string } | null {
   for (const line of stdout.split(/\r?\n/)) {
@@ -347,25 +353,51 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
 }
 
 /**
- * Removes the Run value and the logon script. A missing value or script is not an error.
+ * Removes the Run value, then the logon script. A missing value or script is not an error.
  * Whether the value is there is asked with `reg query` first, because reg.exe's messages are in
- * the system's language and its exit code is 1 for every failure.
+ * the system's language and its exit code is 1 for every failure. That query also fails when the
+ * value is missing, so a failed query is followed by `reg query` of the whole Run key: when that
+ * lists the values without kurmis', there is none. When the key cannot be read either, or
+ * `reg delete` fails, the answer is a warning, and `autostart.js` (and an old `autostart.vbs`)
+ * are kept: a Run value that names a deleted script makes wscript show an error at every logon.
  */
 export async function unregisterWindowsAutostart(options: WindowsAutostartOptions): Promise<AutostartResult> {
   const reg = options.reg ?? regFor(options.env)
   const scriptPath = options.scriptPath ?? windowsAutostartScriptPath()
   let changed = false
-  let warning: string | undefined
   const query = await reg(regQueryArgs())
-  if (ok(query) && parseRegQuery(query.stdout, RUN_VALUE_NAME) !== null) {
-    const deleted = await reg(regDeleteArgs())
-    if (ok(deleted)) changed = true
-    else warning = `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}).`
+  let present: boolean
+  if (ok(query)) {
+    present = parseRegQuery(query.stdout, RUN_VALUE_NAME) !== null
+  } else {
+    const listing = await reg(regListArgs())
+    if (!ok(listing)) {
+      return {
+        changed,
+        where: RUN_ENTRY_DESCRIPTION,
+        warning: `reg.exe could not read the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(query)}), so it may still be ` +
+          `there. ${scriptPath}, which that entry runs, is kept.`
+      }
+    }
+    present = parseRegQuery(listing.stdout, RUN_VALUE_NAME) !== null
   }
+  if (present) {
+    const deleted = await reg(regDeleteArgs())
+    if (!ok(deleted)) {
+      return {
+        changed,
+        where: RUN_ENTRY_DESCRIPTION,
+        warning: `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}). ${scriptPath}, ` +
+          'which that entry runs, is kept.'
+      }
+    }
+    changed = true
+  }
+  // The Run value is gone, so nothing runs the scripts any more.
   if (readScript(scriptPath) !== null) {
     rmSync(scriptPath, { force: true })
     changed = true
   }
   if (removeOldVbsScript(scriptPath)) changed = true
-  return warning === undefined ? { changed, where: RUN_ENTRY_DESCRIPTION } : { changed, where: RUN_ENTRY_DESCRIPTION, warning }
+  return { changed, where: RUN_ENTRY_DESCRIPTION }
 }

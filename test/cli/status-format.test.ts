@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
-import { formatStatus as formatReport, STATUS_JSON_FORMAT, statusJson as reportJson, type StatusFormatOptions, type StatusReport } from '../../src/cli/status-format.ts'
+import { formatStatus as formatReport, noIdYetStandIn, STATUS_JSON_FORMAT, statusJson as reportJson, type StatusFormatOptions, type StatusReport } from '../../src/cli/status-format.ts'
+import type { LoginId } from '../../src/data/login-id.ts'
 import type { StatusAnswer } from '../../src/core/control-api.ts'
 import { accountUsage, usageWindow } from '../core/usage-fixtures.ts'
 import { codexUsage } from '../core/codex-usage-fixture.ts'
@@ -86,12 +87,12 @@ work-example (Claude, id workclaude)  work@example.com
   passed over: at its limit, the 5 hour window is at 92% of 90%; it resets in
     45m
 
-spareclaude (Claude, id spareclaude)
+spareclaude (Claude)
   sign-in not checked yet, routing off, limits 100% 5 hour, 100% weekly,
   0 sessions
   usage not read yet
 
-coolclaude (Claude, id coolclaude)
+coolclaude (Claude)
   signed in, routing on, limits 100% 5 hour, 100% weekly, 0 sessions
   usage not read yet
   passed over: cooling down until 02:10 (in 1h)
@@ -244,6 +245,36 @@ describe('the warning about an extra login that is the account of the login plai
     const status = statusAnswer([loginStatus(OWN_CLAUDE_LOGIN), loginStatus(WORK_CLAUDE, { email: 'own@example.com' })])
     expect(statusJson(status, NOW, { keychain: false }).warnings).toEqual([])
     expect(formatStatus(status, NOW, { keychain: false })).not.toContain('Warning')
+  })
+
+  test('compares the extra logins with each other too, and names a login plain claude uses without an id as such', () => {
+    const own = { ...loginStatus({ ...OWN_CLAUDE_REF, id: noIdYetStandIn('claude') as LoginId, alias: noIdYetStandIn('claude') },
+      { email: 'own@example.com' }), noIdYet: true }
+    const report: StatusReport = {
+      daemon: null,
+      source: 'files',
+      logins: [
+        own,
+        loginStatus(WORK_CLAUDE, { email: 'own@example.com' }),
+        loginStatus({ ...claudeRef('spareclaude'), alias: 'spare-example' }, { email: 'spare@example.com' }),
+        loginStatus({ ...claudeRef('spareagain'), alias: 'spare-example-2' }, { email: 'spare@example.com' })
+      ],
+      credentials: new Map(),
+      globalRouting: 'off',
+      version: '0.1.0'
+    }
+    expect(reportJson(report, NOW, { keychain: false }).warnings).toEqual([
+      'work-example and the login plain claude uses are the same Claude account (own@example.com), so they use one ' +
+        'subscription. "kurmis logout work-example" removes work-example.',
+      'spare-example-2 and spare-example are the same Claude account (spare@example.com), so they use one subscription. ' +
+        '"kurmis logout spare-example-2" removes spare-example-2.'
+    ])
+    const json = reportJson(report, NOW, { keychain: false })
+    expect(json.logins[0]).toMatchObject({ id: null, alias: null, machineOwn: true, email: 'own@example.com' })
+    const text = formatReport(report, NOW, { keychain: false })
+    expect(text).toContain('\nthe login plain claude uses (Claude, no id yet)  own@example.com\n  config.json has no entry')
+    expect(text).not.toContain('-claude')
+    for (const line of text.split('\n')) expect(line.length).toBeLessThanOrEqual(80)
   })
 
   test('puts an email that does not fit on the title line on a line of its own', () => {

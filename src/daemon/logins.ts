@@ -66,6 +66,12 @@ export type Placement =
 export type ConfigReload = { ok: true; changed: boolean } | { ok: false; error: string }
 
 export class LoginTable {
+  /**
+   * Until a config has been read, a stand-in with the logins of plain claude and plain codex
+   * under new random ids, because the proxy and the control API always need those two logins.
+   * The stand-in is never saved. The first config that reads replaces it, and that drops the
+   * usage and cooldowns kept under the stand-in's ids.
+   */
   private config: KurmisConfig = defaultConfig()
   private stamp: string | null = null
   private lastCheck = -Infinity
@@ -130,7 +136,9 @@ export class LoginTable {
 
   /**
    * Reads `config.json` again. A file that does not read keeps the config the daemon has, so a
-   * half-finished edit never empties the pool; the error says why, for the control API.
+   * half-finished edit never empties the pool; the error says why, for the control API. A file
+   * that could not be read because another process held its lock is read again at the next
+   * check, whether or not it changed.
    */
   reloadConfig(): ConfigReload {
     this.lastCheck = this.options.now()
@@ -145,8 +153,11 @@ export class LoginTable {
     try {
       this.config = loadConfig(this.configFile, { timeoutMs: CONFIG_LOCK_TIMEOUT_MS })
     } catch (error) {
-      this.stamp = stamp
-      this.options.log.write('config_invalid', { reason: 'invalid' })
+      // A lock that another process holds says nothing about the file. The stamp is not kept,
+      // so the next check reads the file again even when its contents stay the same.
+      const busy = isLockTimeout(error)
+      if (!busy) this.stamp = stamp
+      this.options.log.write('config_invalid', { reason: busy ? 'timeout' : 'invalid' })
       return { ok: false, error: messageOf(error) }
     }
     this.stamp = stamp

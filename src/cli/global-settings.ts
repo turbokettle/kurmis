@@ -799,19 +799,29 @@ function writeEdit(
   return { backup, modeBefore: existed && mode !== before ? before : null }
 }
 
+/**
+ * Rethrows an error of a settings file operation as a `SettingsFileError` that names the file.
+ * A file system error (EACCES, EISDIR, ...) becomes one too, with its code, so the command can
+ * report it as a sentence.
+ */
 function failWith(path: string, error: unknown): never {
   if (error instanceof SettingsFileError) {
     throw new SettingsFileError(`${path} was not changed: ${error.message}`)
+  }
+  const code = (error as NodeJS.ErrnoException | null)?.code
+  if (typeof code === 'string') {
+    throw new SettingsFileError(`${path} was not changed: it, its backup or its folder could not be read or written (${code})`)
   }
   throw error
 }
 
 /** Puts kurmis' routing variables in the settings file. Backs it up before the change (see the top of this file). */
 export function setupSettingsFile(path: string, values: SetupValues, platform: NodeJS.Platform = process.platform): SettingsFileResult {
-  const text = readText(path)
+  let text: string | null
   let edit: SettingsEdit
   let written: { backup: string | null; modeBefore: number | null }
   try {
+    text = readText(path)
     edit = applySetupToText(text, values)
     written = writeEdit(path, edit, text !== null, true, platform)
   } catch (error) {
@@ -819,7 +829,12 @@ export function setupSettingsFile(path: string, values: SetupValues, platform: N
   }
   // The backup of a file from before kurmis may hold other secrets of the user's; a backup an
   // older kurmis wrote, or one copied by hand, may not be user-only yet.
-  const backupModeBefore = written.backup === null ? restrictIfPresent(backupPathFor(path)) : null
+  let backupModeBefore: number | null
+  try {
+    backupModeBefore = written.backup === null ? restrictIfPresent(backupPathFor(path)) : null
+  } catch (error) {
+    failWith(backupPathFor(path), error)
+  }
   return {
     ...edit,
     path,
@@ -852,13 +867,14 @@ export function checkSetupSettingsFile(path: string, values: SetupValues, platfo
 /** Takes kurmis' routing variables out of the settings file again. A missing file is left missing. */
 export function undoSettingsFile(path: string, values: Omit<UndoValues, 'backupText'>,
   platform: NodeJS.Platform = process.platform): SettingsFileResult {
-  const text = readText(path)
-  if (text === null) {
-    return { ...emptyEdit(''), path, existed: false, backupWritten: null, linkTarget: null, modeBefore: null, backupModeBefore: null }
-  }
+  let text: string | null
   let edit: SettingsEdit
   let written: { backup: string | null; modeBefore: number | null }
   try {
+    text = readText(path)
+    if (text === null) {
+      return { ...emptyEdit(''), path, existed: false, backupWritten: null, linkTarget: null, modeBefore: null, backupModeBefore: null }
+    }
     edit = undoSetupInText(text, { ...values, backupText: readText(backupPathFor(path)) })
     written = writeEdit(path, edit, true, false, platform)
   } catch (error) {

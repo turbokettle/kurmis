@@ -49,6 +49,13 @@ const nodeFs: RemoveTreeFs = {
 export interface RemoveTreeOptions {
   platform?: NodeJS.Platform
   fs?: RemoveTreeFs
+  /**
+   * Windows only: the real path of a folder the removal must stay inside, checked for `path`
+   * itself too. Without it, the real path of `path` is that folder, so `path` itself is never
+   * checked. A caller that removes the entries of a folder one by one passes that folder's real
+   * path, so an entry that is a mount point is removed as a link.
+   */
+  root?: string
 }
 
 function codeOf(error: unknown): string | undefined {
@@ -61,7 +68,7 @@ function codeOf(error: unknown): string | undefined {
  * was. A missing `path` is not an error.
  */
 export function removeTreeSync(path: string, options: RemoveTreeOptions = {}): void {
-  removeEntry(path, options.fs ?? nodeFs, options.platform ?? process.platform, null)
+  removeEntry(path, options.fs ?? nodeFs, options.platform ?? process.platform, options.root ?? null)
 }
 
 /** Whether `path` is `root` or inside it, comparing Windows paths without regard to case. */

@@ -314,6 +314,48 @@ describe('kurmis claude --login', () => {
     expect(h.daemon.calls).toEqual([])
   })
 
+  test('without --login, a config.json that cannot be read starts claude on the login plain claude uses, with a warning', async () => {
+    // The daemon's status names the login plain claude uses by its id; the signed-in extra login
+    // that Auto would otherwise prefer is not looked at.
+    const h = harness({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: false }), loginStatus(WORK)]) }, {
+      loadConfig: () => {
+        throw new ConfigError('Another kurmis command (pid 4321) holds the lock of config.json.')
+      }
+    })
+    const out = collect()
+    expect(await createClaudeCommand(h.deps).run(['-p', 'hi'], out.context)).toBe(3)
+    expect(out.stderr()).toBe('kurmis claude: Another kurmis command (pid 4321) holds the lock of config.json. ' +
+      'Starting claude on the login plain claude uses.\n')
+    expect(h.daemon.calls).toEqual(['findDaemon', 'readStatus'])
+    expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`, `x-kurmis-started-on: ${OWN_CLAUDE}`))
+    expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
+  })
+
+  test('with config.json unreadable and no daemon running, ensureDaemon is asked to start one', async () => {
+    const h = harness({ running: false, status: statusAnswer([]) }, {
+      loadConfig: () => {
+        throw new ConfigError('config.json is not valid JSON.')
+      }
+    })
+    const out = collect()
+    expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(3)
+    expect(h.daemon.calls).toEqual(['findDaemon', 'ensureDaemon', 'readStatus'])
+    // The status names no login of plain claude, so no started-on header is sent: the daemon reads that as plain claude's login.
+    expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`))
+  })
+
+  test('with config.json unreadable, a daemon that cannot be started stops claude', async () => {
+    const h = harness({ running: false, ensureFails: 'config.json is not valid JSON.' }, {
+      loadConfig: () => {
+        throw new ConfigError('config.json is not valid JSON.')
+      }
+    })
+    const out = collect()
+    expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(1)
+    expect(out.stderr()).toContain('the kurmis daemon could not be reached (config.json is not valid JSON.)')
+    expect(h.specs).toEqual([])
+  })
+
   test('a damaged config.json is an error with its message', async () => {
     const h = harness({}, {
       loadConfig: () => {

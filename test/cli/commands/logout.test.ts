@@ -222,24 +222,72 @@ describe('kurmis logout', () => {
     expect(findLogin(loadConfig(), OWN_CODEX)).toBeDefined()
   })
 
-  it('keeps the folder when asked and the logout CLI fails, naming the command that tries again', async () => {
+  it('with keepWhenSignOutFails, keeps the login and its folder when the logout CLI fails, naming the command that tries again', async () => {
     const folder = addWithFolder(WORK.id, 'claude', 'work-example')
-    const logOut = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: fakeRun({ code: 1 }).runProgram, platform: 'darwin' })
+    const daemon = fakeDaemonClient()
+    const logOut = createLoginLogout({ daemon, findProgram: fakeProgram, runProgram: fakeRun({ code: 1 }).runProgram, platform: 'darwin' })
     const out = collect()
-    expect(await logOut(WORK, out.context, { keepFolderWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout' })).toBe(1)
-    expect(out.stderr()).toContain(`work-example is removed from kurmis, but its folder ${folder} is kept, so that ` +
+    expect(await logOut(WORK, out.context, { keepWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout', prefix: 'kurmis setup' })).toBe(1)
+    expect(out.stderr()).toMatch(/^kurmis setup: "claude auth logout" did not finish \(exit code 1\)\./)
+    expect(out.stderr()).toContain(`work-example stays in kurmis with its folder ${folder}, so that ` +
       '"kurmis setup --uninstall-and-logout" runs it again.')
+    expect(out.stderr()).not.toContain('kurmis logout:')
     expect(existsSync(folder)).toBe(true)
-    expect(findLogin(loadConfig(), WORK.id)).toBeUndefined()
+    expect(findLogin(loadConfig(), WORK.id)).toBeDefined()
+    // Nothing changed, so the daemon was not told anything.
+    expect(daemon.calls).toEqual([])
 
-    // The second run finds only the folder, and removes it once the logout CLI finishes.
+    // The second run finds the login in config.json, and removes it once the logout CLI finishes.
     const second = collect()
     const run = fakeRun()
     const again = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: run.runProgram, platform: 'darwin' })
-    expect(await again(WORK, second.context, { keepFolderWhenSignOutFails: true })).toBe(0)
-    expect(second.stdout()).toContain('Deleted the folder that workclaude left behind.')
+    expect(await again(WORK, second.context, { keepWhenSignOutFails: true })).toBe(0)
+    expect(second.stdout()).toContain('Removed work-example (id workclaude).')
     expect(run.runs).toHaveLength(1)
     expect(existsSync(folder)).toBe(false)
+    expect(findLogin(loadConfig(), WORK.id)).toBeUndefined()
+  })
+
+  it('with keepWhenSignOutFails, keeps a folder left behind when its logout CLI fails', async () => {
+    const folder = loginFolder(claudeRef('leftclaude'))
+    mkdirSync(folder, { recursive: true })
+    const logOut = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: fakeRun({ code: 1 }).runProgram, platform: 'linux' })
+    const out = collect()
+    expect(await logOut(claudeRef('leftclaude'), out.context, { keepWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout' })).toBe(1)
+    expect(out.stderr()).toContain(`Its folder ${folder} is kept, so that "kurmis setup --uninstall-and-logout" runs it again.`)
+    expect(existsSync(folder)).toBe(true)
+  })
+
+  it('with keepWhenSignOutFails, counts a failed logout of a Claude login without a folder as a failure and keeps the login', async () => {
+    changeConfig((config) => addLogin(config, WORK, { alias: 'work-example' }))
+    const logOut = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: fakeRun({ code: 1 }).runProgram, platform: 'darwin' })
+    const out = collect()
+    expect(await logOut(WORK, out.context, { keepWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout' })).toBe(1)
+    expect(out.stderr()).toContain(`Its Keychain item "${keychainService(loginFolder(WORK))}" may be left`)
+    expect(out.stderr()).toContain('work-example stays in kurmis, so that "kurmis setup --uninstall-and-logout" runs it again.')
+    expect(out.stderr()).not.toContain('removed anyway')
+    expect(findLogin(loadConfig(), WORK.id)).toBeDefined()
+  })
+
+  it('with keepWhenSignOutFails and the logout CLI missing, names "kurmis logout <id>" as the way out, which removes the login anyway', async () => {
+    const folder = addWithFolder(WORK.id, 'claude', 'work-example')
+    const missing: LogoutDeps['findProgram'] = (tool) => {
+      throw new ProgramNotFoundError(tool, 'claude was not found on PATH.')
+    }
+    const deps = { daemon: fakeDaemonClient(), findProgram: missing, runProgram: fakeRun().runProgram, platform: 'darwin' as const }
+    const out = collect()
+    expect(await createLoginLogout(deps)(WORK, out.context, { keepWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout' })).toBe(1)
+    expect(out.stderr()).toContain('claude was not found on PATH.')
+    expect(out.stderr()).toContain('If that cannot work, for example because claude is not installed, "kurmis logout workclaude" ' +
+      'removes work-example and its folder without signing it out, which leaves the item named above.')
+    expect(existsSync(folder)).toBe(true)
+
+    // The way out works with the CLI still missing.
+    const way = collect()
+    expect(await createLogoutCommand(deps).run(['workclaude'], way.context)).toBe(0)
+    expect(way.stderr()).toContain('work-example is removed anyway.')
+    expect(existsSync(folder)).toBe(false)
+    expect(findLogin(loadConfig(), WORK.id)).toBeUndefined()
   })
 
   it('answers a login that does not exist', async () => {
@@ -265,7 +313,8 @@ describe('kurmis logout', () => {
     const daemon = fakeDaemonClient()
     const logout = createLogoutCommand({ daemon, findProgram: fakeProgram, runProgram: run.runProgram })
     const out = collect()
-    expect(await logout.run(['leftcodex1'], out.context)).toBe(0)
+    // Read as an alias is read: without the spaces around it and without regard to case.
+    expect(await logout.run([' Codex:LEFTCODEX1 '], out.context)).toBe(0)
     expect(out.stdout()).toContain('Deleted the folder that leftcodex1 left behind.')
     expect(existsSync(folder)).toBe(false)
     expect(run.runs).toHaveLength(1)

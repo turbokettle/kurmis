@@ -20,9 +20,12 @@
 // The whole removal holds the login's lock (`login-lock.ts`), so it never runs while a
 // `kurmis login` of the same login writes into the folder.
 //
-// `kurmis setup --uninstall-and-logout` removes each login through `createLoginLogout` too. It
-// asks for the folder to be kept when the logout CLI fails, so that running it again finds the
-// folder and runs the logout CLI again: the folder's path is what names the Keychain item.
+// `kurmis setup --uninstall-and-logout` removes each login through `createLoginLogout` too, with
+// `keepWhenSignOutFails`. Then the logout CLI runs first, while the login is still in config.json,
+// and when it fails nothing is removed: the login stays in config.json and its folder stays, so
+// that running the uninstall again finds the login and runs the logout CLI again. The folder's
+// path is what names the Keychain item. The message names the way out when the logout CLI can
+// never finish: `kurmis logout <id>` removes the login anyway.
 import { lstatSync, rmSync } from 'node:fs'
 import { changeConfig, ConfigError, findLogin, loadConfig, removeLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
 import { isLoginId, isLoginProvider, LOGIN_PROVIDERS, type LoginRef } from '../../data/login-id.ts'
@@ -47,13 +50,16 @@ export interface LogoutDeps {
 
 export interface LogoutOptions {
   /**
-   * When the logout CLI does not finish, keep the login's folder and answer `EXIT_FAILURE`, so
-   * that running the command again runs the logout CLI again. Without it the folder is deleted
-   * anyway and the removal counts as done.
+   * Run the logout CLI before the login is taken out of config.json, and when it does not
+   * finish, remove nothing and answer `EXIT_FAILURE`: the login stays in config.json, when it is
+   * there, and its folder stays, when it has one. So running `again` runs the logout CLI again.
+   * Without it, the login is removed anyway and the removal counts as done.
    */
-  keepFolderWhenSignOutFails?: boolean
+  keepWhenSignOutFails?: boolean
   /** The command that tries again, named in the messages. `kurmis logout <id>` by default. */
   again?: string
+  /** What each error message starts with. `kurmis logout` by default. */
+  prefix?: string
 }
 
 /**
@@ -72,8 +78,8 @@ function exists(path: string): boolean {
   }
 }
 
-function fail(context: CliContext, message: string): number {
-  writeLine(context.stderr, `kurmis logout: ${message}`)
+function fail(context: CliContext, message: string, prefix = 'kurmis logout'): number {
+  writeLine(context.stderr, `${prefix}: ${message}`)
   return EXIT_FAILURE
 }
 
@@ -92,20 +98,21 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
   async function removeNow(login: LoginRef, context: CliContext, options: LogoutOptions): Promise<number> {
     const { id } = login
     const again = options.again ?? `kurmis logout ${id}`
+    const prefix = options.prefix ?? 'kurmis logout'
+    const keep = options.keepWhenSignOutFails === true
     const folder = loginFolder(login)
     let name: string = id
     let listed = false
     try {
       // Read again under the login's lock: another run may have removed it in the meantime.
       const found = findLogin(loadConfig(), id)
-      if (found?.machineOwn === true) return fail(context, `${found.alias} is ${machineOwnText(found.provider)} and cannot be removed.`)
+      if (found?.machineOwn === true) return fail(context, `${found.alias} is ${machineOwnText(found.provider)} and cannot be removed.`, prefix)
       if (found !== undefined && found.provider === login.provider) {
         listed = true
         name = found.alias
-        changeConfig((config) => removeLogin(config, id))
       }
     } catch (error) {
-      if (error instanceof ConfigError) return fail(context, error.message)
+      if (error instanceof ConfigError) return fail(context, error.message, prefix)
       throw error
     }
     const hasFolder = exists(folder)
@@ -113,26 +120,51 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
       // A sign-in of a new Codex login that stopped half-way can leave only the record of what
       // was merged into its home.
       const record = login.provider === 'codex' ? codexMergedRecordPath(login) : null
-      if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis status" shows the logins`)
+      if (record === null || !exists(record)) return fail(context, `there is no login ${id}; "kurmis status" shows the logins`, prefix)
       rmSync(record, { force: true })
       writeLine(context.stdout, `Deleted the record of what was merged into the Codex home of ${id}, which ${id} left behind.`)
       return EXIT_OK
     }
-    const reload = listed ? reloadText(await reloadIfRunning(daemon, context.env)) : null
 
+    let reload: string | null = null
+    /** Takes the login out of config.json and tells a running daemon. Answers an exit code when that failed. */
+    const unlist = async (): Promise<number | null> => {
+      if (!listed) return null
+      try {
+        changeConfig((config) => findLogin(config, id) === undefined ? config : removeLogin(config, id))
+      } catch (error) {
+        if (error instanceof ConfigError) return fail(context, error.message, prefix)
+        throw error
+      }
+      reload = reloadText(await reloadIfRunning(daemon, context.env))
+      return null
+    }
+
+    if (!keep) {
+      const failed = await unlist()
+      if (failed !== null) return failed
+    }
     // Claude on macOS keeps the secret in the Keychain, so the logout of a listed Claude login
     // runs even when its folder is gone.
     if (hasFolder || login.provider === 'claude') {
       const problem = await signOutLogin(login, context.env, signOutDeps)
       if (problem !== null) {
         const left = leftBehindText(login, signOutDeps.platform)
-        if (options.keepFolderWhenSignOutFails === true && hasFolder) {
-          if (reload !== null) writeLine(context.stdout, reload)
-          const kept = listed ? ` ${name} is removed from kurmis, but its folder` : ' Its folder'
-          return fail(context, `${problem}.${left}${kept} ${folder} is kept, so that "${again}" runs it again.`)
+        if (keep) {
+          const kept = listed
+            ? `${name} stays in kurmis${hasFolder ? ` with its folder ${folder}` : ''}`
+            : `Its folder ${folder} is kept`
+          const cli = login.provider === 'claude' ? 'claude' : 'codex'
+          const wayOut = `If that cannot work, for example because ${cli} is not installed, "kurmis logout ${id}" removes ` +
+            `${name} and its folder without signing it out${left === '' ? '' : ', which leaves the item named above'}.`
+          return fail(context, `${problem}.${left} ${kept}, so that "${again}" runs it again. ${wayOut}`, prefix)
         }
-        writeLine(context.stderr, `kurmis logout: ${problem}; ${name} is removed anyway.${left}`)
+        writeLine(context.stderr, `${prefix}: ${problem}; ${name} is removed anyway.${left}`)
       }
+    }
+    if (keep) {
+      const failed = await unlist()
+      if (failed !== null) return failed
     }
     try {
       removeTreeSync(folder)
@@ -142,7 +174,7 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
       // The id still names the folder; the alias is gone with the login.
       return fail(context, listed
         ? `${name} is removed from kurmis, but ${problem}. Close what uses it and run "${again}".`
-        : `${id} left a folder behind, but ${problem}. Close what uses it and run "${again}" again.`)
+        : `${id} left a folder behind, but ${problem}. Close what uses it and run "${again}" again.`, prefix)
     }
     writeLine(context.stdout, listed ? `Removed ${name} (id ${id}).` : `Deleted the folder that ${id} left behind.`)
     if (reload !== null) writeLine(context.stdout, reload)
@@ -150,19 +182,20 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
   }
 
   return async (login, context, options = {}) => {
-    if (login.machineOwn) return fail(context, `${login.id} is ${machineOwnText(login.provider)} and cannot be removed.`)
+    const prefix = options.prefix ?? 'kurmis logout'
+    if (login.machineOwn) return fail(context, `${login.id} is ${machineOwnText(login.provider)} and cannot be removed.`, prefix)
     let name: string
     try {
       name = findLogin(loadConfig(), login.id)?.alias ?? login.id
     } catch (error) {
-      if (error instanceof ConfigError) return fail(context, error.message)
+      if (error instanceof ConfigError) return fail(context, error.message, prefix)
       throw error
     }
     let lock
     try {
       lock = lockLogin(login.id, name)
     } catch (error) {
-      if (error instanceof LoginBusyError) return fail(context, error.message)
+      if (error instanceof LoginBusyError) return fail(context, error.message, prefix)
       throw error
     }
     try {
@@ -197,9 +230,11 @@ function logoutTarget(config: KurmisConfig, text: string): LogoutTarget {
     }
     return { kind: 'logins', logins: [{ id: login.id, provider: login.provider, machineOwn: false }] }
   }
-  const colon = text.indexOf(':')
-  const prefix = colon < 0 ? null : text.slice(0, colon)
-  const id = colon < 0 ? text : text.slice(colon + 1)
+  // Read as `resolveLogin` reads it.
+  const typed = text.trim().toLowerCase()
+  const colon = typed.indexOf(':')
+  const prefix = colon < 0 ? null : typed.slice(0, colon)
+  const id = colon < 0 ? typed : typed.slice(colon + 1)
   const providers = prefix === null ? LOGIN_PROVIDERS : isLoginProvider(prefix) ? [prefix] : []
   if (isLoginId(id) && findLogin(config, id) === undefined) {
     const refs = providers.map((provider): LoginRef => ({ id, provider, machineOwn: false }))
@@ -219,7 +254,9 @@ export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
     usage: `Usage: kurmis logout <login>
 
 Signs a login out with "claude auth logout" or "codex logout", removes it from kurmis and
-deletes its folder in the kurmis data folder. A running daemon stops using it at once.
+deletes its folder in the kurmis data folder. A running daemon stops using it at once. When
+the logout CLI fails or is not installed, the login is removed anyway; for a Claude login,
+kurmis names the Keychain item or Credential Manager record that may be left.
 
 <login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
 Codex login have the same alias, put claude: or codex: in front, for example
@@ -228,8 +265,9 @@ codex:work-example.
 The logins of plain claude and plain codex cannot be removed. To sign them out, run
 "claude auth logout" or "codex logout" yourself.
 
-An id that is in no list any more but still has a folder in the kurmis data folder, for
-example after a removal that stopped half-way, has that folder deleted.
+An id that is not in config.json but still has a folder in the kurmis data folder, for
+example after a removal that stopped half-way, has that folder deleted. Its logout runs
+first, as for any login.
 
 Options:
   -h, --help   Show this help.`,

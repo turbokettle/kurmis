@@ -15,7 +15,8 @@ import {
   type DaemonClientOptions,
   type StartResult
 } from '../daemon-client.ts'
-import { compareVersions } from '../../daemon/lifecycle.ts'
+import { CONTROL_API_VERSION } from '../../core/control-api.ts'
+import { compareVersions, shouldReplaceDaemon } from '../../daemon/lifecycle.ts'
 
 type Handler = (args: string[], context: CliContext) => Promise<number> | number
 
@@ -151,8 +152,11 @@ const status: Handler = async (args, context) => {
     writeLine(context.stdout, `The kurmis daemon ${answer.version} runs on ${address(answer.port)}, pid ${String(answer.pid)}, ` +
       `since ${new Date(answer.startedAt).toISOString()}, with ${String(answer.logins.length)} logins.`)
     const order = compareVersions(answer.version, kurmisVersion)
-    if (order === -1) {
-      writeLine(context.stdout, `This kurmis is ${kurmisVersion}; the next "kurmis claude", "kurmis codex", "kurmis setup" ` +
+    if (shouldReplaceDaemon(answer, kurmisVersion)) {
+      const which = order === -1 ? kurmisVersion
+        : `${kurmisVersion} with control API version ${String(CONTROL_API_VERSION)}, while the daemon has ` +
+          `${typeof answer.apiVersion === 'number' ? String(answer.apiVersion) : 'none'}`
+      writeLine(context.stdout, `This kurmis is ${which}; the next "kurmis claude", "kurmis codex", "kurmis setup" ` +
         'or "kurmis daemon start" replaces the daemon.')
     }
     if (order === 1) writeLine(context.stdout, `This kurmis is ${kurmisVersion}, older than the daemon.`)
@@ -195,10 +199,13 @@ export const daemonCommand: Command = {
   summary: 'Start, stop or show the background process',
   usage: `Usage: kurmis daemon <start|stop|restart|status|run>
 
-The daemon is the background process that routes Claude requests. "kurmis claude" starts it
-when it is not running, so it seldom needs starting by hand.
+The daemon is the background process that routes Claude requests. "kurmis claude", "kurmis
+codex" without --login and "kurmis setup" start it when it is not running, so "kurmis daemon
+start" is seldom needed.
 
   start                   Start it in the background, replacing one of an older version.
+                          A daemon of the same version is replaced too when its control API
+                          version is another one.
                           --env NAME=VALUE sets a kurmis variable in the daemon's
                           environment; the Windows logon entry uses it.
   stop [--now]            Stop it after it finishes the requests it has open, waiting at most

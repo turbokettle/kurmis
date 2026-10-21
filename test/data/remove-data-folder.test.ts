@@ -31,7 +31,8 @@ afterEach(() => {
 describe('isKurmisEntry', () => {
   it('knows the names kurmis writes and their temporary and rotated forms', () => {
     for (const name of ['config.json', 'config.json.lock', 'config.json.lock.break', 'daemon.json.removing', 'daemon.log.1', 'key',
-      '.key-1-ab', 'autostart.js', 'claude', 'codex', 'codex-merged', 'locks', 'probe', 'settings', 'paused.json']) {
+      '.key-1-ab', 'autostart.js', 'claude', 'codex', 'codex-merged', 'locks', 'probe', 'settings', 'paused.json',
+      'settings-files.json', 'settings-files.json.lock']) {
       expect(isKurmisEntry(name)).toBe(true)
     }
     for (const name of ['notes.txt', 'keys', 'Documents', '.git', 'configjson']) expect(isKurmisEntry(name)).toBe(false)
@@ -51,6 +52,19 @@ describe('removeDataFolder', () => {
     writeFileSync(join(dataFolder, 'notes.txt'), 'mine')
     expect(removeDataFolder()).toEqual({ path: dataFolder, removed: false, left: ['notes.txt'] })
     expect(readdirSync(dataFolder)).toEqual(['notes.txt'])
+  })
+
+  it('deletes the files Finder and Explorer leave when nothing else is left, and never names them', () => {
+    fill(dataFolder)
+    for (const name of ['.DS_Store', 'Thumbs.db', 'desktop.ini']) writeFileSync(join(dataFolder, name), '')
+    expect(removeDataFolder()).toEqual({ path: dataFolder, removed: true, left: [] })
+    expect(existsSync(dataFolder)).toBe(false)
+
+    fill(dataFolder)
+    writeFileSync(join(dataFolder, '.DS_Store'), '')
+    writeFileSync(join(dataFolder, 'notes.txt'), 'mine')
+    expect(removeDataFolder()).toEqual({ path: dataFolder, removed: false, left: ['notes.txt'] })
+    expect(readdirSync(dataFolder).sort()).toEqual(['.DS_Store', 'notes.txt'])
   })
 
   it('answers removed for a folder that is not there', () => {

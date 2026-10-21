@@ -4,7 +4,7 @@
 // uses it to find, start and stop the daemon.
 import { request } from 'node:http'
 import { createConnection } from 'node:net'
-import { CONTROL_PATHS, type StatusAnswer } from '../core/control-api.ts'
+import { CONTROL_API_VERSION, CONTROL_PATHS, type StatusAnswer } from '../core/control-api.ts'
 import { KEY_HEADER } from '../core/route-headers.ts'
 import { isPlainObject } from '../data/validate.ts'
 
@@ -13,6 +13,22 @@ export const DAEMON_HOST = '127.0.0.1'
 
 /** How long a quick control request (status, reload, stop) may take. */
 export const CONTROL_TIMEOUT_MS = 5_000
+
+/** How long a stopping daemon waits for its request handling to finish starting before it gives up on closing it. */
+export const START_WAIT_MS = 10_000
+
+/**
+ * How long a stopping daemon waits for its request handling to close: to kill the usage probes
+ * that still run, wait for their processes to exit and write `state.json`.
+ */
+export const CLOSE_WAIT_MS = 10_000
+
+/**
+ * The longest a daemon takes to exit once its wait for open requests is over: `START_WAIT_MS`
+ * and `CLOSE_WAIT_MS` one after the other. A CLI that ends the process before then may end it
+ * before `state.json` is written.
+ */
+export const STOP_FINISH_MAX_MS = START_WAIT_MS + CLOSE_WAIT_MS
 
 /** The most of a control answer that is read. A status answer with many logins is a few kB. */
 const MAX_ANSWER_BYTES = 4 * 1024 * 1024
@@ -170,6 +186,19 @@ function parseVersion(text: string): { parts: number[]; pre: string | null } | n
 /** Whether a daemon of `daemonVersion` should be replaced by one of `cliVersion`. */
 export function shouldReplace(daemonVersion: string, cliVersion: string): boolean {
   return compareVersions(daemonVersion, cliVersion) === -1
+}
+
+/**
+ * Whether a running daemon, as its status answer describes it, should be replaced by a daemon of
+ * this kurmis (`version`, `apiVersion`). It is replaced when its version is older
+ * (`shouldReplace`), and when its version is the same but its control API version is another
+ * one: then it was built from other code of the same version, and its answers may be misread.
+ * A status without `apiVersion` counts as another control API version.
+ */
+export function shouldReplaceDaemon(daemon: { version: string; apiVersion?: number }, version: string,
+  apiVersion: number = CONTROL_API_VERSION): boolean {
+  const order = compareVersions(daemon.version, version)
+  return order === -1 || (order === 0 && daemon.apiVersion !== apiVersion)
 }
 
 /** Resolves after `ms`. The timer keeps the process alive, so a CLI waiting on it does not exit. */

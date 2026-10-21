@@ -1,12 +1,18 @@
 // `kurmis status [--json]`: every login with its settings and usage, whether the daemon runs, and
-// whether global routing is on. It never starts the daemon. When the daemon runs, the logins come
-// from its status answer. When none runs, or this kurmis cannot read the answer of the one that
-// runs, they come from `config.json`, with the usage the daemon last wrote to `state.json` and
-// whether each login's credentials are on this machine (`hasCredentials`).
+// whether global routing is on. It never starts the daemon, and exits 0 whether or not one runs.
+// When the daemon runs, the logins come from its status answer. When none runs, or its status
+// request fails, or this kurmis cannot read its answer, they come from `config.json`, with the
+// usage the daemon last wrote to `state.json` and whether each login's credentials are on this
+// machine (`hasCredentials`).
+//
+// Status writes nothing in the data folder: it reads `config.json` with `readConfig`, which never
+// writes the file. While the file has no entry for the login plain claude or plain codex uses,
+// that login is shown without an id (`noIdYet`).
 import { homedir } from 'node:os'
-import { CONTROL_API_VERSION, type LoginStatus, type StatusAnswer } from '../../core/control-api.ts'
-import { ConfigError, loadConfig, type KurmisConfig } from '../../data/config.ts'
+import { CONTROL_API_VERSION, type StatusAnswer } from '../../core/control-api.ts'
+import { ConfigError, newLoginSettings, readConfig, type KurmisConfig, type LoginSettings } from '../../data/config.ts'
 import { readClaudeIdentity } from '../../data/identity.ts'
+import { LOGIN_PROVIDERS, type LoginId, type LoginProvider } from '../../data/login-id.ts'
 import { loadState } from '../../data/state.ts'
 import type { findProgram } from '../../platform/programs.ts'
 import { runProgram } from '../../platform/run.ts'
@@ -16,7 +22,7 @@ import { realDaemonClient, realFindProgram, settleWithin, type DaemonClient } fr
 import type { DaemonConnection } from '../daemon-client.ts'
 import { globalRoutingState, type GlobalRoutingState } from '../global-routing.ts'
 import { hasCredentials } from '../local-credentials.ts'
-import { daemonReport, formatStatus, statusJson, type StatusReport } from '../status-format.ts'
+import { daemonReport, formatStatus, noIdYetStandIn, statusJson, type ReportLogin, type StatusReport } from '../status-format.ts'
 
 /**
  * How long `kurmis status` waits for the first usage probe of a daemon that has read no usage
@@ -45,11 +51,11 @@ Shows every login with its settings and its five-hour and weekly usage, whether 
 is running, and whether global routing ("kurmis setup") is on, paused or off, with the command
 that changes it. It never starts the daemon.
 
-Each login is shown by its alias, with its provider, its id and the account's email when kurmis
-knows it. The login plain claude uses and the login plain codex uses are marked: they are the
-accounts a plain "claude" and a plain "codex" are signed in to. When an extra Claude login is
-the same account as the login plain claude uses, a warning says so, because both then use one
-subscription. The same goes for Codex.
+Each login is shown by its alias, with its provider, its id (when the alias is not the id)
+and the account's email when kurmis knows it. The login plain claude uses and the login plain
+codex uses are marked: they are the accounts a plain "claude" and a plain "codex" are signed
+in to. When two Claude logins are the same account, a warning says so, because both then use
+one subscription. The same goes for Codex.
 
 While the daemon runs, the status comes from it: whether each login is signed in, its usage,
 how many sessions it serves, why routing would pass it over now, and which login
@@ -65,14 +71,20 @@ only. "kurmis claude", "kurmis codex" without --login, "kurmis setup" and
 "kurmis daemon start" each start the daemon.
 
 When the daemon runs an older kurmis than this one, the status still comes from it, and the
-next command that starts the daemon replaces it. When this kurmis cannot read that daemon's
-status, the logins come from config.json as above.
+next command that starts the daemon replaces it. When the daemon does not answer the status
+request, or this kurmis cannot read its answer, the logins come from config.json as above,
+with a note on stderr.
+
+Status changes no file. While config.json has no entry for the login plain claude or plain
+codex uses (before the first other kurmis command, or after an uninstall), that login is shown
+without an id. It exits 0 whether or not the daemon runs.
 
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and
                "source" says whether the logins come from the daemon or from the files. Each
                login has "alias", "id", "provider", "machineOwn", "signedIn" (from the daemon)
-               and "credentials" (from the files); "warnings" holds the warnings.
+               and "credentials" (from the files); "id" and "alias" are null for a login
+               without an id yet. "warnings" holds the warnings.
   -h, --help   Show this help.`
 
 export function createStatusCommand(overrides: Partial<StatusDeps> = {}): Command {
@@ -121,15 +133,21 @@ async function runStatus(args: string[], context: CliContext, deps: StatusDeps):
     if (files === null) return EXIT_FAILURE
     report = files
   } else {
-    let status: StatusAnswer
+    let status: StatusAnswer | null
     try {
       status = await deps.daemon.readStatus(connection)
     } catch (error) {
-      writeLine(context.stderr, `kurmis status: the kurmis daemon (pid ${String(connection.pid)}) did not answer: ${messageOf(error)}`)
-      writeLine(context.stderr, 'Its log is daemon.log in the kurmis data folder; "kurmis daemon restart" replaces it.')
-      return EXIT_FAILURE
+      writeLine(context.stderr, `kurmis status: the kurmis daemon (pid ${String(connection.pid)}) did not answer the status ` +
+        `request: ${messageOf(error)}`)
+      writeLine(context.stderr, 'Showing the logins from config.json instead. The daemon\'s log is daemon.log in the kurmis data ' +
+        'folder; "kurmis daemon restart" replaces the daemon.')
+      status = null
     }
-    if (status.apiVersion !== CONTROL_API_VERSION) {
+    if (status === null) {
+      const files = await reportFromFiles(null, globalRouting, context, deps)
+      if (files === null) return EXIT_FAILURE
+      report = files
+    } else if (status.apiVersion !== CONTROL_API_VERSION) {
       const files = await reportFromFiles(status, globalRouting, context, deps)
       if (files === null) return EXIT_FAILURE
       report = files
@@ -159,15 +177,15 @@ async function firstProbe(connection: DaemonConnection, status: StatusAnswer, co
 }
 
 /**
- * The report from `config.json` and `state.json`, for when no daemon runs (`daemon` null) or
- * this kurmis cannot read the answer of the one that runs. Null after saying why `config.json`
- * cannot be read.
+ * The report from `config.json` and `state.json`, for when no daemon runs or answers (`daemon`
+ * null) or this kurmis cannot read the answer of the one that runs. Null after saying why
+ * `config.json` cannot be read. Writes nothing.
  */
 async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: GlobalRoutingState, context: CliContext,
   deps: StatusDeps): Promise<StatusReport | null> {
   let config: KurmisConfig
   try {
-    config = loadConfig()
+    config = readConfig()
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error
     writeLine(context.stderr, `kurmis status: ${error.message}`)
@@ -176,10 +194,11 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
   const now = deps.now()
   const state = loadState(now).state
   const home = deps.home()
-  const logins: LoginStatus[] = config.logins.map((login) => {
-    const cooldown = state.cooldowns.get(login.id)
+  const shown = withMachineOwnLogins(config)
+  const logins: ReportLogin[] = shown.map(({ login, noIdYet }) => {
+    const cooldown = noIdYet ? undefined : state.cooldowns.get(login.id)
     let sessions = 0
-    for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++
+    if (!noIdYet) for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++
     return {
       id: login.id,
       provider: login.provider,
@@ -190,17 +209,18 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
       weeklyLimit: login.weeklyLimit,
       useFirst: login.useFirst,
       signedIn: null,
-      usage: state.usage.get(login.id) ?? null,
+      usage: noIdYet ? null : state.usage.get(login.id) ?? null,
       cooldownUntil: cooldown === undefined ? null : Number.isFinite(cooldown) ? cooldown : 'unknown',
       block: null,
       sessions,
       // A Codex login's email is known only to a running daemon, from its last usage probe.
       email: login.provider === 'claude' ? readClaudeIdentity(login, home)?.email ?? null : null,
-      probing: false
+      probing: false,
+      ...(noIdYet ? { noIdYet: true } : {})
     }
   })
   // The `codex login status` runs, if any, run at the same time.
-  const checks = await Promise.all(config.logins.map(async (login) =>
+  const checks = await Promise.all(shown.map(async ({ login }) =>
     [login.id, await hasCredentials(login, context.env, home, deps)] as const))
   return {
     daemon: daemon === null ? null : { version: daemon.version, pid: daemon.pid, port: daemon.port, startedAt: daemon.startedAt },
@@ -210,6 +230,20 @@ async function reportFromFiles(daemon: StatusAnswer | null, globalRouting: Globa
     globalRouting,
     version: deps.version
   }
+}
+
+/**
+ * The logins to show from `config`: the logins of plain claude and plain codex first, each one
+ * that the file has no entry for as a login with default settings and a stand-in id
+ * (`noIdYet`), then the extra logins.
+ */
+function withMachineOwnLogins(config: KurmisConfig): { login: LoginSettings; noIdYet: boolean }[] {
+  const own = LOGIN_PROVIDERS.map((provider: LoginProvider) => {
+    const found = config.logins.find((login) => login.machineOwn && login.provider === provider)
+    if (found !== undefined) return { login: found, noIdYet: false }
+    return { login: newLoginSettings({ id: noIdYetStandIn(provider) as LoginId, provider, machineOwn: true }), noIdYet: true }
+  })
+  return [...own, ...config.logins.filter((login) => !login.machineOwn).map((login) => ({ login, noIdYet: false }))]
 }
 
 function messageOf(error: unknown): string {

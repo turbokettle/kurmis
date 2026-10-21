@@ -3,8 +3,9 @@
 // reloads it when `configStamp` changes.
 //
 // The login plain claude uses and the login plain codex uses are always in a loaded config,
-// first and in the order of `LOGIN_PROVIDERS`. `loadConfig` adds one with a new id when the file has none, and
-// saves the file then, so that every reader sees the same id.
+// first and in the order of `LOGIN_PROVIDERS`. `loadConfig` adds one with a new id when the file
+// has none, and saves the file then, so that every reader sees the same id. `readConfig` reads
+// the file without writing it, for `kurmis status`, and so may answer a config without them.
 //
 // No email is stored here. An automatic alias is made from one (`automaticAlias`), and the
 // email itself is read when it is needed from where the provider's CLI keeps it.
@@ -273,6 +274,17 @@ function readConfigFile(path: string): KurmisConfig {
 }
 
 /**
+ * Reads `config.json` without writing anything, for a command that must not change the data
+ * folder (`kurmis status`). The logins of plain claude and plain codex are in the result only
+ * when the file has them, so the result may have neither. A missing file reads as a config with
+ * no logins and the default port. A file that is not JSON, or has a wrong field, is a
+ * `ConfigError`, as for `loadConfig`.
+ */
+export function readConfig(path = configPath()): KurmisConfig {
+  return readConfigFile(path)
+}
+
+/**
  * Reads `config.json`. A file that is not JSON, or has a wrong field, is a `ConfigError` whose
  * message names the file and the field. When the file is missing or has no login for
  * plain claude or plain codex, that login is added with a new id and the file is saved
@@ -307,7 +319,14 @@ export function newLoginIdFor(config: KurmisConfig): LoginId {
 }
 
 /** What `resolveLogin` found. */
-export type ResolvedLogin = { login: LoginSettings } | { error: string }
+export type ResolvedLogin<L = LoginSettings> = { login: L } | { error: string }
+
+/** What `resolveLogin` needs of a login. */
+export interface NamedLogin {
+  id: string
+  provider: LoginProvider
+  alias: string
+}
 
 const PROVIDER_NAMES: Record<LoginProvider, string> = { claude: 'Claude', codex: 'Codex' }
 
@@ -318,7 +337,8 @@ const PROVIDER_NAMES: Record<LoginProvider, string> = { claude: 'Claude', codex:
  * login share is an error that says to add the prefix. The error is a sentence without the
  * command's name.
  */
-export function resolveLogin(config: KurmisConfig, text: string, provider?: LoginProvider): ResolvedLogin {
+export function resolveLogin<L extends NamedLogin = LoginSettings>(config: { readonly logins: readonly L[] }, text: string,
+  provider?: LoginProvider): ResolvedLogin<L> {
   const typed = text.trim().toLowerCase()
   const colon = typed.indexOf(':')
   let scope = provider
