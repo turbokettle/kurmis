@@ -110,6 +110,16 @@ describe('macOS login item', () => {
   })
 })
 
+describe('a Node in a temporary folder', () => {
+  it('is registered with a warning that it may be gone at the next login', async () => {
+    const result = await registerAutostart({ env: process.env, platform: 'darwin', entry: ENTRY,
+      nodePath: '/Users/example/.local/state/fnm_multishells/4242_1/bin/node' })
+    expect(result.changed).toBe(true)
+    expect(result.warning).toContain('which is in a temporary folder and may be gone at your next login')
+    expect((await registerAutostart(mac())).warning).toBeUndefined()
+  })
+})
+
 describe('Windows logon entry', () => {
   const scriptPath = (): string => join(process.env.HOME ?? '', 'win-autostart', 'autostart.vbs')
   const win = () => ({

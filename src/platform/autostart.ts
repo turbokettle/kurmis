@@ -14,7 +14,7 @@
 // - Both are idempotent: what is there is compared first, and `changed` says whether anything
 //   was written, loaded or removed.
 import { readFileSync, rmSync } from 'node:fs'
-import { kurmisEntry, nodeForJobs } from './detach.ts'
+import { isTemporaryPath, kurmisEntry, nodeForJobs, temporaryFolders } from './detach.ts'
 import {
   AUTOSTART_LABEL,
   DAEMON_START_ARGS,
@@ -83,15 +83,22 @@ export async function registerAutostart(options: AutostartOptions): Promise<Auto
   if (platform !== 'darwin' && platform !== 'win32') return { changed: false, where: null, warning: UNSUPPORTED }
   const programArguments = loginProgram(options, platform)
   if (programArguments === null) return { changed: false, where: null, warning: NO_ENTRY }
-  if (platform === 'win32') {
-    return await registerWindowsAutostart({
+  const node = programArguments[0] ?? ''
+  const temporary = isTemporaryPath(node, temporaryFolders(options.env, platform), platform)
+    ? `The login item starts Node from ${node}, which is in a temporary folder and may be gone at your next login. ` +
+      'Run kurmis setup again from a shell whose node is installed in a lasting place (for example, not one of fnm\'s ' +
+      'per-shell folders).'
+    : null
+  const result = platform === 'win32'
+    ? await registerWindowsAutostart({
       env: options.env,
       programArguments,
       ...(options.windowsScriptPath === undefined ? {} : { scriptPath: options.windowsScriptPath }),
       ...(options.reg === undefined ? {} : { reg: options.reg })
     })
-  }
-  return await registerLaunchAgent(options, programArguments)
+    : await registerLaunchAgent(options, programArguments)
+  if (temporary === null) return result
+  return { ...result, warning: result.warning === undefined ? temporary : `${result.warning} ${temporary}` }
 }
 
 /** Removes what `registerAutostart` registered. Doing it twice is not an error. */
