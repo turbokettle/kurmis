@@ -59,6 +59,8 @@ export const LOG_REASONS = [
   'no_credentials',
   'token_expired',
   'timeout',
+  /** A program the daemon started (a usage probe's CLI) ended before it answered. */
+  'exited',
   'network',
   'upstream_error',
   'invalid',

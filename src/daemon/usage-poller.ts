@@ -5,30 +5,23 @@
 // A probe's answer goes into the login table: the usage snapshot, whether the login is signed
 // in, and the end of a cooldown that had no known end (`cooldownAfterProbe`). A failed probe
 // keeps the previous windows and records the error on the snapshot.
-import type { AccountUsage } from '../core/claude-usage.ts'
 import { emptyCodexUsage } from '../core/codex-usage.ts'
 import { cooldownAfterProbe } from '../core/proxy-rules.ts'
 import { emptyAccountUsage } from '../core/usage.ts'
 import type { LoginSettings } from '../data/config.ts'
-import type { DaemonLog, LogReason } from '../data/log.ts'
+import type { DaemonLog } from '../data/log.ts'
 import { isLoginId } from '../data/login-id.ts'
 import type { LoginTable } from './logins.ts'
+import type { ProbeOptions, ProbeResult } from './probe-result.ts'
 import type { TokenSource } from './tokens.ts'
 
 /** How often every signed-in login is probed. */
 export const POLL_INTERVAL_MS = 15 * 60_000
 
-/** What one probe answered: the shape `probeClaudeUsage` and `probeCodexUsage` return. */
-export type ProbeAnswer =
-  | { ok: true; signedIn: boolean; usage: AccountUsage }
-  | { ok: false; signedIn: boolean | null; reason: LogReason; error: string }
+/** What one probe answered: `probeClaudeUsage` and `probeCodexUsage` return it. */
+export type ProbeAnswer = ProbeResult
 
-export type ProbeFunction = (id: string, options: {
-  env: NodeJS.ProcessEnv
-  now?: () => number
-  signal?: AbortSignal
-  previous?: AccountUsage | null
-}) => Promise<ProbeAnswer>
+export type ProbeFunction = (id: string, options: ProbeOptions) => Promise<ProbeResult>
 
 /** Why a probe runs, for the log. */
 export type ProbeCause = 'start' | 'poll' | 'request' | 'stale' | 'renewal' | 'config'
