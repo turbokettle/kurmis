@@ -96,8 +96,8 @@ claude:work-example.
 Options:
   --auto on|off         Whether Auto routing may use the login. A session started with
                         "--login <login>" uses it either way.
-  --five-hour <1-100>   Auto routing stops using the login once its five-hour window is at
-                        this percentage.
+  --five-hour <1-100>   Auto routing stops using the login while its five-hour window is at
+                        or above this percentage.
   --weekly <1-100>      The same for the weekly window.
   --use-first on|off    Take this login before every other one that has room.
   --alias <alias>       The name you type and see for the login. It is 1 to 32 lowercase

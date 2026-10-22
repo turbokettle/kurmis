@@ -1,21 +1,21 @@
 // How `kurmis claude …` and `kurmis codex …` split their arguments into kurmis' own options
 // and the arguments passed on to the CLI.
 //
-// Kurmis reads its options from the front of the list and stops at the first argument it
-// does not know; that argument and everything after it go to the CLI unchanged. `--` also
-// stops it and is itself dropped, so `kurmis claude -- --help` passes `--help` to claude.
+// Kurmis' options come first. Everything after `--` goes to the CLI unchanged, and anything else
+// before `--` is an error, so there is a single rule to remember.
 //
-//   kurmis claude --login work-example -p "hi"   -> the login work-example, claude gets: -p hi
-//   kurmis claude -p --login work-example        -> Auto, claude gets: -p --login work-example
-//   kurmis claude --help                         -> kurmis' help for `kurmis claude`
-//   kurmis claude -- --help                      -> claude gets: --help
+//   kurmis claude --login work-example -- -p "hi"   -> the login work-example, claude gets: -p hi
+//   kurmis claude -- -p --login work-example        -> Auto, claude gets: -p --login work-example
+//   kurmis claude --help                            -> kurmis' help for `kurmis claude`
+//   kurmis claude -- --help                         -> claude gets: --help
+//   kurmis claude -p "hi"                           -> error: claude's arguments go after --
 //
 // The text given to `--login` is returned as it was typed. The command looks it up in
 // config.json (`resolveLogin`), among its own provider's logins only.
 import { isHelpFlag } from './command.ts'
 
 export interface WrapperArgs {
-  /** `--help` or `-h` came before the first passed-on argument. */
+  /** `--help` or `-h` came before `--`. */
   help: boolean
   /**
    * What `--login` was given: an alias, an id, or either with `claude:` or `codex:` in front.
@@ -28,15 +28,16 @@ export interface WrapperArgs {
 
 /**
  * Parses the arguments of `kurmis claude` or `kurmis codex`. Returns the parsed arguments, or
- * an error message for a missing, empty or repeated `--login`.
+ * an error message for a missing, empty or repeated `--login` or an argument before `--` that
+ * kurmis does not know.
  */
-export function parseWrapperArgs(args: readonly string[]): WrapperArgs | { error: string } {
+export function parseWrapperArgs(args: readonly string[], cli: 'claude' | 'codex'): WrapperArgs | { error: string } {
   const result: WrapperArgs = { help: false, login: null, passThrough: [] }
   let index = 0
   while (index < args.length) {
     const arg = args[index] as string
     if (arg === '--') {
-      index++
+      result.passThrough = args.slice(index + 1)
       break
     }
     if (isHelpFlag(arg)) {
@@ -52,12 +53,11 @@ export function parseWrapperArgs(args: readonly string[]): WrapperArgs | { error
       value = arg.slice('--login='.length)
       index++
     } else {
-      break
+      return { error: `kurmis does not know ${arg}. Put ${cli}'s arguments after --, for example "kurmis ${cli} -- ${arg}"` }
     }
     if (value === undefined || value === '') return { error: '--login needs the alias or id of a login, for example --login work-example' }
     if (result.login !== null) return { error: '--login was given twice' }
     result.login = value
   }
-  result.passThrough = args.slice(index)
   return result
 }

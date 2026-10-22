@@ -76,18 +76,18 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis statu
    logins, which should not appear.
 
 ### Routing Claude
-1. `kurmis claude -p --model haiku "Reply ok"` answers `ok`. `daemon.log` shows
+1. `kurmis claude -- -p --model haiku "Reply ok"` answers `ok`. `daemon.log` shows
    `session_placed` on the login whose weekly window resets soonest (`kurmis status` shows the
    reset times), then `request_forwarded ... status=200`.
-2. `kurmis claude --login <t1> -p --model haiku "Reply ok"` lands on `<t1>`.
-3. An interactive `kurmis claude --model haiku`: ask a question that makes it read a file, so a
+2. `kurmis claude --login <t1> -- -p --model haiku "Reply ok"` lands on `<t1>`.
+3. An interactive `kurmis claude -- --model haiku`: ask a question that makes it read a file, so a
    tool call runs. Then run `kurmis set <that login> --auto off` in another terminal and ask
    again. Expect `session_moved` to another login, and the conversation keeps its context.
    Set `--auto on` again.
 4. In the interactive session, press Ctrl-C twice. It should exit as quickly as a plain
    `claude` does (about a second), and `echo $?` (PowerShell: `$LASTEXITCODE`) should match
    what plain `claude` gives.
-5. Start `kurmis claude -p --model haiku "Write the numbers from 1 to 400 as words"` and
+5. Start `kurmis claude -- -p --model haiku "Write the numbers from 1 to 400 as words"` and
    interrupt it from another terminal (macOS: `kill -INT <pid of kurmis>`; Windows: Ctrl-C in
    its own window). It should stop within a second or two.
 6. **A login at its limit.** When a login reaches a usage limit on its own (or set its
@@ -97,7 +97,7 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis statu
    usage-limit 429, note its `anthropic-ratelimit-unified-*` header names and the body's
    `error.type` (not the body itself): kurmis decides from those.
 7. **Every login out.** With every routed login set to `--auto off` except one, and that one at
-   its limit, `kurmis claude -p` should fail exactly as a plain `claude` does on an exhausted
+   its limit, `kurmis claude -- -p` should fail exactly as a plain `claude` does on an exhausted
    account. `daemon.log` shows `pool_exhausted`. Undo the settings afterwards.
 
 ### Token renewal
@@ -118,7 +118,7 @@ because a renewal replaces the refresh token.
    `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
 2. A plain `claude -p --model haiku "Reply ok"` now shows in `daemon.log` as
    `session_placed`.
-3. `kurmis claude --login <t1> -p ...` still lands on `<t1>` in global mode.
+3. `kurmis claude --login <t1> -- -p ...` still lands on `<t1>` in global mode.
 4. Open the IDE extension (VS Code or JetBrains) and send one message. It should be routed too.
 5. Log out of the computer and in again, without running kurmis. `kurmis daemon status` should
    show a daemon started at the new login.
@@ -151,7 +151,7 @@ Run this last, since it removes the logins added above.
    creates a data folder that holds only `config.json`.
 
 ### Codex
-1. `kurmis codex exec "Reply ok"` answers, on the login `kurmis status` named in its last line.
+1. `kurmis codex -- exec "Reply ok"` answers, on the login `kurmis status` named in its last line.
 2. On an extra Codex login, change the model with `/model` inside `kurmis codex --login <login>`,
    exit, and start it again. The model choice should still be there.
 3. Add a line to `~/.codex/AGENTS.md` and start `kurmis codex --login <login>`. The login's copy
@@ -163,14 +163,14 @@ Run this last, since it removes the logins added above.
 1. `kurmis daemon stop`, then `kurmis status`. It exits 0, says the daemon is not running, and
    shows each login's last usage with how long ago it was read. `kurmis daemon status` still
    says the daemon is not running. With global routing on (after `kurmis setup`), `status` also
-   warns that a plain `claude` cannot reach Anthropic. `kurmis claude -p "Reply ok"` starts the
+   warns that a plain `claude` cannot reach Anthropic. `kurmis claude -- -p "Reply ok"` starts the
    daemon again.
 2. Install a newer build over the running one, then run `kurmis status`. It should say the
-   daemon runs an older kurmis and leave it running. Then run `kurmis claude -p "Reply ok"`. Expect
+   daemon runs an older kurmis and leave it running. Then run `kurmis claude -- -p "Reply ok"`. Expect
    `daemon_replacing_older` in `daemon.log`, and an interactive session that was open keeps
    working.
 3. Close the terminal that started the daemon. The daemon keeps running.
-4. Start `kurmis claude -p --model haiku "Write the numbers from 1 to 400 as words"` and, while
+4. Start `kurmis claude -- -p --model haiku "Write the numbers from 1 to 400 as words"` and, while
    it streams, run `kurmis daemon stop --now` in another terminal. The stop should return
    within a few seconds and `daemon.log` should show `drain_cut_short` with `reason=stop_now`. Run
    `kurmis daemon start` right after: the session should retry its request and carry on.
@@ -187,11 +187,11 @@ Run this last, since it removes the logins added above.
 - **Over ssh.** Without setup: ssh in and run `kurmis daemon stop`, then `kurmis daemon start`.
   The daemon starts, and `kurmis status` shows the logins whose token is in the Keychain
   without a token. Then run `kurmis setup` at the screen and log out and in again. Over ssh,
-  `kurmis daemon status` should show the daemon started at that login, and `kurmis claude -p
+  `kurmis daemon status` should show the daemon started at that login, and `kurmis claude -- -p
   --model haiku "Reply ok"` should be routed on a Keychain login.
 - **The login plain claude uses, signed out.** When `claude` itself is signed out, `kurmis claude`
   says it starts on another login's credentials and still routes. Check it right after
-  `kurmis daemon stop; kurmis daemon start` too: the first `kurmis claude -p "Reply ok"` waits for
+  `kurmis daemon stop; kurmis daemon start` too: the first `kurmis claude -- -p "Reply ok"` waits for
   the daemon's first probe and starts on the other login as well.
 
 ## Windows only

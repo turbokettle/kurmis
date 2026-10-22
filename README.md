@@ -60,7 +60,7 @@ Then use `kurmis claude` and `kurmis codex` where you used `claude` and `codex`:
 
 ```sh
 kurmis claude                       # an interactive session, routed
-kurmis claude -p "explain this"     # every claude argument works as before
+kurmis claude -- -p "explain this"  # claude's own arguments go after --
 kurmis codex                        # Codex on the login with the most room
 ```
 
@@ -123,12 +123,13 @@ login runs at a time; a second one stops and says so.
 ### `kurmis claude`
 
 ```sh
-kurmis claude [--login <login>] [--] [claude arguments...]
+kurmis claude [--login <login>] [-- <claude arguments...>]
 ```
 
-Starts Claude Code with the terminal attached and exits with its exit code. Every argument after
-kurmis' own options goes to `claude` unchanged, so `kurmis claude --resume` or
-`kurmis claude mcp list` work as usual. `kurmis claude -- --help` shows claude's own help.
+Starts Claude Code with the terminal attached and exits with its exit code. claude's own
+arguments go after `--` and reach it unchanged, as in `kurmis claude -- --resume` or
+`kurmis claude -- mcp list`. Anything else before `--` that is not a kurmis option is an error.
+To use kurmis every time you run claude, add `alias claude='kurmis claude --'` to your shell.
 
 - **Auto** (no `--login`): each request goes to a login that is opted in to routing and is
   under its limits. A login marked "use first" is taken first. Otherwise a new session goes to
@@ -162,7 +163,7 @@ empty value for that claude, which Claude Code reads as unset, also with a note.
 ### `kurmis codex`
 
 ```sh
-kurmis codex [--login <login>] [--] [codex arguments...]
+kurmis codex [--login <login>] [-- <codex arguments...>]
 ```
 
 Starts Codex on the login that ranks first by the same rules as Claude's Auto, or on the one
@@ -192,7 +193,7 @@ kurmis status [--json]
 
 Shows every login by its alias, with its id (when the alias is not the id), its settings and
 its usage, whether the daemon is running, and whether global routing (`kurmis setup`) is on,
-paused or off, with the command that changes it. It never starts the daemon, and it exits 0
+paused or off, with the command that changes it. It does not start the daemon, and it exits 0
 whether the daemon runs or not. Like every other command, it gives the logins plain `claude` and
 plain `codex` use their ids in `~/.kurmis/config.json` when the file has none yet; it changes no
 other file.
@@ -202,7 +203,8 @@ two Claude logins, or two Codex logins, are the same account, because both then 
 subscription. Another warning says when global routing is on but the daemon is not running,
 because a plain `claude` then cannot reach Anthropic.
 
-While the daemon runs, the status comes from it. For each login it shows the account's email,
+While the daemon runs, the status comes from it. When the daemon has read no usage yet, as
+right after it starts, `status` waits up to 15 seconds for its first usage probe. For each login it shows the account's email,
 whether the login is signed in, the five-hour and weekly usage with the time until each resets,
 its limits, whether routing may use it and how many sessions it serves. A line starting with
 "passed over" says why Auto, or `kurmis codex`, would skip that login now (signed out, at its

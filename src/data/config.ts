@@ -65,7 +65,7 @@ export interface LoginSettings extends LoginRef {
   aliasSetByUser: boolean
   /** Whether Auto routing may use this login. */
   routing: boolean
-  /** Auto routing stops using the login once its five-hour window is at this percentage, 1-100. */
+  /** Auto routing stops using the login while its five-hour window is at or above this percentage, 1-100. */
   fiveHourLimit: number
   /** The same for the weekly windows, 1-100. */
   weeklyLimit: number

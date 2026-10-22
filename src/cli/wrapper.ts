@@ -8,7 +8,7 @@
 //   decides what they do (Claude Code uses Ctrl-C itself), so the wrapper ignores them and keeps
 //   waiting. This is what `system(3)` does in a parent while its child runs.
 //   That holds only when the wrapper runs in a terminal. When its stdin is not a terminal (a
-//   script, a pipe, a program that runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
+//   script, a pipe, a program that runs `kurmis claude -- -p`), a SIGINT or SIGQUIT is most likely
 //   sent to the wrapper's pid alone, so the wrapper sends them on to the child like SIGTERM. A
 //   child in a terminal's process group whose input is piped then gets Ctrl-C twice, once from
 //   the terminal and once from the wrapper; a CLI that is not interactive ends at the first.

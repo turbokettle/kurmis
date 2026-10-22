@@ -50,7 +50,7 @@ describe('kurmis codex', () => {
     const codexHome = writeDefaultCodexHome(world)
     const home = world.loginFolder('codex', WORK)
 
-    const result = await world.kurmis(['codex', '--login', 'codex:work', 'exec', '--json', 'hello'], { env: { FAKE_CODEX_EXIT_CODE: '3' } })
+    const result = await world.kurmis(['codex', '--login', 'codex:work', '--', 'exec', '--json', 'hello'], { env: { FAKE_CODEX_EXIT_CODE: '3' } })
     expect(result.code, result.stderr).toBe(3)
     expect(result.stdout).toContain('fake-codex:')
 
@@ -95,7 +95,7 @@ describe('kurmis codex', () => {
     const world = await createWorld({ config: { extras: [WORK_LOGIN] } })
     writeDefaultCodexHome(world)
     const home = world.loginFolder('codex', WORK)
-    expect((await world.kurmis(['codex', '--login', 'work', 'resume', '--last'])).code).toBe(0)
+    expect((await world.kurmis(['codex', '--login', 'work', '--', 'resume', '--last'])).code).toBe(0)
 
     // A session on the login marked the folder untrusted and gave the MCP server its own key.
     const own = readFileSync(join(home, 'config.toml'), 'utf8')
@@ -107,7 +107,7 @@ describe('kurmis codex', () => {
     const defaultConfig = join(world.home, '.codex', 'config.toml')
     writeFileSync(defaultConfig, readFileSync(defaultConfig, 'utf8').replace('model = "gpt-5"', 'model = "gpt-5.1"'))
 
-    const again = await world.kurmis(['codex', '--login', 'codex:work', 'resume', '--last'])
+    const again = await world.kurmis(['codex', '--login', 'codex:work', '--', 'resume', '--last'])
     expect(again.code, again.stderr).toBe(0)
     const merged = readFileSync(join(home, 'config.toml'), 'utf8')
     expect(merged).toContain('model = "gpt-5.1"')
@@ -125,9 +125,9 @@ describe('kurmis codex', () => {
     const own = join(world.root, 'own-codex-home')
     mkdirSync(own)
 
-    const plain = await world.kurmis(['codex', '--login', OWN_CODEX, 'exec', 'one'])
-    const inherited = await world.kurmis(['codex', '--login', `codex:${OWN_CODEX}`, 'exec', 'two'], { env: { CODEX_HOME: own } })
-    const nested = await world.kurmis(['codex', '--login', OWN_CODEX, 'exec', 'three'], { env: { CODEX_HOME: world.loginFolder('codex', WORK) } })
+    const plain = await world.kurmis(['codex', '--login', OWN_CODEX, '--', 'exec', 'one'])
+    const inherited = await world.kurmis(['codex', '--login', `codex:${OWN_CODEX}`, '--', 'exec', 'two'], { env: { CODEX_HOME: own } })
+    const nested = await world.kurmis(['codex', '--login', OWN_CODEX, '--', 'exec', 'three'], { env: { CODEX_HOME: world.loginFolder('codex', WORK) } })
     for (const result of [plain, inherited, nested]) expect(result.code, result.stderr).toBe(0)
     expect(sessionStarts(world).map((start) => [start.argv.at(-1), start.codexHome])).toEqual([['one', null], ['two', own], ['three', null]])
     // The login plain codex uses has no home of its own to prepare.
@@ -136,10 +136,10 @@ describe('kurmis codex', () => {
 
   it('refuses a --login that is not a Codex login in config.json', async () => {
     const world = await createWorld()
-    const missing = await world.kurmis(['codex', '--login', 'codex:nobody', 'exec', 'hi'])
+    const missing = await world.kurmis(['codex', '--login', 'codex:nobody', '--', 'exec', 'hi'])
     expect(missing.code).toBe(1)
     expect(missing.stderr).toContain('there is no Codex login called "nobody"')
-    const claude = await world.kurmis(['codex', '--login', OWN_CLAUDE, 'exec', 'hi'])
+    const claude = await world.kurmis(['codex', '--login', OWN_CLAUDE, '--', 'exec', 'hi'])
     expect(claude.code).toBe(1)
     expect(claude.stderr).toContain(`"${OWN_CLAUDE}" is a Claude login; this takes a Codex login`)
     expect(sessionStarts(world)).toEqual([])
@@ -161,7 +161,7 @@ describe('kurmis codex', () => {
     await waitUntil(async () => (await world.status()).logins.filter((login) => login.provider === 'codex' && login.usage !== null).length === 2,
       30_000, 'the daemon to probe both Codex logins')
 
-    const first = await world.kurmis(['codex', 'exec', 'first'])
+    const first = await world.kurmis(['codex', '--', 'exec', 'first'])
     expect(first.code, first.stderr).toBe(0)
     expect(first.stderr).toContain('starting on work.')
     expect(sessionStarts(world).at(-1)).toMatchObject({ argv: ['exec', 'first'], codexHome: work, authFile: true })
@@ -178,14 +178,14 @@ describe('kurmis codex', () => {
     expect((await world.kurmis(['set', 'codex:work', '--five-hour', '5'])).code).toBe(0)
     // set told the running daemon to reload.
     expect((await world.status()).logins.find((login) => login.id === WORK)?.fiveHourLimit).toBe(5)
-    const second = await world.kurmis(['codex', 'exec', 'second'])
+    const second = await world.kurmis(['codex', '--', 'exec', 'second'])
     expect(second.code, second.stderr).toBe(0)
     expect(second.stderr).toMatch(/Every Codex login is at its limit; starting on default-codex-example, whose usage comes back first \(in \d+m\)/)
     expect(sessionStarts(world).at(-1)).toMatchObject({ argv: ['exec', 'second'], codexHome: null })
 
     // With its limit back, the extra login has room again (and is marked use-first).
     expect((await world.kurmis(['set', 'codex:work', '--five-hour', '100', '--use-first', 'on'])).code).toBe(0)
-    const third = await world.kurmis(['codex', 'exec', 'third'])
+    const third = await world.kurmis(['codex', '--', 'exec', 'third'])
     expect(third.code, third.stderr).toBe(0)
     expect(sessionStarts(world).at(-1)).toMatchObject({ argv: ['exec', 'third'], codexHome: work })
   }, 120_000)

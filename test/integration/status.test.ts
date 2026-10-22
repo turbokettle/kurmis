@@ -235,7 +235,7 @@ describe('kurmis status, end to end', () => {
       text: 'From work',
       unified: { fiveHour: { utilization: 0.5, resetsAt: fiveHourReset * 1000 }, sevenDay: { utilization: 0.25, resetsAt: weekReset * 1000 } }
     }))
-    expect(await world.kurmis(['claude', '-p', 'hi', '--session-id', SESSION_A])).toMatchObject({ code: 0, stdout: 'From work\n' })
+    expect(await world.kurmis(['claude', '--', '-p', 'hi', '--session-id', SESSION_A])).toMatchObject({ code: 0, stdout: 'From work\n' })
     const afterAnswer = loginOf(await statusJson(world), work.id)
     expect(afterAnswer).toMatchObject({ sessions: 1, blocked: null, usage: { source: 'session' } })
     expect(windowOf(afterAnswer, 'five_hour')).toMatchObject({ utilization: 50, resetsAt: isoSeconds(fiveHourReset) })
@@ -245,7 +245,7 @@ describe('kurmis status, end to end', () => {
     const quotaReset = Math.floor((Date.now() + 2 * HOUR_MS) / 1000)
     world.api.scriptFor(work.token, reply.quota({ claim: 'five_hour', resetsAt: quotaReset * 1000 }))
     world.api.scriptFor(spare.token, reply.ok({ text: 'From spare' }))
-    expect(await world.kurmis(['claude', '-p', 'hi'])).toMatchObject({ code: 0, stdout: 'From spare\n' })
+    expect(await world.kurmis(['claude', '--', '-p', 'hi'])).toMatchObject({ code: 0, stdout: 'From spare\n' })
     const afterQuota = await statusJson(world)
     const cooled = loginOf(afterQuota, work.id)
     expect(cooled.blocked).toMatchObject({ kind: 'cooldown', until: isoSeconds(quotaReset) })

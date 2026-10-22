@@ -8092,13 +8092,13 @@ function loginArgument(config, login) {
 }
 
 // src/cli/wrapper-args.ts
-function parseWrapperArgs(args) {
+function parseWrapperArgs(args, cli) {
   const result = { help: false, login: null, passThrough: [] };
   let index = 0;
   while (index < args.length) {
     const arg = args[index];
     if (arg === "--") {
-      index++;
+      result.passThrough = args.slice(index + 1);
       break;
     }
     if (isHelpFlag(arg)) {
@@ -8114,42 +8114,42 @@ function parseWrapperArgs(args) {
       value = arg.slice("--login=".length);
       index++;
     } else {
-      break;
+      return { error: `kurmis does not know ${arg}. Put ${cli}'s arguments after --, for example "kurmis ${cli} -- ${arg}"` };
     }
     if (value === void 0 || value === "") return { error: "--login needs the alias or id of a login, for example --login work-example" };
     if (result.login !== null) return { error: "--login was given twice" };
     result.login = value;
   }
-  result.passThrough = args.slice(index);
   return result;
 }
 
 // src/cli/commands/claude.ts
 var START_PROBE_WAIT_MS = 15e3;
-var USAGE = `Usage: kurmis claude [--login <login>] [--] [claude arguments...]
+var USAGE = `Usage: kurmis claude [--login <login>] [-- <claude arguments...>]
 
 Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
 which signs each one with a login that has room, and the command exits with claude's exit code.
 The daemon is started first when it is not running.
 
-Options (only before the first argument kurmis does not know):
+Options:
   --login <login>   Send every request of the session with one Claude login, even when it
                     is out of usage. <login> is the login's alias or its id, as
                     "kurmis status" shows them, for example --login work-example. Only Claude
                     logins are looked at, so a Codex login with the same alias does not count.
                     Without --login, each request goes to a login that has room (Auto).
   -h, --help        Show this help.
-  --                Pass everything after it to claude, even arguments kurmis knows.
+  --                Pass everything after it to claude unchanged. claude's own arguments
+                    always go here, for example "kurmis claude -- --resume".
 
 claude needs a signed-in login of its own to start, even though the daemon re-signs every
 request. On Auto, kurmis starts it on the login plain claude uses, or on another signed-in login
 when that one is signed out. This does not change where the requests go. Right after the daemon
 starts, kurmis waits up to 15 seconds for its first usage probe to tell which.
 
-Everything from the first argument kurmis does not know is passed to claude unchanged, except
-claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
-give one (your file is not changed).
-"kurmis claude -- --help" shows claude's own help.`;
+kurmis passes its own settings to claude with --settings. When you give a --settings of your
+own, kurmis adds its settings to yours and does not change your file.
+
+To use kurmis every time you run claude: alias claude='kurmis claude --'`;
 function createClaudeCommand(overrides = {}) {
   const deps = {
     daemon: realDaemonClient,
@@ -8174,7 +8174,7 @@ function createClaudeCommand(overrides = {}) {
 }
 var claudeCommand = createClaudeCommand();
 async function runClaude(args, context, deps) {
-  const parsed = parseWrapperArgs(args);
+  const parsed = parseWrapperArgs(args, "claude");
   if ("error" in parsed) return usageError("claude", parsed.error, context);
   if (parsed.help) {
     writeLine(context.stdout, USAGE);
@@ -8352,21 +8352,23 @@ function messageOf(error) {
 
 // src/cli/commands/codex.ts
 var CODEX_PROBE_WAIT_MS = 5e3;
-var USAGE2 = `Usage: kurmis codex [--login <login>] [--] [codex arguments...]
+var USAGE2 = `Usage: kurmis codex [--login <login>] [-- <codex arguments...>]
 
-Starts Codex with the terminal attached, on the login that ranks first (the same order Claude's
-Auto uses) or on the one named, and exits with codex's exit code. Without --login the daemon is
-asked for each login's usage, and started first when it is not running.
+Starts Codex with the terminal attached and exits with codex's exit code. Unlike claude, codex's
+requests do not go through the daemon: the whole session uses the login it started on. Without
+a --login, that is the login with room that ranks first, in the order Claude's Auto uses. The
+daemon is asked for each login's usage, and started first when it is not running.
 
-Options (only before the first argument kurmis does not know):
-  --login <login>   Start on this Codex login. <login> is the login's alias or its id, as
-                    "kurmis status" shows them, for example --login work-example. Only Codex
-                    logins are looked at, so a Claude login with the same alias does not count.
+Options:
+  --login <login>   Start on this Codex login, even when it is out of usage. <login> is the
+                    login's alias or its id, as "kurmis status" shows them, for example
+                    --login work-example. Only Codex logins are looked at, so a Claude login
+                    with the same alias does not count.
   -h, --help        Show this help.
-  --                Pass everything after it to codex, even arguments kurmis knows.
+  --                Pass everything after it to codex unchanged. codex's own arguments
+                    always go here, for example "kurmis codex -- exec".
 
-Everything from the first argument kurmis does not know is passed to codex unchanged.
-"kurmis codex -- --help" shows codex's own help.`;
+To use kurmis every time you run codex: alias codex='kurmis codex --'`;
 function createCodexCommand(overrides = {}) {
   const deps = {
     daemon: realDaemonClient,
@@ -8389,7 +8391,7 @@ function createCodexCommand(overrides = {}) {
 }
 var codexCommand = createCodexCommand();
 async function runCodex(args, context, deps) {
-  const parsed = parseWrapperArgs(args);
+  const parsed = parseWrapperArgs(args, "codex");
   if ("error" in parsed) return usageError("codex", parsed.error, context);
   if (parsed.help) {
     writeLine(context.stdout, USAGE2);
@@ -13260,8 +13262,8 @@ claude:work-example.
 Options:
   --auto on|off         Whether Auto routing may use the login. A session started with
                         "--login <login>" uses it either way.
-  --five-hour <1-100>   Auto routing stops using the login once its five-hour window is at
-                        this percentage.
+  --five-hour <1-100>   Auto routing stops using the login while its five-hour window is at
+                        or above this percentage.
   --weekly <1-100>      The same for the weekly window.
   --use-first on|off    Take this login before every other one that has room.
   --alias <alias>       The name you type and see for the login. It is 1 to 32 lowercase
@@ -15116,44 +15118,32 @@ function wrap(text2, first, rest) {
 var STATUS_PROBE_WAIT_MS = 15e3;
 var USAGE4 = `Usage: kurmis status [--json]
 
-Shows every login with its settings and its five-hour and weekly usage, whether the daemon
-is running, and whether global routing ("kurmis setup") is on, paused or off, with the command
-that changes it. It never starts the daemon.
+Shows every login with its settings and usage, whether the daemon runs, and whether global
+routing is on. It does not start the daemon, and it exits 0 either way. For example:
 
-Each login is shown by its alias, with its provider, its id (when the alias is not the id)
-and the account's email when kurmis knows it. The login plain claude uses and the login plain
-codex uses are marked: they are the accounts a plain "claude" and a plain "codex" are signed
-in to. When two Claude logins are the same account, a warning says so, because both then use
-one subscription. Two Claude logins are the same account when they have the same email and the
-same organization; a personal plan and a Team or Enterprise seat of one email are not. Two
-Codex logins are the same account when they have the same email.
+  kurmis daemon 0.1.0, pid 4242, port 28411, running for 2h 5m
+  Global routing is off: only Claude Code started with "kurmis claude" goes
+  through kurmis. "kurmis setup" turns it on.
 
-While the daemon runs, the status comes from it: whether each login is signed in, its usage,
-how many sessions it serves, why routing would pass it over now, and which login
-"kurmis codex" would start on. When no usage has been read yet, it waits up to 15 seconds for
-the daemon's first usage probe.
+  own-example (Claude, id k3v9q2m7xa)           <- alias, provider and id
+    the login plain claude uses
+    signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
+    5 hour       42%  resets in 2h 10m      limit 100%
+    7 day        63%  resets in 3d 4h       limit 100%
+    usage read 3m ago
 
-While the daemon is not running, the logins come from config.json, and the usage is the last
-the daemon read, with how long ago it read it. Kurmis cannot tell then whether a login is
-signed in; it shows whether the login's credentials are on this machine. For a Claude login
-that is its token: in its .credentials.json, or else in the macOS Keychain or Windows
-Credential Manager, which status asks whether the item exists without reading it. For a Codex
-login it is its auth.json, or for one that keeps its sign-in in the system's keyring, what
-"codex login status" says. When a check cannot run, the login shows "credentials on this
-machine: unknown". Codex logins show no email then, so the warning about one subscription covers Claude logins
-only. "kurmis claude", "kurmis codex" without --login, "kurmis setup" and
-"kurmis daemon start" each start the daemon.
+  work-example (Claude, id p8x2n4c6ve)  work@example.com
+    signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session
+    5 hour       92%  resets in 45m         limit 90%
+    7 day         0%  reset since read      limit 100%
+    passed over: at its limit, the 5 hour window is at 92% of 90%; it resets in
+      45m                                   <- why Auto skips this login now
 
-When the daemon runs an older kurmis than this one, the status still comes from it, and the
-next command that starts the daemon replaces it. A newer daemon is never replaced; when its
-control API version is another, this kurmis cannot read its status, and status says to update
-this kurmis or to stop the daemon with "kurmis daemon stop". When the daemon does not answer the status
-request, or this kurmis cannot read its answer, the logins come from config.json as above,
-with a note on stderr.
+A warning at the top says when two logins are the same account, so they use one subscription.
 
-When config.json has no entry for the login plain claude or plain codex uses (before the first
-kurmis command, or after an uninstall), status adds it with a new id, as every other command
-does. It changes no other file, and exits 0 whether or not the daemon runs.
+While the daemon is not running, the logins come from config.json with the last usage the
+daemon read, and "credentials on this machine" takes the place of "signed in": kurmis checks
+that the token is there without reading it. The README describes every line.
 
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and

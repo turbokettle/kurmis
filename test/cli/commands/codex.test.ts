@@ -80,7 +80,7 @@ describe('kurmis codex with --login', () => {
   test('starts codex on the named login with its prepared CODEX_HOME and the arguments passed on', async () => {
     const h = harness()
     const out = collect({ PATH: '/usr/bin', ANTHROPIC_BASE_URL: 'http://127.0.0.1:40123' })
-    const code = await createCodexCommand(h.deps).run(['--login', 'work-example', 'exec', '--login', 'x'], out.context)
+    const code = await createCodexCommand(h.deps).run(['--login', 'work-example', '--', 'exec', '--login', 'x'], out.context)
     expect(code).toBe(3)
     expect(h.daemon.calls).toEqual([])
     expect(h.prepared).toEqual([WORK.id])
@@ -210,7 +210,7 @@ describe('kurmis codex without --login', () => {
   test('starts on the login plain codex uses with a note when the daemon cannot be reached', async () => {
     const h = harness({ ensureFails: 'port 40123 is taken by another program' })
     const out = collect()
-    expect(await createCodexCommand(h.deps).run(['resume'], out.context)).toBe(3)
+    expect(await createCodexCommand(h.deps).run(['--', 'resume'], out.context)).toBe(3)
     expect(h.prepared).toEqual([OWN_CODEX])
     expect(h.specs[0]?.args).toEqual(['/fake/codex.js', 'resume'])
     expect(out.stderr()).toBe(`kurmis codex: the kurmis daemon could not be reached (port 40123 is taken by another program); starting on ${OWN_CODEX}, the login plain codex uses.\n`)
@@ -281,6 +281,18 @@ describe('kurmis codex failures', () => {
     const out = collect()
     expect(await createCodexCommand(h.deps).run(['--help'], out.context)).toBe(0)
     expect(out.stdout()).toContain('Usage: kurmis codex')
+    expect(h.specs).toEqual([])
+  })
+
+  test('a codex argument before -- is a usage error and starts nothing', async () => {
+    const h = harness()
+    const out = collect()
+    expect(await createCodexCommand(h.deps).run(['--login', 'work-example', 'exec', '--help'], out.context)).toBe(2)
+    expect(out.stdout()).toBe('')
+    expect(out.stderr()).toBe(
+      'kurmis codex: kurmis does not know exec. Put codex\'s arguments after --, for example "kurmis codex -- exec"\n' +
+      'Run "kurmis help codex" for its options.\n')
+    expect(h.daemon.calls).toEqual([])
     expect(h.specs).toEqual([])
   })
 })

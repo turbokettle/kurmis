@@ -61,9 +61,9 @@ describe('dispatch', () => {
     expect(result.stderr).toContain('unknown command "nope"')
   })
 
-  it('passes --help after a claude argument on to claude instead of showing kurmis help', async () => {
+  it('passes --help after -- on to claude instead of showing kurmis help', async () => {
     // The test environment is empty, so no claude is found and nothing is started.
-    const result = await run('claude', '-p', '--help')
+    const result = await run('claude', '--', '--help')
     expect(result.stdout).toBe('')
     expect(result.stderr).not.toContain('Usage: kurmis claude')
     expect(result.code).toBe(127)

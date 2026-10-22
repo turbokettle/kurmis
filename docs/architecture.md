@@ -674,11 +674,11 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
   settings into its own environment, so a shell in a routed session has both set to the empty
   string, and a `kurmis claude` run there says nothing about them.
 
-**Kurmis' own options come first.** `kurmis claude` and `kurmis codex` read their options
-(`--login <login>`, `--help`) from the front of the argument list and stop at the first argument
-they do not know. That argument and everything after it go to the CLI unchanged. `--` also ends
-kurmis' options and is dropped, so `kurmis claude -- --help` shows claude's own help, while
-`kurmis claude --help` shows kurmis'. `--login` takes an alias or an id, and `kurmis claude`
+**Kurmis' own options come first, the CLI's after `--`.** `kurmis claude` and `kurmis codex`
+read their options (`--login <login>`, `--help`) up to `--`, and everything after `--` goes to
+the CLI unchanged. Any other argument before `--` is a usage error, so the rule has no
+exceptions: `kurmis claude -- --help` shows claude's own help, `kurmis claude --help` shows
+kurmis'. `--login` takes an alias or an id, and `kurmis claude`
 looks it up among the Claude logins only, `kurmis codex` among the Codex logins only. The code
 is `src/cli/wrapper-args.ts`.
 
@@ -949,7 +949,7 @@ makes sure no request is signed as that login for a CLI on other credentials:
 - **macOS and Linux.** Ctrl-C (SIGINT) and Ctrl-\ (SIGQUIT) reach every process in the
   terminal's foreground process group, so the child gets them itself; the wrapper ignores them
   while the child runs, as `system(3)` does. That is so only when stdin is a terminal. When it
-  is not (a script or a program runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
+  is not (a script or a program runs `kurmis claude -- -p`), a SIGINT or SIGQUIT is most likely
   sent to the wrapper's pid alone, so the wrapper forwards them like SIGTERM. A child whose input
   is piped but that runs in a terminal's foreground process group then gets Ctrl-C twice, which
   a CLI that is not interactive does not mind: it ends at the first. SIGTERM and SIGHUP are

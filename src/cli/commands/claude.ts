@@ -80,30 +80,31 @@ export interface ClaudeDeps {
  */
 export const START_PROBE_WAIT_MS = 15_000
 
-const USAGE = `Usage: kurmis claude [--login <login>] [--] [claude arguments...]
+const USAGE = `Usage: kurmis claude [--login <login>] [-- <claude arguments...>]
 
 Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
 which signs each one with a login that has room, and the command exits with claude's exit code.
 The daemon is started first when it is not running.
 
-Options (only before the first argument kurmis does not know):
+Options:
   --login <login>   Send every request of the session with one Claude login, even when it
                     is out of usage. <login> is the login's alias or its id, as
                     "kurmis status" shows them, for example --login work-example. Only Claude
                     logins are looked at, so a Codex login with the same alias does not count.
                     Without --login, each request goes to a login that has room (Auto).
   -h, --help        Show this help.
-  --                Pass everything after it to claude, even arguments kurmis knows.
+  --                Pass everything after it to claude unchanged. claude's own arguments
+                    always go here, for example "kurmis claude -- --resume".
 
 claude needs a signed-in login of its own to start, even though the daemon re-signs every
 request. On Auto, kurmis starts it on the login plain claude uses, or on another signed-in login
 when that one is signed out. This does not change where the requests go. Right after the daemon
 starts, kurmis waits up to 15 seconds for its first usage probe to tell which.
 
-Everything from the first argument kurmis does not know is passed to claude unchanged, except
-claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
-give one (your file is not changed).
-"kurmis claude -- --help" shows claude's own help.`
+kurmis passes its own settings to claude with --settings. When you give a --settings of your
+own, kurmis adds its settings to yours and does not change your file.
+
+To use kurmis every time you run claude: alias claude='kurmis claude --'`
 
 export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Command {
   const deps: ClaudeDeps = {
@@ -141,7 +142,7 @@ interface StartedOn {
 }
 
 async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps): Promise<number> {
-  const parsed = parseWrapperArgs(args)
+  const parsed = parseWrapperArgs(args, 'claude')
   if ('error' in parsed) return usageError('claude', parsed.error, context)
   if (parsed.help) {
     writeLine(context.stdout, USAGE)

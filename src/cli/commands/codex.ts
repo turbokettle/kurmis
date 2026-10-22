@@ -42,21 +42,23 @@ export interface CodexDeps {
   probeWaitMs: number
 }
 
-const USAGE = `Usage: kurmis codex [--login <login>] [--] [codex arguments...]
+const USAGE = `Usage: kurmis codex [--login <login>] [-- <codex arguments...>]
 
-Starts Codex with the terminal attached, on the login that ranks first (the same order Claude's
-Auto uses) or on the one named, and exits with codex's exit code. Without --login the daemon is
-asked for each login's usage, and started first when it is not running.
+Starts Codex with the terminal attached and exits with codex's exit code. Unlike claude, codex's
+requests do not go through the daemon: the whole session uses the login it started on. Without
+a --login, that is the login with room that ranks first, in the order Claude's Auto uses. The
+daemon is asked for each login's usage, and started first when it is not running.
 
-Options (only before the first argument kurmis does not know):
-  --login <login>   Start on this Codex login. <login> is the login's alias or its id, as
-                    "kurmis status" shows them, for example --login work-example. Only Codex
-                    logins are looked at, so a Claude login with the same alias does not count.
+Options:
+  --login <login>   Start on this Codex login, even when it is out of usage. <login> is the
+                    login's alias or its id, as "kurmis status" shows them, for example
+                    --login work-example. Only Codex logins are looked at, so a Claude login
+                    with the same alias does not count.
   -h, --help        Show this help.
-  --                Pass everything after it to codex, even arguments kurmis knows.
+  --                Pass everything after it to codex unchanged. codex's own arguments
+                    always go here, for example "kurmis codex -- exec".
 
-Everything from the first argument kurmis does not know is passed to codex unchanged.
-"kurmis codex -- --help" shows codex's own help.`
+To use kurmis every time you run codex: alias codex='kurmis codex --'`
 
 export function createCodexCommand(overrides: Partial<CodexDeps> = {}): Command {
   const deps: CodexDeps = {
@@ -82,7 +84,7 @@ export function createCodexCommand(overrides: Partial<CodexDeps> = {}): Command 
 export const codexCommand: Command = createCodexCommand()
 
 async function runCodex(args: string[], context: CliContext, deps: CodexDeps): Promise<number> {
-  const parsed = parseWrapperArgs(args)
+  const parsed = parseWrapperArgs(args, 'codex')
   if ('error' in parsed) return usageError('codex', parsed.error, context)
   if (parsed.help) {
     writeLine(context.stdout, USAGE)

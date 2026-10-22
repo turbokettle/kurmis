@@ -49,44 +49,32 @@ export interface StatusDeps {
 
 const USAGE = `Usage: kurmis status [--json]
 
-Shows every login with its settings and its five-hour and weekly usage, whether the daemon
-is running, and whether global routing ("kurmis setup") is on, paused or off, with the command
-that changes it. It never starts the daemon.
+Shows every login with its settings and usage, whether the daemon runs, and whether global
+routing is on. It does not start the daemon, and it exits 0 either way. For example:
 
-Each login is shown by its alias, with its provider, its id (when the alias is not the id)
-and the account's email when kurmis knows it. The login plain claude uses and the login plain
-codex uses are marked: they are the accounts a plain "claude" and a plain "codex" are signed
-in to. When two Claude logins are the same account, a warning says so, because both then use
-one subscription. Two Claude logins are the same account when they have the same email and the
-same organization; a personal plan and a Team or Enterprise seat of one email are not. Two
-Codex logins are the same account when they have the same email.
+  kurmis daemon 0.1.0, pid 4242, port 28411, running for 2h 5m
+  Global routing is off: only Claude Code started with "kurmis claude" goes
+  through kurmis. "kurmis setup" turns it on.
 
-While the daemon runs, the status comes from it: whether each login is signed in, its usage,
-how many sessions it serves, why routing would pass it over now, and which login
-"kurmis codex" would start on. When no usage has been read yet, it waits up to 15 seconds for
-the daemon's first usage probe.
+  own-example (Claude, id k3v9q2m7xa)           <- alias, provider and id
+    the login plain claude uses
+    signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
+    5 hour       42%  resets in 2h 10m      limit 100%
+    7 day        63%  resets in 3d 4h       limit 100%
+    usage read 3m ago
 
-While the daemon is not running, the logins come from config.json, and the usage is the last
-the daemon read, with how long ago it read it. Kurmis cannot tell then whether a login is
-signed in; it shows whether the login's credentials are on this machine. For a Claude login
-that is its token: in its .credentials.json, or else in the macOS Keychain or Windows
-Credential Manager, which status asks whether the item exists without reading it. For a Codex
-login it is its auth.json, or for one that keeps its sign-in in the system's keyring, what
-"codex login status" says. When a check cannot run, the login shows "credentials on this
-machine: unknown". Codex logins show no email then, so the warning about one subscription covers Claude logins
-only. "kurmis claude", "kurmis codex" without --login, "kurmis setup" and
-"kurmis daemon start" each start the daemon.
+  work-example (Claude, id p8x2n4c6ve)  work@example.com
+    signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session
+    5 hour       92%  resets in 45m         limit 90%
+    7 day         0%  reset since read      limit 100%
+    passed over: at its limit, the 5 hour window is at 92% of 90%; it resets in
+      45m                                   <- why Auto skips this login now
 
-When the daemon runs an older kurmis than this one, the status still comes from it, and the
-next command that starts the daemon replaces it. A newer daemon is never replaced; when its
-control API version is another, this kurmis cannot read its status, and status says to update
-this kurmis or to stop the daemon with "kurmis daemon stop". When the daemon does not answer the status
-request, or this kurmis cannot read its answer, the logins come from config.json as above,
-with a note on stderr.
+A warning at the top says when two logins are the same account, so they use one subscription.
 
-When config.json has no entry for the login plain claude or plain codex uses (before the first
-kurmis command, or after an uninstall), status adds it with a new id, as every other command
-does. It changes no other file, and exits 0 whether or not the daemon runs.
+While the daemon is not running, the logins come from config.json with the last usage the
+daemon read, and "credentials on this machine" takes the place of "signed in": kurmis checks
+that the token is there without reading it. The README describes every line.
 
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and
