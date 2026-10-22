@@ -78,14 +78,26 @@ export function credentialsFileHasToken(dir: string): CredentialCheck {
  * secret, and is not read here. Exit 0 is yes, 44 (`NO_SUCH_ITEM_EXIT_CODE`) no, anything else
  * (a locked Keychain, a missing `security`, the deadline) `unknown`. `KURMIS_SECURITY_PROGRAM`
  * (a test hook) names a stand-in for `security`.
+ *
+ * In an ssh login the search list holds only the System keychain, so a no is asked again of the
+ * user's own keychains (`security list-keychains -d user`), named one by one.
  */
 export async function keychainItemExists(service: string, env: NodeJS.ProcessEnv, run: typeof runProgram): Promise<CredentialCheck> {
   // `security` runs in this process's environment, as the daemon's Keychain reader runs it.
-  const result = await run(systemProgram('security', env), ['find-generic-password', '-s', service],
-    { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxOutputBytes: 64 * 1024 })
-  if (result.error !== null) return 'unknown'
-  if (result.code === 0) return true
-  return result.code === NO_SUCH_ITEM_EXIT_CODE ? false : 'unknown'
+  const security = (args: string[]): ReturnType<typeof runProgram> =>
+    run(systemProgram('security', env), args, { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxOutputBytes: 64 * 1024 })
+  const answer = async (keychains: string[]): Promise<CredentialCheck> => {
+    const result = await security(['find-generic-password', '-s', service, ...keychains])
+    if (result.error !== null) return 'unknown'
+    if (result.code === 0) return true
+    return result.code === NO_SUCH_ITEM_EXIT_CODE ? false : 'unknown'
+  }
+  const searched = await answer([])
+  if (searched !== false) return searched
+  const listed = await security(['list-keychains', '-d', 'user'])
+  if (listed.error !== null || listed.code !== 0) return false
+  const keychains = listed.stdout.split('\n').map((line) => line.trim().replace(/^"|"$/g, '')).filter((line) => line.length > 0)
+  return keychains.length === 0 ? false : answer(keychains)
 }
 
 /** Yes when either says yes, else `unknown` when either is, else no. */

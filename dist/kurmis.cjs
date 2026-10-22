@@ -12579,14 +12579,19 @@ function credentialsFileHasToken(dir) {
   return parseCredentials(text2) !== null;
 }
 async function keychainItemExists(service, env, run2) {
-  const result = await run2(
-    systemProgram("security", env),
-    ["find-generic-password", "-s", service],
-    { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxOutputBytes: 64 * 1024 }
-  );
-  if (result.error !== null) return "unknown";
-  if (result.code === 0) return true;
-  return result.code === NO_SUCH_ITEM_EXIT_CODE ? false : "unknown";
+  const security = (args) => run2(systemProgram("security", env), args, { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxOutputBytes: 64 * 1024 });
+  const answer2 = async (keychains2) => {
+    const result = await security(["find-generic-password", "-s", service, ...keychains2]);
+    if (result.error !== null) return "unknown";
+    if (result.code === 0) return true;
+    return result.code === NO_SUCH_ITEM_EXIT_CODE ? false : "unknown";
+  };
+  const searched = await answer2([]);
+  if (searched !== false) return searched;
+  const listed = await security(["list-keychains", "-d", "user"]);
+  if (listed.error !== null || listed.code !== 0) return false;
+  const keychains = listed.stdout.split("\n").map((line) => line.trim().replace(/^"|"$/g, "")).filter((line) => line.length > 0);
+  return keychains.length === 0 ? false : answer2(keychains);
 }
 function either(a, b) {
   if (a === true || b === true) return true;

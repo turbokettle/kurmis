@@ -8,11 +8,16 @@
 //                                           prompt    never answers, the way a Keychain dialog
 //                                                     nobody answers looks from outside
 //                                           oversize  prints half a megabyte and exits 0
+//                                           ssh       the search list holds only the System
+//                                                     keychain, as in an ssh login: a lookup
+//                                                     finds an item only when the user's
+//                                                     keychain is named after the service
 //   calls.jsonl                           every call's arguments are appended here
 //
-// Only `find-generic-password -s <service>` is understood, with or without `-w`. With `-w` it
-// prints the item's secret; without it, the item's attributes and not its secret, as `security`
-// does. An item it does not hold exits 44, as `security` does.
+// `find-generic-password -s <service> [keychain...]` is understood, with or without `-w`. With
+// `-w` it prints the item's secret; without it, the item's attributes and not its secret, as
+// `security` does. An item it does not hold exits 44, as `security` does.
+// `list-keychains -d user` prints the user's login keychain.
 // `fake-keychain.ts` beside this file writes the folder.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -28,6 +33,8 @@ if (!dir) {
 
 appendFileSync(join(dir, 'calls.jsonl'), `${JSON.stringify(argv)}\n`, 'utf8')
 
+const USER_KEYCHAIN = '/Users/example/Library/Keychains/login.keychain-db'
+
 const modeFile = join(dir, 'mode')
 const mode = existsSync(modeFile) ? readFileSync(modeFile, 'utf8').trim() : ''
 
@@ -38,16 +45,22 @@ if (mode === 'prompt') {
 } else if (mode === 'locked') {
   process.stderr.write('security: SecKeychainSearchCopyNext: User interaction is not allowed.\n')
   process.exit(36)
+} else if (argv[0] === 'list-keychains' && argv[1] === '-d' && argv[2] === 'user') {
+  process.stdout.write(`    "${USER_KEYCHAIN}"\n`)
 } else if (argv[0] !== 'find-generic-password' || argv.indexOf('-s') < 0) {
   process.stderr.write(`security: unknown command "${argv.join(' ')}"\n`)
   process.exit(2)
 } else {
   const service = argv[argv.indexOf('-s') + 1] ?? ''
   const item = join(dir, 'items', encodeURIComponent(service))
-  if (existsSync(item) && argv.includes('-w')) {
+  const searched = mode !== 'ssh' || argv.slice(argv.indexOf('-s') + 2).includes(USER_KEYCHAIN)
+  if (!searched) {
+    process.stderr.write('security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.\n')
+    process.exit(44)
+  } else if (existsSync(item) && argv.includes('-w')) {
     process.stdout.write(`${readFileSync(item, 'utf8')}\n`)
   } else if (existsSync(item)) {
-    process.stdout.write(`keychain: "/Users/example/Library/Keychains/login.keychain-db"\nclass: "genp"\nattributes:\n` +
+    process.stdout.write(`keychain: "${USER_KEYCHAIN}"\nclass: "genp"\nattributes:\n` +
       `    "svce"<blob>=${JSON.stringify(service)}\n`)
   } else {
     process.stderr.write('security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.\n')

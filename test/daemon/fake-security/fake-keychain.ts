@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path'
 export const FAKE_SECURITY = resolve('test/daemon/fake-security/security.mjs')
 
 /** What the stand-in does instead of answering; see `security.mjs`. */
-export type FakeSecurityMode = 'locked' | 'prompt' | 'oversize'
+export type FakeSecurityMode = 'locked' | 'prompt' | 'oversize' | 'ssh'
 
 export class FakeKeychain {
   constructor(readonly dir: string) {

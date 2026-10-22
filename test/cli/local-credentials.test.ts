@@ -72,14 +72,24 @@ describe('checkCredentials', () => {
     fake.setItem(keychainService(loginFolder(A)), '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-example"}}')
     expect(await check([OWN_CLAUDE_REF, A, B], 'darwin')).toEqual([true, true, false])
     const calls = fake.calls()
-    expect(calls).toHaveLength(3)
     for (const call of calls) expect(call).not.toContain('-w')
-    expect(calls.map((call) => call[call.indexOf('-s') + 1]).sort())
-      .toEqual([keychainService(null), keychainService(loginFolder(A)), keychainService(loginFolder(B))].sort())
+    const lookups = calls.filter((call) => call[0] === 'find-generic-password')
+    // B is not found in the search list, and is asked again of the user's keychains.
+    expect(lookups.map((call) => call.slice(2).join(' ')).sort()).toEqual([
+      keychainService(null), keychainService(loginFolder(A)), keychainService(loginFolder(B)),
+      `${keychainService(loginFolder(B))} /Users/example/Library/Keychains/login.keychain-db`
+    ].sort())
     // A login whose file has the token needs no Keychain lookup.
     writeClaudeCredentials(loginFolder(B))
     expect(await check([B], 'darwin')).toEqual([true])
-    expect(fake.calls()).toHaveLength(3)
+    expect(fake.calls()).toHaveLength(calls.length)
+  })
+
+  it('finds the item in the user keychain when the search list has only the System keychain, as over ssh', async () => {
+    const fake = keychain()
+    fake.setItem(keychainService(loginFolder(A)), '{"claudeAiOauth":{"accessToken":"sk-ant-oat01-example"}}')
+    fake.setMode('ssh')
+    expect(await check([A, B], 'darwin')).toEqual([true, false])
   })
 
   it('answers unknown when the Keychain cannot be asked', async () => {
