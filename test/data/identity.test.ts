@@ -59,12 +59,19 @@ describe('reading', () => {
     expect(readClaudeIdentity(WORK)?.accountUuid).toBe('uuid-work')
   })
 
-  test("the login plain claude uses prefers the probe folder and falls back to ~/.claude.json", () => {
+  test("the login plain claude uses reads ~/.claude.json only until a probe has written the probe folder's file", () => {
     writeFileSync(join(homedir(), '.claude.json'), profile('uuid-shared', 'shared@example.com'))
     const reader = new ClaudeIdentityReader()
     expect(reader.read(OWN_CLAUDE_REF)?.accountUuid).toBe('uuid-shared')
     mkdirSync(ownClaudeProbeFolder(), { recursive: true })
     writeFileSync(join(ownClaudeProbeFolder(), '.claude.json'), profile('uuid-probe', 'own@example.com'))
     expect(reader.read(OWN_CLAUDE_REF)?.accountUuid).toBe('uuid-probe')
+  })
+
+  test('a probe of a signed-out login plain claude uses hides the account another login wrote to ~/.claude.json', () => {
+    writeFileSync(join(homedir(), '.claude.json'), profile('uuid-extra', 'extra@example.com'))
+    mkdirSync(ownClaudeProbeFolder(), { recursive: true })
+    writeFileSync(join(ownClaudeProbeFolder(), '.claude.json'), '{"numStartups":1}')
+    expect(readClaudeIdentity(OWN_CLAUDE_REF)).toBeNull()
   })
 })

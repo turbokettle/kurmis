@@ -135,7 +135,10 @@ their own provider's logins.
 
 No email is stored in any file kurmis keeps. The daemon keeps a Codex login's email from its
 last probe in memory, for the control API's `status`; a Claude login's email is read from its
-profile file when it is needed.
+profile file when it is needed (`src/data/identity.ts`). For plain claude's login that is the
+probe folder's `.claude.json`. The shared `~/.claude.json` counts only before the first probe:
+every claude that uses the default config folder writes its account there, so after a
+`kurmis claude` on an extra login it names that login.
 
 **Writing files.** Every JSON file is written to a temp file in the same folder, flushed to the
 disk and renamed over the old one, so a reader sees the old file or the new one, never half of

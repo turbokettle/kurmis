@@ -8658,11 +8658,10 @@ var import_node_fs14 = require("node:fs");
 var import_node_os9 = require("node:os");
 var import_node_path16 = require("node:path");
 var CLAUDE_PROFILE_FILE = ".claude.json";
-function claudeIdentityFiles(login, home = (0, import_node_os9.homedir)()) {
-  if (login.usedByPlainCli) {
-    return [(0, import_node_path16.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE)];
-  }
-  return [(0, import_node_path16.join)(loginFolder(login), CLAUDE_PROFILE_FILE)];
+function claudeIdentityFile(login, home = (0, import_node_os9.homedir)()) {
+  if (!login.usedByPlainCli) return (0, import_node_path16.join)(loginFolder(login), CLAUDE_PROFILE_FILE);
+  const probed = (0, import_node_path16.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE);
+  return (0, import_node_fs14.existsSync)(probed) ? probed : (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE);
 }
 function parseClaudeIdentity(text2) {
   try {
@@ -8691,13 +8690,9 @@ var ClaudeIdentityReader = class {
   }
   home;
   cache = /* @__PURE__ */ new Map();
-  /** The login's identity from the first of its files that names somebody, or null. */
+  /** The login's identity, or null when its file names nobody. */
   read(login) {
-    for (const file of claudeIdentityFiles(login, this.home())) {
-      const value = this.readFile(file);
-      if (value !== null) return value;
-    }
-    return null;
+    return this.readFile(claudeIdentityFile(login, this.home()));
   }
   readFile(file) {
     try {

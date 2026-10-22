@@ -8,13 +8,15 @@
 // never name another login: the login's folder for an extra login (written by `claude auth login`
 // and by its usage probes), and the probe folder for plain claude's login (written by its
 // probes).
-// The shared `~/.claude.json` is read for plain claude's login only before its first probe has
-// written the probe folder's file, as a last resort: a routed CLI writes there too, but always
-// on behalf of plain claude's login.
+// The shared `~/.claude.json` is read for plain claude's login only while the probe folder has no
+// `.claude.json`, that is before its first probe, so that `kurmis login` on a new machine can
+// tell that an account is already plain claude's. Once a probe has written the file, it alone
+// counts, even when it names nobody: every CLI that uses the default config folder writes its
+// account to the shared file, including a `kurmis claude` started on an extra login.
 //
 // The email is personal data. It may be shown to the person on their own terminal, and is never
 // written to the log or to any file kurmis keeps.
-import { readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { LoginRef } from './login-id.ts'
@@ -31,15 +33,14 @@ export interface ClaudeIdentity {
 }
 
 /**
- * The files the identity of a login is read from, best first: for an extra login only its own
- * folder's `.claude.json`, for plain claude's login the probe folder's and then
- * `~/.claude.json`.
+ * The file the identity of a login is read from: its own folder's `.claude.json` for an extra
+ * login. For plain claude's login it is the probe folder's, or `~/.claude.json` while the probe
+ * folder has none.
  */
-export function claudeIdentityFiles(login: LoginRef, home: string = homedir()): string[] {
-  if (login.usedByPlainCli) {
-    return [join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), join(home, CLAUDE_PROFILE_FILE)]
-  }
-  return [join(loginFolder(login), CLAUDE_PROFILE_FILE)]
+export function claudeIdentityFile(login: LoginRef, home: string = homedir()): string {
+  if (!login.usedByPlainCli) return join(loginFolder(login), CLAUDE_PROFILE_FILE)
+  const probed = join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE)
+  return existsSync(probed) ? probed : join(home, CLAUDE_PROFILE_FILE)
 }
 
 /** The `oauthAccount` block of a `.claude.json`, or null when there is none or it names nobody. */
@@ -75,13 +76,9 @@ export class ClaudeIdentityReader {
 
   constructor(private readonly home: () => string = homedir) {}
 
-  /** The login's identity from the first of its files that names somebody, or null. */
+  /** The login's identity, or null when its file names nobody. */
   read(login: LoginRef): ClaudeIdentity | null {
-    for (const file of claudeIdentityFiles(login, this.home())) {
-      const value = this.readFile(file)
-      if (value !== null) return value
-    }
-    return null
+    return this.readFile(claudeIdentityFile(login, this.home()))
   }
 
   private readFile(file: string): ClaudeIdentity | null {
