@@ -253,21 +253,13 @@ export function createLogoutCommand(deps: Partial<LogoutDeps> = {}): Command {
     summary: 'Remove a login and its credentials',
     usage: `Usage: kurmis logout <login>
 
-Signs a login out with "claude auth logout" or "codex logout", removes it from kurmis and
-deletes its folder in the kurmis data folder. A running daemon stops using it at once. When
-the logout CLI fails or is not installed, the login is removed anyway; for a Claude login,
-kurmis names the Keychain item or Credential Manager record that may be left.
+Signs a login out and removes it from kurmis. A running daemon stops using it at once.
 
-<login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
-Codex login have the same alias, put claude: or codex: in front, for example
-codex:work-example.
+<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
+have the same alias, put claude: or codex: in front, for example codex:work-example.
 
-The logins of plain claude and plain codex cannot be removed. To sign them out, run
-"claude auth logout" or "codex logout" yourself.
-
-An id that is not in config.json but still has a folder in the kurmis data folder, for
-example after a removal that stopped half-way, has that folder deleted. Its logout runs
-first, as for any login.
+The logins plain claude and plain codex use cannot be removed. To sign them out, run
+"claude auth logout" or "codex logout".
 
 Options:
   -h, --help   Show this help.`,

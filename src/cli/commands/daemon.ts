@@ -213,23 +213,15 @@ The daemon is the background process that routes Claude requests. "kurmis claude
 "kurmis codex" without --login and "kurmis setup" start it when it is not running, so
 "kurmis daemon start" is seldom needed.
 
-  start                   Start it in the background, replacing an older one: one of a
-                          lower version, or of the same version with a lower control API
-                          version. A newer daemon is kept. When its control API version is
-                          another, this kurmis cannot use it, and the command says so: update
-                          this kurmis, or run "kurmis daemon stop" and then the command again.
-                          --env NAME=VALUE sets a kurmis variable in the daemon's
-                          environment; the Windows logon entry uses it.
-  stop [--now]            Stop it after it finishes the requests it has open, waiting at most
-                          30 seconds for them. With --now it stops at once and cuts the
-                          requests it has open. An open Claude session then sees a dropped
-                          connection and retries the request.
+  start                   Start it in the background. An older daemon is replaced, a newer
+                          one is kept.
+  stop [--now]            Stop it after it finishes its open requests, waiting at most 30
+                          seconds. With --now it stops at once, and open Claude sessions
+                          retry the requests it cut.
   restart                 Start a new one now; the old one finishes its open requests first.
-                          A newer daemon is not replaced.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
-  run                     Run it in this terminal instead of the background (what "start"
-                          launches).
+  run                     Run it in this terminal instead of the background.
 
 On macOS, a daemon started from an ssh login cannot read the login Keychain. Run
 "kurmis setup" in a terminal at the screen: the daemon then runs in your desktop session,

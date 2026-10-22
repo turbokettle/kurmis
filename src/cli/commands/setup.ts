@@ -84,39 +84,21 @@ const NPM_UNINSTALL = 'npm uninstall -g kurmis'
 
 const USAGE = `Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]
 
-Turns global routing on: every Claude Code on this machine goes through kurmis, not only the
-ones started with "kurmis claude". Setup:
-
-- starts the daemon now, and goes no further when it cannot;
-- puts kurmis' address and key in the "env" block of your Claude Code settings file,
-  ~/.claude/settings.json (or settings.json in CLAUDE_CONFIG_DIR when that is set), so a plain
-  "claude" and the IDE extensions use your kurmis logins too. Nothing else in the file changes,
-  and the file is copied to settings.json.kurmis-backup before kurmis adds its settings.
-  Because the file then holds kurmis' key, on macOS and Linux setup makes it and the copy
-  readable only by you. Kurmis keeps a list of the settings files setup changed, so --pause
-  and --uninstall-and-logout find each of them, whatever CLAUDE_CONFIG_DIR is then;
-- makes the kurmis daemon start when you log in (macOS and Windows).
-
-Claude Code sessions that are already open keep the settings they started with; start them
-again.
+Turns global routing on: every Claude Code on this machine goes through kurmis, including a
+plain "claude" and the IDE extensions, not only "kurmis claude". Setup starts the daemon, makes
+it start when you log in (macOS and Windows), and adds kurmis' address to the "env" block of
+~/.claude/settings.json (or the one in CLAUDE_CONFIG_DIR), after saving a copy as
+settings.json.kurmis-backup. Claude Code sessions that are already open need a restart.
 
 Options:
-  --pause                 Take kurmis' settings out of the settings files, so a plain "claude"
-                          and the IDE extensions send their requests to Anthropic directly. A
-                          setting you changed yourself is left as it is. The daemon, its start
-                          at login, your logins and the backup copy stay. "kurmis status"
-                          shows global routing as paused, and "kurmis setup" turns it on again.
-  --uninstall-and-logout  Remove everything kurmis set up: its settings and the backup copy,
-                          the daemon's start at login, every login you added to kurmis (each is
-                          signed out first, which removes its Keychain or Credential Manager
-                          item), the daemon and the kurmis data folder. The logins plain
-                          claude and plain codex use are not signed out, so a plain "claude"
-                          and "codex" keep working. It lists what it removes and asks first.
-                          When a login cannot be signed out, that login and the data folder
-                          are kept, and the message says how to finish. The last step,
-                          "${NPM_UNINSTALL}", is yours to run.
-  --yes                   With --uninstall-and-logout: do not ask. Without a terminal to ask
-                          at, --uninstall-and-logout needs it.
+  --pause                 Turn global routing off again: plain "claude" and the IDE
+                          extensions talk to Anthropic directly. Everything else stays, and
+                          "kurmis setup" turns it back on.
+  --uninstall-and-logout  Remove everything kurmis set up, and sign out and remove every login
+                          you added. The logins plain claude and plain codex use stay signed
+                          in. It lists what it removes and asks first. Then run
+                          "npm uninstall -g kurmis".
+  --yes                   Do not ask (needed when there is no terminal to ask at).
   -h, --help              Show this help.`
 
 /** One line about one variable, in plain words. Never shows the key. */

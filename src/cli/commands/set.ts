@@ -86,25 +86,20 @@ export function createSetCommand(deps: Partial<SetDeps> = {}): Command {
     usage: `Usage: kurmis set <login> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>]
                        [--use-first on|off] [--alias <alias>]
 
-Changes the settings of a login and prints them. A running daemon uses them at once. Give at
-least one option.
+Changes a login's settings and prints them. A running daemon uses them at once.
 
-<login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
-Codex login have the same alias, put claude: or codex: in front, for example
-claude:work-example.
+<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
+have the same alias, put claude: or codex: in front, for example claude:work-example.
 
 Options:
-  --auto on|off         Whether Auto routing may use the login. A session started with
-                        "--login <login>" uses it either way.
+  --auto on|off         Whether Auto routing may use the login. "--login <login>" uses it
+                        either way.
   --five-hour <1-100>   Auto routing stops using the login while its five-hour window is at
                         or above this percentage.
   --weekly <1-100>      The same for the weekly window.
   --use-first on|off    Take this login before every other one that has room.
-  --alias <alias>       The name you type and see for the login. It is 1 to 32 lowercase
-                        letters, digits, "-" or "_", starts with a letter or digit, and is not
-                        "claude" or "codex". No other login of the same provider may have it,
-                        and it may not be another login's id.
-                        Kurmis keeps an alias you set; without one, the alias follows the
+  --alias <alias>       Rename the login: 1 to 32 lowercase letters, digits, "-" or "_", and
+                        not "claude" or "codex". An alias you set no longer follows the
                         account's email.
   -h, --help            Show this help.
 

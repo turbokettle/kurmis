@@ -429,43 +429,23 @@ export function createLoginCommand(deps: Partial<LoginDeps> = {}): Command {
     usage: `Usage: kurmis login claude|codex [--alias <alias>]
        kurmis login <login> [--alias <alias>]
 
-Signs a login in with Claude Code's "claude auth login" or Codex's "codex login", which open
-the sign-in page in the browser.
+Signs a login in through the browser.
 
-  kurmis login claude         Adds a new Claude login. It gets Auto routing on and both limits
-                              at 100%; "kurmis set" changes that.
+  kurmis login claude         Adds a new Claude login.
   kurmis login codex          Adds a new Codex login.
   kurmis login work-example   Signs the login work-example in again, for example after it was
-                              signed out. This works for the logins of plain claude and plain
-                              codex too.
+                              signed out.
 
-<login> is the login's alias or its id, as "kurmis status" shows them. When a Claude login and a
-Codex login have the same alias, put claude: or codex: in front, for example
-claude:work-example.
+<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
+have the same alias, put claude: or codex: in front, for example claude:work-example.
 
-Each login gets an id of random letters and digits, which never changes. Its alias is the name
-you see and type. Kurmis makes the alias from the account's email: work@example.com gives
-work-example. Without --alias, the alias follows the email when the account changes.
-
-When the account you sign in to with "kurmis login claude" or "kurmis login codex" is already
-a kurmis login, kurmis signs the new sign-in out again, adds nothing and says which login the
-account is. --alias is then not used. When "kurmis login <login>" signs a login in to an
-account that another login of the same provider already has, kurmis warns that the two logins
-are now the same account and signs neither out.
-
-A Claude account is its email and its organization: a personal plan and a Team or Enterprise
-seat of the same email are two subscriptions, so they become two logins, and the second one's
-alias ends in -2. When the organization of either login is not known, the email alone decides.
-A Codex account is its email.
-
-Each extra login keeps its own credentials in its folder in the kurmis data folder (on macOS in
-the Keychain). Kurmis prints the account's email and does not store it.
+A new login's alias comes from its email: work@example.com gives work-example. When you sign in
+to an account kurmis already has, nothing is added and kurmis names the login it already is.
+"kurmis set" changes a login's alias and routing settings.
 
 Options:
-  --alias <alias>   The alias of the login, in place of the one made from the email. It is 1
-                    to 32 lowercase letters, digits, "-" or "_", starts with a letter or digit,
-                    and is not "claude" or "codex". No other login of the same provider may
-                    have it. Kurmis keeps it when the email changes.
+  --alias <alias>   Use this alias instead of the one from the email: 1 to 32 lowercase
+                    letters, digits, "-" or "_", and not "claude" or "codex".
   -h, --help        Show this help.`,
     async run(args, context) {
       const parsed = parseCommandArgs('login', args, { alias: { type: 'string' } }, context, true)

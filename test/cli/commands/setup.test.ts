@@ -424,7 +424,7 @@ describe('kurmis setup', () => {
   it('names its three modes in its help', () => {
     const { usage } = setup().command
     expect(usage).toContain('Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]')
-    expect(usage).toContain('The logins plain\n                          claude and plain codex use are not signed out')
+    expect(usage).toContain('The logins plain claude and plain codex use stay signed\n                          in.')
     expect(usage).toContain('npm uninstall -g kurmis')
   })
 })
