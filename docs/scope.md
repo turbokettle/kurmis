@@ -62,7 +62,7 @@ signs the request with that login's token.
   logins the session may use, for up to about two minutes.
 - **An exhausted pool.** When every login is out, the CLI gets the same answer it would get
   from a single account that has run out. It then behaves as it always does at a limit.
-- **Pinning.** A session started on one named login stays on it, whatever its limits say.
+- **Pinning.** A session started on one named login stays on it, even when that login is out of usage.
 
 ## Tokens and usage
 

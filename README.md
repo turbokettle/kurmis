@@ -135,12 +135,13 @@ kurmis' own options goes to `claude` unchanged, so `kurmis claude --resume` or
   the login whose weekly usage resets soonest, and a session stays on the login that served it
   for as long as that login has room, because switching makes the next request rebuild the
   prompt cache.
-- **`--login <login>`** keeps the session on one Claude login whatever its limits say, for
-  example `--login work-example`.
+- **`--login <login>`** sends every request of the session with one Claude login, even when it
+  is out of usage, for example `--login work-example`.
 
-On Auto, claude starts on the credentials of the login plain `claude` uses, so it has a sign-in
-to send requests with. When that login is signed out, it starts on a signed-in login of the
-pool instead, and kurmis says so. Right after the daemon starts, it may not know yet whether the
+claude needs a signed-in login of its own to start, even though the daemon re-signs every
+request. On Auto, kurmis starts it on the login plain `claude` uses, or, when that login is
+signed out, on another signed-in login, and says so. This does not change where the requests
+go. Right after the daemon starts, it may not know yet whether the
 login plain `claude` uses is signed in; then `kurmis claude` waits up to 15 seconds for the
 daemon's first usage probe before it decides.
 

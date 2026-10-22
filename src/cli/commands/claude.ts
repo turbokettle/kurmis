@@ -87,18 +87,18 @@ which signs each one with a login that has room, and the command exits with clau
 The daemon is started first when it is not running.
 
 Options (only before the first argument kurmis does not know):
-  --login <login>   Keep the session on one Claude login, whatever its limits say. <login> is
-                    the login's alias or its id, as "kurmis status" shows them, for example
-                    --login work-example. Only Claude logins are looked at, so a Codex login
-                    with the same alias does not count. Without --login the session is on Auto.
-                    When config.json cannot be read, --login is an error. Without --login
-                    claude then starts on the login plain claude uses, with a warning.
+  --login <login>   Send every request of the session with one Claude login, even when it
+                    is out of usage. <login> is the login's alias or its id, as
+                    "kurmis status" shows them, for example --login work-example. Only Claude
+                    logins are looked at, so a Codex login with the same alias does not count.
+                    Without --login, each request goes to a login that has room (Auto).
   -h, --help        Show this help.
   --                Pass everything after it to claude, even arguments kurmis knows.
 
-On Auto, claude starts on the credentials of the login plain claude uses, or, when that login
-is signed out, on those of a signed-in login of the pool. Right after the daemon starts, kurmis
-waits up to 15 seconds for its first usage probe to tell which.
+claude needs a signed-in login of its own to start, even though the daemon re-signs every
+request. On Auto, kurmis starts it on the login plain claude uses, or on another signed-in login
+when that one is signed out. This does not change where the requests go. Right after the daemon
+starts, kurmis waits up to 15 seconds for its first usage probe to tell which.
 
 Everything from the first argument kurmis does not know is passed to claude unchanged, except
 claude's --settings: kurmis passes its own settings that way, and adds them to yours when you
