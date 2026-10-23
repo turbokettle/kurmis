@@ -88,6 +88,5 @@ Kurmis does not do these things:
 - any CLI other than Claude Code;
 - lending a login to another machine;
 - pausing a session at a limit and continuing it after the reset;
-- the sign-in UI and the phone usage screen;
-- rewriting the CLI's boilerplate text;
+- a graphical interface: kurmis has only its command line;
 - usage history.
