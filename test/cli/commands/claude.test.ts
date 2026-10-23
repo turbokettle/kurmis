@@ -78,7 +78,7 @@ function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<Claud
     deps: {
       daemon,
       child,
-      findProgram: () => ({ command: '/fake/claude', args: ['--from-find'], source: 'env' }),
+      findProgram: () => ({ command: '/fake/claude', args: ['--from-find'] }),
       loadConfig: () => testConfig({ extras: [{ ...WORK }, { ...SPARE }] }),
       platform: 'darwin',
       cwd: () => cwd,
@@ -562,7 +562,7 @@ describe('kurmis claude, other cases', () => {
   test('a claude that cannot be found exits 127 with the lookup\'s message', async () => {
     const h = harness({}, {
       findProgram: () => {
-        throw new ProgramNotFoundError('claude', 'claude was not found on PATH')
+        throw new ProgramNotFoundError('claude was not found on PATH')
       }
     })
     const out = collect()

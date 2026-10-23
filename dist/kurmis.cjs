@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101334" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101356" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -2064,6 +2064,60 @@ function hasVariable(env, name) {
   return Object.keys(env).some((key) => key.toUpperCase() === upper && env[key] !== void 0);
 }
 
+// src/platform/system-programs.ts
+var SYSTEM_PROGRAM_VARIABLES = {
+  launchctl: "KURMIS_LAUNCHCTL_PROGRAM",
+  security: "KURMIS_SECURITY_PROGRAM",
+  powershell: "KURMIS_POWERSHELL_PROGRAM",
+  reg: "KURMIS_REG_PROGRAM",
+  taskkill: "KURMIS_TASKKILL_PROGRAM",
+  wscript: "KURMIS_WSCRIPT_PROGRAM"
+};
+function envValue(env, name) {
+  const exact = env[name];
+  if (exact !== void 0 && exact !== "") return exact;
+  const upper = name.toUpperCase();
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
+  }
+  return void 0;
+}
+function systemRoot(env = process.env) {
+  const value = envValue(env, "SystemRoot") ?? envValue(env, "windir");
+  return value === void 0 ? "C:\\Windows" : value.replace(/[\\/]+$/, "");
+}
+function realSystemProgram(program, env = process.env) {
+  switch (program) {
+    case "launchctl":
+      return "/bin/launchctl";
+    case "security":
+      return "/usr/bin/security";
+    case "powershell":
+      return `${systemRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+    case "reg":
+      return `${systemRoot(env)}\\System32\\reg.exe`;
+    case "taskkill":
+      return `${systemRoot(env)}\\System32\\taskkill.exe`;
+    case "wscript":
+      return `${systemRoot(env)}\\System32\\wscript.exe`;
+  }
+}
+function systemProgram(program, env = process.env, processEnv = process.env) {
+  const variable = SYSTEM_PROGRAM_VARIABLES[program];
+  return envValue(env, variable) ?? envValue(processEnv, variable) ?? realSystemProgram(program, env);
+}
+function inheritedTestHooks(env, processEnv = process.env) {
+  const out = {};
+  const guarded = envValue(env, GUARD_VARIABLE) === "1" || envValue(processEnv, GUARD_VARIABLE) === "1";
+  const names = [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, ...guarded ? TEST_HOME_VARIABLES : []];
+  for (const name of names) {
+    if (envValue(env, name) !== void 0) continue;
+    const value = envValue(processEnv, name);
+    if (value !== void 0) out[name] = value;
+  }
+  return out;
+}
+
 // src/platform/detach.ts
 var ENTRY_VARIABLE = "KURMIS_ENTRY";
 function bundleFile() {
@@ -2083,7 +2137,7 @@ function kurmisEntry(options = {}) {
   }
 }
 function temporaryFolders(env = process.env, platform = process.platform) {
-  const named = ["TMPDIR", "TEMP", "TMP"].map((name) => platform === "win32" ? windowsEnv(env, name) : env[name]);
+  const named = ["TMPDIR", "TEMP", "TMP"].map((name) => platform === "win32" ? envValue(env, name) : env[name]);
   const fixed = platform === "win32" ? [] : ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"];
   return [...new Set([(0, import_node_os3.tmpdir)(), ...named, ...fixed].filter((folder) => folder !== void 0 && folder !== ""))];
 }
@@ -2112,7 +2166,7 @@ function nodeForJobs(options = {}) {
   }
   const running = isTemporaryPath(execPath, temporary, platform) && !isTemporaryPath(target, temporary, platform) ? target : execPath;
   const windows = platform === "win32";
-  const folders = windows ? windowsPathFolders(windowsEnv(env, "PATH")) : posixPathFolders(env.PATH);
+  const folders = windows ? windowsPathFolders(envValue(env, "PATH")) : posixPathFolders(env.PATH);
   for (const folder of folders) {
     const candidate = windows ? import_node_path6.win32.join(folder, "node.exe") : import_node_path6.posix.join(folder, "node");
     try {
@@ -2413,86 +2467,84 @@ function runProgram(program, args, options) {
 
 // src/platform/programs.ts
 var ProgramNotFoundError = class extends Error {
-  constructor(tool, message) {
+  constructor(message) {
     super(message);
-    this.tool = tool;
     this.name = "ProgramNotFoundError";
   }
-  tool;
 };
 var PROGRAM_VARIABLE = "KURMIS_CLAUDE_BIN";
 var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
 var MAX_SHIM_BYTES = 64 * 1024;
-function findProgram(tool, options = {}) {
+function findProgram(options = {}) {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const nodePath = options.nodePath ?? process.execPath;
   const files = options.files ?? realFiles;
-  const named = namedProgram(env, PROGRAM_VARIABLE, platform);
+  const named = namedProgram(env, platform);
   if (named !== void 0) {
     const invocation = invocationFor(named, [], nodePath);
-    if ("refused" in invocation) throw new ProgramNotFoundError(tool, `${PROGRAM_VARIABLE}: ${invocation.refused}`);
-    return { command: invocation.command, args: invocation.args, source: "env" };
+    if ("refused" in invocation) throw new ProgramNotFoundError(`${PROGRAM_VARIABLE}: ${invocation.refused}`);
+    return { command: invocation.command, args: invocation.args };
   }
   const ownEntry = options.ownEntry === void 0 ? kurmisEntry({ env }) : options.ownEntry;
   const own = ownEntry === null ? null : files.realPath(ownEntry) ?? ownEntry;
-  return platform === "win32" ? findOnWindows(tool, env, nodePath, files, own) : findOnPosix(tool, env, nodePath, files, own);
+  return platform === "win32" ? findOnWindows(env, nodePath, files, own) : findOnPosix(env, nodePath, files, own);
 }
-function namedProgram(env, variable, platform) {
-  const own = platform === "win32" ? windowsEnv(env, variable) : env[variable];
+function namedProgram(env, platform) {
+  const own = platform === "win32" ? envValue(env, PROGRAM_VARIABLE) : env[PROGRAM_VARIABLE];
   if (own !== void 0 && own !== "") return own;
-  if (!guardOn(env) || hasVariable(env, variable)) return void 0;
-  const inherited = process.env[variable];
+  if (!guardOn(env) || hasVariable(env, PROGRAM_VARIABLE)) return void 0;
+  const inherited = process.env[PROGRAM_VARIABLE];
   return inherited === void 0 || inherited === "" ? void 0 : inherited;
 }
 var OWN_BUNDLE = "it is kurmis itself, not the real program";
-function findOnPosix(tool, env, nodePath, files, own) {
+function findOnPosix(env, nodePath, files, own) {
   const folders = posixPathFolders(env.PATH);
   const skipped = [];
   for (const folder of folders) {
-    const candidate = import_node_path8.posix.join(folder, tool);
+    const candidate = import_node_path8.posix.join(folder, "claude");
     if (!files.isExecutable(candidate)) continue;
     const real = files.realPath(candidate);
     if (own !== null && real === own) {
       skipped.push(`${candidate}: ${OWN_BUNDLE}`);
       continue;
     }
-    if (real !== null && /\.(js|cjs|mjs)$/i.test(real)) return { command: nodePath, args: [real], source: "path" };
-    return { command: candidate, args: [], source: "path" };
+    if (real !== null && /\.(js|cjs|mjs)$/i.test(real)) return { command: nodePath, args: [real] };
+    return { command: candidate, args: [] };
   }
   const looked = [`the ${countFolders(folders.length)} on PATH`];
   if (env.HOME !== void 0 && import_node_path8.posix.isAbsolute(env.HOME)) {
     const native = import_node_path8.posix.join(env.HOME, ".local", "bin", "claude");
     if (files.isExecutable(native) && (own === null || files.realPath(native) !== own)) {
-      return { command: native, args: [], source: "native-installer" };
+      return { command: native, args: [] };
     }
     looked.push(native);
   }
-  throw notFound(tool, looked, skipped);
+  throw notFound(looked, skipped);
 }
-function findOnWindows(tool, env, nodePath, files, own) {
-  const folders = windowsPathFolders(windowsEnv(env, "PATH"));
-  const extensions = pathExtensions(windowsEnv(env, "PATHEXT"));
+function findOnWindows(env, nodePath, files, own) {
+  const folders = windowsPathFolders(envValue(env, "PATH"));
+  const extensions = pathExtensions(envValue(env, "PATHEXT"));
   const skipped = [];
   const isOwn = (path) => own !== null && (files.realPath(path) ?? path).toLowerCase() === own.toLowerCase();
   for (const folder of folders) {
     for (const extension of extensions) {
-      const candidate = import_node_path8.win32.join(folder, tool + extension);
+      const candidate = import_node_path8.win32.join(folder, `claude${extension}`);
       if (!files.isFile(candidate)) continue;
-      if (extension === ".exe" || extension === ".com") return { command: candidate, args: [], source: "path" };
+      if (extension === ".exe" || extension === ".com") return { command: candidate, args: [] };
       const resolved = resolveShim(candidate, nodePath, files, isOwn);
       if ("refused" in resolved) skipped.push(`${candidate}: ${resolved.refused}`);
       else return resolved;
     }
   }
-  const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => tool + extension).join(", ")})`];
-  const home = windowsEnv(env, "USERPROFILE");
+  const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => `claude${extension}`).join(", ")})`];
+  const home = envValue(env, "USERPROFILE");
   if (home !== void 0 && isAbsoluteWindowsPath(home)) {
     const native = import_node_path8.win32.join(home, ".local", "bin", "claude.exe");
-    if (files.isFile(native)) return { command: native, args: [], source: "native-installer" };
+    if (files.isFile(native)) return { command: native, args: [] };
     looked.push(native);
   }
-  throw notFound(tool, looked, skipped);
+  throw notFound(looked, skipped);
 }
 function resolveShim(shimPath, nodePath, files, isOwn) {
   const bytes = files.read(shimPath, MAX_SHIM_BYTES);
@@ -2508,24 +2560,24 @@ function resolveShim(shimPath, nodePath, files, isOwn) {
   if (invocation.command === shim.target && !startsLikeWindowsProgram(files, shim.target)) {
     const wrapper = import_node_path8.win32.join(import_node_path8.win32.dirname(import_node_path8.win32.dirname(shim.target)), "cli-wrapper.cjs");
     if (files.isFile(wrapper)) {
-      return { command: nodePath, args: [wrapper, ...invocation.args], source: "npm-shim" };
+      return { command: nodePath, args: [wrapper, ...invocation.args] };
     }
     return {
       refused: `it starts ${shim.target}, which is not a Windows program; if this is the npm package, its install step did not run (reinstall it without --ignore-scripts)`
     };
   }
-  return { command: invocation.command, args: invocation.args, source: "npm-shim" };
+  return { command: invocation.command, args: invocation.args };
 }
 function startsLikeWindowsProgram(files, path) {
   const head = files.read(path, 2);
   return head !== null && head[0] === 77 && head[1] === 90;
 }
-function notFound(tool, looked, skipped) {
-  const lines = [`Claude Code (${tool}) was not found. Looked in ${looked.join(" and at ")}.`];
+function notFound(looked, skipped) {
+  const lines = [`Claude Code (claude) was not found. Looked in ${looked.join(" and at ")}.`];
   if (skipped.length > 0) lines.push(`Skipped:
 ${skipped.map((line) => `  ${line}`).join("\n")}`);
   lines.push(`Install Claude Code, or set ${PROGRAM_VARIABLE} to the full path of the program.`);
-  return new ProgramNotFoundError(tool, lines.join("\n"));
+  return new ProgramNotFoundError(lines.join("\n"));
 }
 function countFolders(count) {
   return count === 1 ? "1 folder" : `${String(count)} folders`;
@@ -2539,15 +2591,6 @@ function windowsPathFolders(value) {
 function pathExtensions(value) {
   const listed = (value === void 0 || value.trim() === "" ? DEFAULT_PATHEXT : value).split(";").map((extension) => extension.trim().toLowerCase());
   return [...new Set(listed)].filter((extension) => [".com", ".exe", ".bat", ".cmd"].includes(extension));
-}
-function windowsEnv(env, name) {
-  const exact = env[name];
-  if (exact !== void 0 && exact !== "") return exact;
-  const upper = name.toUpperCase();
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
-  }
-  return exact;
 }
 function regularFile(path) {
   try {
@@ -2721,60 +2764,6 @@ function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
   } finally {
     if (!keepAside) (0, import_node_fs9.rmSync)(aside, { force: true });
   }
-}
-
-// src/platform/system-programs.ts
-var SYSTEM_PROGRAM_VARIABLES = {
-  launchctl: "KURMIS_LAUNCHCTL_PROGRAM",
-  security: "KURMIS_SECURITY_PROGRAM",
-  powershell: "KURMIS_POWERSHELL_PROGRAM",
-  reg: "KURMIS_REG_PROGRAM",
-  taskkill: "KURMIS_TASKKILL_PROGRAM",
-  wscript: "KURMIS_WSCRIPT_PROGRAM"
-};
-function lookup(env, name) {
-  const exact = env[name];
-  if (exact !== void 0 && exact !== "") return exact;
-  const upper = name.toUpperCase();
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === upper && value !== void 0 && value !== "") return value;
-  }
-  return void 0;
-}
-function systemRoot(env = process.env) {
-  const value = lookup(env, "SystemRoot") ?? lookup(env, "windir");
-  return value === void 0 ? "C:\\Windows" : value.replace(/[\\/]+$/, "");
-}
-function realSystemProgram(program, env = process.env) {
-  switch (program) {
-    case "launchctl":
-      return "/bin/launchctl";
-    case "security":
-      return "/usr/bin/security";
-    case "powershell":
-      return `${systemRoot(env)}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-    case "reg":
-      return `${systemRoot(env)}\\System32\\reg.exe`;
-    case "taskkill":
-      return `${systemRoot(env)}\\System32\\taskkill.exe`;
-    case "wscript":
-      return `${systemRoot(env)}\\System32\\wscript.exe`;
-  }
-}
-function systemProgram(program, env = process.env, processEnv = process.env) {
-  const variable = SYSTEM_PROGRAM_VARIABLES[program];
-  return lookup(env, variable) ?? lookup(processEnv, variable) ?? realSystemProgram(program, env);
-}
-function inheritedTestHooks(env, processEnv = process.env) {
-  const out = {};
-  const guarded = lookup(env, GUARD_VARIABLE) === "1" || lookup(processEnv, GUARD_VARIABLE) === "1";
-  const names = [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, ...guarded ? TEST_HOME_VARIABLES : []];
-  for (const name of names) {
-    if (lookup(env, name) !== void 0) continue;
-    const value = lookup(processEnv, name);
-    if (value !== void 0) out[name] = value;
-  }
-  return out;
 }
 
 // src/cli/daemon-client.ts
@@ -3676,7 +3665,7 @@ async function runClaude(args, login, context, deps) {
   if ("error" in userSettings) return fail4(userSettings.error);
   let program;
   try {
-    program = deps.findProgram("claude", { env: context.env, platform: deps.platform });
+    program = deps.findProgram({ env: context.env, platform: deps.platform });
   } catch (error) {
     if (error instanceof ProgramNotFoundError) return fail4(error.message, notStartedExitCode("ENOENT"));
     return fail4(messageOf(error));
@@ -4362,7 +4351,7 @@ async function probeClaudeUsage(login, options) {
   if (options.signal?.aborted === true) return abortedProbe(null);
   let program;
   try {
-    program = findProgram("claude", { env: options.env });
+    program = findProgram({ env: options.env });
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
       return probeFailure(null, "missing", programMissingText());
@@ -7761,7 +7750,7 @@ var LOGOUT_TIMEOUT_MS = 3e4;
 async function signOutLogin(login, env, deps) {
   let problem;
   try {
-    const program = deps.findProgram("claude", { env });
+    const program = deps.findProgram({ env });
     const patch = claudeLoginEnv(login, deps.platform === "win32");
     const result = await deps.runProgram(
       program.command,
@@ -8064,7 +8053,7 @@ Options:
       }
       let program;
       try {
-        program = full.findProgram("claude", { env: context.env });
+        program = full.findProgram({ env: context.env });
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail2(context, error.message);
         throw error;
@@ -8851,15 +8840,15 @@ function parseSettings2(text) {
   if (envMembers.length > 1) throw new SettingsFileError('it has more than one "env" key');
   const envMember = envMembers[0];
   if (envMember === void 0) return { text, top, env: null };
-  const envValue = value.env;
-  if (!isPlainObject3(envValue)) throw new SettingsFileError('its "env" is not a JSON object');
+  const envValue2 = value.env;
+  if (!isPlainObject3(envValue2)) throw new SettingsFileError('its "env" is not a JSON object');
   const node = scanner.object(envMember.valueStart);
   for (const name of ROUTING_VARIABLES) {
     if (node.members.filter((member) => member.name === name).length > 1) {
       throw new SettingsFileError(`its "env" has more than one "${name}" key`);
     }
   }
-  return { text, top, env: { member: envMember, node, value: envValue } };
+  return { text, top, env: { member: envMember, node, value: envValue2 } };
 }
 function layoutOf(parsed) {
   const eol = parsed.text.includes("\r\n") ? "\r\n" : "\n";

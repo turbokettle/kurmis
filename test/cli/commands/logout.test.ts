@@ -32,7 +32,7 @@ function fakeRun(result: Partial<RunResult> = {}, order?: string[]): { runs: Run
   }
 }
 
-const fakeProgram: LogoutDeps['findProgram'] = (tool) => ({ command: `/fake/bin/${tool}`, args: ['--fake'], source: 'env' })
+const fakeProgram: LogoutDeps['findProgram'] = () => ({ command: '/fake/bin/claude', args: ['--fake'] })
 
 /** Adds an extra login with this id and alias to config.json, and makes its folder. */
 function addWithFolder(id: string, alias?: string): string {
@@ -131,8 +131,8 @@ describe('kurmis logout', () => {
     addWithFolder('claudea')
     const missing = createLogoutCommand({
       daemon: fakeDaemonClient(),
-      findProgram: (tool) => {
-        throw new ProgramNotFoundError(tool, 'claude was not found on PATH.')
+      findProgram: () => {
+        throw new ProgramNotFoundError('claude was not found on PATH.')
       },
       runProgram: fakeRun().runProgram,
       platform: 'linux'
@@ -234,8 +234,8 @@ describe('kurmis logout', () => {
 
   it('with keepWhenSignOutFails and the logout CLI missing, names "kurmis logout <id>" as the way out, which removes the login anyway', async () => {
     const folder = addWithFolder(WORK.id, 'work-example')
-    const missing: LogoutDeps['findProgram'] = (tool) => {
-      throw new ProgramNotFoundError(tool, 'claude was not found on PATH.')
+    const missing: LogoutDeps['findProgram'] = () => {
+      throw new ProgramNotFoundError('claude was not found on PATH.')
     }
     const deps = { daemon: fakeDaemonClient(), findProgram: missing, runProgram: fakeRun().runProgram, platform: 'darwin' as const }
     const out = collect()

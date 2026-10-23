@@ -41,19 +41,16 @@ import { kurmisEntry } from './detach.ts'
 import { cmdShimInvocation, decodeCmdShim, isAbsoluteWindowsPath, parseCmdShim } from './npm-shim.ts'
 import { invocationFor } from './run.ts'
 import { guardOn, hasVariable } from './system-program-guard.ts'
-
-export type ToolName = 'claude'
+import { envValue } from './system-programs.ts'
 
 /** How to start the program: `command` with `args` in front of the caller's own arguments. */
 export interface ResolvedProgram {
   command: string
   args: string[]
-  /** Where it was found, for messages and `kurmis status`. */
-  source: 'env' | 'path' | 'npm-shim' | 'native-installer'
 }
 
 export class ProgramNotFoundError extends Error {
-  constructor(readonly tool: ToolName, message: string) {
+  constructor(message: string) {
     super(message)
     this.name = 'ProgramNotFoundError'
   }
@@ -86,7 +83,7 @@ export interface FindProgramOptions {
 }
 
 /** The variable that names the program explicitly. */
-export const PROGRAM_VARIABLE = 'KURMIS_CLAUDE_BIN'
+const PROGRAM_VARIABLE = 'KURMIS_CLAUDE_BIN'
 
 /** PATHEXT when the variable is not set, as cmd.exe assumes. */
 const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD'
@@ -94,92 +91,92 @@ const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD'
 /** A shim is a few hundred bytes; anything much larger is not one. */
 const MAX_SHIM_BYTES = 64 * 1024
 
-/** The program to start for `tool`. Throws `ProgramNotFoundError` with a sentence a person can act on. */
-export function findProgram(tool: ToolName, options: FindProgramOptions = {}): ResolvedProgram {
+/** The Claude Code program to start. Throws `ProgramNotFoundError` with a sentence a person can act on. */
+export function findProgram(options: FindProgramOptions = {}): ResolvedProgram {
   const env = options.env ?? process.env
   const platform = options.platform ?? process.platform
   const nodePath = options.nodePath ?? process.execPath
   const files = options.files ?? realFiles
 
-  const named = namedProgram(env, PROGRAM_VARIABLE, platform)
+  const named = namedProgram(env, platform)
   if (named !== undefined) {
     const invocation = invocationFor(named, [], nodePath)
-    if ('refused' in invocation) throw new ProgramNotFoundError(tool, `${PROGRAM_VARIABLE}: ${invocation.refused}`)
-    return { command: invocation.command, args: invocation.args, source: 'env' }
+    if ('refused' in invocation) throw new ProgramNotFoundError(`${PROGRAM_VARIABLE}: ${invocation.refused}`)
+    return { command: invocation.command, args: invocation.args }
   }
   const ownEntry = options.ownEntry === undefined ? kurmisEntry({ env }) : options.ownEntry
   const own = ownEntry === null ? null : files.realPath(ownEntry) ?? ownEntry
   return platform === 'win32'
-    ? findOnWindows(tool, env, nodePath, files, own)
-    : findOnPosix(tool, env, nodePath, files, own)
+    ? findOnWindows(env, nodePath, files, own)
+    : findOnPosix(env, nodePath, files, own)
 }
 
 /**
- * The program `variable` names in `env`. While the test guard is on (`system-program-guard.ts`),
+ * The program `PROGRAM_VARIABLE` names in `env`. While the test guard is on (`system-program-guard.ts`),
  * an `env` without the variable gets the one of this process's environment, so a test that
  * hands kurmis an environment of its own gets the fake or failing program `test/setup.ts` names
  * rather than a search of PATH that could find the real one. An empty value in `env` still means
  * that PATH is searched; the tests of the search use that.
  */
-function namedProgram(env: NodeJS.ProcessEnv, variable: string, platform: NodeJS.Platform): string | undefined {
-  const own = platform === 'win32' ? windowsEnv(env, variable) : env[variable]
+function namedProgram(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string | undefined {
+  const own = platform === 'win32' ? envValue(env, PROGRAM_VARIABLE) : env[PROGRAM_VARIABLE]
   if (own !== undefined && own !== '') return own
-  if (!guardOn(env) || hasVariable(env, variable)) return undefined
-  const inherited = process.env[variable]
+  if (!guardOn(env) || hasVariable(env, PROGRAM_VARIABLE)) return undefined
+  const inherited = process.env[PROGRAM_VARIABLE]
   return inherited === undefined || inherited === '' ? undefined : inherited
 }
 
 const OWN_BUNDLE = 'it is kurmis itself, not the real program'
 
-function findOnPosix(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles, own: string | null): ResolvedProgram {
+function findOnPosix(env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles, own: string | null): ResolvedProgram {
   const folders = posixPathFolders(env.PATH)
   const skipped: string[] = []
   for (const folder of folders) {
-    const candidate = posix.join(folder, tool)
+    const candidate = posix.join(folder, 'claude')
     if (!files.isExecutable(candidate)) continue
     const real = files.realPath(candidate)
     if (own !== null && real === own) {
       skipped.push(`${candidate}: ${OWN_BUNDLE}`)
       continue
     }
-    if (real !== null && /\.(js|cjs|mjs)$/i.test(real)) return { command: nodePath, args: [real], source: 'path' }
-    return { command: candidate, args: [], source: 'path' }
+    if (real !== null && /\.(js|cjs|mjs)$/i.test(real)) return { command: nodePath, args: [real] }
+    return { command: candidate, args: [] }
   }
   const looked = [`the ${countFolders(folders.length)} on PATH`]
   if (env.HOME !== undefined && posix.isAbsolute(env.HOME)) {
     const native = posix.join(env.HOME, '.local', 'bin', 'claude')
     if (files.isExecutable(native) && (own === null || files.realPath(native) !== own)) {
-      return { command: native, args: [], source: 'native-installer' }
+      return { command: native, args: [] }
     }
     looked.push(native)
   }
-  throw notFound(tool, looked, skipped)
+  throw notFound(looked, skipped)
 }
 
-function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles, own: string | null): ResolvedProgram {
-  const folders = windowsPathFolders(windowsEnv(env, 'PATH'))
-  const extensions = pathExtensions(windowsEnv(env, 'PATHEXT'))
+function findOnWindows(env: NodeJS.ProcessEnv, nodePath: string, files: ProgramFiles, own: string | null): ResolvedProgram {
+  const folders = windowsPathFolders(envValue(env, 'PATH'))
+  const extensions = pathExtensions(envValue(env, 'PATHEXT'))
   const skipped: string[] = []
   const isOwn = (path: string): boolean => own !== null &&
     (files.realPath(path) ?? path).toLowerCase() === own.toLowerCase()
   for (const folder of folders) {
     for (const extension of extensions) {
-      const candidate = win32.join(folder, tool + extension)
+      const candidate = win32.join(folder, `claude${extension}`)
       if (!files.isFile(candidate)) continue
-      if (extension === '.exe' || extension === '.com') return { command: candidate, args: [], source: 'path' }
+      if (extension === '.exe' || extension === '.com') return { command: candidate, args: [] }
       const resolved = resolveShim(candidate, nodePath, files, isOwn)
       if ('refused' in resolved) skipped.push(`${candidate}: ${resolved.refused}`)
       else return resolved
     }
   }
-  const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => tool + extension).join(', ')})`]
-  const home = windowsEnv(env, 'USERPROFILE')
+  const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => `claude${extension}`).join(', ')})`]
+  const home = envValue(env, 'USERPROFILE')
   if (home !== undefined && isAbsoluteWindowsPath(home)) {
     const native = win32.join(home, '.local', 'bin', 'claude.exe')
-    if (files.isFile(native)) return { command: native, args: [], source: 'native-installer' }
+    if (files.isFile(native)) return { command: native, args: [] }
     looked.push(native)
   }
-  throw notFound(tool, looked, skipped)
+  throw notFound(looked, skipped)
 }
 
 /**
@@ -201,13 +198,13 @@ function resolveShim(shimPath: string, nodePath: string, files: ProgramFiles, is
     // Claude Code's npm package before its postinstall step ran (see the top of this file).
     const wrapper = win32.join(win32.dirname(win32.dirname(shim.target)), 'cli-wrapper.cjs')
     if (files.isFile(wrapper)) {
-      return { command: nodePath, args: [wrapper, ...invocation.args], source: 'npm-shim' }
+      return { command: nodePath, args: [wrapper, ...invocation.args] }
     }
     return {
       refused: `it starts ${shim.target}, which is not a Windows program; if this is the npm package, its install step did not run (reinstall it without --ignore-scripts)`
     }
   }
-  return { command: invocation.command, args: invocation.args, source: 'npm-shim' }
+  return { command: invocation.command, args: invocation.args }
 }
 
 function startsLikeWindowsProgram(files: ProgramFiles, path: string): boolean {
@@ -215,11 +212,11 @@ function startsLikeWindowsProgram(files: ProgramFiles, path: string): boolean {
   return head !== null && head[0] === 0x4d && head[1] === 0x5a // "MZ"
 }
 
-function notFound(tool: ToolName, looked: string[], skipped: string[]): ProgramNotFoundError {
-  const lines = [`Claude Code (${tool}) was not found. Looked in ${looked.join(' and at ')}.`]
+function notFound(looked: string[], skipped: string[]): ProgramNotFoundError {
+  const lines = [`Claude Code (claude) was not found. Looked in ${looked.join(' and at ')}.`]
   if (skipped.length > 0) lines.push(`Skipped:\n${skipped.map((line) => `  ${line}`).join('\n')}`)
   lines.push(`Install Claude Code, or set ${PROGRAM_VARIABLE} to the full path of the program.`)
-  return new ProgramNotFoundError(tool, lines.join('\n'))
+  return new ProgramNotFoundError(lines.join('\n'))
 }
 
 function countFolders(count: number): string {
@@ -254,20 +251,6 @@ export function pathExtensions(value: string | undefined): string[] {
     .split(';')
     .map((extension) => extension.trim().toLowerCase())
   return [...new Set(listed)].filter((extension) => ['.com', '.exe', '.bat', '.cmd'].includes(extension))
-}
-
-/**
- * A variable from a Windows environment, whose names are case-insensitive: a copied
- * `process.env` has `Path`, not `PATH`. The first spelling with a non-empty value wins.
- */
-export function windowsEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const exact = env[name]
-  if (exact !== undefined && exact !== '') return exact
-  const upper = name.toUpperCase()
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === upper && value !== undefined && value !== '') return value
-  }
-  return exact
 }
 
 /**

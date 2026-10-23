@@ -106,7 +106,7 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
 
   let program: ResolvedProgram
   try {
-    program = findProgram('claude', { env: options.env })
+    program = findProgram({ env: options.env })
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
       return probeFailure(null, 'missing', programMissingText())

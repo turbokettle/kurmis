@@ -150,7 +150,7 @@ async function runClaude(args: string[], login: string | null, context: CliConte
 
   let program: ResolvedProgram
   try {
-    program = deps.findProgram('claude', { env: context.env, platform: deps.platform })
+    program = deps.findProgram({ env: context.env, platform: deps.platform })
   } catch (error) {
     // 127, as a shell answers for a program it cannot find (see `notStartedExitCode`).
     if (error instanceof ProgramNotFoundError) return fail(error.message, notStartedExitCode('ENOENT'))

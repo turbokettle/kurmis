@@ -62,7 +62,7 @@ function holdLock(id: string, pid = process.ppid): void {
   writeFileSync(loginLockPath(id), JSON.stringify({ pid, createdAt: Date.now(), token: 'another-run' }))
 }
 
-const fakeProgram: LoginDeps['findProgram'] = (tool) => ({ command: `/fake/bin/${tool}`, args: ['--fake'], source: 'env' })
+const fakeProgram: LoginDeps['findProgram'] = () => ({ command: '/fake/bin/claude', args: ['--fake'] })
 
 interface Run {
   program: string
@@ -430,8 +430,8 @@ describe('kurmis login without a login', () => {
   it('reports a missing claude program and creates nothing', async () => {
     const runner = fakeRunner(claudeSignsIn())
     const { login } = command(runner, {
-      findProgram: (tool) => {
-        throw new ProgramNotFoundError(tool, 'claude was not found on PATH.')
+      findProgram: () => {
+        throw new ProgramNotFoundError('claude was not found on PATH.')
       }
     })
     const out = collect()

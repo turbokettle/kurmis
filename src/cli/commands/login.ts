@@ -411,7 +411,7 @@ Options:
 
       let program: ResolvedProgram
       try {
-        program = full.findProgram('claude', { env: context.env })
+        program = full.findProgram({ env: context.env })
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail(context, error.message)
         throw error

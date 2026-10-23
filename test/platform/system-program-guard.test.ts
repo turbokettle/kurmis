@@ -115,7 +115,7 @@ describe('the guard against the real claude run through Node', () => {
     mkdirSync(bin, { recursive: true })
     symlinkSync(script, join(bin, 'claude'))
     // An empty KURMIS_CLAUDE_BIN asks for the PATH search, as only the tests of the search do.
-    const found = findProgram('claude', { env: { PATH: bin, KURMIS_CLAUDE_BIN: '' }, platform: 'darwin', ownEntry: null })
+    const found = findProgram({ env: { PATH: bin, KURMIS_CLAUDE_BIN: '' }, platform: 'darwin', ownEntry: null })
     expect(found.command).toBe(process.execPath)
     const run = await runProgram(found.command, found.args, { timeoutMs: 10_000, env: {} })
     expect(run.error).toMatch(/KURMIS_REFUSE_SYSTEM_PROGRAMS/)
@@ -127,9 +127,9 @@ describe('the guard against the real claude run through Node', () => {
     const named = process.env.KURMIS_CLAUDE_BIN ?? ''
     expect(named).not.toBe('')
     for (const platform of ['darwin', 'linux', 'win32'] as const) {
-      expect(findProgram('claude', { env: { PATH: '/usr/local/bin:/opt/homebrew/bin' }, platform, ownEntry: null }))
-        .toEqual({ command: process.execPath, args: [named], source: 'env' })
-      expect(findProgram('claude', { env: {}, platform, ownEntry: null }).args).toEqual([named])
+      expect(findProgram({ env: { PATH: '/usr/local/bin:/opt/homebrew/bin' }, platform, ownEntry: null }))
+        .toEqual({ command: process.execPath, args: [named] })
+      expect(findProgram({ env: {}, platform, ownEntry: null }).args).toEqual([named])
     }
   })
 })

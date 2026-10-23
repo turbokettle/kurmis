@@ -29,7 +29,7 @@ export interface SignOutDeps {
 export async function signOutLogin(login: LoginRef, env: NodeJS.ProcessEnv, deps: SignOutDeps): Promise<string | null> {
   let problem: string
   try {
-    const program = deps.findProgram('claude', { env })
+    const program = deps.findProgram({ env })
     // On Windows the CLI deletes the record in Credential Manager only with the switch on.
     const patch = claudeLoginEnv(login, deps.platform === 'win32')
     const result = await deps.runProgram(program.command, [...program.args, 'auth', 'logout'],

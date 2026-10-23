@@ -25,8 +25,12 @@ export const SYSTEM_PROGRAM_VARIABLES: Readonly<Record<SystemProgram, string>> =
   wscript: 'KURMIS_WSCRIPT_PROGRAM'
 }
 
-/** A variable by name; Windows names are matched without regard to case, and an empty value counts as unset. */
-function lookup(env: Readonly<Record<string, string | undefined>>, name: string): string | undefined {
+/**
+ * A variable by name, matched without regard to case as Windows does (a copied `process.env` has
+ * `Path`, not `PATH`). The exact spelling wins, then the first other spelling; an empty value
+ * counts as unset.
+ */
+export function envValue(env: Readonly<Record<string, string | undefined>>, name: string): string | undefined {
   const exact = env[name]
   if (exact !== undefined && exact !== '') return exact
   const upper = name.toUpperCase()
@@ -38,7 +42,7 @@ function lookup(env: Readonly<Record<string, string | undefined>>, name: string)
 
 /** The Windows folder: `SystemRoot`, else `windir`, else `C:\Windows`, without a trailing backslash. */
 export function systemRoot(env: NodeJS.ProcessEnv = process.env): string {
-  const value = lookup(env, 'SystemRoot') ?? lookup(env, 'windir')
+  const value = envValue(env, 'SystemRoot') ?? envValue(env, 'windir')
   return value === undefined ? 'C:\\Windows' : value.replace(/[\\/]+$/, '')
 }
 
@@ -70,7 +74,7 @@ export function systemProgram(
   processEnv: NodeJS.ProcessEnv = process.env
 ): string {
   const variable = SYSTEM_PROGRAM_VARIABLES[program]
-  return lookup(env, variable) ?? lookup(processEnv, variable) ?? realSystemProgram(program, env)
+  return envValue(env, variable) ?? envValue(processEnv, variable) ?? realSystemProgram(program, env)
 }
 
 /**
@@ -83,11 +87,11 @@ export function systemProgram(
  */
 export function inheritedTestHooks(env: NodeJS.ProcessEnv, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {}
-  const guarded = lookup(env, GUARD_VARIABLE) === '1' || lookup(processEnv, GUARD_VARIABLE) === '1'
+  const guarded = envValue(env, GUARD_VARIABLE) === '1' || envValue(processEnv, GUARD_VARIABLE) === '1'
   const names = [...Object.values(SYSTEM_PROGRAM_VARIABLES), GUARD_VARIABLE, REFUSAL_LOG_VARIABLE, ...(guarded ? TEST_HOME_VARIABLES : [])]
   for (const name of names) {
-    if (lookup(env, name) !== undefined) continue
-    const value = lookup(processEnv, name)
+    if (envValue(env, name) !== undefined) continue
+    const value = envValue(processEnv, name)
     if (value !== undefined) out[name] = value
   }
   return out

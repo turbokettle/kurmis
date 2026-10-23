@@ -18,8 +18,9 @@ import { spawn } from 'node:child_process'
 import { realpathSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { posix, win32 } from 'node:path'
-import { posixPathFolders, windowsEnv, windowsPathFolders } from './programs.ts'
+import { posixPathFolders, windowsPathFolders } from './programs.ts'
 import { refusedByGuard, withGuard } from './system-program-guard.ts'
+import { envValue } from './system-programs.ts'
 
 /** The test hook naming the bundle a daemon is started from. */
 export const ENTRY_VARIABLE = 'KURMIS_ENTRY'
@@ -72,7 +73,7 @@ export interface NodeForJobsOptions {
  * `/tmp` and `/var/folders` (macOS' per-user temporary folders), with their `/private` forms.
  */
 export function temporaryFolders(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
-  const named = ['TMPDIR', 'TEMP', 'TMP'].map((name) => (platform === 'win32' ? windowsEnv(env, name) : env[name]))
+  const named = ['TMPDIR', 'TEMP', 'TMP'].map((name) => (platform === 'win32' ? envValue(env, name) : env[name]))
   const fixed = platform === 'win32' ? [] : ['/tmp', '/private/tmp', '/var/folders', '/private/var/folders']
   return [...new Set([tmpdir(), ...named, ...fixed].filter((folder): folder is string => folder !== undefined && folder !== ''))]
 }
@@ -118,7 +119,7 @@ export function nodeForJobs(options: NodeForJobsOptions = {}): string {
   }
   const running = isTemporaryPath(execPath, temporary, platform) && !isTemporaryPath(target, temporary, platform) ? target : execPath
   const windows = platform === 'win32'
-  const folders = windows ? windowsPathFolders(windowsEnv(env, 'PATH')) : posixPathFolders(env.PATH)
+  const folders = windows ? windowsPathFolders(envValue(env, 'PATH')) : posixPathFolders(env.PATH)
   for (const folder of folders) {
     const candidate = windows ? win32.join(folder, 'node.exe') : posix.join(folder, 'node')
     try {

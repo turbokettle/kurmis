@@ -643,9 +643,9 @@ describe('kurmis setup --uninstall-and-logout', () => {
     const logOutLogin = createLoginLogout({
       daemon,
       platform,
-      findProgram: (tool) => {
-        if (options.cliMissing === true) throw new ProgramNotFoundError(tool, `${tool} was not found on PATH.`)
-        return { command: `/fake/bin/${tool}`, args: [], source: 'env' }
+      findProgram: () => {
+        if (options.cliMissing === true) throw new ProgramNotFoundError('claude was not found on PATH.')
+        return { command: '/fake/bin/claude', args: [] }
       },
       async runProgram(program, args, run) {
         const folder = run.env?.['CLAUDE_CONFIG_DIR'] ?? ''
@@ -824,8 +824,8 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(existsSync(kurmisHome)).toBe(true)
 
     // The way out, with the CLIs still missing.
-    const missing = (tool: 'claude') => {
-      throw new ProgramNotFoundError(tool, `${tool} was not found on PATH.`)
+    const missing = () => {
+      throw new ProgramNotFoundError('claude was not found on PATH.')
     }
     const logout = createLogoutCommand({ daemon: fakeDaemonClient({ running: false }), findProgram: missing, platform: 'darwin' })
     expect(await logout.run(['workclaude'], collect().context)).toBe(0)
