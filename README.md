@@ -15,23 +15,23 @@ login changes is which subscription is billed.
 ## Requirements
 
 - **Node.js 22 or newer.** The bundle is built for Node 22.
-- **git**, and ssh access to the `turbokettle/kurmis` repository on GitHub, because npm clones it.
+- **git**, because npm clones the repository.
 - Claude Code (`claude`) installed as usual and on your `PATH`.
 - macOS or Windows. Linux should work but is not tested.
-- A machine only you use. The daemon listens on a fixed local port, and another user's program
+- A machine only you use. The daemon listens on one known local port, and another user's program
   that took that port first would receive kurmis' key and, after `kurmis setup`, Claude Code's
   sign-in token.
 
 ## Install
 
 ```sh
-npm i -g git+ssh://git@github.com/turbokettle/kurmis.git
+npm i -g git+https://github.com/turbokettle/kurmis.git
 ```
 
 To install a given commit, tag or branch, add it after `#`:
 
 ```sh
-npm i -g "git+ssh://git@github.com/turbokettle/kurmis.git#main"
+npm i -g "git+https://github.com/turbokettle/kurmis.git#main"
 ```
 
 The repository holds the built program (`dist/kurmis.cjs`), so the install runs no build step
