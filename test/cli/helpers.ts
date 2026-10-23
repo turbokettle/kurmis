@@ -70,7 +70,10 @@ export function statusAnswer(logins: LoginStatus[], patch: Partial<StatusAnswer>
   }
 }
 
-/** A status report of the daemon's answer, global routing off and this kurmis of the daemon's version, unless `patch` says otherwise. */
+/**
+ * A status report made from the daemon's answer, with global routing off and this kurmis
+ * reported as the same version as the daemon, unless `patch` says otherwise.
+ */
 export function daemonStatus(answer: StatusAnswer, patch: Partial<StatusReport> = {}): StatusReport {
   return { ...daemonReport(answer, 'off', answer.version), ...patch }
 }

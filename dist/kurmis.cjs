@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101631" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101652" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
