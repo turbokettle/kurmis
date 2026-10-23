@@ -9,7 +9,8 @@ import type { LoginRef } from '../../src/data/login-id.ts'
 import { configPath, statePath } from '../../src/data/paths.ts'
 import { LoginTable } from '../../src/daemon/logins.ts'
 import type { TokenSource } from '../../src/daemon/tokens.ts'
-import { UsagePoller, type ProbeAnswer, type ProbeFunction } from '../../src/daemon/usage-poller.ts'
+import type { ProbeResult } from '../../src/daemon/claude-probe.ts'
+import { UsagePoller, type ProbeFunction } from '../../src/daemon/usage-poller.ts'
 import { loginOf, OWN_CLAUDE } from '../logins.ts'
 import { freshHome, writeLogins } from './harness.ts'
 
@@ -98,7 +99,7 @@ describe('a probe', () => {
 
   test('that fails keeps the previous windows and records the error', async () => {
     writeLogins({})
-    let answer: ProbeAnswer = { ok: true, signedIn: true, usage: usage(OWN_CLAUDE, 30) }
+    let answer: ProbeResult = { ok: true, signedIn: true, usage: usage(OWN_CLAUDE, 30) }
     const { table, poller } = setup(() => Promise.resolve(answer))
     await poller.probe(OWN_CLAUDE, 'request')
     answer = { ok: false, signedIn: null, reason: 'timeout', error: 'The probe timed out.' }
@@ -404,7 +405,7 @@ describe("a probe and the login's email", () => {
     writeLogins({ claude: { [WORK]: {} } })
     claudeEmails.set(OWN_CLAUDE, 'signed.out@example.com')
     claudeEmails.set(WORK, null)
-    let work: ProbeAnswer = { ok: true, signedIn: true, usage: usage(WORK, 1) }
+    let work: ProbeResult = { ok: true, signedIn: true, usage: usage(WORK, 1) }
     const { table, poller } = setup(({ id }) => Promise.resolve(id === OWN_CLAUDE
       ? { ok: true, signedIn: false, usage: emptyAccountUsage(id, Date.now()) }
       : work))

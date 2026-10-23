@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023102115" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023102152" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -4123,8 +4123,96 @@ function errorCode(error) {
   return typeof code === "string" ? code : null;
 }
 
-// src/daemon/probe-result.ts
+// src/daemon/claude-probe.ts
+var CLAUDE_PROBE_TIMEOUT_MS = 3e4;
+var CLAUDE_PROBE_ARGS = [
+  "-p",
+  "--input-format",
+  "stream-json",
+  "--output-format",
+  "stream-json",
+  // The CLI refuses stream-json output without it.
+  "--verbose",
+  "--setting-sources=",
+  "--strict-mcp-config",
+  "--mcp-config",
+  '{"mcpServers":{}}',
+  "--no-session-persistence"
+];
 var PROBE_CLOSE_GRACE_MS = 5e3;
+var PROBE_SETTINGS = { DISABLE_AUTOUPDATER: "1" };
+async function probeClaudeUsage(login, options) {
+  const now = options.now ?? Date.now;
+  const timeoutMs = options.timeoutMs ?? CLAUDE_PROBE_TIMEOUT_MS;
+  if (options.signal?.aborted === true) return abortedProbe(null);
+  let program;
+  try {
+    program = findProgram({ env: options.env });
+  } catch (error) {
+    if (error instanceof ProgramNotFoundError) {
+      return probeFailure(null, "missing", programMissingText());
+    }
+    return probeFailure(null, "other", "The claude program could not be looked up.");
+  }
+  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(login), ...PROBE_SETTINGS });
+  const cwd = probeWorkFolder();
+  try {
+    makePrivateDirSync(cwd);
+    if (login.usedByPlainClaude) makePrivateDirSync(ownClaudeProbeFolder());
+  } catch {
+    return probeFailure(null, "other", "The usage probe could not create its folder in the kurmis data folder.");
+  }
+  let waiting = null;
+  const claude = startFrameProcess(program.command, [...program.args, ...CLAUDE_PROBE_ARGS], {
+    env,
+    cwd,
+    timeoutMs,
+    signal: options.signal,
+    onFrame: (frame) => {
+      const reply = controlReply(frame);
+      const pending = waiting;
+      if (reply === null || pending === null || reply.id !== pending.id) return;
+      waiting = null;
+      pending.resolve(reply.reply);
+    }
+  });
+  const ask = (requestId, request2) => {
+    const reply = new Promise((resolve8) => {
+      waiting = { id: requestId, resolve: resolve8 };
+    });
+    claude.send({ type: "control_request", request_id: requestId, request: request2 });
+    return Promise.race([
+      reply.then((value) => ({ kind: "reply", value })),
+      claude.exited.then((exit2) => ({ kind: "ended", exit: exit2 }))
+    ]);
+  };
+  const result = await converse(ask, login.id, timeoutMs, now, options.previous ?? null);
+  const exit = await claude.close(PROBE_CLOSE_GRACE_MS);
+  if (!result.ok && exit.end === "aborted") return abortedProbe(result.signedIn);
+  return result;
+}
+async function converse(ask, id, timeoutMs, now, previous) {
+  const init = await ask("kurmis_1", { subtype: "initialize" });
+  if (init.kind === "ended") return failureForExit(init.exit, timeoutMs, null);
+  if (!init.value.ok) return probeFailure(null, "upstream_error", "claude answered the start of the usage probe with an error.");
+  const planAtStart = initializePlan(init.value.response);
+  const usage = await ask("kurmis_2", { subtype: "get_usage", skip_behaviors: true });
+  if (usage.kind === "ended") return failureForExit(usage.exit, timeoutMs, planAtStart);
+  if (!usage.value.ok) return probeFailure(planAtStart, "upstream_error", "Claude answered the usage request with an error.");
+  const answer2 = usage.value.response;
+  if (!isRecord(answer2)) return probeFailure(planAtStart, "invalid", "Claude's answer to the usage request could not be read.");
+  const available = answer2.rate_limits_available === true;
+  const signedIn = available || typeof answer2.subscription_type === "string" && answer2.subscription_type !== "";
+  if (available && !isRecord(answer2.rate_limits)) {
+    return probeFailure(true, "upstream_error", "Claude could not fetch the plan usage from Anthropic.");
+  }
+  return { ok: true, signedIn, usage: usageFromGetUsage(id, answer2, now(), previous) };
+}
+function initializePlan(response) {
+  if (!isRecord(response) || !isRecord(response.account)) return null;
+  const plan = response.account.subscriptionType;
+  return typeof plan === "string" && plan !== "";
+}
 function programMissingText() {
   return 'The claude program was not found on the PATH the kurmis daemon was started with. Install Claude Code, or put claude on PATH, and run "kurmis daemon restart" from a shell that finds it; or set KURMIS_CLAUDE_BIN to the program.';
 }
@@ -4159,111 +4247,6 @@ function failureForExit(exit, timeoutMs, signedIn) {
 }
 function safeCode(code) {
   return /^[A-Z0-9_]{1,32}$/.test(code) ? code : "unknown error";
-}
-function replyOrExit(reply, exited) {
-  return Promise.race([
-    reply.then((value) => ({ kind: "reply", value })),
-    exited.then((exit) => ({ kind: "ended", exit }))
-  ]);
-}
-var PendingReplies = class {
-  waiting = /* @__PURE__ */ new Map();
-  /** A promise for the reply to request `id`. Ask for it before the request is sent. */
-  wait(id) {
-    return new Promise((resolve8) => {
-      this.waiting.set(id, resolve8);
-    });
-  }
-  /** Hands a reply to whoever waits for it. A reply nobody waits for is dropped. */
-  settle(id, value) {
-    const resolve8 = this.waiting.get(id);
-    if (resolve8 === void 0) return;
-    this.waiting.delete(id);
-    resolve8(value);
-  }
-};
-
-// src/daemon/claude-probe.ts
-var CLAUDE_PROBE_TIMEOUT_MS = 3e4;
-var CLAUDE_PROBE_ARGS = [
-  "-p",
-  "--input-format",
-  "stream-json",
-  "--output-format",
-  "stream-json",
-  // The CLI refuses stream-json output without it.
-  "--verbose",
-  "--setting-sources=",
-  "--strict-mcp-config",
-  "--mcp-config",
-  '{"mcpServers":{}}',
-  "--no-session-persistence"
-];
-var TOKEN_VARIABLES = { CLAUDE_CODE_OAUTH_TOKEN: void 0, CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: void 0 };
-var PROBE_SETTINGS = { DISABLE_AUTOUPDATER: "1" };
-async function probeClaudeUsage(login, options) {
-  const now = options.now ?? Date.now;
-  const timeoutMs = options.timeoutMs ?? CLAUDE_PROBE_TIMEOUT_MS;
-  if (options.signal?.aborted === true) return abortedProbe(null);
-  let program;
-  try {
-    program = findProgram({ env: options.env });
-  } catch (error) {
-    if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, "missing", programMissingText());
-    }
-    return probeFailure(null, "other", "The claude program could not be looked up.");
-  }
-  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(login), ...TOKEN_VARIABLES, ...PROBE_SETTINGS });
-  const cwd = probeWorkFolder();
-  try {
-    makePrivateDirSync(cwd);
-    if (login.usedByPlainClaude) makePrivateDirSync(ownClaudeProbeFolder());
-  } catch {
-    return probeFailure(null, "other", "The usage probe could not create its folder in the kurmis data folder.");
-  }
-  const replies = new PendingReplies();
-  const claude = startFrameProcess(program.command, [...program.args, ...CLAUDE_PROBE_ARGS], {
-    env,
-    cwd,
-    timeoutMs,
-    signal: options.signal,
-    onFrame: (frame) => {
-      const reply = controlReply(frame);
-      if (reply !== null) replies.settle(reply.id, reply.reply);
-    }
-  });
-  const result = await converse(claude, replies, login.id, timeoutMs, now, options.previous ?? null);
-  const exit = await claude.close(PROBE_CLOSE_GRACE_MS);
-  if (!result.ok && exit.end === "aborted") return abortedProbe(result.signedIn);
-  return result;
-}
-async function converse(claude, replies, id, timeoutMs, now, previous) {
-  const ask = (requestId, request2) => {
-    const reply = replies.wait(requestId);
-    claude.send({ type: "control_request", request_id: requestId, request: request2 });
-    return replyOrExit(reply, claude.exited);
-  };
-  const init = await ask("kurmis_1", { subtype: "initialize" });
-  if (init.kind === "ended") return failureForExit(init.exit, timeoutMs, null);
-  if (!init.value.ok) return probeFailure(null, "upstream_error", "claude answered the start of the usage probe with an error.");
-  const planAtStart = initializePlan(init.value.response);
-  const usage = await ask("kurmis_2", { subtype: "get_usage", skip_behaviors: true });
-  if (usage.kind === "ended") return failureForExit(usage.exit, timeoutMs, planAtStart);
-  if (!usage.value.ok) return probeFailure(planAtStart, "upstream_error", "Claude answered the usage request with an error.");
-  const answer2 = usage.value.response;
-  if (!isRecord(answer2)) return probeFailure(planAtStart, "invalid", "Claude's answer to the usage request could not be read.");
-  const available = answer2.rate_limits_available === true;
-  const signedIn = available || typeof answer2.subscription_type === "string" && answer2.subscription_type !== "";
-  if (available && !isRecord(answer2.rate_limits)) {
-    return probeFailure(true, "upstream_error", "Claude could not fetch the plan usage from Anthropic.");
-  }
-  return { ok: true, signedIn, usage: usageFromGetUsage(id, answer2, now(), previous) };
-}
-function initializePlan(response) {
-  if (!isRecord(response) || !isRecord(response.account)) return null;
-  const plan = response.account.subscriptionType;
-  return typeof plan === "string" && plan !== "";
 }
 function controlReply(frame) {
   if (!isRecord(frame) || frame.type !== "control_response" || !isRecord(frame.response)) return null;

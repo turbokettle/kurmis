@@ -44,22 +44,36 @@ import { claudeProbeEnv } from '../data/login-env.ts'
 import type { LoginRef } from '../data/login-id.ts'
 import { ownClaudeProbeFolder, probeWorkFolder } from '../data/paths.ts'
 import { makePrivateDirSync } from '../platform/files.ts'
-import { startFrameProcess, type FrameProcess } from '../platform/frame-process.ts'
+import { startFrameProcess, type FrameProcessExit } from '../platform/frame-process.ts'
 import { findProgram, ProgramNotFoundError, type ResolvedProgram } from '../platform/programs.ts'
-import {
-  abortedProbe,
-  failureForExit,
-  PendingReplies,
-  PROBE_CLOSE_GRACE_MS,
-  probeFailure,
-  programMissingText,
-  replyOrExit,
-  type ProbeOptions,
-  type ProbeResult,
-  type ReplyOrExit
-} from './probe-result.ts'
+import type { LogReason } from '../data/log.ts'
 
-export type { ProbeOptions, ProbeResult } from './probe-result.ts'
+export interface ProbeOptions {
+  /** The daemon's environment. The login's environment changes are applied to a copy of it. */
+  env: NodeJS.ProcessEnv
+  now?: () => number
+  /** How long the whole probe may take, from the start of the CLI to its exit. */
+  timeoutMs?: number
+  /** Aborting kills the CLI; the daemon's `close()` aborts the probes that are running. */
+  signal?: AbortSignal
+  /** The login's last snapshot, which `usageFromGetUsage` weighs the probe's answer against. */
+  previous?: AccountUsage | null
+}
+
+/**
+ * What a probe answers. `error` in a failed answer is shown by `kurmis status` and stored in
+ * `state.json`, so it is always one of the fixed sentences written in this file. Nothing the CLI
+ * printed, no token and no email ever goes into it; an exit code or a number of seconds may.
+ */
+export type ProbeResult =
+  | {
+      ok: true
+      signedIn: boolean
+      usage: AccountUsage
+    }
+  | { ok: false; signedIn: boolean | null; reason: LogReason; error: string }
+
+type ProbeFailure = Extract<ProbeResult, { ok: false }>
 
 /**
  * How long a Claude probe may take in all, from the start of the CLI to its exit. A probe
@@ -84,19 +98,23 @@ export const CLAUDE_PROBE_ARGS: readonly string[] = [
 ]
 
 /**
- * Variables removed from the probe's environment on top of `claudeProbeEnv`'s. Either one makes
- * the CLI use the token it holds instead of the login's stored one, so the probe would report
- * someone else's usage.
+ * How long a probe waits, after it has its answer and has closed the CLI's input, for the CLI to
+ * exit before killing it. The CLI exits within a fraction of a second once its input ends.
+ * Waiting matters because the CLI may just have renewed the token: the daemon reads the
+ * credentials again after the probe and must find the new ones on disk.
  */
-const TOKEN_VARIABLES = { CLAUDE_CODE_OAUTH_TOKEN: undefined, CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: undefined }
+const PROBE_CLOSE_GRACE_MS = 5_000
 
 /**
- * Set on every probe, so a CLI the daemon starts every 15 minutes does not update itself in the
- * background. Updating is left to the CLIs the person starts.
+ * Set on every probe, so a claude the daemon starts every 15 minutes does not update itself in
+ * the background. Updating is left to the claude the person starts.
  */
 const PROBE_SETTINGS = { DISABLE_AUTOUPDATER: '1' }
 
 type ControlReply = { ok: true; response: unknown } | { ok: false }
+
+/** What a probe got for one request: the CLI's reply, or the end of the CLI before it replied. */
+type ReplyOrExit = { kind: 'reply'; value: ControlReply } | { kind: 'ended'; exit: FrameProcessExit }
 
 /** Asks one Claude login for its plan usage. Never rejects. */
 export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): Promise<ProbeResult> {
@@ -114,7 +132,7 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
     return probeFailure(null, 'other', 'The claude program could not be looked up.')
   }
 
-  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(login), ...TOKEN_VARIABLES, ...PROBE_SETTINGS })
+  const env = applyEnvPatch(options.env, { ...claudeProbeEnv(login), ...PROBE_SETTINGS })
   const cwd = probeWorkFolder()
   try {
     makePrivateDirSync(cwd)
@@ -123,7 +141,9 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
     return probeFailure(null, 'other', 'The usage probe could not create its folder in the kurmis data folder.')
   }
 
-  const replies = new PendingReplies<ControlReply>()
+  // The probe sends one request at a time and waits for its reply. A reply to any other request
+  // id is dropped.
+  let waiting: { id: string; resolve: (reply: ControlReply) => void } | null = null
   const claude = startFrameProcess(program.command, [...program.args, ...CLAUDE_PROBE_ARGS], {
     env,
     cwd,
@@ -131,11 +151,22 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
     signal: options.signal,
     onFrame: (frame) => {
       const reply = controlReply(frame)
-      if (reply !== null) replies.settle(reply.id, reply.reply)
+      const pending = waiting
+      if (reply === null || pending === null || reply.id !== pending.id) return
+      waiting = null
+      pending.resolve(reply.reply)
     }
   })
+  const ask = (requestId: string, request: Record<string, unknown>): Promise<ReplyOrExit> => {
+    const reply = new Promise<ControlReply>((resolve) => { waiting = { id: requestId, resolve } })
+    claude.send({ type: 'control_request', request_id: requestId, request })
+    return Promise.race([
+      reply.then((value): ReplyOrExit => ({ kind: 'reply', value })),
+      claude.exited.then((exit): ReplyOrExit => ({ kind: 'ended', exit }))
+    ])
+  }
 
-  const result = await converse(claude, replies, login.id, timeoutMs, now, options.previous ?? null)
+  const result = await converse(ask, login.id, timeoutMs, now, options.previous ?? null)
   // Wait for the exit in every case, so a renewed token is on disk and no CLI outlives the probe.
   const exit = await claude.close(PROBE_CLOSE_GRACE_MS)
   // The signal fired after the answer: the answer still stands.
@@ -144,19 +175,12 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
 }
 
 async function converse(
-  claude: FrameProcess,
-  replies: PendingReplies<ControlReply>,
+  ask: (requestId: string, request: Record<string, unknown>) => Promise<ReplyOrExit>,
   id: string,
   timeoutMs: number,
   now: () => number,
   previous: AccountUsage | null
 ): Promise<ProbeResult> {
-  const ask = (requestId: string, request: Record<string, unknown>): Promise<ReplyOrExit<ControlReply>> => {
-    const reply = replies.wait(requestId)
-    claude.send({ type: 'control_request', request_id: requestId, request })
-    return replyOrExit(reply, claude.exited)
-  }
-
   const init = await ask('kurmis_1', { subtype: 'initialize' })
   if (init.kind === 'ended') return failureForExit(init.exit, timeoutMs, null)
   if (!init.value.ok) return probeFailure(null, 'upstream_error', 'claude answered the start of the usage probe with an error.')
@@ -187,6 +211,61 @@ function initializePlan(response: unknown): boolean | null {
   if (!isRecord(response) || !isRecord(response.account)) return null
   const plan = response.account.subscriptionType
   return typeof plan === 'string' && plan !== ''
+}
+
+/**
+ * The error of a probe whose CLI is not found. The daemon looks the program up on the PATH it
+ * was started with, which is the PATH of the shell or login item that started it, so a CLI
+ * installed or put on PATH since is found only after a restart from a shell that has it.
+ */
+function programMissingText(): string {
+  return 'The claude program was not found on the PATH the kurmis daemon was started with. Install Claude Code, ' +
+    'or put claude on PATH, and run "kurmis daemon restart" from a shell that finds it; or set KURMIS_CLAUDE_BIN to the program.'
+}
+
+function probeFailure(signedIn: boolean | null, reason: LogReason, error: string): ProbeFailure {
+  return { ok: false, signedIn, reason, error }
+}
+
+/** The answer for a probe stopped by its AbortSignal: the daemon is shutting down. */
+function abortedProbe(signedIn: boolean | null): ProbeFailure {
+  return probeFailure(signedIn, 'shutdown', 'The usage probe was stopped because the daemon is shutting down.')
+}
+
+/** Seconds for a sentence: `30`, or `2.5` for a timeout that is not whole seconds. */
+function seconds(ms: number): string {
+  return String(Math.round(ms / 100) / 10)
+}
+
+/** The answer for a claude CLI that ended before the probe had what it asked for. */
+function failureForExit(exit: FrameProcessExit, timeoutMs: number, signedIn: boolean | null): ProbeFailure {
+  switch (exit.end) {
+    case 'aborted':
+      return abortedProbe(signedIn)
+    case 'timeout':
+      return probeFailure(signedIn, 'timeout', `The usage probe timed out after ${seconds(timeoutMs)} s.`)
+    case 'output_too_large':
+      return probeFailure(signedIn, 'invalid', 'claude printed more output than the usage probe accepts.')
+    case 'refused':
+      return probeFailure(signedIn, 'invalid', 'claude is a batch file, which kurmis never starts.')
+    case 'start_failed':
+      return probeFailure(signedIn, 'missing', exit.errorCode === null
+        ? 'claude could not be started.'
+        : `claude could not be started (${safeCode(exit.errorCode)}).`)
+    case 'close_timeout':
+    case 'exited':
+      if (exit.code !== null) {
+        return probeFailure(signedIn, 'exited', `claude exited with code ${String(exit.code)} before it answered.`)
+      }
+      return probeFailure(signedIn, 'exited', exit.signal === null
+        ? 'claude ended before it answered.'
+        : `claude was ended by ${exit.signal} before it answered.`)
+  }
+}
+
+/** Node's error codes are short upper-case words; anything else is not put in a sentence. */
+function safeCode(code: string): string {
+  return /^[A-Z0-9_]{1,32}$/.test(code) ? code : 'unknown error'
 }
 
 /** The request id and outcome of a `control_response` frame, or null for any other frame. */

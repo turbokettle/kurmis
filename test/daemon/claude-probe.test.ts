@@ -7,8 +7,7 @@ import type { AccountUsage } from '../../src/core/claude-usage.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import { LOG_REASONS } from '../../src/data/log.ts'
 import { ownClaudeProbeFolder, loginFolder, probeWorkFolder } from '../../src/data/paths.ts'
-import { CLAUDE_PROBE_ARGS, probeClaudeUsage } from '../../src/daemon/claude-probe.ts'
-import type { ProbeResult } from '../../src/daemon/probe-result.ts'
+import { CLAUDE_PROBE_ARGS, probeClaudeUsage, type ProbeResult } from '../../src/daemon/claude-probe.ts'
 import {
   FAKE_CLAUDE_SCRIPT,
   fakeToken,

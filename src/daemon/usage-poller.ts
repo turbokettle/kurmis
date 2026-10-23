@@ -28,7 +28,7 @@ import type { ClaudeIdentityReader } from '../data/identity.ts'
 import type { DaemonLog } from '../data/log.ts'
 import type { LoginRef } from '../data/login-id.ts'
 import type { LoginTable } from './logins.ts'
-import type { ProbeOptions, ProbeResult } from './probe-result.ts'
+import type { ProbeOptions, ProbeResult } from './claude-probe.ts'
 import type { TokenSource } from './tokens.ts'
 
 /** How often every signed-in login is probed. */
@@ -37,9 +37,7 @@ export const POLL_INTERVAL_MS = 15 * 60_000
 /** How long after a probe for a stale reading the proxy does not ask for another one of the same login. */
 export const STALE_PROBE_INTERVAL_MS = 60_000
 
-/** What one probe answered: `probeClaudeUsage` returns it. */
-export type ProbeAnswer = ProbeResult
-
+/** `probeClaudeUsage`, or a stand-in in tests. */
 export type ProbeFunction = (login: LoginRef, options: ProbeOptions) => Promise<ProbeResult>
 
 /** Why a probe runs, for the log. */
@@ -164,7 +162,7 @@ export class UsagePoller {
     table.noteProbeStarted(id)
     log.write(cause === 'renewal' ? 'token_renewal_started' : 'usage_probe_started', { login: id })
     const ref: LoginRef = { id, usedByPlainClaude: login.usedByPlainClaude }
-    let answer: ProbeAnswer
+    let answer: ProbeResult
     try {
       answer = await this.options.probeClaude(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) })
     } catch {
@@ -205,7 +203,7 @@ export class UsagePoller {
    * After a successful probe that found the login signed in, gives the login the automatic alias
    * made from the email its profile names, when it names one.
    */
-  private learnEmail(login: LoginRef, answer: Extract<ProbeAnswer, { ok: true }>): void {
+  private learnEmail(login: LoginRef, answer: Extract<ProbeResult, { ok: true }>): void {
     if (!answer.signedIn) return
     const email = this.options.identity.read(login)?.email ?? null
     if (email !== null) this.options.table.noteEmail(login.id, email)
