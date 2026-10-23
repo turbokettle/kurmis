@@ -310,8 +310,13 @@ export function createProxy(options: ProxyOptions): Proxy {
       return routeBlock(measured, now()) !== null
     }
 
-    /** Chooses the login to send on. `bound` is the client's signal, and ends with the hold too. */
-    const pick = async (bound: AbortSignal): Promise<RouteAccount | null> => {
+    /**
+     * Chooses the login to send on. `bound` is the client's signal, and ends with the hold too.
+     * Answers `{ wakeAt }` when the only logins that could take the request are cooling after an
+     * answer without capacity. The time is read with the same clock reading as the choice, so a
+     * cooling that ends just after the choice still makes the request wait, not be refused.
+     */
+    const pick = async (bound: AbortSignal): Promise<RouteAccount | { wakeAt: number } | null> => {
       for (;;) {
         for (const [id, entry] of deferred) if (entry.ended) takeBack(id)
         await abortable(tokens.prime(table.logins().map((login) => login.id)), bound)
@@ -335,7 +340,7 @@ export function createProxy(options: ProxyOptions): Proxy {
           continue
         }
         const scope = new Set(accountsInScope(session, rows).map((row) => row.id))
-        const coolingNow = cooling.waitFor(sessionKey, scope, now()).cooling
+        const { cooling: coolingNow, wakeAt } = cooling.waitFor(sessionKey, scope, now())
         const blocked = new Set([...excluded, ...coolingNow])
         const candidates = rows.map((row) => (renewable(row) ? { ...row, tokenExpiresAt: null } : row))
         const chosen = chooseAccount(session, candidates, now(), blocked)
@@ -343,7 +348,7 @@ export function createProxy(options: ProxyOptions): Proxy {
           // No other login can take the request: it goes back to a login whose renewal ran long,
           // unless that one is cooling after an answer without capacity, and waits for the renewal.
           const back = [...deferred.keys()].find((id) => !coolingNow.has(id))
-          if (back === undefined) return null
+          if (back === undefined) return wakeAt === null ? null : { wakeAt }
           await awaitRenewal(back, bound)
           continue
         }
@@ -424,17 +429,16 @@ export function createProxy(options: ProxyOptions): Proxy {
         giveHoldBack()
         return
       }
+      if (row !== null && 'wakeAt' in row) {
+        // Every login left is cooling after an answer without capacity: wait for the first of
+        // them, a change in the pool, or the end of the hold. A wake time already past makes
+        // this a zero wait, and the next choice finds that login free.
+        holdSince ??= arrived
+        await waitForPool(table, Math.min(row.wakeAt, holdSince + holdMs), now, signal)
+        continue
+      }
       if (row === null) {
         const rows = rowsNow()
-        const scope = new Set(accountsInScope(session, rows).map((each) => each.id))
-        const { wakeAt } = cooling.waitFor(sessionKey, scope, now())
-        if (wakeAt !== null) {
-          // Every login left is cooling after an answer without capacity: wait for the first of
-          // them, a change in the pool, or the end of the hold.
-          holdSince ??= arrived
-          await waitForPool(table, Math.min(wakeAt, holdSince + holdMs), now, signal)
-          continue
-        }
         if (refusals.length === 0 && leftAnswer !== null) {
           // The pin-back found no login to serve: the CLI gets the 400 that started it.
           log.write('request_forwarded', { login: asLogin(leftAnswer.login), method: methodOf(req.method), status: leftAnswer.status,

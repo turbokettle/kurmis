@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023105404" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023111707" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -5621,13 +5621,13 @@ function createProxy(options) {
           continue;
         }
         const scope = new Set(accountsInScope(session, rows).map((row2) => row2.id));
-        const coolingNow = cooling.waitFor(sessionKey, scope, now()).cooling;
+        const { cooling: coolingNow, wakeAt } = cooling.waitFor(sessionKey, scope, now());
         const blocked = /* @__PURE__ */ new Set([...excluded, ...coolingNow]);
         const candidates = rows.map((row2) => renewable(row2) ? { ...row2, tokenExpiresAt: null } : row2);
         const chosen = chooseAccount(session, candidates, now(), blocked);
         if (chosen === null) {
           const back = [...deferred.keys()].find((id) => !coolingNow.has(id));
-          if (back === void 0) return null;
+          if (back === void 0) return wakeAt === null ? null : { wakeAt };
           await awaitRenewal(back, bound);
           continue;
         }
@@ -5698,15 +5698,13 @@ function createProxy(options) {
         giveHoldBack();
         return;
       }
+      if (row !== null && "wakeAt" in row) {
+        holdSince ??= arrived;
+        await waitForPool(table, Math.min(row.wakeAt, holdSince + holdMs), now, signal);
+        continue;
+      }
       if (row === null) {
         const rows = rowsNow();
-        const scope = new Set(accountsInScope(session, rows).map((each) => each.id));
-        const { wakeAt } = cooling.waitFor(sessionKey, scope, now());
-        if (wakeAt !== null) {
-          holdSince ??= arrived;
-          await waitForPool(table, Math.min(wakeAt, holdSince + holdMs), now, signal);
-          continue;
-        }
         if (refusals.length === 0 && leftAnswer !== null) {
           log.write("request_forwarded", {
             login: asLogin(leftAnswer.login),
