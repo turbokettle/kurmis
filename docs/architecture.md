@@ -242,8 +242,11 @@ old one finishes its open requests in the background ("Version handover" below).
   minute a Keychain answer is kept, since the CLI may have renewed it, and only a token that is
   still about to expire is renewed by a usage probe; on Auto, when another login could take the
   request, the request waits at most 5 s (`RENEWAL_WAIT_MS`) for that and then goes to the other
-  login. A login whose record has no refresh token is never renewed: it just becomes unusable when
-  its token is about to expire.
+  login. The request takes the first login back once that renewal has ended. It goes back to it
+  and waits for the renewal to end when no other login can take the request (they refused it,
+  have no capacity, or cannot sign), and when the session is sent back to it after a 400. A
+  login whose record has no refresh token is never renewed: it just becomes unusable when its
+  token is about to expire.
 - **Signing.** The proxy signs with `Bearer <token>` for the token it read for the chosen login.
   When the chosen login is the one the CLI was started on and no token was read for it, the
   CLI's own `authorization` header is forwarded instead. No other login is ever signed with the

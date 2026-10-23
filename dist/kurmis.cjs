@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023103302" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023103535" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -5451,6 +5451,7 @@ function createProxy(options) {
     const refreshed = /* @__PURE__ */ new Set();
     const renewed = /* @__PURE__ */ new Set();
     const reread = /* @__PURE__ */ new Set();
+    const deferred = /* @__PURE__ */ new Map();
     const refusals = [];
     let holdSince = cooling.coolingOf(sessionKey, now()) === null ? null : arrived;
     const renewable = (row) => !renewed.has(row.id) && tokens.read(row.id)?.hasRefreshToken === true;
@@ -5461,6 +5462,16 @@ function createProxy(options) {
       sentBackHere = false;
       session.pinnedAccountId = null;
       session.homeAccountId = ownClaude;
+    };
+    const takeBack = (id) => {
+      deferred.delete(id);
+      excluded.delete(id);
+      tokens.invalidate(id);
+    };
+    const awaitRenewal = async (id) => {
+      const entry = deferred.get(id);
+      if (entry !== void 0) await abortable(entry.renewal, signal);
+      takeBack(id);
     };
     const pinBackEnds = (rows) => {
       if (sentBack === null) return false;
@@ -5479,6 +5490,7 @@ function createProxy(options) {
     };
     const pick = async () => {
       for (; ; ) {
+        for (const [id, entry] of deferred) if (entry.ended) takeBack(id);
         await abortable(tokens.prime(table.logins().map((login) => login.id)), signal);
         const rows = rowsNow();
         const stale = staleUsageLogins(session, rows, now(), /* @__PURE__ */ new Set([...refreshed, ...poller.recentStaleProbes()]));
@@ -5487,16 +5499,26 @@ function createProxy(options) {
           await abortable(poller.probeMany(stale, "stale"), signal);
           continue;
         }
+        if (sentBack !== null && deferred.has(sentBack)) {
+          await awaitRenewal(sentBack);
+          continue;
+        }
         if (sentBack !== null && pinBackEnds(rows)) {
           log.write("session_hold_ended", { login: asLogin(sentBack) });
           endPinBack();
           continue;
         }
         const scope = new Set(accountsInScope(session, rows).map((row2) => row2.id));
-        const blocked = /* @__PURE__ */ new Set([...excluded, ...cooling.waitFor(sessionKey, scope, now()).cooling]);
+        const coolingNow = cooling.waitFor(sessionKey, scope, now()).cooling;
+        const blocked = /* @__PURE__ */ new Set([...excluded, ...coolingNow]);
         const candidates = rows.map((row2) => renewable(row2) ? { ...row2, tokenExpiresAt: null } : row2);
         const chosen = chooseAccount(session, candidates, now(), blocked);
-        if (chosen === null) return null;
+        if (chosen === null) {
+          const back = [...deferred.keys()].find((id) => !coolingNow.has(id));
+          if (back === void 0) return null;
+          await awaitRenewal(back);
+          continue;
+        }
         const row = rows.find((each) => each.id === chosen.id) ?? chosen;
         if (tokenIsFresh(row.tokenExpiresAt, now())) return row;
         if (!reread.has(row.id)) {
@@ -5513,7 +5535,14 @@ function createProxy(options) {
         const elsewhere = effectivePin(session, rows) === null && chooseAccount(session, candidates, now(), /* @__PURE__ */ new Set([...blocked, row.id])) !== null;
         const renewal = poller.probe(row.id, "renewal");
         const finishedInTime = await abortable(elsewhere ? withTimeout(renewal, renewalWaitMs) : renewal.then(() => true), signal);
-        if (!finishedInTime) excluded.add(row.id);
+        if (!finishedInTime) {
+          const entry = { renewal, ended: false };
+          void renewal.finally(() => {
+            entry.ended = true;
+          });
+          deferred.set(row.id, entry);
+          excluded.add(row.id);
+        }
         tokens.invalidate(row.id);
       }
     };

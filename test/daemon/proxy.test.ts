@@ -11,6 +11,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
 import { loadConfig, saveConfig, updateLogin } from '../../src/data/config.ts'
 import { loginFolder } from '../../src/data/paths.ts'
+import { probeClaudeUsage } from '../../src/daemon/claude-probe.ts'
 import { createProxy } from '../../src/daemon/proxy.ts'
 import type { ProbeFunction } from '../../src/daemon/usage-poller.ts'
 import { fakeToken, reply, writeClaudeCredentials } from '../fakes/index.ts'
@@ -292,6 +293,41 @@ describe('a token about to expire', () => {
       rmSync(dir, { recursive: true, force: true, maxRetries: 10 })
     }
   }, 30_000)
+})
+
+describe('a renewal that outlasts the wait', () => {
+  /** A probe that renews (or not) as the fake claude does, after `delayMs`. */
+  const slowProbe = (delayMs: number): ProbeFunction => (login, probe) =>
+    new Promise((resolve) => setTimeout(resolve, delayMs)).then(() => probeClaudeUsage(login, probe))
+  const expiring = { expiresAt: Date.now() + 60_000 }
+  const RENEWED = `${DEFAULT}-renewed`
+
+  test('goes back to that login when the other login refuses the request with a usage limit', async () => {
+    const h = await twoLogins({ tuning: { renewalWaitMs: 100, probeClaude: slowProbe(600) } }, { default: expiring })
+    h.api.scriptFor(WORK, reply.quota({ resetsAt: Date.now() + 3_600_000 }))
+    const answer = await messages(h, S1)
+    expect(answer.status).toBe(200)
+    expect(bearers(h)).toEqual([WORK, RENEWED])
+  }, 15_000)
+
+  test('goes back to that login when the session is sent back to it after a 400', async () => {
+    const h = await twoLogins({ tuning: { renewalWaitMs: 100, probeClaude: slowProbe(600) } })
+    expect((await messages(h, S1)).status).toBe(200)
+    writeClaudeCredentials(join(h.home, '.claude'), { accessToken: DEFAULT, ...expiring })
+    h.api.scriptFor(WORK, reply.raw(400, BAD_REQUEST))
+    const answer = await messages(h, S1)
+    expect(answer.status).toBe(200)
+    expect(bearers(h)).toEqual([DEFAULT, WORK, RENEWED])
+  }, 15_000)
+
+  test('goes back to that login when the other login has no capacity, rather than waiting for it', async () => {
+    const h = await twoLogins({ tuning: { renewalWaitMs: 100, probeClaude: slowProbe(600), holdBaseMs: 3_000, holdMaxMs: 3_000 } },
+      { default: expiring })
+    h.api.scriptFor(WORK, reply.overloaded())
+    const answer = await messages(h, S1)
+    expect(answer.status).toBe(200)
+    expect(bearers(h)).toEqual([WORK, RENEWED])
+  }, 15_000)
 })
 
 describe('stale usage', () => {

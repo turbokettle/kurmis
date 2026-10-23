@@ -74,8 +74,9 @@ export const KEPT_ANSWER_TIMEOUT_MS = 5_000
 
 /**
  * How long a request on Auto waits for the renewal of the chosen login's expiring token when
- * another login could take it. The renewal goes on; the request is sent on the other login. A
- * request that has no other login waits for the renewal as long as the probe takes.
+ * another login could take it. The renewal goes on; the request is sent on the other login, and
+ * comes back to this one when that renewal has ended or the other login cannot take it after
+ * all. A request that has no other login waits for the renewal as long as the probe takes.
  */
 export const RENEWAL_WAIT_MS = 5_000
 
@@ -240,7 +241,8 @@ export function createProxy(options: ProxyOptions): Proxy {
     const attempted = new Set<string>()
     /**
      * Logins this request may not be sent on again: they refused it with a usage limit, their
-     * token could not be renewed, or Anthropic refused their token.
+     * token could not be renewed, or Anthropic refused their token. A login whose renewal is
+     * still running is here only while it is in `deferred`.
      */
     const excluded = new Set<string>()
     /** Logins whose stale usage this request has probed. */
@@ -249,6 +251,11 @@ export function createProxy(options: ProxyOptions): Proxy {
     const renewed = new Set<string>()
     /** Logins whose token this request has read again because the one held was about to expire. */
     const reread = new Set<string>()
+    /**
+     * Logins passed over because their renewal outlasted `renewalWaitMs`, each with whether that
+     * renewal has ended. They are in `excluded` too, until `pick` takes them back.
+     */
+    const deferred = new Map<string, { renewal: Promise<void>; ended: boolean }>()
     const refusals: KeptRefusal[] = []
     /** When the capacity hold started, or null while the request is not held. */
     let holdSince: number | null = cooling.coolingOf(sessionKey, now()) === null ? null : arrived
@@ -274,6 +281,20 @@ export function createProxy(options: ProxyOptions): Proxy {
      * window at 100% (a held session is measured like a pinned one, not to the login's own
      * limits). A token about to expire that can be renewed does not end it.
      */
+    /** Lets a deferred login be chosen again, with its token read again after the renewal. */
+    const takeBack = (id: string): void => {
+      deferred.delete(id)
+      excluded.delete(id)
+      tokens.invalidate(id)
+    }
+
+    /** Waits for a deferred login's renewal to end, and takes the login back. */
+    const awaitRenewal = async (id: string): Promise<void> => {
+      const entry = deferred.get(id)
+      if (entry !== undefined) await abortable(entry.renewal, signal)
+      takeBack(id)
+    }
+
     const pinBackEnds = (rows: readonly RouteAccount[]): boolean => {
       if (sentBack === null) return false
       if (excluded.has(sentBack)) return true
@@ -288,6 +309,7 @@ export function createProxy(options: ProxyOptions): Proxy {
 
     const pick = async (): Promise<RouteAccount | null> => {
       for (;;) {
+        for (const [id, entry] of deferred) if (entry.ended) takeBack(id)
         await abortable(tokens.prime(table.logins().map((login) => login.id)), signal)
         const rows = rowsNow()
         // A login probed for a stale reading in the last minute, by this request or another
@@ -298,16 +320,29 @@ export function createProxy(options: ProxyOptions): Proxy {
           await abortable(poller.probeMany(stale, 'stale'), signal)
           continue
         }
+        // A session sent back to a login whose renewal is still running waits for that renewal.
+        if (sentBack !== null && deferred.has(sentBack)) {
+          await awaitRenewal(sentBack)
+          continue
+        }
         if (sentBack !== null && pinBackEnds(rows)) {
           log.write('session_hold_ended', { login: asLogin(sentBack) })
           endPinBack()
           continue
         }
         const scope = new Set(accountsInScope(session, rows).map((row) => row.id))
-        const blocked = new Set([...excluded, ...cooling.waitFor(sessionKey, scope, now()).cooling])
+        const coolingNow = cooling.waitFor(sessionKey, scope, now()).cooling
+        const blocked = new Set([...excluded, ...coolingNow])
         const candidates = rows.map((row) => (renewable(row) ? { ...row, tokenExpiresAt: null } : row))
         const chosen = chooseAccount(session, candidates, now(), blocked)
-        if (chosen === null) return null
+        if (chosen === null) {
+          // No other login can take the request: it goes back to a login whose renewal ran long,
+          // unless that one is cooling after an answer without capacity, and waits for the renewal.
+          const back = [...deferred.keys()].find((id) => !coolingNow.has(id))
+          if (back === undefined) return null
+          await awaitRenewal(back)
+          continue
+        }
         const row = rows.find((each) => each.id === chosen.id) ?? chosen
         if (tokenIsFresh(row.tokenExpiresAt, now())) return row
         // A Keychain answer is kept for up to a minute, and the CLI may have renewed the token
@@ -328,7 +363,12 @@ export function createProxy(options: ProxyOptions): Proxy {
           chooseAccount(session, candidates, now(), new Set([...blocked, row.id])) !== null
         const renewal = poller.probe(row.id, 'renewal')
         const finishedInTime = await abortable(elsewhere ? withTimeout(renewal, renewalWaitMs) : renewal.then(() => true), signal)
-        if (!finishedInTime) excluded.add(row.id)
+        if (!finishedInTime) {
+          const entry = { renewal, ended: false }
+          void renewal.finally(() => { entry.ended = true })
+          deferred.set(row.id, entry)
+          excluded.add(row.id)
+        }
         tokens.invalidate(row.id)
       }
     }
