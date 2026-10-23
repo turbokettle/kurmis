@@ -89,8 +89,8 @@ account changes. While kurmis cannot read the email, the login keeps the alias i
 keeps no email in its files.
 
 `--alias` sets an alias of your own instead. It is 1 to 32 lowercase letters, digits, `-` or
-`_`, starts with a letter or digit, and is not `claude`. No other login may have it, and it may
-not be another login's id. `kurmis set <login> --alias <alias>` changes it. Kurmis never
+`_` and starts with a letter or digit. No other login may have it, and it may not be another
+login's id. `kurmis set <login> --alias <alias>` changes it. Kurmis never
 replaces an alias you set, and no command makes it follow the email again.
 
 **An account that is already a login.** When you sign in to an account that is already a kurmis

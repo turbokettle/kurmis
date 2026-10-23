@@ -10357,7 +10357,7 @@ ${lines.join("\n")}
   ${"help".padEnd(width)}  Show the help of a command
 
 Options:
-  -h, --help     Show this help, or a command's help after its name.
+  -h, --help     Show this help, or a command's help after its name (after claude, claude's own help).
   --version      Print the version.
 
 Run "kurmis help <command>" for the options of a command.`;
@@ -10411,7 +10411,7 @@ function parseLogin2(argv) {
   } else {
     return { login: null, rest: argv };
   }
-  if (login === void 0 || login === "" || login === "claude") {
+  if (login === void 0 || login === "") {
     return { error: '--login needs the alias or id of a login, for example "kurmis --login work-example claude"' };
   }
   if (rest[0] === "--login" || rest[0]?.startsWith("--login=") === true) return { error: "--login was given twice" };

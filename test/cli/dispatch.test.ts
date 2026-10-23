@@ -76,6 +76,15 @@ describe('dispatch', () => {
     expect(result.code).toBe(127)
   })
 
+  it('takes "claude" as the login of --login, since an alias may be "claude"', async () => {
+    for (const argv of [['--login', 'claude', 'claude'], ['--login=claude', 'claude']]) {
+      const result = await run(...argv)
+      // Dispatch passes it on; the claude command then stops because the test finds no claude.
+      expect(result.code).not.toBe(2)
+      expect(result.stderr).toMatch(/^kurmis claude: /)
+    }
+  })
+
   it('gives a usage error for a bad option', async () => {
     const status = await run('status', '--nope')
     expect(status.code).toBe(2)
