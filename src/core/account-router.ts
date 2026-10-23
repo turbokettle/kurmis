@@ -288,37 +288,6 @@ export function effectivePin(session: RouteSession, accounts: readonly RouteAcco
   return session.homeAccountId
 }
 
-/** What `autoStartLogin` reads of a login. */
-export interface StartableLogin {
-  id: string
-  /** The login plain claude uses. The list has exactly one such login. */
-  usedByPlainClaude: boolean
-  loggedIn: boolean
-  autoRoute: boolean
-}
-
-/**
- * The login whose credentials an Auto CLI is started on. The proxy signs an Auto request with
- * whichever login it picks, so this login only has to get the CLI to send at all: a CLI that
- * finds no credentials answers "Not logged in" before it sends anything.
- *
- * So plain claude's login is taken while it is signed in, or when the list does not say.
- * Otherwise `preferred` (the login that served the session last), then the first signed-in
- * login of the pool. When the pool has logins but none of them is signed in, `preferred` is
- * taken when it is in the pool, else the pool's first login: the CLI then fails to sign in on a
- * pool login, which is the problem to fix. With no pool at all, plain claude's login stays,
- * because `effectivePin` holds such a session to it.
- */
-export function autoStartLogin(accounts: readonly StartableLogin[], preferred?: string | null): string {
-  const own = accounts.find((account) => account.usedByPlainClaude)
-  if (own === undefined) throw new Error('autoStartLogin: the list has no login that plain claude uses')
-  if (own.loggedIn) return own.id
-  const pool = accounts.filter((account) => account.autoRoute)
-  const signedIn = pool.filter((account) => account.loggedIn)
-  const from = signedIn.length > 0 ? signedIn : pool
-  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? own.id
-}
-
 /**
  * The logins that could serve this request, best first.
  *

@@ -2,10 +2,10 @@
 // what order, what a refusal means, and when the pool is back.
 import { describe, expect, test } from 'vitest'
 import {
-  accountsInScope, autoStartLogin, chooseAccount, effectivePin, eligible, explainRouting,
+  accountsInScope, chooseAccount, effectivePin, eligible, explainRouting,
   isDefinitiveQuotaRejection, parseUnifiedHeaders, poolReadyAt, quotaCooldownUntil, replayDecision, routeBlock,
   TOKEN_MARGIN_MS, tokenIsFresh, usageFromUnifiedHeaders, worstUtilisation,
-  type HeaderGetter, type ReplayInput, type RouteAccount, type RouteSession, type StartableLogin
+  type HeaderGetter, type ReplayInput, type RouteAccount, type RouteSession
 } from '../../src/core/account-router.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
@@ -689,43 +689,6 @@ describe('a five-login pool', () => {
       ['teamclaude', 'over-limit'],
       ['charlieclaude', 'auto-route-off']
     ])
-  })
-})
-
-describe('the login an Auto CLI is started on', () => {
-  const login = (id: string, loggedIn: boolean, autoRoute: boolean): StartableLogin =>
-    ({ id, usedByPlainClaude: id === OWN_CLAUDE, loggedIn, autoRoute })
-
-  test('the login of the machine itself while it is signed in', () => {
-    expect(autoStartLogin([login('poolclaude', true, true), login(OWN_CLAUDE, true, false)])).toBe(OWN_CLAUDE)
-    expect(autoStartLogin([login(OWN_CLAUDE, true, true), login('poolclaude', true, true)], 'poolclaude')).toBe(OWN_CLAUDE)
-  })
-
-  test("a list without the login plain claude uses is a mistake of the caller", () => {
-    expect(() => autoStartLogin([login('poolclaude', true, true)])).toThrow(/no login that plain claude uses/)
-  })
-
-  test('a signed-in pool login when the login of the machine is signed out, the one that served last first', () => {
-    const rows = [login(OWN_CLAUDE, false, false), login('offclaude', true, false), login('outclaude', false, true),
-      login('poolaclaude', true, true), login('poolbclaude', true, true)]
-    expect(autoStartLogin(rows)).toBe('poolaclaude')
-    expect(autoStartLogin(rows, 'poolbclaude')).toBe('poolbclaude')
-    expect(autoStartLogin(rows, 'offclaude')).toBe('poolaclaude')
-  })
-
-  // A pool with nothing signed in is a sign-in problem with a pool login, so the CLI is not
-  // started on the login plain claude uses, which an Auto session with a pool never runs on.
-  test('a pool login when the pool has logins but none is signed in, the one that served last first', () => {
-    const rows = [login(OWN_CLAUDE, false, false), login('offclaude', true, false), login('outaclaude', false, true), login('outbclaude', false, true)]
-    expect(effectivePin({ homeAccountId: OWN_CLAUDE, currentAccountId: null }, rows.map((row) => account(row.id, {
-      loggedIn: row.loggedIn, autoRoute: row.autoRoute })))).toBeNull()
-    expect(autoStartLogin(rows)).toBe('outaclaude')
-    expect(autoStartLogin(rows, 'outbclaude')).toBe('outbclaude')
-    expect(autoStartLogin(rows, 'offclaude')).toBe('outaclaude')
-  })
-
-  test('the login of the machine when there is no pool, since the router then holds the session to it', () => {
-    expect(autoStartLogin([login(OWN_CLAUDE, false, false), login('offclaude', true, false)])).toBe(OWN_CLAUDE)
   })
 })
 

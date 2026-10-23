@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { createClaudeCommand, startableLogins, type ClaudeDeps } from '../../../src/cli/commands/claude.ts'
+import { createClaudeCommand, type ClaudeDeps } from '../../../src/cli/commands/claude.ts'
 import type { ChildRunner } from '../../../src/cli/command-deps.ts'
 import type { ChildEnd, ChildSpec, FinishOptions } from '../../../src/cli/wrapper.ts'
 import { CONTROL_API_VERSION } from '../../../src/core/control-api.ts'
@@ -276,14 +276,29 @@ describe('kurmis claude on Auto', () => {
     expect(out.stderr()).toContain(`kurmis claude: ${OWN_CLAUDE}, the login plain claude uses, is not signed in, so claude starts on work-example's credentials`)
   })
 
-  test('startableLogins reads an unknown sign-in as signed in only for the login plain claude uses', () => {
-    expect(startableLogins(statusAnswer([
-      loginStatus(OWN_CLAUDE_REF, { signedIn: null }),
-      loginStatus(WORK, { signedIn: null, routing: false })
-    ]))).toEqual([
-      { id: OWN_CLAUDE, usedByPlainClaude: true, loggedIn: true, autoRoute: true },
-      { id: 'workclaude', usedByPlainClaude: false, loggedIn: false, autoRoute: false }
-    ])
+  // A pool with nothing signed in is a sign-in problem with a pool login, so claude is not
+  // started on the login plain claude uses, which an Auto session with a pool never runs on.
+  test('with the login plain claude uses signed out and no pool login signed in, claude starts on the first pool login', async () => {
+    const h = harness({
+      status: statusAnswer([
+        loginStatus(OWN_CLAUDE_REF, { signedIn: false, routing: false }),
+        loginStatus({ ...claudeRef('offclaude') }, { routing: false }),
+        loginStatus(SPARE, { signedIn: null }),
+        loginStatus(WORK, { signedIn: false })
+      ])
+    })
+    await createClaudeCommand(h.deps).run([], collect().context)
+    expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain('x-kurmis-started-on: spareclaude')
+  })
+
+  test('with the login plain claude uses signed out and no pool, claude starts on it, since Auto then runs on it', async () => {
+    const h = harness({
+      status: statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: false, routing: false }), loginStatus(WORK, { routing: false })])
+    })
+    const out = collect()
+    await createClaudeCommand(h.deps).run([], out.context)
+    expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain(`x-kurmis-started-on: ${OWN_CLAUDE}`)
+    expect(out.stderr()).toBe('')
   })
 
   test('a pool login to start on whose folder is missing is an error', async () => {

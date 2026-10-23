@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101743" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101804" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -56,6 +56,128 @@ function parseCommandArgs(command, args, options, context, allowPositionals = fa
 // src/cli/commands/claude.ts
 var import_node_fs11 = require("node:fs");
 var import_node_os7 = require("node:os");
+
+// src/core/route-headers.ts
+var import_node_crypto = require("node:crypto");
+
+// src/core/accounts.ts
+var DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100;
+var DEFAULT_WEEKLY_LIMIT_PERCENT = 100;
+var DEFAULT_AUTO_ROUTE = true;
+var LOGIN_ID = /^[a-z0-9]{1,32}$/;
+var RESERVED_IDS = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|none|invalid)$/;
+function isLoginIdText(text) {
+  return LOGIN_ID.test(text) && !RESERVED_IDS.test(text);
+}
+
+// src/core/route-headers.ts
+var KEY_HEADER = "x-kurmis-key";
+var LOGIN_HEADER = "x-kurmis-login";
+var STARTED_ON_HEADER = "x-kurmis-started-on";
+var STARTED_ON_NONE = "none";
+var SESSION_HEADER = "x-claude-code-session-id";
+var KURMIS_HEADERS = [KEY_HEADER, LOGIN_HEADER, STARTED_ON_HEADER];
+function parseCustomHeaders(value) {
+  const out = [];
+  for (const line of (value ?? "").split(/\r?\n/)) {
+    const colon = line.indexOf(":");
+    if (colon < 0) continue;
+    const name = line.slice(0, colon).trim();
+    if (name.length === 0) continue;
+    out.push({ name, value: line.slice(colon + 1).trim() });
+  }
+  return out;
+}
+function formatCustomHeaders(headers) {
+  return headers.map((header) => `${header.name}: ${header.value}`).join("\n");
+}
+function withRouteHeaders(existing, key, login, startedOn = null) {
+  const own = parseCustomHeaders(existing).filter((header) => !KURMIS_HEADERS.includes(header.name.toLowerCase()));
+  const added = [{ name: KEY_HEADER, value: key }];
+  if (login !== null) added.push({ name: LOGIN_HEADER, value: login });
+  if (startedOn !== null) added.push({ name: STARTED_ON_HEADER, value: startedOn });
+  return formatCustomHeaders([...own, ...added]);
+}
+function readRouteRequest(get, ownClaude) {
+  const key = nonEmpty(get(KEY_HEADER));
+  const named = nonEmpty(get(LOGIN_HEADER));
+  const startedOn = nonEmpty(get(STARTED_ON_HEADER));
+  return {
+    key,
+    login: named === null ? null : loginIdOrInvalid(named),
+    startedOn: startedOn === null ? ownClaude : startedOn.toLowerCase() === STARTED_ON_NONE ? null : loginIdOrInvalid(startedOn),
+    sessionId: nonEmpty(get(SESSION_HEADER))
+  };
+}
+function loginIdOrInvalid(value) {
+  return isLoginIdText(value) ? value : "invalid";
+}
+function routeKeyMatches(given, secret) {
+  if (given === null || secret.length === 0) return false;
+  const a = Buffer.from(given, "utf8");
+  const b = Buffer.from(secret, "utf8");
+  return a.length === b.length && (0, import_node_crypto.timingSafeEqual)(a, b);
+}
+function nonEmpty(value) {
+  const text = value?.trim() ?? "";
+  return text.length === 0 ? null : text;
+}
+
+// src/core/routed-env.ts
+function applyEnvPatch(env, patch, windows = process.platform === "win32") {
+  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
+  const names = Object.keys(patch);
+  const out = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value === void 0 || names.some((other) => same(name, other))) continue;
+    out[name] = value;
+  }
+  for (const [name, value] of Object.entries(patch)) {
+    if (value !== void 0) out[name] = value;
+  }
+  return out;
+}
+var ROUTED_CLI_MAX_RETRIES = 15;
+var UNROUTED_KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+var OAUTH_TOKEN_VARIABLES = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"];
+var ROUTING_VARIABLES = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "ENABLE_TOOL_SEARCH",
+  "CLAUDE_CODE_MAX_RETRIES"
+];
+var USER_OWNED_ROUTING_VARIABLES = ["ENABLE_TOOL_SEARCH", "CLAUDE_CODE_MAX_RETRIES"];
+function withoutRoutedVariables(routed, names) {
+  const out = {};
+  for (const [name, value] of Object.entries(routed)) if (!names.includes(name)) out[name] = value;
+  return out;
+}
+var DEFAULT_SECURE_STORAGE_DIR = "";
+function routedClaudeEnv(input) {
+  const startedOn = input.startedOn ?? null;
+  if (input.login !== null && startedOn !== null && startedOn !== input.login) {
+    throw new Error(`routedClaudeEnv: a CLI pinned to ${input.login} is started on that login, not on ${startedOn}`);
+  }
+  if (input.secureStorageDir !== null && input.secureStorageDir.length === 0) {
+    throw new Error("routedClaudeEnv: the folder of an extra login cannot be the empty string");
+  }
+  const patch = {
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(input.port)}`,
+    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login, startedOn),
+    ENABLE_TOOL_SEARCH: "true",
+    CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES),
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: input.secureStorageDir ?? DEFAULT_SECURE_STORAGE_DIR
+  };
+  for (const name of [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES]) patch[name] = void 0;
+  return patch;
+}
+function inheritedOAuthTokenVariables(env, windows = false) {
+  return Object.entries(env).filter(([name, value]) => value !== void 0 && value !== "" && OAUTH_TOKEN_VARIABLES.some((other) => windows ? other.toUpperCase() === name.toUpperCase() : other === name)).map(([name]) => name);
+}
+
+// src/daemon/lifecycle.ts
+var import_node_http = require("node:http");
+var import_node_net = require("node:net");
 
 // src/core/claude-usage.ts
 var FIVE_HOUR_MINS = 5 * 60;
@@ -559,15 +681,6 @@ function effectivePin(session, accounts) {
   if (accounts.some((account) => account.autoRoute)) return null;
   return session.homeAccountId;
 }
-function autoStartLogin(accounts, preferred) {
-  const own = accounts.find((account) => account.usedByPlainClaude);
-  if (own === void 0) throw new Error("autoStartLogin: the list has no login that plain claude uses");
-  if (own.loggedIn) return own.id;
-  const pool = accounts.filter((account) => account.autoRoute);
-  const signedIn = pool.filter((account) => account.loggedIn);
-  const from = signedIn.length > 0 ? signedIn : pool;
-  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? own.id;
-}
 function rankAccounts(session, accounts, now, exclude) {
   return accounts.filter((account) => !exclude.has(account.id) && eligible(account, now)).sort((a, b) => {
     if (a.useFirst !== b.useFirst) return a.useFirst ? -1 : 1;
@@ -634,128 +747,6 @@ function secondsFromIso(value) {
 function windowName(value) {
   return Object.hasOwn(WINDOW_NAMES, value) ? WINDOW_NAMES[value] : value;
 }
-
-// src/core/route-headers.ts
-var import_node_crypto = require("node:crypto");
-
-// src/core/accounts.ts
-var DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100;
-var DEFAULT_WEEKLY_LIMIT_PERCENT = 100;
-var DEFAULT_AUTO_ROUTE = true;
-var LOGIN_ID = /^[a-z0-9]{1,32}$/;
-var RESERVED_IDS = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|none|invalid)$/;
-function isLoginIdText(text) {
-  return LOGIN_ID.test(text) && !RESERVED_IDS.test(text);
-}
-
-// src/core/route-headers.ts
-var KEY_HEADER = "x-kurmis-key";
-var LOGIN_HEADER = "x-kurmis-login";
-var STARTED_ON_HEADER = "x-kurmis-started-on";
-var STARTED_ON_NONE = "none";
-var SESSION_HEADER = "x-claude-code-session-id";
-var KURMIS_HEADERS = [KEY_HEADER, LOGIN_HEADER, STARTED_ON_HEADER];
-function parseCustomHeaders(value) {
-  const out = [];
-  for (const line of (value ?? "").split(/\r?\n/)) {
-    const colon = line.indexOf(":");
-    if (colon < 0) continue;
-    const name = line.slice(0, colon).trim();
-    if (name.length === 0) continue;
-    out.push({ name, value: line.slice(colon + 1).trim() });
-  }
-  return out;
-}
-function formatCustomHeaders(headers) {
-  return headers.map((header) => `${header.name}: ${header.value}`).join("\n");
-}
-function withRouteHeaders(existing, key, login, startedOn = null) {
-  const own = parseCustomHeaders(existing).filter((header) => !KURMIS_HEADERS.includes(header.name.toLowerCase()));
-  const added = [{ name: KEY_HEADER, value: key }];
-  if (login !== null) added.push({ name: LOGIN_HEADER, value: login });
-  if (startedOn !== null) added.push({ name: STARTED_ON_HEADER, value: startedOn });
-  return formatCustomHeaders([...own, ...added]);
-}
-function readRouteRequest(get, ownClaude) {
-  const key = nonEmpty(get(KEY_HEADER));
-  const named = nonEmpty(get(LOGIN_HEADER));
-  const startedOn = nonEmpty(get(STARTED_ON_HEADER));
-  return {
-    key,
-    login: named === null ? null : loginIdOrInvalid(named),
-    startedOn: startedOn === null ? ownClaude : startedOn.toLowerCase() === STARTED_ON_NONE ? null : loginIdOrInvalid(startedOn),
-    sessionId: nonEmpty(get(SESSION_HEADER))
-  };
-}
-function loginIdOrInvalid(value) {
-  return isLoginIdText(value) ? value : "invalid";
-}
-function routeKeyMatches(given, secret) {
-  if (given === null || secret.length === 0) return false;
-  const a = Buffer.from(given, "utf8");
-  const b = Buffer.from(secret, "utf8");
-  return a.length === b.length && (0, import_node_crypto.timingSafeEqual)(a, b);
-}
-function nonEmpty(value) {
-  const text = value?.trim() ?? "";
-  return text.length === 0 ? null : text;
-}
-
-// src/core/routed-env.ts
-function applyEnvPatch(env, patch, windows = process.platform === "win32") {
-  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
-  const names = Object.keys(patch);
-  const out = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value === void 0 || names.some((other) => same(name, other))) continue;
-    out[name] = value;
-  }
-  for (const [name, value] of Object.entries(patch)) {
-    if (value !== void 0) out[name] = value;
-  }
-  return out;
-}
-var ROUTED_CLI_MAX_RETRIES = 15;
-var UNROUTED_KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
-var OAUTH_TOKEN_VARIABLES = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"];
-var ROUTING_VARIABLES = [
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_CUSTOM_HEADERS",
-  "ENABLE_TOOL_SEARCH",
-  "CLAUDE_CODE_MAX_RETRIES"
-];
-var USER_OWNED_ROUTING_VARIABLES = ["ENABLE_TOOL_SEARCH", "CLAUDE_CODE_MAX_RETRIES"];
-function withoutRoutedVariables(routed, names) {
-  const out = {};
-  for (const [name, value] of Object.entries(routed)) if (!names.includes(name)) out[name] = value;
-  return out;
-}
-var DEFAULT_SECURE_STORAGE_DIR = "";
-function routedClaudeEnv(input) {
-  const startedOn = input.startedOn ?? null;
-  if (input.login !== null && startedOn !== null && startedOn !== input.login) {
-    throw new Error(`routedClaudeEnv: a CLI pinned to ${input.login} is started on that login, not on ${startedOn}`);
-  }
-  if (input.secureStorageDir !== null && input.secureStorageDir.length === 0) {
-    throw new Error("routedClaudeEnv: the folder of an extra login cannot be the empty string");
-  }
-  const patch = {
-    ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(input.port)}`,
-    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login, startedOn),
-    ENABLE_TOOL_SEARCH: "true",
-    CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES),
-    CLAUDE_SECURESTORAGE_CONFIG_DIR: input.secureStorageDir ?? DEFAULT_SECURE_STORAGE_DIR
-  };
-  for (const name of [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES]) patch[name] = void 0;
-  return patch;
-}
-function inheritedOAuthTokenVariables(env, windows = false) {
-  return Object.entries(env).filter(([name, value]) => value !== void 0 && value !== "" && OAUTH_TOKEN_VARIABLES.some((other) => windows ? other.toUpperCase() === name.toUpperCase() : other === name)).map(([name]) => name);
-}
-
-// src/daemon/lifecycle.ts
-var import_node_http = require("node:http");
-var import_node_net = require("node:net");
 
 // src/core/proxy-rules.ts
 var ROUTE_PATHS = [
@@ -3677,8 +3668,7 @@ async function runClaude(args, login, context, deps) {
       startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true };
     } else {
       status2 = await withFirstProbe(connection, status2, context, deps);
-      const startId = autoStartLogin(startableLogins(status2));
-      startedOn = status2.logins.find((login2) => login2.id === startId) ?? plainClaudeLogin(config);
+      startedOn = autoStartLogin(status2.logins) ?? plainClaudeLogin(config);
       if (!startedOn.usedByPlainClaude) {
         const own = ownRow ?? plainClaudeLogin(config);
         writeLine(context.stderr, `kurmis claude: ${own.alias}, ${PLAIN_CLAUDE_LOGIN}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
@@ -3735,13 +3725,11 @@ async function withFirstProbe(connection, status2, context, deps) {
   writeLine(context.stderr, probed.kind === "timeout" ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1e3)} s, so it is not known yet whether ${PLAIN_CLAUDE_LOGIN} is signed in; claude starts on it.` : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ${PLAIN_CLAUDE_LOGIN} is signed in; claude starts on it.`);
   return status2;
 }
-function startableLogins(status2) {
-  return status2.logins.map((login) => ({
-    id: login.id,
-    usedByPlainClaude: login.usedByPlainClaude,
-    loggedIn: login.signedIn ?? login.usedByPlainClaude,
-    autoRoute: login.routing
-  }));
+function autoStartLogin(logins) {
+  const own = logins.find((login) => login.usedByPlainClaude);
+  if (own === void 0 || own.signedIn !== false) return own;
+  const pool = logins.filter((login) => login.routing);
+  return pool.find((login) => login.signedIn === true) ?? pool[0] ?? own;
 }
 function settingsLayers(userSettings, env, deps) {
   const flagEnv = userSettings.settings?.env;

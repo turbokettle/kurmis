@@ -16,8 +16,7 @@
 // are about the requests, while that variable says where the CLI's own credentials are.
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { autoStartLogin, type StartableLogin } from '../../core/account-router.ts'
-import type { StatusAnswer } from '../../core/control-api.ts'
+import type { LoginStatus, StatusAnswer } from '../../core/control-api.ts'
 import {
   applyEnvPatch,
   inheritedOAuthTokenVariables,
@@ -205,8 +204,7 @@ async function runClaude(args: string[], login: string | null, context: CliConte
       startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true }
     } else {
       status = await withFirstProbe(connection, status, context, deps)
-      const startId = autoStartLogin(startableLogins(status))
-      startedOn = status.logins.find((login) => login.id === startId) ?? plainClaudeLogin(config)
+      startedOn = autoStartLogin(status.logins) ?? plainClaudeLogin(config)
       if (!startedOn.usedByPlainClaude) {
         const own = ownRow ?? plainClaudeLogin(config)
         writeLine(context.stderr, `kurmis claude: ${own.alias}, ${PLAIN_CLAUDE_LOGIN}, is not signed in, so claude starts on ` +
@@ -286,18 +284,23 @@ async function withFirstProbe(connection: DaemonConnection, status: StatusAnswer
 }
 
 /**
- * The logins of a status as `autoStartLogin` reads them. A login the daemon has not looked
- * at yet (`signedIn: null`) counts as signed in only for plain claude's login, which is
- * normally signed in; an extra login that is known to be signed in is better to start on than
- * one that is not known.
+ * The login of `logins` whose credentials an Auto claude is started on. The proxy signs each
+ * Auto request with the login it picks, so this login only has to let claude send at all: a
+ * claude that finds no credentials answers "Not logged in" before it sends anything.
+ *
+ * Plain claude's login is taken unless the daemon found it signed out (a login it has not
+ * looked at yet is normally signed in). Otherwise the first signed-in login of the pool (the
+ * logins with routing on); an extra login whose sign-in is not known yet does not count as
+ * signed in. When no pool login is signed in, the pool's first login is taken: claude then fails
+ * to sign in on a pool login, which is the problem to fix. With no pool at all, plain claude's
+ * login stays, because the router holds such a session to it (`effectivePin`). Undefined only
+ * when `logins` has no login plain claude uses.
  */
-export function startableLogins(status: StatusAnswer): StartableLogin[] {
-  return status.logins.map((login) => ({
-    id: login.id,
-    usedByPlainClaude: login.usedByPlainClaude,
-    loggedIn: login.signedIn ?? login.usedByPlainClaude,
-    autoRoute: login.routing
-  }))
+function autoStartLogin(logins: readonly LoginStatus[]): LoginStatus | undefined {
+  const own = logins.find((login) => login.usedByPlainClaude)
+  if (own === undefined || own.signedIn !== false) return own
+  const pool = logins.filter((login) => login.routing)
+  return pool.find((login) => login.signedIn === true) ?? pool[0] ?? own
 }
 
 /**
