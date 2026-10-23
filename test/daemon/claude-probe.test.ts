@@ -18,7 +18,7 @@ import {
   type FakeClaudeRecord,
   type FakeClaudeScenario
 } from '../fakes/index.ts'
-import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF } from '../logins.ts'
+import { extraRef, OWN_CLAUDE, OWN_CLAUDE_REF } from '../logins.ts'
 
 let counter = 0
 
@@ -26,7 +26,7 @@ let counter = 0
 function login(scenario?: FakeClaudeScenario): { id: string; dir: string; record: string; env: NodeJS.ProcessEnv } {
   counter += 1
   const id = `probe${String(counter)}`
-  const dir = loginFolder(claudeRef(id))
+  const dir = loginFolder(extraRef(id))
   const record = join(mkdtempSync(join(homedir(), 'claude-probe-')), 'record.jsonl')
   if (scenario !== undefined) writeClaudeScenario(dir, scenario)
   return { id, dir, record, env: { ...process.env, KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT, FAKE_CLAUDE_RECORD: record } }
@@ -55,7 +55,7 @@ function expectFixedError(result: ProbeResult): void {
 test('a signed-in login answers its windows, and the CLI has exited when the promise resolves', async () => {
   const { id, dir, record, env } = login()
   writeClaudeCredentials(dir, { accessToken: fakeToken('work') })
-  const result = await probeClaudeUsage(claudeRef(id), { env, now: () => 1_000 })
+  const result = await probeClaudeUsage(extraRef(id), { env, now: () => 1_000 })
   expect(result.ok).toBe(true)
   if (!result.ok) return
   expect(result.signedIn).toBe(true)
@@ -84,7 +84,7 @@ test('a signed-in login answers its windows, and the CLI has exited when the pro
 
 test('a login with no credentials is signed out, which is an answer and not an error', async () => {
   const { id, env } = login()
-  const result = await probeClaudeUsage(claudeRef(id), { env })
+  const result = await probeClaudeUsage(extraRef(id), { env })
   expect(result).toMatchObject({ ok: true, signedIn: false })
   if (!result.ok) return
   expect(result.usage).toMatchObject({ rateLimitsAvailable: false, fiveHour: null, sevenDay: null, subscriptionType: null })
@@ -93,21 +93,21 @@ test('a login with no credentials is signed out, which is an answer and not an e
 test('a login whose token lacks the profile scope is signed in but has no windows', async () => {
   const { id, dir, env } = login()
   writeClaudeCredentials(dir, { scopes: ['user:inference'] })
-  const result = await probeClaudeUsage(claudeRef(id), { env })
+  const result = await probeClaudeUsage(extraRef(id), { env })
   expect(result).toMatchObject({ ok: true, signedIn: true, usage: { rateLimitsAvailable: false, fiveHour: null, subscriptionType: 'max' } })
 })
 
 test('a failed get_usage is an error with a fixed sentence, and initialize said the login is signed in', async () => {
   const { id, dir, env } = login({ getUsage: 'error' })
   writeClaudeCredentials(dir)
-  const result = await probeClaudeUsage(claudeRef(id), { env })
+  const result = await probeClaudeUsage(extraRef(id), { env })
   expect(result).toEqual({ ok: false, signedIn: true, reason: 'upstream_error', error: 'Claude answered the usage request with an error.' })
 })
 
 test('rate limits that are available but missing mean the usage request failed', async () => {
   const { id, dir, env } = login({ usage: { rate_limits: null } })
   writeClaudeCredentials(dir)
-  const result = await probeClaudeUsage(claudeRef(id), { env })
+  const result = await probeClaudeUsage(extraRef(id), { env })
   expect(result).toMatchObject({ ok: false, signedIn: true, reason: 'upstream_error' })
   expectFixedError(result)
 })
@@ -123,7 +123,7 @@ test('a CLI that never answers is killed at the deadline', { timeout: HANG_DEADL
   const { id, dir, record, env } = login({ getUsage: 'hang' })
   writeClaudeCredentials(dir)
   const started = Date.now()
-  const result = await probeClaudeUsage(claudeRef(id), { env, timeoutMs: HANG_DEADLINE_MS })
+  const result = await probeClaudeUsage(extraRef(id), { env, timeoutMs: HANG_DEADLINE_MS })
   expect(Date.now() - started).toBeLessThan(HANG_DEADLINE_MS + 6_500)
   expect(result).toEqual({ ok: false, signedIn: true, reason: 'timeout', error: `The usage probe timed out after ${String(HANG_DEADLINE_MS / 1000)} s.` })
   const [start] = starts(record)
@@ -133,7 +133,7 @@ test('a CLI that never answers is killed at the deadline', { timeout: HANG_DEADL
 
 test('a CLI that fails at start is an error naming its exit code and nothing it printed', async () => {
   const { id, env } = login({ startupFailure: 'fake startup failure on stderr' })
-  const result = await probeClaudeUsage(claudeRef(id), { env })
+  const result = await probeClaudeUsage(extraRef(id), { env })
   expect(result).toEqual({ ok: false, signedIn: null, reason: 'exited', error: 'claude exited with code 1 before it answered.' })
 })
 
@@ -141,7 +141,7 @@ test('aborting the signal kills the CLI', async () => {
   const { id, dir, record, env } = login({ getUsage: 'hang' })
   writeClaudeCredentials(dir)
   const controller = new AbortController()
-  const probe = probeClaudeUsage(claudeRef(id), { env, signal: controller.signal })
+  const probe = probeClaudeUsage(extraRef(id), { env, signal: controller.signal })
   const until = Date.now() + 5_000
   while (!readFakeClaudeRecord(record).some((line) => line.kind === 'control_request' && line.subtype === 'get_usage')) {
     if (Date.now() > until) throw new Error('the probe never asked get_usage')
@@ -157,14 +157,14 @@ test('a signal that is already aborted starts nothing', async () => {
   const { id, record, env } = login()
   const controller = new AbortController()
   controller.abort()
-  expect(await probeClaudeUsage(claudeRef(id), { env, signal: controller.signal })).toMatchObject({ ok: false, signedIn: null, reason: 'shutdown' })
+  expect(await probeClaudeUsage(extraRef(id), { env, signal: controller.signal })).toMatchObject({ ok: false, signedIn: null, reason: 'shutdown' })
   expect(existsSync(record)).toBe(false)
 })
 
 test('a token that expires within five minutes is renewed by the probe and on disk when it resolves', async () => {
   const { id, dir, env } = login()
   writeClaudeCredentials(dir, { accessToken: fakeToken('expiring'), expiresAt: Date.now() + 2 * 60_000 })
-  const result = await probeClaudeUsage(claudeRef(id), { env })
+  const result = await probeClaudeUsage(extraRef(id), { env })
   expect(result).toMatchObject({ ok: true, signedIn: true })
   const after = readClaudeCredentials(dir)
   expect(after?.accessToken).toBe(`${fakeToken('expiring')}-renewed`)
@@ -175,7 +175,7 @@ test('a token without a refresh token is never renewed', async () => {
   const { id, dir, record, env } = login()
   const expiresAt = Date.now() + 2 * 60_000
   writeClaudeCredentials(dir, { accessToken: fakeToken('no-refresh'), refreshToken: null, expiresAt })
-  const result = await probeClaudeUsage(claudeRef(id), { env })
+  const result = await probeClaudeUsage(extraRef(id), { env })
   expect(result).toMatchObject({ ok: true, signedIn: true })
   expect(readClaudeCredentials(dir)).toMatchObject({ accessToken: fakeToken('no-refresh'), expiresAt })
   expect(readFakeClaudeRecord(record).some((line) => line.kind === 'renew')).toBe(false)
@@ -184,7 +184,7 @@ test('a token without a refresh token is never renewed', async () => {
 test('a failed renewal leaves the login signed out', async () => {
   const { id, dir, env } = login({ renew: 'fail' })
   writeClaudeCredentials(dir, { expiresAt: Date.now() + 60_000 })
-  expect(await probeClaudeUsage(claudeRef(id), { env })).toMatchObject({ ok: true, signedIn: false, usage: { rateLimitsAvailable: false } })
+  expect(await probeClaudeUsage(extraRef(id), { env })).toMatchObject({ ok: true, signedIn: false, usage: { rateLimitsAvailable: false } })
 })
 
 test("the login plain claude uses runs with claudeProbeEnv, its own probe folder and the default credentials", async () => {
@@ -222,7 +222,7 @@ test('the last snapshot decides whether a status the probe cannot measure still 
     status: 'rejected',
     limited: { window: 'seven_day_sonnet', utilization: 100, resetsAt: new Date(Date.now() + 86_400_000).toISOString() }
   }
-  const result = await probeClaudeUsage(claudeRef(id), { env, previous })
+  const result = await probeClaudeUsage(extraRef(id), { env, previous })
   expect(result).toMatchObject({ ok: true, usage: { status: 'rejected', limited: { window: 'seven_day_sonnet' } } })
 })
 
@@ -231,7 +231,7 @@ test('a claude that cannot be found is an error with a fixed sentence', async ()
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: empty, Path: empty }
   // Empty rather than removed: in the tests a missing variable is taken from test/setup.ts.
   env.KURMIS_CLAUDE_BIN = ''
-  const result = await probeClaudeUsage(claudeRef('missing'), { env })
+  const result = await probeClaudeUsage(extraRef('missing'), { env })
   expect(result).toMatchObject({ ok: false, signedIn: null, reason: 'missing' })
   expectFixedError(result)
   // The daemon looks it up on the PATH it was started with, and the sentence says so.
@@ -242,6 +242,6 @@ test('a claude that cannot be found is an error with a fixed sentence', async ()
 
 test('a claude that does not exist at the named path is a failed start', async () => {
   const env = { ...process.env, KURMIS_CLAUDE_BIN: join(homedir(), 'no-such-claude') }
-  const result = await probeClaudeUsage(claudeRef('nowhere'), { env })
+  const result = await probeClaudeUsage(extraRef('nowhere'), { env })
   expect(result).toEqual({ ok: false, signedIn: null, reason: 'missing', error: 'claude could not be started (ENOENT).' })
 })

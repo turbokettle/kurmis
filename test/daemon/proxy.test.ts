@@ -15,7 +15,7 @@ import { createProxy } from '../../src/daemon/proxy.ts'
 import type { ProbeFunction } from '../../src/daemon/usage-poller.ts'
 import { fakeToken, reply, writeClaudeCredentials } from '../fakes/index.ts'
 import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
-import { claudeRef, OWN_CLAUDE } from '../logins.ts'
+import { extraRef, OWN_CLAUDE } from '../logins.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
@@ -38,7 +38,7 @@ async function twoLogins(options: Parameters<typeof startHarness>[0] = {},
   credentials: { default?: Parameters<typeof writeClaudeCredentials>[1] } = {}): Promise<Harness> {
   harness = await startHarness({ claude: { [WORK_ID]: {} }, ...options })
   writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT, ...credentials.default })
-  writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
+  writeClaudeCredentials(loginFolder(extraRef(WORK_ID)), { accessToken: WORK })
   return harness
 }
 

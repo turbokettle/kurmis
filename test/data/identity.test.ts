@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import { ClaudeIdentityReader, isSameClaudeAccount, parseClaudeIdentity, readClaudeIdentity } from '../../src/data/identity.ts'
 import { loginFolder, ownClaudeProbeFolder } from '../../src/data/paths.ts'
-import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
+import { extraRef, OWN_CLAUDE_REF } from '../logins.ts'
 
 function profile(uuid: string, email: string): string {
   return JSON.stringify({ numStartups: 3, oauthAccount: { accountUuid: uuid, emailAddress: email,
@@ -48,7 +48,7 @@ describe('the same account', () => {
   })
 })
 
-const WORK = claudeRef('workclaude')
+const WORK = extraRef('workclaude')
 
 describe('reading', () => {
   test('an extra login reads only its own folder', () => {

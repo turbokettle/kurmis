@@ -20,7 +20,7 @@ export const OWN_CLAUDE = 'ownclaude1' as LoginId
 export const OWN_CLAUDE_REF: LoginRef = { id: OWN_CLAUDE, usedByPlainClaude: true }
 
 /** An extra login with this id, as a `LoginRef`. */
-export function claudeRef(id: string): LoginRef {
+export function extraRef(id: string): LoginRef {
   return { id: id as LoginId, usedByPlainClaude: false }
 }
 

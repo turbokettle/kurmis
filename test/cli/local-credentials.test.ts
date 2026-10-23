@@ -9,11 +9,11 @@ import { runProgram } from '../../src/platform/run.ts'
 import type { CredentialRead, FilterAnswer } from '../../src/platform/windows-credentials.ts'
 import { FakeKeychain } from '../daemon/fake-security/fake-keychain.ts'
 import { writeClaudeCredentials, writeClaudeIdentity } from '../fakes/index.ts'
-import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
+import { extraRef, OWN_CLAUDE_REF } from '../logins.ts'
 
-const A = claudeRef('logina')
-const B = claudeRef('loginb')
-const C = claudeRef('loginc')
+const A = extraRef('logina')
+const B = extraRef('loginb')
+const C = extraRef('loginc')
 
 const home = join(process.env.HOME!, 'credentials-home')
 

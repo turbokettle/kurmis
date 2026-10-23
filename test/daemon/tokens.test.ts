@@ -17,7 +17,7 @@ import {
 } from '../../src/daemon/tokens.ts'
 import { fakeToken, writeClaudeCredentials } from '../fakes/claude.ts'
 import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
-import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF, testConfig } from '../logins.ts'
+import { extraRef, OWN_CLAUDE, OWN_CLAUDE_REF, testConfig } from '../logins.ts'
 
 const DEFAULT = OWN_CLAUDE
 const WORK = 'workclaude'
@@ -25,7 +25,7 @@ const WORK = 'workclaude'
 const UNKNOWN = 'unknown01'
 /** The config the token source looks logins up in. */
 const config = testConfig({ extras: [{ id: WORK }] })
-const workFolder = (): string => loginFolder(claudeRef(WORK))
+const workFolder = (): string => loginFolder(extraRef(WORK))
 const PLAIN = 'Claude Code-credentials'
 const record = (token: string, refresh = true): string =>
   JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt: 4_100_000_000_000, ...(refresh ? { refreshToken: 'fake-refresh' } : {}) } })
@@ -75,12 +75,12 @@ test('the security program comes from KURMIS_SECURITY_PROGRAM, else /usr/bin/sec
 })
 
 test("an extra login uses its folder for both the item name and the file; the login plain claude uses the plain item and ~/.claude", () => {
-  expect(claudeSecureStorageDir(claudeRef(WORK))).toBe(join(dir, 'kurmis', 'claude', WORK))
+  expect(claudeSecureStorageDir(extraRef(WORK))).toBe(join(dir, 'kurmis', 'claude', WORK))
   expect(claudeSecureStorageDir(OWN_CLAUDE_REF)).toBeNull()
-  expect(claudeCredentialsDir(claudeRef(WORK), home)).toBe(join(dir, 'kurmis', 'claude', WORK))
+  expect(claudeCredentialsDir(extraRef(WORK), home)).toBe(join(dir, 'kurmis', 'claude', WORK))
   expect(claudeCredentialsDir(OWN_CLAUDE_REF, home)).toBe(join(home, '.claude'))
-  expect(() => claudeSecureStorageDir(claudeRef('../x'))).toThrow()
-  expect(() => claudeCredentialsDir(claudeRef('../x'), home)).toThrow()
+  expect(() => claudeSecureStorageDir(extraRef('../x'))).toThrow()
+  expect(() => claudeCredentialsDir(extraRef('../x'), home)).toThrow()
 })
 
 test('a login is told apart by its settings in the config, not by its id', async () => {
@@ -91,7 +91,7 @@ test('a login is told apart by its settings in the config, not by its id', async
   const extra = source({ platform: 'linux' })
   await extra.prime([WORK])
   expect(extra.read(WORK)?.accessToken).toBe(fakeToken('work-file'))
-  const plain = source({ platform: 'linux', login: (id) => (id === WORK ? { ...claudeRef(WORK), usedByPlainClaude: true } : undefined) })
+  const plain = source({ platform: 'linux', login: (id) => (id === WORK ? { ...extraRef(WORK), usedByPlainClaude: true } : undefined) })
   await plain.prime([WORK])
   expect(plain.read(WORK)?.accessToken).toBe(fakeToken('default-file'))
   const none = source({ platform: 'linux', login: () => undefined })

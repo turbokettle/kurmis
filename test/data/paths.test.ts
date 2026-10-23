@@ -11,7 +11,7 @@ import {
   ownClaudeProbeFolder,
   statePath
 } from '../../src/data/paths.ts'
-import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
+import { extraRef, OWN_CLAUDE_REF } from '../logins.ts'
 
 const testHome = process.env.KURMIS_HOME as string
 
@@ -48,7 +48,7 @@ describe('file paths', () => {
 
   it("names an extra login's folder after its id, in the folder of the extra logins", () => {
     expect(extraLoginsFolder()).toBe(join(kurmisHome(), 'claude'))
-    expect(loginFolder(claudeRef('workclaude'))).toBe(join(kurmisHome(), 'claude', 'workclaude'))
+    expect(loginFolder(extraRef('workclaude'))).toBe(join(kurmisHome(), 'claude', 'workclaude'))
   })
 
   it("refuses the login of plain claude, which has no folder here", () => {
@@ -58,7 +58,7 @@ describe('file paths', () => {
   it.each(['../x', 'a/b', 'a\\b', '..', '', 'claude:work', 'Work', 'con', '.hidden', 'side-2', 'a_b', 'a'.repeat(33)])(
     'refuses the id %j',
     (id) => {
-      expect(() => loginFolder(claudeRef(id))).toThrow(/not a login id/)
+      expect(() => loginFolder(extraRef(id))).toThrow(/not a login id/)
     }
   )
 

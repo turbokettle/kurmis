@@ -11,14 +11,14 @@ import { accountUsage, usageWindow } from '../../core/usage-fixtures.ts'
 import { writeClaudeCredentials, writeClaudeIdentity } from '../../fakes/index.ts'
 import { FakeKeychain } from '../../daemon/fake-security/fake-keychain.ts'
 import { collect, fakeDaemonClient, loginStatus, statusAnswer } from '../helpers.ts'
-import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
+import { extraRef, OWN_CLAUDE, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
 
 const NOW = Date.parse('2026-09-13T01:10:00.000Z')
 const HOUR = 60 * 60_000
 
 const PROBED = statusAnswer([
   loginStatus(OWN_CLAUDE_REF, { usage: accountUsage({ fetchedAt: NOW, fiveHour: usageWindow(7) }) }),
-  loginStatus(claudeRef('workclaude'), { signedIn: false })
+  loginStatus(extraRef('workclaude'), { signedIn: false })
 ])
 
 const home = join(process.env.HOME!, 'status-home')
@@ -66,7 +66,7 @@ describe('kurmis status with the daemon running', () => {
   test('warns when an extra login is the same account as the login plain claude uses', async () => {
     const status = statusAnswer([
       loginStatus(OWN_CLAUDE_REF, { email: 'own@example.com', usage: PROBED.logins[0]!.usage }),
-      loginStatus({ ...claudeRef('workclaude'), alias: 'own-example' }, { email: 'own@example.com' })
+      loginStatus({ ...extraRef('workclaude'), alias: 'own-example' }, { email: 'own@example.com' })
     ])
     const daemon = fakeDaemonClient({ status })
     const text = collect()
@@ -78,7 +78,7 @@ describe('kurmis status with the daemon running', () => {
   })
 
   test('asks for a probe once when no login has been probed yet', async () => {
-    const daemon = fakeDaemonClient({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(claudeRef('workclaude'))]), probed: PROBED })
+    const daemon = fakeDaemonClient({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(extraRef('workclaude'))]), probed: PROBED })
     const out = collect()
     await command({ daemon }).run(['--json'], out.context)
     expect(daemon.calls).toEqual(['findDaemon', 'requestProbe'])
@@ -124,8 +124,8 @@ describe('kurmis status with the daemon running', () => {
   test('warns about two extra logins with the same email, and says how to remove the second', async () => {
     const status = statusAnswer([
       loginStatus(OWN_CLAUDE_REF, { email: 'own@example.com', usage: PROBED.logins[0]!.usage }),
-      loginStatus({ ...claudeRef('workclaude'), alias: 'work-example' }, { email: 'work@example.com' }),
-      loginStatus({ ...claudeRef('workagain'), alias: 'work-example-2' }, { email: 'Work@Example.com' })
+      loginStatus({ ...extraRef('workclaude'), alias: 'work-example' }, { email: 'work@example.com' }),
+      loginStatus({ ...extraRef('workagain'), alias: 'work-example-2' }, { email: 'Work@Example.com' })
     ])
     const out = collect()
     expect(await command({ daemon: fakeDaemonClient({ status }) }).run(['--json'], out.context)).toBe(0)
@@ -153,8 +153,8 @@ describe('kurmis status with the daemon not running', () => {
     state.usage.set('workclaude' as LoginId, accountUsage({ accountId: 'workclaude', fetchedAt: NOW - 3 * HOUR, fiveHour: usageWindow(42, new Date(NOW + HOUR).toISOString()) }))
     state.sessions.set('0b7c0a52-1111-4222-8333-944445555666', { login: 'workclaude' as LoginId, lastUsed: NOW - HOUR })
     await saveState(state)
-    writeClaudeCredentials(loginFolder(claudeRef('workclaude')))
-    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
+    writeClaudeCredentials(loginFolder(extraRef('workclaude')))
+    writeClaudeIdentity(join(loginFolder(extraRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
 
     const daemon = fakeDaemonClient({ running: false })
     const out = collect({})
@@ -184,7 +184,7 @@ describe('kurmis status with the daemon not running', () => {
   test('shows no credentials for a login whose .claude.json names an account but whose token is gone, on macOS and Windows', async () => {
     writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
-    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
+    writeClaudeIdentity(join(loginFolder(extraRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
     for (const platform of ['darwin', 'win32'] as const) {
       const out = collect({})
       expect(await command({ daemon: fakeDaemonClient({ running: false }), platform }).run([], out.context)).toBe(0)
@@ -212,7 +212,7 @@ describe('kurmis status with the daemon not running', () => {
   test('warns about an extra login that is the account of the login plain claude uses, from the profile files', async () => {
     writeTestConfig({ extras: [{ id: 'workclaude', alias: 'own-example' }] })
     writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
-    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'Own@Example.com' })
+    writeClaudeIdentity(join(loginFolder(extraRef('workclaude')), '.claude.json'), { email: 'Own@Example.com' })
     const out = collect({})
     expect(await command({ daemon: fakeDaemonClient({ running: false }) }).run(['--json'], out.context)).toBe(0)
     expect((JSON.parse(out.stdout()) as StatusJson).warnings).toEqual([expect.stringContaining('"kurmis logout own-example"')])
@@ -221,7 +221,7 @@ describe('kurmis status with the daemon not running', () => {
   test('does not warn about one email in two organizations, from the profile files', async () => {
     writeTestConfig({ extras: [{ id: 'workclaude', alias: 'own-example' }] })
     writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
-    writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'),
+    writeClaudeIdentity(join(loginFolder(extraRef('workclaude')), '.claude.json'),
       { email: 'own@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c002' })
     const out = collect({})
     expect(await command({ daemon: fakeDaemonClient({ running: false }) }).run(['--json'], out.context)).toBe(0)
@@ -316,7 +316,7 @@ describe('kurmis status with the daemon not running', () => {
 describe('whether nothing has been probed yet', () => {
   test('every login that may be signed in has no usage', () => {
     expect(nothingProbedYet(statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: null }),
-      loginStatus(claudeRef('workclaude'), { signedIn: false, usage: accountUsage({ accountId: 'workclaude', fetchedAt: NOW }) })]))).toBe(true)
+      loginStatus(extraRef('workclaude'), { signedIn: false, usage: accountUsage({ accountId: 'workclaude', fetchedAt: NOW }) })]))).toBe(true)
     expect(nothingProbedYet(PROBED)).toBe(false)
     expect(nothingProbedYet(statusAnswer([loginStatus(OWN_CLAUDE_REF, { signedIn: false })]))).toBe(false)
   })

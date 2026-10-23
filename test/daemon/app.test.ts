@@ -11,7 +11,7 @@ import { emptyAccountUsage } from '../../src/core/usage.ts'
 import { toLoginId } from '../../src/data/login-id.ts'
 import { loginFolder, statePath } from '../../src/data/paths.ts'
 import { fakeToken, readFakeClaudeRecord, reply, writeClaudeCredentials, writeClaudeIdentity } from '../fakes/index.ts'
-import { claudeRef, OWN_CLAUDE } from '../logins.ts'
+import { extraRef, OWN_CLAUDE } from '../logins.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
@@ -31,7 +31,7 @@ afterEach(async () => {
 async function twoLogins(options: Parameters<typeof startHarness>[0] = {}): Promise<Harness> {
   harness = await startHarness({ claude: { [WORK_ID]: {} }, ...options })
   writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
-  writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
+  writeClaudeCredentials(loginFolder(extraRef(WORK_ID)), { accessToken: WORK })
   return harness
 }
 
@@ -162,7 +162,7 @@ describe('choosing and signing', () => {
 
   test('the account uuid in metadata.user_id is the chosen login\'s', async () => {
     const h = await twoLogins()
-    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'),
+    writeClaudeIdentity(join(loginFolder(extraRef(WORK_ID)), '.claude.json'),
       { email: 'work@example.com', accountUuid: '00000000-0000-4000-8000-00000000a0a0' })
     await messages(h, S1, { 'x-kurmis-login': WORK_ID })
     const sent = h.api.apiRequests()[0]!.json as { metadata: { user_id: string } }
@@ -173,7 +173,7 @@ describe('choosing and signing', () => {
 
   test('the body goes upstream byte for byte, and only the account uuid changes when it must', async () => {
     const h = await twoLogins()
-    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'),
+    writeClaudeIdentity(join(loginFolder(extraRef(WORK_ID)), '.claude.json'),
       { email: 'work@example.com', accountUuid: '00000000-0000-4000-8000-00000000a0a0' })
     const userId = JSON.stringify(JSON.stringify({ device_id: 'device-1', account_uuid: '00000000-0000-4000-8000-00000000c11e' }))
     const text = `{ "model" : "claude-sonnet-5",\n "max_tokens": 100, "seed": 18446744073709551615, "stream": true,\n` +
@@ -377,7 +377,7 @@ describe('the control API', () => {
 
   test("status lists every login with its settings, the login of plain claude first", async () => {
     const h = await twoLogins()
-    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'),
+    writeClaudeIdentity(join(loginFolder(extraRef(WORK_ID)), '.claude.json'),
       { email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
     const answer = await status(h)
     expect(answer).toMatchObject({ ok: true, apiVersion: CONTROL_API_VERSION, pid: process.pid })
@@ -395,12 +395,12 @@ describe('the control API', () => {
     harness = await startHarness({ claude: { [WORK_ID]: {}, picked: { alias: 'picked' } } })
     const h = harness
     writeClaudeCredentials(join(h.home, '.claude'), { accessToken: DEFAULT })
-    writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
-    writeClaudeCredentials(loginFolder(claudeRef('picked')), { accessToken: fakeToken('picked') })
+    writeClaudeCredentials(loginFolder(extraRef(WORK_ID)), { accessToken: WORK })
+    writeClaudeCredentials(loginFolder(extraRef('picked')), { accessToken: fakeToken('picked') })
     // Before its first probe, the profile of the login plain claude uses is read from ~/.claude.json.
     writeClaudeIdentity(join(h.home, '.claude.json'), { email: 'own.person@example.com' })
-    writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'), { email: 'work.person@example.com' })
-    writeClaudeIdentity(join(loginFolder(claudeRef('picked')), '.claude.json'), { email: 'picked.person@example.com' })
+    writeClaudeIdentity(join(loginFolder(extraRef(WORK_ID)), '.claude.json'), { email: 'work.person@example.com' })
+    writeClaudeIdentity(join(loginFolder(extraRef('picked')), '.claude.json'), { email: 'picked.person@example.com' })
     const probed = await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY },
       body: { logins: [OWN_CLAUDE, WORK_ID, 'picked'] } })
     expect(probed.status).toBe(200)

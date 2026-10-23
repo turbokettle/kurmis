@@ -9,13 +9,13 @@ import { CONTROL_API_VERSION } from '../../../src/core/control-api.ts'
 import { ConfigError } from '../../../src/data/config.ts'
 import { loginFolder, logPath } from '../../../src/data/paths.ts'
 import { ProgramNotFoundError } from '../../../src/platform/programs.ts'
-import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF, testConfig } from '../../logins.ts'
+import { extraRef, OWN_CLAUDE, OWN_CLAUDE_REF, testConfig } from '../../logins.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, loginStatus, statusAnswer, type FakeDaemonOptions } from '../helpers.ts'
 
 const KEY = FAKE_CONNECTION.key
 const BASE_URL = `http://127.0.0.1:${String(FAKE_CONNECTION.port)}`
-const WORK = { ...claudeRef('workclaude'), alias: 'work-example' }
-const SPARE = claudeRef('spareclaude')
+const WORK = { ...extraRef('workclaude'), alias: 'work-example' }
+const SPARE = extraRef('spareclaude')
 const WORK_FOLDER = (): string => loginFolder(WORK)
 
 let home: string
@@ -282,7 +282,7 @@ describe('kurmis claude on Auto', () => {
     const h = harness({
       status: statusAnswer([
         loginStatus(OWN_CLAUDE_REF, { signedIn: false, routing: false }),
-        loginStatus({ ...claudeRef('offclaude') }, { routing: false }),
+        loginStatus({ ...extraRef('offclaude') }, { routing: false }),
         loginStatus(SPARE, { signedIn: null }),
         loginStatus(WORK, { signedIn: false })
       ])

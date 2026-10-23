@@ -13,7 +13,7 @@ import { readKey } from '../../../src/data/daemon-file.ts'
 import { loginFolder, pausedFilePath, setupSettingsRecordPath } from '../../../src/data/paths.ts'
 import { ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { registerAutostart, unregisterAutostart, type AutostartOptions, type AutostartResult } from '../../../src/platform/autostart.ts'
-import { claudeRef, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
+import { extraRef, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
 import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
@@ -673,8 +673,8 @@ describe('kurmis setup --uninstall-and-logout', () => {
     return world
   }
 
-  const WORK = claudeRef('workclaude')
-  const SPARE = claudeRef('spareclaude')
+  const WORK = extraRef('workclaude')
+  const SPARE = extraRef('spareclaude')
 
   function addLoginWithFolder(login: LoginRef, alias: string): string {
     saveConfig(addLogin(loadConfig(), login.id, { alias }))
@@ -728,7 +728,7 @@ describe('kurmis setup --uninstall-and-logout', () => {
   it('signs out a folder a login left behind by its id, and never the login plain claude uses', async () => {
     writeTestConfig({ port: PORT })
     await installed()
-    const leftover = claudeRef('leftover01')
+    const leftover = extraRef('leftover01')
     mkdirSync(loginFolder(leftover), { recursive: true })
     // A folder named by the id of the login plain claude uses is not a login kurmis added.
     mkdirSync(join(kurmisHome, 'claude', OWN_CLAUDE_REF.id), { recursive: true })

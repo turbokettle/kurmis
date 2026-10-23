@@ -3,10 +3,10 @@ import { formatStatus as formatReport, STATUS_JSON_FORMAT, statusJson as reportJ
 import { CONTROL_API_VERSION, type StatusAnswer } from '../../src/core/control-api.ts'
 import { accountUsage, usageWindow } from '../core/usage-fixtures.ts'
 import { daemonStatus, loginStatus, statusAnswer } from './helpers.ts'
-import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
+import { extraRef, OWN_CLAUDE_REF } from '../logins.ts'
 
 const OWN_CLAUDE_LOGIN = { ...OWN_CLAUDE_REF, alias: 'own-example' }
-const WORK_CLAUDE = { ...claudeRef('workclaude'), alias: 'work-example' }
+const WORK_CLAUDE = { ...extraRef('workclaude'), alias: 'work-example' }
 
 /** The text of the daemon's answer, as `kurmis status` prints it. */
 const formatStatus = (answer: StatusAnswer, now: number, options: StatusFormatOptions): string =>
@@ -48,9 +48,9 @@ function sampleStatus() {
       }),
       block: { kind: 'over-limit', utilization: 92, limitPercent: 90, window: '5 hour', resetsAt: at(45 * MINUTE) }
     }),
-    loginStatus(claudeRef('spareclaude'), { signedIn: null, routing: false, block: { kind: 'auto-route-off' } }),
-    loginStatus(claudeRef('coolclaude'), { block: { kind: 'cooldown', until: NOW + HOUR }, cooldownUntil: NOW + HOUR }),
-    loginStatus(claudeRef('goneclaude'), {
+    loginStatus(extraRef('spareclaude'), { signedIn: null, routing: false, block: { kind: 'auto-route-off' } }),
+    loginStatus(extraRef('coolclaude'), { block: { kind: 'cooldown', until: NOW + HOUR }, cooldownUntil: NOW + HOUR }),
+    loginStatus(extraRef('goneclaude'), {
       signedIn: false,
       usage: accountUsage({
         accountId: 'goneclaude',
@@ -113,14 +113,14 @@ goneclaude
   })
 
   test('gives a cooldown\'s end in local time, with the date when it is on another day', () => {
-    const status = (until: number) => statusAnswer([loginStatus(claudeRef('coolclaude'), { block: { kind: 'cooldown', until }, cooldownUntil: until })])
+    const status = (until: number) => statusAnswer([loginStatus(extraRef('coolclaude'), { block: { kind: 'cooldown', until }, cooldownUntil: until })])
     expect(formatStatus(status(NOW + HOUR), NOW, { keychain: false, timeZone: 'Asia/Tokyo' }))
       .toContain('passed over: cooling down until 11:10 (in 1h)')
     expect(formatStatus(status(NOW + 23 * HOUR), NOW, { keychain: false, timeZone: 'Asia/Tokyo' }))
       .toContain('passed over: cooling down until 2026-09-14 09:10 (in 23h)')
     expect(formatStatus(status(NOW + HOUR), NOW, { keychain: false })).not.toContain('2026-09-13T02:10:00.000Z')
     // A cooldown with no end says so in words.
-    expect(formatStatus(statusAnswer([loginStatus(claudeRef('coolclaude'), { block: { kind: 'cooldown', until: null } })]), NOW, { keychain: false }))
+    expect(formatStatus(statusAnswer([loginStatus(extraRef('coolclaude'), { block: { kind: 'cooldown', until: null } })]), NOW, { keychain: false }))
       .toContain('passed over: cooling down until a usage probe says it is back')
   })
 
@@ -216,7 +216,7 @@ describe('the warning about an extra login that is the account of the login plai
     const status = statusAnswer([
       loginStatus(OWN_CLAUDE_LOGIN, { email: 'own@example.com' }),
       loginStatus(WORK_CLAUDE, { email: 'Own@Example.com' }),
-      loginStatus({ ...claudeRef('otherclaude'), alias: 'other-example' }, { email: 'other@example.com' })
+      loginStatus({ ...extraRef('otherclaude'), alias: 'other-example' }, { email: 'other@example.com' })
     ])
     const warning = 'work-example and own-example, the login plain claude uses, are the same account ' +
       '(own@example.com), so they use one subscription. "kurmis logout work-example" removes work-example.'
@@ -230,7 +230,7 @@ describe('the warning about an extra login that is the account of the login plai
     const status = statusAnswer([
       loginStatus(OWN_CLAUDE_LOGIN, { email: 'own@example.com', organizationUuid: 'org-0001' }),
       loginStatus(WORK_CLAUDE, { email: 'own@example.com', organizationUuid: 'org-0002' }),
-      loginStatus({ ...claudeRef('spareclaude'), alias: 'spare-example' }, { email: 'own@example.com', organizationUuid: null })
+      loginStatus({ ...extraRef('spareclaude'), alias: 'spare-example' }, { email: 'own@example.com', organizationUuid: null })
     ])
     expect(statusJson(status, NOW, { keychain: false }).warnings).toEqual([
       'spare-example and own-example, the login plain claude uses, are the same account (own@example.com), so they ' +
@@ -251,8 +251,8 @@ describe('the warning about an extra login that is the account of the login plai
       logins: [
         loginStatus(OWN_CLAUDE_LOGIN, { email: 'own@example.com' }),
         loginStatus(WORK_CLAUDE, { email: 'own@example.com' }),
-        loginStatus({ ...claudeRef('spareclaude'), alias: 'spare-example' }, { email: 'spare@example.com' }),
-        loginStatus({ ...claudeRef('spareagain'), alias: 'spare-example-2' }, { email: 'spare@example.com' })
+        loginStatus({ ...extraRef('spareclaude'), alias: 'spare-example' }, { email: 'spare@example.com' }),
+        loginStatus({ ...extraRef('spareagain'), alias: 'spare-example-2' }, { email: 'spare@example.com' })
       ],
       credentials: new Map(),
       globalRouting: 'off',
@@ -267,7 +267,7 @@ describe('the warning about an extra login that is the account of the login plai
   })
 
   test('puts an email that does not fit on the title line on a line of its own', () => {
-    const login = { ...claudeRef('longclaude'), alias: 'a-very-long-alias-made-from-an-email' }
+    const login = { ...extraRef('longclaude'), alias: 'a-very-long-alias-made-from-an-email' }
     const text = formatStatus(statusAnswer([loginStatus(login, { email: 'a.very.long.alias.made.from.an.email@example.com' })]), NOW, { keychain: false })
     expect(text).toContain('a-very-long-alias-made-from-an-email (id longclaude)\n  a.very.long.alias.made.from.an.email@example.com\n')
   })

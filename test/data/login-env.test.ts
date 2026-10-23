@@ -7,17 +7,17 @@ import { configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, namesDefaul
   sharesDefaultSettingsFile } from '../../src/data/login-env.ts'
 import { kurmisHome, ownClaudeProbeFolder } from '../../src/data/paths.ts'
 import { canCreateSymlinks, linkFolder } from '../host.ts'
-import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
+import { extraRef, OWN_CLAUDE_REF } from '../logins.ts'
 
 const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
 
 describe('claude', () => {
   test('an extra login runs with its folder as the config folder', () => {
-    const env = claudeLoginEnv(claudeRef('workclaude'))
+    const env = claudeLoginEnv(extraRef('workclaude'))
     expect(env['CLAUDE_CONFIG_DIR']).toBe(join(kurmisHome(), 'claude', 'workclaude'))
     expect('CLAUDE_SECURESTORAGE_CONFIG_DIR' in env && env['CLAUDE_SECURESTORAGE_CONFIG_DIR'] === undefined).toBe(true)
     for (const name of ROUTED) expect(name in env && env[name] === undefined).toBe(true)
-    expect(claudeProbeEnv(claudeRef('workclaude'))).toEqual(env)
+    expect(claudeProbeEnv(extraRef('workclaude'))).toEqual(env)
   })
 
   test("the login plain claude uses signs in on ~/.claude, with both folder variables removed", () => {
@@ -27,10 +27,10 @@ describe('claude', () => {
   })
 
   test('forceCredentialManager adds CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1', () => {
-    const work = claudeRef('workclaude')
+    const work = extraRef('workclaude')
     expect(claudeLoginEnv(work, true)).toEqual({ ...claudeLoginEnv(work), CLAUDE_CODE_FORCE_WINDOWS_CREDMAN: '1' })
     expect(claudeLoginEnv(OWN_CLAUDE_REF, true)['CLAUDE_CODE_FORCE_WINDOWS_CREDMAN']).toBe('1')
-    expect('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN' in claudeLoginEnv(claudeRef('workclaude'))).toBe(false)
+    expect('CLAUDE_CODE_FORCE_WINDOWS_CREDMAN' in claudeLoginEnv(extraRef('workclaude'))).toBe(false)
   })
 
   test("the login plain claude uses is probed in the probe folder with the default credentials", () => {

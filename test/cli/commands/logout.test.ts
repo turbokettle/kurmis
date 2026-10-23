@@ -9,7 +9,7 @@ import { kurmisHome, loginFolder, loginLockPath } from '../../../src/data/paths.
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram, type RunResult } from '../../../src/platform/run.ts'
 import { FAKE_CLAUDE_SCRIPT, readFakeClaudeRecord, writeClaudeCredentials } from '../../fakes/index.ts'
-import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
+import { extraRef, OWN_CLAUDE, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
 import { collect, fakeDaemonClient } from '../helpers.ts'
 
 const home = process.env.HOME!
@@ -37,12 +37,12 @@ const fakeProgram: LogoutDeps['findProgram'] = () => ({ command: '/fake/bin/clau
 /** Adds an extra login with this id and alias to config.json, and makes its folder. */
 function addWithFolder(id: string, alias?: string): string {
   changeConfig((config) => addLogin(config, id, alias === undefined ? {} : { alias }))
-  const folder = loginFolder(claudeRef(id))
+  const folder = loginFolder(extraRef(id))
   mkdirSync(folder, { recursive: true })
   return folder
 }
 
-const WORK: LoginRef = claudeRef('workclaude')
+const WORK: LoginRef = extraRef('workclaude')
 
 beforeEach(() => {
   rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
@@ -176,7 +176,7 @@ describe('kurmis logout', () => {
   it('as a function, refuses the login plain claude uses without running anything', async () => {
     const run = fakeRun()
     const logOut = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: run.runProgram, platform: 'darwin' })
-    for (const login of [OWN_CLAUDE_REF, claudeRef(OWN_CLAUDE)]) {
+    for (const login of [OWN_CLAUDE_REF, extraRef(OWN_CLAUDE)]) {
       const out = collect()
       expect(await logOut(login, out.context)).toBe(1)
       expect(out.stderr()).toContain('cannot be removed')
@@ -212,11 +212,11 @@ describe('kurmis logout', () => {
   })
 
   it('with keepWhenSignOutFails, keeps a folder left behind when its logout CLI fails', async () => {
-    const folder = loginFolder(claudeRef('leftclaude'))
+    const folder = loginFolder(extraRef('leftclaude'))
     mkdirSync(folder, { recursive: true })
     const logOut = createLoginLogout({ daemon: fakeDaemonClient(), findProgram: fakeProgram, runProgram: fakeRun({ code: 1 }).runProgram, platform: 'linux' })
     const out = collect()
-    expect(await logOut(claudeRef('leftclaude'), out.context, { keepWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout' })).toBe(1)
+    expect(await logOut(extraRef('leftclaude'), out.context, { keepWhenSignOutFails: true, again: 'kurmis setup --uninstall-and-logout' })).toBe(1)
     expect(out.stderr()).toContain(`Its folder ${folder} is kept, so that "kurmis setup --uninstall-and-logout" runs it again.`)
     expect(existsSync(folder)).toBe(true)
   })
@@ -269,7 +269,7 @@ describe('kurmis logout', () => {
   })
 
   it('cleans up a folder left by a removal that stopped half-way, named by its id, and signs it out first', async () => {
-    const folder = loginFolder(claudeRef('leftclaude'))
+    const folder = loginFolder(extraRef('leftclaude'))
     writeClaudeCredentials(folder)
     const run = fakeRun()
     const daemon = fakeDaemonClient()
