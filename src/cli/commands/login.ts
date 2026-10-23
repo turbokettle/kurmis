@@ -341,7 +341,7 @@ async function dropDuplicate(run: SignInRun, existing: LoginSettings, email: str
   }
   const which = existing.usedByPlainClaude ? `${existing.alias}, ${plainClaudeLoginText()}` : existing.alias
   writeLine(context.stdout, `${email} is already a kurmis login: ${which} (id ${existing.id}). ` +
-    'No login was added, and the new sign-in was signed out again.')
+    (problem === null ? 'No login was added, and the new sign-in was signed out again.' : 'No login was added, and the new sign-in was deleted.'))
   writeLine(context.stdout, `"kurmis login ${existing.alias}" signs ${existing.alias} in again.`)
   if (run.alias !== undefined) {
     writeLine(context.stderr, `kurmis login: --alias ${run.alias} was not used, because no login was added. ` +

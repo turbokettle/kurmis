@@ -8005,7 +8005,7 @@ async function dropDuplicate(run2, existing, email) {
     return fail2(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted (${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`);
   }
   const which = existing.usedByPlainClaude ? `${existing.alias}, ${plainClaudeLoginText()}` : existing.alias;
-  writeLine(context.stdout, `${email} is already a kurmis login: ${which} (id ${existing.id}). No login was added, and the new sign-in was signed out again.`);
+  writeLine(context.stdout, `${email} is already a kurmis login: ${which} (id ${existing.id}). ` + (problem === null ? "No login was added, and the new sign-in was signed out again." : "No login was added, and the new sign-in was deleted."));
   writeLine(context.stdout, `"kurmis login ${existing.alias}" signs ${existing.alias} in again.`);
   if (run2.alias !== void 0) {
     writeLine(context.stderr, `kurmis login: --alias ${run2.alias} was not used, because no login was added. "kurmis set ${existing.alias} --alias ${run2.alias}" gives ${existing.alias} that alias.`);

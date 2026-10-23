@@ -524,6 +524,8 @@ describe('kurmis login of an account that is already a kurmis login', () => {
     expect(out.stderr()).toContain('"claude auth logout" did not finish (exit code 1); the new sign-in is deleted anyway.')
     expect(out.stderr()).toContain('may be left; Credential Manager can delete them.')
     expect(out.stdout()).toContain(`own@example.com is already a kurmis login: own-example, the login plain claude uses (id ${OWN_CLAUDE}).`)
+    expect(out.stdout()).toContain('No login was added, and the new sign-in was deleted.')
+    expect(out.stdout()).not.toContain('signed out again')
     expect(out.stdout()).toContain('"kurmis login own-example" signs own-example in again.')
     expect(folders()).toEqual([])
   })
