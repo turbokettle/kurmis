@@ -85,6 +85,31 @@ export async function readKeychainItem(
   return result.stdout.trim().length === 0 ? null : result.stdout
 }
 
+/**
+ * Why this process cannot use the login Keychain, or null when it can:
+ * `security show-keychain-info login.keychain`, which prints the Keychain's settings and shows
+ * no dialog. A process started from an ssh login cannot use it, and neither can anything it
+ * starts. Its Keychain search list then holds only the System keychain, so every item read
+ * answers exit 44, the same as an item that is not there, and nothing else would tell a login
+ * whose record is in the Keychain from one that keeps it in its `.credentials.json`. `code` is
+ * `security`'s exit code, or null when it was killed or never ran. Holds nothing `security`
+ * printed.
+ */
+export async function loginKeychainProblem(securityProgram: string, timeoutMs: number = KEYCHAIN_READ_TIMEOUT_MS):
+  Promise<{ code: number | null; timedOut: boolean } | null> {
+  const result = await runProgram(securityProgram, ['show-keychain-info', 'login.keychain'], { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES })
+  if (!result.timedOut && !result.outputTooLarge && result.error === null && result.code === 0) return null
+  return { code: result.timedOut ? null : result.code, timedOut: result.timedOut }
+}
+
+/** What `kurmis status` says about a `loginKeychainProblem`. */
+export function loginKeychainProblemText(problem: { code: number | null; timedOut: boolean }): string {
+  const how = problem.timedOut ? 'did not answer in time' : problem.code === null ? 'could not be run' : `exited with code ${String(problem.code)}`
+  return `The daemon cannot read the login Keychain ("security show-keychain-info login.keychain" ${how}), so it has no ` +
+    'token for a login whose credentials are kept there. It was probably started from an ssh session. Start it again ' +
+    'from a terminal at the screen with "kurmis daemon restart".'
+}
+
 /** Reads one Keychain item, as `readKeychainItem` does. Tests pass their own to inject answers. */
 export type KeychainRun = (service: string) => Promise<string | null>
 

@@ -337,6 +337,13 @@ work-example (id workclaude)  own@example.com
     expect(json.warnings).toEqual([expect.stringContaining('"kurmis logout work-example"')])
   })
 
+  test('warns when the daemon cannot read the login Keychain', () => {
+    const problem = 'The daemon cannot read the login Keychain.'
+    const json = reportJson(daemonStatus({ ...sampleStatus(), keychainProblem: problem }), NOW, { keychain: true })
+    expect(json.warnings).toEqual([problem])
+    expect(reportJson(daemonStatus({ ...sampleStatus(), keychainProblem: null }), NOW, { keychain: true }).warnings).toEqual([])
+  })
+
   test('warns when global routing is on and the daemon is not running', () => {
     const json = reportJson(filesReport({ globalRouting: 'on' }), NOW, { keychain: false })
     expect(json.warnings).toContain('Global routing is on, but the daemon is not running, so a plain claude and the Claude Code ' +

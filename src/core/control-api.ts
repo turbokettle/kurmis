@@ -113,4 +113,10 @@ export interface StatusAnswer {
   startedAt: number
   /** Every login in `config.json`, the login of plain claude first. */
   logins: LoginStatus[]
+  /**
+   * On macOS, why the daemon cannot read the login Keychain, as a sentence for `kurmis status`
+   * (`loginKeychainProblem`, checked once when the daemon starts); null when it can. Absent from
+   * an older daemon's answer.
+   */
+  keychainProblem?: string | null
 }

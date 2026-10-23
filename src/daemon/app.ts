@@ -14,7 +14,8 @@ import { probeClaudeUsage } from './claude-probe.ts'
 import { createControl } from './control.ts'
 import { LoginTable } from './logins.ts'
 import { createProxy } from './proxy.ts'
-import { createTokenSource, probeEnvironment } from './tokens.ts'
+import { KEYCHAIN_NOT_ALLOWED_EXIT_CODE, keychainHoldsSecret, loginKeychainProblem, loginKeychainProblemText } from './keychain.ts'
+import { createTokenSource, probeEnvironment, securityProgramOf } from './tokens.ts'
 import { createUpstream, upstreamOrigin } from './upstream.ts'
 import { UsagePoller, type ProbeFunction } from './usage-poller.ts'
 
@@ -105,12 +106,24 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
       ...(tuning.holdMaxMs === undefined ? {} : { maxMs: tuning.holdMaxMs }) },
     ...(tuning.renewalWaitMs === undefined ? {} : { renewalWaitMs: tuning.renewalWaitMs }),
     ...(tuning.keptAnswerTimeoutMs === undefined ? {} : { keptAnswerTimeoutMs: tuning.keptAnswerTimeoutMs }) })
+  /** On macOS, the check of the login Keychain that `start` begins; null when it can be read. */
+  let keychainCheck: Promise<string | null> = Promise.resolve(null)
   const control = createControl({ key, table, tokens, identity, poller, log, now, pid: options.pid, port: options.port,
-    startedAt: options.startedAt, onStopRequested: (request) => { options.onStopRequested(request) } })
+    startedAt: options.startedAt, onStopRequested: (request) => { options.onStopRequested(request) },
+    keychainProblem: () => keychainCheck })
   let closed: Promise<void> | null = null
 
   return {
     async start() {
+      // A daemon started from an ssh login reads no Keychain item, and every read looks like an
+      // item that is not there, so this is checked once and said in the log and the status.
+      if (keychainHoldsSecret(tuning.platform ?? process.platform)) {
+        keychainCheck = loginKeychainProblem(securityProgramOf(env)).then((problem) => {
+          if (problem === null) return null
+          log.write('keychain_unreadable', { reason: problem.timedOut ? 'timeout' : problem.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE ? 'not_allowed' : 'error' })
+          return loginKeychainProblemText(problem)
+        })
+      }
       table.load()
       // From here on, a login that appears in a reloaded config.json is probed at once rather
       // than at the next poll. The logins of the first read are probed by the poll's start.
@@ -146,7 +159,7 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
         const probesEnded = poller.close()
         upstream.close()
         tokens.clear()
-        await Promise.all([table.flush(), probesEnded])
+        await Promise.all([table.flush(), probesEnded, keychainCheck])
       })()
       return closed
     }

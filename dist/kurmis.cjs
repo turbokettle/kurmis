@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023104611" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023105131" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -3771,6 +3771,8 @@ var LOG_EVENTS = [
   "session_moved",
   "session_hold_ended",
   "token_read_failed",
+  /** At the start, on macOS: the daemon cannot read the login Keychain (`loginKeychainProblem`). */
+  "keychain_unreadable",
   "token_renewal_started",
   "token_renewal_finished",
   "usage_probe_started",
@@ -4341,7 +4343,8 @@ function createControl(options) {
       pid: options.pid,
       port: options.port,
       startedAt: options.startedAt,
-      logins
+      logins,
+      keychainProblem: await (options.keychainProblem?.() ?? Promise.resolve(null))
     };
   }
   async function handle(req, res, path) {
@@ -6062,14 +6065,14 @@ function waitForPool(table, until, now, signal) {
   });
 }
 
-// src/daemon/tokens.ts
-var import_node_fs15 = require("node:fs");
-var import_node_os10 = require("node:os");
-var import_node_path15 = require("node:path");
-
-// src/daemon/credentials.ts
-var import_node_fs14 = require("node:fs");
-var import_node_path14 = require("node:path");
+// src/core/keychain-service.ts
+var import_node_crypto9 = require("node:crypto");
+var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
+function keychainService(secureStorageDir) {
+  if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
+  const digest = (0, import_node_crypto9.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
+  return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
+}
 
 // src/core/credentials.ts
 function parseCredentials(text) {
@@ -6087,7 +6090,159 @@ function parseCredentials(text) {
   }
 }
 
+// src/daemon/keychain.ts
+var KEYCHAIN_CACHE_MS = 6e4;
+var KEYCHAIN_READ_TIMEOUT_MS = 3e3;
+var MAX_OUTPUT_BYTES = 256 * 1024;
+function keychainHoldsSecret(platform = process.platform) {
+  return platform === "darwin";
+}
+var KeychainReadError = class extends Error {
+  constructor(code, timedOut = false, outputTooLarge = false) {
+    super(`security failed (${timedOut ? "timed out" : outputTooLarge ? "printed too much" : `exit code ${String(code)}`})`);
+    this.code = code;
+    this.timedOut = timedOut;
+    this.outputTooLarge = outputTooLarge;
+  }
+  code;
+  timedOut;
+  outputTooLarge;
+};
+var NO_SUCH_ITEM_EXIT_CODE = 44;
+var KEYCHAIN_NOT_ALLOWED_EXIT_CODE = 36;
+async function readKeychainItem(securityProgram, service, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
+  const result = await runProgram(
+    securityProgram,
+    ["find-generic-password", "-w", "-s", service],
+    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
+  );
+  if (result.timedOut || result.outputTooLarge || result.error !== null || result.code !== 0) {
+    throw new KeychainReadError(result.code, result.timedOut, result.outputTooLarge);
+  }
+  return result.stdout.trim().length === 0 ? null : result.stdout;
+}
+async function loginKeychainProblem(securityProgram, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
+  const result = await runProgram(securityProgram, ["show-keychain-info", "login.keychain"], { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES });
+  if (!result.timedOut && !result.outputTooLarge && result.error === null && result.code === 0) return null;
+  return { code: result.timedOut ? null : result.code, timedOut: result.timedOut };
+}
+function loginKeychainProblemText(problem) {
+  const how = problem.timedOut ? "did not answer in time" : problem.code === null ? "could not be run" : `exited with code ${String(problem.code)}`;
+  return `The daemon cannot read the login Keychain ("security show-keychain-info login.keychain" ${how}), so it has no token for a login whose credentials are kept there. It was probably started from an ssh session. Start it again from a terminal at the screen with "kurmis daemon restart".`;
+}
+var KeychainCredentialsReader = class {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  cache = /* @__PURE__ */ new Map();
+  /** The read of each login going on now, with the `invalidations` count it started under. */
+  reading = /* @__PURE__ */ new Map();
+  /** How often each login was invalidated. */
+  invalidations = /* @__PURE__ */ new Map();
+  /** The logins whose failed read has been reported to `onFailure`, until a read of one works. */
+  failureReported = /* @__PURE__ */ new Set();
+  /**
+   * The items whose read was killed at its deadline. A `security` that does not answer is most
+   * likely showing a Keychain dialog that nobody is there to answer, and reading the item again
+   * would show another one, so none of these is read again by this reader. Neither `invalidate`
+   * nor `clear` empties it.
+   */
+  unanswered = /* @__PURE__ */ new Set();
+  read(id) {
+    return this.cache.get(id)?.value ?? null;
+  }
+  async prime(ids) {
+    await Promise.all([...new Set(ids)].map((id) => this.refresh(id)));
+  }
+  invalidate(id) {
+    this.invalidations.set(id, this.invalidatedCount(id) + 1);
+    const cached = this.cache.get(id);
+    if (cached !== void 0) this.cache.set(id, { ...cached, readAt: Number.NEGATIVE_INFINITY });
+  }
+  clear() {
+    this.cache.clear();
+    for (const id of this.reading.keys()) this.invalidations.set(id, this.invalidatedCount(id) + 1);
+  }
+  /**
+   * One read per login at a time; a second caller waits for the one already running. A read
+   * that started before the latest `invalidate` is waited for and then followed by a new one.
+   */
+  refresh(id) {
+    const cached = this.cache.get(id);
+    if (cached && this.now() - cached.readAt < KEYCHAIN_CACHE_MS) return Promise.resolve();
+    const invalidated = this.invalidatedCount(id);
+    const running = this.reading.get(id);
+    if (running !== void 0) {
+      return running.invalidated === invalidated ? running.promise : running.promise.then(() => this.refresh(id));
+    }
+    const promise = this.load(id, invalidated).finally(() => {
+      this.reading.delete(id);
+    });
+    this.reading.set(id, { promise, invalidated });
+    return promise;
+  }
+  invalidatedCount(id) {
+    return this.invalidations.get(id) ?? 0;
+  }
+  async load(id, invalidated) {
+    const timeoutMs = this.options.readTimeoutMs ?? KEYCHAIN_READ_TIMEOUT_MS;
+    const run2 = this.options.run ?? ((service2) => readKeychainItem(this.options.securityProgram, service2, timeoutMs));
+    const service = keychainService(this.options.accounts.secureStorageDir(id));
+    const keep = (value2) => {
+      if (this.invalidatedCount(id) !== invalidated) return false;
+      this.cache.set(id, { readAt: this.now(), value: value2 });
+      return true;
+    };
+    if (this.unanswered.has(service)) {
+      keep(null);
+      return;
+    }
+    let value = null;
+    let failure2 = null;
+    try {
+      const secret = await run2(service);
+      value = secret === null ? null : parseCredentials(secret);
+      if (secret === null) failure2 = { kind: "empty", code: null };
+      else if (value === null) failure2 = { kind: "not_credentials", code: null };
+    } catch (error) {
+      if (error instanceof KeychainReadError && error.timedOut) {
+        this.unanswered.add(service);
+        keep(null);
+        this.options.onFailure?.({ id, kind: "timeout", code: null });
+        return;
+      }
+      if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
+        failure2 = error instanceof KeychainReadError ? { kind: failureKindOf(error), code: error.code } : { kind: "failed", code: null };
+      }
+    }
+    if (!keep(value)) return;
+    if (failure2 === null) {
+      this.failureReported.delete(id);
+    } else if (!this.failureReported.has(id)) {
+      this.failureReported.add(id);
+      this.options.onFailure?.({ id, ...failure2 });
+    }
+  }
+  now() {
+    return this.options.now?.() ?? Date.now();
+  }
+};
+function failureKindOf(error) {
+  if (error.outputTooLarge) return "too_large";
+  if (error.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE) return "not_allowed";
+  if (error.code === null) return "not_run";
+  return "failed";
+}
+
+// src/daemon/tokens.ts
+var import_node_fs15 = require("node:fs");
+var import_node_os10 = require("node:os");
+var import_node_path15 = require("node:path");
+
 // src/daemon/credentials.ts
+var import_node_fs14 = require("node:fs");
+var import_node_path14 = require("node:path");
 var CREDENTIALS_FILE_NAME = ".credentials.json";
 var CredentialsFileReader = class {
   constructor(options) {
@@ -6126,17 +6281,6 @@ var CredentialsFileReader = class {
 
 // src/platform/windows-credentials.ts
 var import_node_os9 = require("node:os");
-
-// src/core/keychain-service.ts
-var import_node_crypto9 = require("node:crypto");
-var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
-function keychainService(secureStorageDir) {
-  if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
-  const digest = (0, import_node_crypto9.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
-  return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
-}
-
-// src/platform/windows-credentials.ts
 function powerShellQuote(text) {
   return `'${text.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`;
 }
@@ -6355,142 +6499,6 @@ async function storedRecordsExist(secureStorageDirs, read, preferred = preferred
     if (accounts.length === 0) return false;
     return chooseAccount2(accounts, preferred) === null ? "unknown" : true;
   });
-}
-
-// src/daemon/keychain.ts
-var KEYCHAIN_CACHE_MS = 6e4;
-var KEYCHAIN_READ_TIMEOUT_MS = 3e3;
-var MAX_OUTPUT_BYTES = 256 * 1024;
-function keychainHoldsSecret(platform = process.platform) {
-  return platform === "darwin";
-}
-var KeychainReadError = class extends Error {
-  constructor(code, timedOut = false, outputTooLarge = false) {
-    super(`security failed (${timedOut ? "timed out" : outputTooLarge ? "printed too much" : `exit code ${String(code)}`})`);
-    this.code = code;
-    this.timedOut = timedOut;
-    this.outputTooLarge = outputTooLarge;
-  }
-  code;
-  timedOut;
-  outputTooLarge;
-};
-var NO_SUCH_ITEM_EXIT_CODE = 44;
-var KEYCHAIN_NOT_ALLOWED_EXIT_CODE = 36;
-async function readKeychainItem(securityProgram, service, timeoutMs = KEYCHAIN_READ_TIMEOUT_MS) {
-  const result = await runProgram(
-    securityProgram,
-    ["find-generic-password", "-w", "-s", service],
-    { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
-  );
-  if (result.timedOut || result.outputTooLarge || result.error !== null || result.code !== 0) {
-    throw new KeychainReadError(result.code, result.timedOut, result.outputTooLarge);
-  }
-  return result.stdout.trim().length === 0 ? null : result.stdout;
-}
-var KeychainCredentialsReader = class {
-  constructor(options) {
-    this.options = options;
-  }
-  options;
-  cache = /* @__PURE__ */ new Map();
-  /** The read of each login going on now, with the `invalidations` count it started under. */
-  reading = /* @__PURE__ */ new Map();
-  /** How often each login was invalidated. */
-  invalidations = /* @__PURE__ */ new Map();
-  /** The logins whose failed read has been reported to `onFailure`, until a read of one works. */
-  failureReported = /* @__PURE__ */ new Set();
-  /**
-   * The items whose read was killed at its deadline. A `security` that does not answer is most
-   * likely showing a Keychain dialog that nobody is there to answer, and reading the item again
-   * would show another one, so none of these is read again by this reader. Neither `invalidate`
-   * nor `clear` empties it.
-   */
-  unanswered = /* @__PURE__ */ new Set();
-  read(id) {
-    return this.cache.get(id)?.value ?? null;
-  }
-  async prime(ids) {
-    await Promise.all([...new Set(ids)].map((id) => this.refresh(id)));
-  }
-  invalidate(id) {
-    this.invalidations.set(id, this.invalidatedCount(id) + 1);
-    const cached = this.cache.get(id);
-    if (cached !== void 0) this.cache.set(id, { ...cached, readAt: Number.NEGATIVE_INFINITY });
-  }
-  clear() {
-    this.cache.clear();
-    for (const id of this.reading.keys()) this.invalidations.set(id, this.invalidatedCount(id) + 1);
-  }
-  /**
-   * One read per login at a time; a second caller waits for the one already running. A read
-   * that started before the latest `invalidate` is waited for and then followed by a new one.
-   */
-  refresh(id) {
-    const cached = this.cache.get(id);
-    if (cached && this.now() - cached.readAt < KEYCHAIN_CACHE_MS) return Promise.resolve();
-    const invalidated = this.invalidatedCount(id);
-    const running = this.reading.get(id);
-    if (running !== void 0) {
-      return running.invalidated === invalidated ? running.promise : running.promise.then(() => this.refresh(id));
-    }
-    const promise = this.load(id, invalidated).finally(() => {
-      this.reading.delete(id);
-    });
-    this.reading.set(id, { promise, invalidated });
-    return promise;
-  }
-  invalidatedCount(id) {
-    return this.invalidations.get(id) ?? 0;
-  }
-  async load(id, invalidated) {
-    const timeoutMs = this.options.readTimeoutMs ?? KEYCHAIN_READ_TIMEOUT_MS;
-    const run2 = this.options.run ?? ((service2) => readKeychainItem(this.options.securityProgram, service2, timeoutMs));
-    const service = keychainService(this.options.accounts.secureStorageDir(id));
-    const keep = (value2) => {
-      if (this.invalidatedCount(id) !== invalidated) return false;
-      this.cache.set(id, { readAt: this.now(), value: value2 });
-      return true;
-    };
-    if (this.unanswered.has(service)) {
-      keep(null);
-      return;
-    }
-    let value = null;
-    let failure2 = null;
-    try {
-      const secret = await run2(service);
-      value = secret === null ? null : parseCredentials(secret);
-      if (secret === null) failure2 = { kind: "empty", code: null };
-      else if (value === null) failure2 = { kind: "not_credentials", code: null };
-    } catch (error) {
-      if (error instanceof KeychainReadError && error.timedOut) {
-        this.unanswered.add(service);
-        keep(null);
-        this.options.onFailure?.({ id, kind: "timeout", code: null });
-        return;
-      }
-      if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
-        failure2 = error instanceof KeychainReadError ? { kind: failureKindOf(error), code: error.code } : { kind: "failed", code: null };
-      }
-    }
-    if (!keep(value)) return;
-    if (failure2 === null) {
-      this.failureReported.delete(id);
-    } else if (!this.failureReported.has(id)) {
-      this.failureReported.add(id);
-      this.options.onFailure?.({ id, ...failure2 });
-    }
-  }
-  now() {
-    return this.options.now?.() ?? Date.now();
-  }
-};
-function failureKindOf(error) {
-  if (error.outputTooLarge) return "too_large";
-  if (error.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE) return "not_allowed";
-  if (error.code === null) return "not_run";
-  return "failed";
 }
 
 // src/daemon/credential-manager.ts
@@ -6930,6 +6938,7 @@ function createDaemonApp(options) {
     ...tuning.renewalWaitMs === void 0 ? {} : { renewalWaitMs: tuning.renewalWaitMs },
     ...tuning.keptAnswerTimeoutMs === void 0 ? {} : { keptAnswerTimeoutMs: tuning.keptAnswerTimeoutMs }
   });
+  let keychainCheck = Promise.resolve(null);
   const control = createControl({
     key,
     table,
@@ -6943,11 +6952,19 @@ function createDaemonApp(options) {
     startedAt: options.startedAt,
     onStopRequested: (request2) => {
       options.onStopRequested(request2);
-    }
+    },
+    keychainProblem: () => keychainCheck
   });
   let closed = null;
   return {
     async start() {
+      if (keychainHoldsSecret(tuning.platform ?? process.platform)) {
+        keychainCheck = loginKeychainProblem(securityProgramOf(env)).then((problem) => {
+          if (problem === null) return null;
+          log.write("keychain_unreadable", { reason: problem.timedOut ? "timeout" : problem.code === KEYCHAIN_NOT_ALLOWED_EXIT_CODE ? "not_allowed" : "error" });
+          return loginKeychainProblemText(problem);
+        });
+      }
       table.load();
       table.onLoginsAdded((ids) => {
         void poller.probeMany(ids, "config");
@@ -6983,7 +7000,7 @@ function createDaemonApp(options) {
         const probesEnded = poller.close();
         upstream.close();
         tokens.clear();
-        await Promise.all([table.flush(), probesEnded]);
+        await Promise.all([table.flush(), probesEnded, keychainCheck]);
       })();
       return closed;
     }
@@ -9835,7 +9852,8 @@ function daemonReport(answer2, globalRouting, version) {
     logins: answer2.logins,
     credentials: /* @__PURE__ */ new Map(),
     globalRouting,
-    version
+    version,
+    keychainProblem: answer2.keychainProblem ?? null
   };
 }
 function daemonOf(answer2) {
@@ -9874,7 +9892,11 @@ function statusJson(report, now, options) {
       blocked: fromDaemon ? blockJson(login, now, options) : null,
       sessions: login.sessions
     })),
-    warnings: [...sameAccountWarnings(report), ...report.globalRouting === "on" && daemon === null ? [NO_DAEMON_WARNING] : []]
+    warnings: [
+      ...sameAccountWarnings(report),
+      ...report.globalRouting === "on" && daemon === null ? [NO_DAEMON_WARNING] : [],
+      ...report.keychainProblem == null ? [] : [report.keychainProblem]
+    ]
   };
 }
 var NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, so a plain claude and the Claude Code editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.';

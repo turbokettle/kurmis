@@ -9,6 +9,8 @@ import {
   KeychainCredentialsReader,
   KeychainReadError,
   keychainHoldsSecret,
+  loginKeychainProblem,
+  loginKeychainProblemText,
   readKeychainItem,
   type KeychainReaderOptions,
   type KeychainReadFailure
@@ -145,6 +147,17 @@ test('a read that started before invalidate is not used, and a new read follows 
   answers[1]?.(secretWith('fake-token-after'))
   await second
   expect(credentials.read(DEFAULT)?.accessToken).toBe('fake-token-after')
+})
+
+test('the check of the login Keychain answers null when it can be used, and the exit code when it cannot', async () => {
+  expect(await loginKeychainProblem(FAKE_SECURITY, TIMEOUT_MS)).toBeNull()
+  expect(keychain.calls()).toEqual([['show-keychain-info', 'login.keychain']])
+  keychain.setMode('ssh')
+  const problem = await loginKeychainProblem(FAKE_SECURITY, TIMEOUT_MS)
+  expect(problem).toEqual({ code: 36, timedOut: false })
+  expect(loginKeychainProblemText(problem!)).toContain('"security show-keychain-info login.keychain" exited with code 36')
+  keychain.setMode('prompt')
+  expect(await loginKeychainProblem(FAKE_SECURITY, HANG_TIMEOUT_MS)).toEqual({ code: null, timedOut: true })
 })
 
 // Each of these is a login the proxy holds no token for.

@@ -43,6 +43,8 @@ export const LOG_EVENTS = [
   'session_moved',
   'session_hold_ended',
   'token_read_failed',
+  /** At the start, on macOS: the daemon cannot read the login Keychain (`loginKeychainProblem`). */
+  'keychain_unreadable',
   'token_renewal_started',
   'token_renewal_finished',
   'usage_probe_started',

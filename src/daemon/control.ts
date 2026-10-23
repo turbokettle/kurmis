@@ -40,6 +40,8 @@ export interface ControlOptions {
   startedAt: number
   /** Called once a `stop` request has been answered, with what the request asked for. */
   onStopRequested(request: StopRequest): void
+  /** Why the daemon cannot read the login Keychain, or null (`StatusAnswer.keychainProblem`). */
+  keychainProblem?: () => Promise<string | null>
 }
 
 export interface Control {
@@ -86,7 +88,8 @@ export function createControl(options: ControlOptions): Control {
       pid: options.pid,
       port: options.port,
       startedAt: options.startedAt,
-      logins
+      logins,
+      keychainProblem: await (options.keychainProblem?.() ?? Promise.resolve(null))
     }
   }
 

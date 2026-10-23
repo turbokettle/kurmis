@@ -136,6 +136,8 @@ export interface StatusReport {
   globalRouting: GlobalRoutingState
   /** This kurmis' version, which with `CONTROL_API_VERSION` tells whether the daemon is older or newer. */
   version: string
+  /** Why the daemon cannot read the login Keychain (`StatusAnswer.keychainProblem`); null or absent when it can. */
+  keychainProblem?: string | null
 }
 
 /** A report of the daemon's status answer. */
@@ -146,7 +148,8 @@ export function daemonReport(answer: StatusAnswer, globalRouting: GlobalRoutingS
     logins: answer.logins,
     credentials: new Map(),
     globalRouting,
-    version
+    version,
+    keychainProblem: answer.keychainProblem ?? null
   }
 }
 
@@ -197,7 +200,8 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
       blocked: fromDaemon ? blockJson(login, now, options) : null,
       sessions: login.sessions
     })),
-    warnings: [...sameAccountWarnings(report), ...(report.globalRouting === 'on' && daemon === null ? [NO_DAEMON_WARNING] : [])]
+    warnings: [...sameAccountWarnings(report), ...(report.globalRouting === 'on' && daemon === null ? [NO_DAEMON_WARNING] : []),
+      ...(report.keychainProblem == null ? [] : [report.keychainProblem])]
   }
 }
 

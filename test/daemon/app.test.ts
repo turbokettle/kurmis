@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { join } from 'node:path'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { CONTROL_API_VERSION, CONTROL_PATHS, type StatusAnswer } from '../../src/core/control-api.ts'
 import { addLogin, loadConfig, saveConfig } from '../../src/data/config.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
@@ -12,6 +12,7 @@ import { toLoginId } from '../../src/data/login-id.ts'
 import { loginFolder, statePath } from '../../src/data/paths.ts'
 import { fakeToken, readFakeClaudeRecord, reply, writeClaudeCredentials, writeClaudeIdentity } from '../fakes/index.ts'
 import { extraRef, OWN_CLAUDE } from '../logins.ts'
+import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
@@ -373,6 +374,32 @@ describe('tokens and probes', () => {
     expect(work?.signedIn).toBe(true)
     expect(work?.usage?.source).toBe('probe')
     expect(work?.usage?.fiveHour?.utilization).toBe(42)
+  })
+})
+
+describe('the login Keychain', () => {
+  afterEach(() => { vi.unstubAllEnvs() })
+
+  test('a daemon that cannot read it says so in the log and the status, once', async () => {
+    const keychain = new FakeKeychain(join(process.env.HOME ?? '', 'keychain'))
+    keychain.setMode('ssh')
+    vi.stubEnv('FAKE_SECURITY_DIR', keychain.dir)
+    harness = await startHarness({ tuning: { platform: 'darwin' }, env: { KURMIS_SECURITY_PROGRAM: FAKE_SECURITY } })
+    const answer = await status(harness)
+    expect(answer.keychainProblem).toContain('cannot read the login Keychain')
+    expect(harness.log.filter((line) => line.event === 'keychain_unreadable')).toEqual([{ event: 'keychain_unreadable', fields: { reason: 'not_allowed' } }])
+    await status(harness)
+    expect(keychain.calls().filter((call) => call[0] === 'show-keychain-info')).toHaveLength(1)
+  })
+
+  test('a daemon that can read it, or runs where there is none, reports no problem', async () => {
+    const keychain = new FakeKeychain(join(process.env.HOME ?? '', 'keychain'))
+    vi.stubEnv('FAKE_SECURITY_DIR', keychain.dir)
+    harness = await startHarness({ tuning: { platform: 'darwin' }, env: { KURMIS_SECURITY_PROGRAM: FAKE_SECURITY } })
+    expect((await status(harness)).keychainProblem).toBeNull()
+    await harness.close()
+    harness = await startHarness({ tuning: { platform: 'linux' } })
+    expect((await status(harness)).keychainProblem).toBeNull()
   })
 })
 

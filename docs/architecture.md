@@ -1180,10 +1180,13 @@ These are known and left as they are.
   `kurmis claude`.
 - **A daemon started from ssh on macOS.** A process started from an ssh login runs in the ssh
   session's audit session. It cannot read the login Keychain, and neither can any process it
-  starts, so such a daemon gets no token from a Keychain item. The Keychain reads fail with exit
-  36 ("User interaction is not allowed"), and `kurmis status` shows those logins without a token.
-  The CLI starts the daemon the same way from ssh as from a terminal at the screen and does not
-  check for this. With `kurmis setup` run at the screen, the login item starts the daemon in the
+  starts, so such a daemon gets no token from a Keychain item. Its Keychain search list holds
+  only the System keychain, so a read of a login's item exits 44, the same as an item that is
+  not there, and the daemon goes on to the login's `.credentials.json`. The daemon checks for
+  this once at its start with `security show-keychain-info login.keychain`, which shows no
+  dialog: when that fails it logs `keychain_unreadable`, and `kurmis status` warns with the
+  reason (`keychainProblem` in the status answer). The CLI starts the daemon the same way from
+  ssh as from a terminal at the screen. With `kurmis setup` run at the screen, the login item starts the daemon in the
   GUI session and ssh sessions use it. A newer kurmis replaces an older daemon from wherever it
   runs, so after an update the first command over ssh that starts the daemon leaves a daemon
   that cannot read the Keychain.
@@ -1377,5 +1380,6 @@ stable while the daemon's usage snapshot changes. Times are ISO strings. The cur
   daemon's snapshot keeps both.
 - `blocked` is null when Auto could use the login. `blocked.text` gives a cooldown's end as an
   ISO time, as the daemon's log does.
-- `warnings` holds a sentence for each login that is the same account as another login, and one
-  when `globalRouting` is `on` and `daemon` is null.
+- `warnings` holds a sentence for each login that is the same account as another login, one
+  when `globalRouting` is `on` and `daemon` is null, and one when the daemon cannot read the
+  login Keychain on macOS.

@@ -17,7 +17,8 @@
 // `find-generic-password -s <service> [keychain...]` is understood, with or without `-w`. With
 // `-w` it prints the item's secret; without it, the item's attributes and not its secret, as
 // `security` does. An item it does not hold exits 44, as `security` does.
-// `list-keychains -d user` prints the user's login keychain.
+// `list-keychains -d user` prints the user's login keychain. `show-keychain-info login.keychain`
+// exits 0, or 36 in the modes `locked` and `ssh`, where the login Keychain cannot be used.
 // `fake-keychain.ts` beside this file writes the folder.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -42,7 +43,9 @@ if (mode === 'prompt') {
   setInterval(() => undefined, 1000)
 } else if (mode === 'oversize') {
   process.stdout.write('x'.repeat(512 * 1024))
-} else if (mode === 'locked') {
+} else if (argv[0] === 'show-keychain-info' && mode !== 'locked' && mode !== 'ssh') {
+  process.stderr.write('Keychain "login.keychain" no-timeout\n')
+} else if (argv[0] === 'show-keychain-info' || mode === 'locked') {
   process.stderr.write('security: SecKeychainSearchCopyNext: User interaction is not allowed.\n')
   process.exit(36)
 } else if (argv[0] === 'list-keychains' && argv[1] === '-d' && argv[2] === 'user') {
