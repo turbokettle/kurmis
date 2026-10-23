@@ -156,7 +156,8 @@ Anthropic.
 
 While the daemon runs, the status comes from it. For each login it shows the account's email,
 whether the login is signed in, the five-hour and weekly usage with the time until each resets,
-and the number of sessions placed on it in the last 7 days (kurmis keeps at most 2000). A line
+and how many sessions it served in the last 7 days (a session counts for the login that served
+its last request, and kurmis keeps at most 2000 sessions). A line
 starting with "passed over" says why Auto would skip that login now (signed out, at its limit,
 cooling down after a usage-limit answer). When the daemon runs an older kurmis than the one you
 run, `status` says so: the next command that starts the daemon replaces it. When the daemon is
@@ -167,7 +168,7 @@ While the daemon is not running, the first line says so and names the commands t
 from `~/.kurmis/config.json`, and the usage is the last the daemon read, with how long ago it
 read it. Kurmis cannot tell then whether a login is signed in, so it shows whether the login's
 token is on this machine, or `unknown` when it cannot check. That does not show that the token
-still works. The same goes when the daemon runs but does not answer; a note on stderr says so.
+still works. A daemon that runs but does not answer within 10 seconds is shown as not running.
 
 `--json` prints the same as JSON (see `docs/architecture.md` for its shape).
 

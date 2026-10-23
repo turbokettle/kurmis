@@ -8,8 +8,9 @@
 //
 // **Starting.** `ensureDaemon` starts `<node> <bundle> daemon run` detached
 // (`src/platform/detach.ts`) and waits until a daemon of this version or a newer one answers.
-// A daemon is older when its version is lower, or its version is the same and its control API
-// version is lower (`daemonAge`, `shouldReplaceDaemon`). Only an older daemon is replaced.
+// A daemon is older when its version is lower or it is an earlier build of the same version, or
+// it is the same build with a lower control API version (`daemonAge`, `shouldReplaceDaemon`).
+// Only an older daemon is replaced.
 // The start is the same from an ssh session as from a terminal at the screen. Two CLIs that
 // start one at the same moment both start a process; the port decides which one stays, the
 // other exits at once, and both CLIs connect to the one that stayed. A daemon of an

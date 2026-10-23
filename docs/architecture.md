@@ -82,8 +82,8 @@ no folder here. It is the login in `~/.claude`: `~/.claude/.credentials.json` an
 item with the plain name, whatever `CLAUDE_CONFIG_DIR` says (see "Plain claude's login and
 `CLAUDE_CONFIG_DIR`" below). A CLI on this login runs with the environment left as it was
 inherited, apart from the routing variables and `CLAUDE_SECURESTORAGE_CONFIG_DIR`. Code tells
-this login apart from the others by its `usedByPlainClaude` setting (`isUsedByPlainClaude`,
-`plainClaudeLogin` and `extraLogins` in `src/data/config.ts`), never by its id.
+this login apart from the others by its `usedByPlainClaude` setting (`plainClaudeLogin` and
+`extraLogins` in `src/data/config.ts`), never by its id.
 
 **Login ids.** Every login, plain claude's included, has an id that never changes. A new id is
 10 lowercase letters and digits from `node:crypto` (`newLoginId` in `src/data/login-id.ts`,
@@ -403,8 +403,8 @@ daemon both need: a keyed control request, who holds a port, version comparison)
 `daemon.log`. Then it listens on `127.0.0.1:<port>`. The port is the lock that keeps one daemon
 per user. When the port is busy, the daemon asks the holder for its status with the key:
 
-- an older kurmis daemon is replaced (below): one of a lower version, or of the same version
-  whose control API version (`apiVersion` in its status answer) is lower or missing
+- an older kurmis daemon is replaced (below): one of a lower version or an earlier build, or of
+  the same build whose control API version (`apiVersion` in its status answer) is lower or missing
   (`daemonAge` and `shouldReplaceDaemon` in `src/daemon/lifecycle.ts`);
 - any other kurmis daemon (the same version and control API version, a newer version, the same
   version with a higher control API version, or a version that cannot be compared, such as
@@ -446,9 +446,9 @@ at once there. So on Windows only a control `stop`, and Ctrl-C or closing the co
 An uncaught error is logged by its error code only, and the daemon stops without waiting for its
 requests and exits 1. The next `kurmis claude` starts a new one.
 
-**Version handover.** A CLI that finds an older daemon (a lower version, or the same version
-with a lower control API version) starts a new daemon, and the new daemon does the handover: it
-sends the old one a control `stop` and tries the bind every 100 ms for up to 10 seconds. While
+**Version handover.** A CLI that finds an older daemon (a lower version or an earlier build, or
+the same build with a lower control API version) starts a new daemon, and the new daemon does
+the handover: it sends the old one a control `stop` and tries the bind every 100 ms for up to 10 seconds. While
 the old daemon closes, its port may answer the status request with nothing or with an error;
 once the stop is sent that counts as the old daemon going away, not as another program, and the
 bind is tried again. The old daemon frees the port as soon as it has answered, and finishes its
@@ -1219,8 +1219,8 @@ These are known and left as they are.
   `--settings`, `global-settings.ts` edits the user settings file for `setup`,
   `global-routing.ts` answers whether global routing is on, paused or off and keeps
   `settings-files.json`, `local-credentials.ts` checks whether a login's credentials are on this
-  machine, `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon,
-  `login-names.ts` names a login to the person and `sign-out.ts` signs an extra login out with
+  machine, `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon and
+  `sign-out.ts` signs an extra login out with
   `claude auth logout`. Each command is one module in `src/cli/commands/` exporting a `Command`
   (`src/cli/command.ts`), whose `run` returns the exit code: 0 done, 1 failed, 2 wrong command
   line, or the child's code for `claude`. Most also export a `create<Name>Command(deps)`, which
@@ -1342,7 +1342,8 @@ stable while the daemon's usage snapshot changes. Times are ISO strings. The cur
 - `globalRouting` is `on`, `paused` or `off`.
 - The logins come in `config.json` order, plain claude's first. `id` never changes; `alias` is
   what the person types. `email` is shown, never stored. `sessions` is the number of
-  sessions placed on the login in the last 7 days (at most 2000 are kept).
+  sessions whose last request in the last 7 days this login served (the daemon keeps the 2000
+  sessions that sent a request most recently).
 - With `source` `daemon`: `signedIn` is what the daemon found, null when it has not looked yet,
   and `credentials` is null.
 - With `source` `files`: `signedIn` is null, `credentials` is whether the login's token is on

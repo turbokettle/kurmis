@@ -85,7 +85,7 @@ export interface LoginStatus {
   cooldownUntil: number | 'unknown' | null
   /** Why Auto would pass this login over now, or null when it could serve. */
   block: RouteBlock | null
-  /** Sessions whose last request this login served. */
+  /** Sessions whose last request, in the last 7 days, this login served. */
   sessions: number
   /**
    * The login's email, or null when none is known, from the profile its own CLI runs cached
