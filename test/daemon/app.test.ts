@@ -248,6 +248,18 @@ describe('when every login is out', () => {
     expect(second.text).toContain('every login kurmis may use')
     expect(bearers(h)).toHaveLength(2)
   })
+
+  test('a login whose token is about to expire and cannot be renewed does not make the pool back now', async () => {
+    const h = await twoLogins()
+    writeClaudeCredentials(loginFolder(extraRef(WORK_ID)), { accessToken: WORK, refreshToken: null, expiresAt: Date.now() + 60_000 })
+    const reset = Math.floor((Date.now() + 3_600_000) / 1000) * 1000
+    h.api.scriptFor(DEFAULT, reply.quota({ resetsAt: reset }))
+    const answer = await messages(h, S1)
+    expect(answer.status).toBe(429)
+    expect(bearers(h)).toEqual([DEFAULT])
+    expect(answer.headers['request-id']).toBeDefined()
+    expect(Number(answer.headers['anthropic-ratelimit-unified-reset'])).toBe(reset / 1000)
+  })
 })
 
 describe('the capacity hold', () => {

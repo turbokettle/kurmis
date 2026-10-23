@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023102434" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023103302" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -5676,7 +5676,8 @@ function createProxy(options) {
     if (refusals.length > 0) {
       const first = [...refusals].sort((a, b) => a.until - b.until)[0];
       const refused = new Set(refusals.map((refusal) => refusal.login));
-      const pool = poolLimitAnswer(session, rows.filter((row) => !excluded.has(row.id) || refused.has(row.id)), now());
+      const back = rows.filter((row) => !excluded.has(row.id) || refused.has(row.id));
+      const pool = poolLimitAnswer(session, withoutExpiringTokens(back, now(), session), now());
       if (pool.resetAt !== null && pool.resetAt < first.until) {
         log.write("pool_exhausted", { ...fields, reason: "usage_limit", status: pool.status, until: pool.resetAt });
         send(res, pool);

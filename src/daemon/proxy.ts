@@ -35,7 +35,8 @@ import {
   CAPACITY_HOLD_BASE_MS, CAPACITY_HOLD_MAX_MS, CAPACITY_HOLD_MS, CapacityCooling, capacityHoldAnswer, capacityRefusal
 } from '../core/capacity-hold.ts'
 import {
-  downstreamResponseHeaders, poolLimitAnswer, refusalAnswer, staleUsageLogins, upstreamRequest, type ProxyAnswer
+  downstreamResponseHeaders, poolLimitAnswer, refusalAnswer, staleUsageLogins, upstreamRequest, withoutExpiringTokens,
+  type ProxyAnswer
 } from '../core/proxy-rules.ts'
 import { readRouteRequest, routeKeyMatches, type RouteRequest } from '../core/route-headers.ts'
 import type { ClaudeIdentityReader } from '../data/identity.ts'
@@ -500,8 +501,9 @@ export function createProxy(options: ProxyOptions): Proxy {
    * gets the real 429 of the login that is back first, as it would from a single account that
    * ran out, unless a login it was not sent on is back earlier: the proxy's own 429 then names
    * that time. A login the request may not be sent on for another reason (`excluded`, such as
-   * the login that answered 400 before a pin-back) does not count as back. Without a real 429 in
-   * hand the proxy answers itself (`refusalAnswer`).
+   * the login that answered 400 before a pin-back), and one whose token is about to expire and
+   * could not be renewed (`withoutExpiringTokens`), does not count as back. Without a real 429
+   * in hand the proxy answers itself (`refusalAnswer`).
    */
   function answerRefusal(res: ServerResponse, session: RouteSession, rows: RouteAccount[], refusals: KeptRefusal[],
     attempted: ReadonlySet<string>, excluded: ReadonlySet<string>, cliOnOwnCredentials: boolean): void {
@@ -509,7 +511,8 @@ export function createProxy(options: ProxyOptions): Proxy {
     if (refusals.length > 0) {
       const first = [...refusals].sort((a, b) => a.until - b.until)[0]!
       const refused = new Set(refusals.map((refusal) => refusal.login))
-      const pool = poolLimitAnswer(session, rows.filter((row) => !excluded.has(row.id) || refused.has(row.id)), now())
+      const back = rows.filter((row) => !excluded.has(row.id) || refused.has(row.id))
+      const pool = poolLimitAnswer(session, withoutExpiringTokens(back, now(), session), now())
       if (pool.resetAt !== null && pool.resetAt < first.until) {
         log.write('pool_exhausted', { ...fields, reason: 'usage_limit', status: pool.status, until: pool.resetAt })
         send(res, pool)
