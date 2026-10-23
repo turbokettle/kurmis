@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101610" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101631" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -2195,24 +2195,6 @@ function spawnDetached(start2) {
       else resolve8({ pid: child2.pid, exited });
     });
   });
-}
-function windowsCommandLine(argv) {
-  return argv.map(quoteWindowsArgument).join(" ");
-}
-function quoteWindowsArgument(arg) {
-  if (arg !== "" && !/[\s"]/.test(arg)) return arg;
-  let out = '"';
-  let backslashes = 0;
-  for (const char of arg) {
-    if (char === "\\") {
-      backslashes++;
-      continue;
-    }
-    if (char === '"') out += "\\".repeat(backslashes * 2 + 1) + '"';
-    else out += "\\".repeat(backslashes) + char;
-    backslashes = 0;
-  }
-  return `${out}${"\\".repeat(backslashes * 2)}"`;
 }
 
 // src/platform/npm-shim.ts
@@ -8402,6 +8384,24 @@ function wscriptPath(env = process.env, processEnv = process.env) {
 function regFor(env = process.env) {
   const program = regProgram(env);
   return (args) => runProgram(program, args, { timeoutMs: REG_TIMEOUT_MS, env });
+}
+function windowsCommandLine(argv) {
+  return argv.map(quoteWindowsArgument).join(" ");
+}
+function quoteWindowsArgument(arg) {
+  if (arg !== "" && !/[\s"]/.test(arg)) return arg;
+  let out = '"';
+  let backslashes = 0;
+  for (const char of arg) {
+    if (char === "\\") {
+      backslashes++;
+      continue;
+    }
+    if (char === '"') out += "\\".repeat(backslashes * 2 + 1) + '"';
+    else out += "\\".repeat(backslashes) + char;
+    backslashes = 0;
+  }
+  return `${out}${"\\".repeat(backslashes * 2)}"`;
 }
 function runValueData(wscript, scriptPath) {
   return windowsCommandLine([wscript, "//B", "//Nologo", "//E:JScript", scriptPath]);

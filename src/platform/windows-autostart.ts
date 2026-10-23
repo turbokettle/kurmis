@@ -61,7 +61,6 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, win32 } from 'node:path'
 import { windowsAutostartScriptPath } from '../data/paths.ts'
 import { makePrivateDirSync } from './files.ts'
-import { windowsCommandLine } from './detach.ts'
 import { daemonJobVariables } from './launchd.ts'
 import { runProgram, runResultText, type RunResult } from './run.ts'
 import { systemProgram } from './system-programs.ts'
@@ -94,6 +93,31 @@ export type Reg = (args: readonly string[]) => Promise<RunResult>
 export function regFor(env: NodeJS.ProcessEnv = process.env): Reg {
   const program = regProgram(env)
   return (args) => runProgram(program, args, { timeoutMs: REG_TIMEOUT_MS, env })
+}
+
+/**
+ * One Windows command line from an argument list, quoted the way the Microsoft C runtime (and
+ * so Node) splits it again: an argument with a space, tab or quote, or an empty one, is put in
+ * quotes, a quote in it is escaped with a backslash, and backslashes before a quote are doubled.
+ */
+export function windowsCommandLine(argv: readonly string[]): string {
+  return argv.map(quoteWindowsArgument).join(' ')
+}
+
+function quoteWindowsArgument(arg: string): string {
+  if (arg !== '' && !/[\s"]/.test(arg)) return arg
+  let out = '"'
+  let backslashes = 0
+  for (const char of arg) {
+    if (char === '\\') {
+      backslashes++
+      continue
+    }
+    if (char === '"') out += '\\'.repeat(backslashes * 2 + 1) + '"'
+    else out += '\\'.repeat(backslashes) + char
+    backslashes = 0
+  }
+  return `${out}${'\\'.repeat(backslashes * 2)}"`
 }
 
 /** The Run value's data: wscript running the script as JScript, hidden and without dialogs. */

@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, win32 } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { windowsCommandLine } from '../../src/platform/detach.ts'
 import {
   PERCENT_SIGN_VARIABLE,
   RUN_ENTRY_DESCRIPTION,
@@ -22,6 +21,7 @@ import {
   scriptHostDisabled,
   unregisterWindowsAutostart,
   windowsAutostartEnvironment,
+  windowsCommandLine,
   wscriptPath
 } from '../../src/platform/windows-autostart.ts'
 import { systemRoot } from '../../src/platform/system-programs.ts'
@@ -95,6 +95,18 @@ const NODE = 'C:\\Program Files\\nodejs\\node.exe'
 const ENTRY = 'C:\\Users\\Example User\\AppData\\Roaming\\npm\\node_modules\\kurmis\\dist\\kurmis.cjs'
 const SCRIPT = 'C:\\Users\\Example User\\.kurmis\\autostart.js'
 const PROGRAM = [NODE, ENTRY, 'daemon', 'start']
+
+describe('windowsCommandLine', () => {
+  it('quotes the way the Microsoft C runtime splits again', () => {
+    expect(windowsCommandLine(['C:\\Program Files\\nodejs\\node.exe', 'C:\\Users\\example\\kurmis.cjs', 'daemon', 'run']))
+      .toBe('"C:\\Program Files\\nodejs\\node.exe" C:\\Users\\example\\kurmis.cjs daemon run')
+    expect(windowsCommandLine([''])).toBe('""')
+    expect(windowsCommandLine(['say "hi"'])).toBe('"say \\"hi\\""')
+    // Backslashes before the closing quote are doubled, others are kept.
+    expect(windowsCommandLine(['C:\\a b\\'])).toBe('"C:\\a b\\\\"')
+    expect(windowsCommandLine(['a\\\\"b'])).toBe('"a\\\\\\\\\\"b"')
+  })
+})
 
 describe('programs', () => {
   it('finds the Windows folder from the environment', () => {

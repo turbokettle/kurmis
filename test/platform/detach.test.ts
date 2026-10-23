@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { isTemporaryPath, kurmisEntry, nodeForJobs, spawnDetached, temporaryFolders, windowsCommandLine } from '../../src/platform/detach.ts'
+import { isTemporaryPath, kurmisEntry, nodeForJobs, spawnDetached, temporaryFolders } from '../../src/platform/detach.ts'
 import { canCreateSymlinks } from '../host.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'kurmis-detach-'))
@@ -112,17 +112,5 @@ describe('spawnDetached', () => {
 
   it('rejects when the program does not exist', async () => {
     await expect(spawnDetached({ command: join(scratch, 'no-such-program'), args: [], env: process.env })).rejects.toThrow()
-  })
-})
-
-describe('windowsCommandLine', () => {
-  it('quotes the way the Microsoft C runtime splits again', () => {
-    expect(windowsCommandLine(['C:\\Program Files\\nodejs\\node.exe', 'C:\\Users\\example\\kurmis.cjs', 'daemon', 'run']))
-      .toBe('"C:\\Program Files\\nodejs\\node.exe" C:\\Users\\example\\kurmis.cjs daemon run')
-    expect(windowsCommandLine([''])).toBe('""')
-    expect(windowsCommandLine(['say "hi"'])).toBe('"say \\"hi\\""')
-    // Backslashes before the closing quote are doubled, others are kept.
-    expect(windowsCommandLine(['C:\\a b\\'])).toBe('"C:\\a b\\\\"')
-    expect(windowsCommandLine(['a\\\\"b'])).toBe('"a\\\\\\\\\\"b"')
   })
 })
