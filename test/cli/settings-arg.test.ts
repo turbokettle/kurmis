@@ -221,7 +221,7 @@ describe('merging', () => {
 
   test('routingVariables keeps the four routing variables and leaves out the credentials folder', () => {
     const routed = routedClaudeEnv({ port: 40123, key: 'k', login: 'claude:work', startedOn: 'claude:work', secureStorageDir: '/x/claude/work' })
-    expect(routed.set.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('/x/claude/work')
+    expect(routed['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('/x/claude/work')
     expect(Object.keys(routingVariables(routed)).sort()).toEqual(['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CODE_MAX_RETRIES', 'ENABLE_TOOL_SEARCH'])
   })
 })

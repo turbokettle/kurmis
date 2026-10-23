@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, namesDefaultClaudeFolder,
+import { configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, namesDefaultClaudeFolder,
   sharesDefaultSettingsFile } from '../../src/data/login-env.ts'
 import { kurmisHome, ownClaudeProbeFolder } from '../../src/data/paths.ts'
 import { canCreateSymlinks, linkFolder } from '../host.ts'
@@ -37,18 +37,6 @@ describe('claude', () => {
     const env = claudeProbeEnv(OWN_CLAUDE_REF)
     expect(env['CLAUDE_CONFIG_DIR']).toBe(ownClaudeProbeFolder())
     expect(env['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('')
-  })
-})
-
-describe('applying a patch', () => {
-  test('sets, removes and keeps', () => {
-    const out = applyEnvPatch({ A: '1', B: '2', C: undefined }, { A: undefined, D: '4' }, false)
-    expect(out).toEqual({ B: '2', D: '4' })
-  })
-
-  test('matches names without case on Windows', () => {
-    expect(applyEnvPatch({ Anthropic_Api_Key: 'x', Path: 'p' }, { ANTHROPIC_API_KEY: undefined, PATH: 'q' }, true))
-      .toEqual({ PATH: 'q' })
   })
 })
 

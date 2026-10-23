@@ -34,6 +34,7 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { applyEnvPatch } from '../../core/routed-env.ts'
 import {
   addLogin,
   aliasProblem,
@@ -51,7 +52,7 @@ import {
 import {
   CLAUDE_PROFILE_FILE, isSameClaudeAccount, isSameEmail, parseClaudeIdentity, readClaudeIdentity, type ClaudeAccountKey, type ClaudeIdentity
 } from '../../data/identity.ts'
-import { applyEnvPatch, claudeLoginEnv } from '../../data/login-env.ts'
+import { claudeLoginEnv } from '../../data/login-env.ts'
 import type { LoginId, LoginRef } from '../../data/login-id.ts'
 import { loginFolder, ownClaudeProbeFolder } from '../../data/paths.ts'
 import { makePrivateDirSync } from '../../platform/files.ts'

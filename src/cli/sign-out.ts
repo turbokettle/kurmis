@@ -5,7 +5,8 @@
 // there. `kurmis logout` uses it, and so does `kurmis login` when the account it signed in is
 // already a kurmis login.
 import { keychainService } from '../core/keychain-service.ts'
-import { applyEnvPatch, claudeLoginEnv } from '../data/login-env.ts'
+import { applyEnvPatch } from '../core/routed-env.ts'
+import { claudeLoginEnv } from '../data/login-env.ts'
 import type { LoginRef } from '../data/login-id.ts'
 import { loginFolder } from '../data/paths.ts'
 import { ProgramNotFoundError, type findProgram } from '../platform/programs.ts'

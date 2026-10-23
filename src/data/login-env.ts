@@ -2,8 +2,7 @@
 // `claude auth login|status|logout` and the daemon's usage probes.
 // A routed Claude session gets `routedClaudeEnv` in `src/core/routed-env.ts` instead.
 //
-// Each function answers changes to make to an inherited environment: a string sets the
-// variable, `undefined` removes it. `applyEnvPatch` applies them.
+// Each function answers an `EnvPatch`, which `applyEnvPatch` in `src/core/routed-env.ts` applies.
 //
 // Every one of them removes the variables a routed session puts in its environment, because a
 // kurmis CLI or daemon may itself have been started from inside a routed session (a shell in a
@@ -11,10 +10,9 @@
 import { lstatSync, readlinkSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
+import type { EnvPatch } from '../core/routed-env.ts'
 import type { LoginRef } from './login-id.ts'
 import { loginFolder, ownClaudeProbeFolder } from './paths.ts'
-
-export type EnvPatch = Record<string, string | undefined>
 
 /**
  * Variables no CLI kurmis runs for itself may inherit: the routing variables, and every variable
@@ -147,23 +145,4 @@ function realFilePath(path: string, hops = 0): string {
   }
   const parent = dirname(path)
   return parent === path ? path : join(realFilePath(parent, hops + 1), basename(path))
-}
-
-/**
- * `env` with `patch` applied; the input is not changed. On Windows (`windows`) names are matched
- * without regard to case, as Windows does.
- */
-export function applyEnvPatch(env: Readonly<Record<string, string | undefined>>, patch: EnvPatch,
-  windows = process.platform === 'win32'): Record<string, string> {
-  const same = (a: string, b: string): boolean => (windows ? a.toUpperCase() === b.toUpperCase() : a === b)
-  const names = Object.keys(patch)
-  const out: Record<string, string> = {}
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || names.some((other) => same(name, other))) continue
-    out[name] = value
-  }
-  for (const [name, value] of Object.entries(patch)) {
-    if (value !== undefined) out[name] = value
-  }
-  return out
 }

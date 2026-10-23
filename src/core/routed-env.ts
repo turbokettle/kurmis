@@ -1,6 +1,33 @@
 // The environment a routed Claude CLI is started with (`docs/architecture.md`, "How a Claude
-// CLI reaches the daemon").
+// CLI reaches the daemon"), and `applyEnvPatch`, which also applies the environments of
+// `src/data/login-env.ts`.
 import { withRouteHeaders } from './route-headers.ts'
+
+/**
+ * Changes to make to an inherited environment: a string sets the variable, `undefined` removes
+ * it. A variable that is not named keeps its inherited value.
+ */
+export type EnvPatch = Record<string, string | undefined>
+
+/**
+ * `env` with `patch` applied; the input is not changed. On Windows (`windows`) names are matched
+ * without regard to case, as Windows does, so an inherited `Anthropic_Api_Key` is removed too and
+ * a set variable replaces any spelling of it.
+ */
+export function applyEnvPatch(env: Readonly<Record<string, string | undefined>>, patch: EnvPatch,
+  windows = process.platform === 'win32'): Record<string, string> {
+  const same = (a: string, b: string): boolean => (windows ? a.toUpperCase() === b.toUpperCase() : a === b)
+  const names = Object.keys(patch)
+  const out: Record<string, string> = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || names.some((other) => same(name, other))) continue
+    out[name] = value
+  }
+  for (const [name, value] of Object.entries(patch)) {
+    if (value !== undefined) out[name] = value
+  }
+  return out
+}
 
 /**
  * The retry budget a routed CLI is started with. When the daemon is replaced, a request sent in
@@ -38,10 +65,10 @@ export const ROUTING_VARIABLES: readonly string[] = ['ANTHROPIC_BASE_URL', 'ANTH
 export const USER_OWNED_ROUTING_VARIABLES: readonly string[] = ['ENABLE_TOOL_SEARCH', 'CLAUDE_CODE_MAX_RETRIES']
 
 /** `routed` without the variables in `names`: the CLI keeps what it would inherit for them. */
-export function withoutRoutedVariables(routed: RoutedEnv, names: readonly string[]): RoutedEnv {
-  const set: Record<string, string> = {}
-  for (const [name, value] of Object.entries(routed.set)) if (!names.includes(name)) set[name] = value
-  return { set, unset: routed.unset }
+export function withoutRoutedVariables(routed: EnvPatch, names: readonly string[]): EnvPatch {
+  const out: EnvPatch = {}
+  for (const [name, value] of Object.entries(routed)) if (!names.includes(name)) out[name] = value
+  return out
 }
 
 export interface RoutedEnvInput {
@@ -77,12 +104,6 @@ export interface RoutedEnvInput {
  */
 export const DEFAULT_SECURE_STORAGE_DIR = ''
 
-/** Variables to set, and variables to remove, on top of the inherited environment. */
-export interface RoutedEnv {
-  set: Record<string, string>
-  unset: string[]
-}
-
 /**
  * What a routed CLI is started with.
  *
@@ -105,40 +126,23 @@ export interface RoutedEnv {
  * - `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` are removed, see
  *   `OAUTH_TOKEN_VARIABLES`.
  */
-export function routedClaudeEnv(input: RoutedEnvInput): RoutedEnv {
+export function routedClaudeEnv(input: RoutedEnvInput): EnvPatch {
   const startedOn = input.startedOn ?? null
   if (input.login !== null && startedOn !== null && startedOn !== input.login) {
     throw new Error(`routedClaudeEnv: a CLI pinned to ${input.login} is started on that login, not on ${startedOn}`)
   }
-  const set: Record<string, string> = {
-    ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(input.port)}`,
-    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login, startedOn),
-    ENABLE_TOOL_SEARCH: 'true',
-    CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES)
-  }
-  const unset = [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES]
   if (input.secureStorageDir !== null && input.secureStorageDir.length === 0) {
     throw new Error('routedClaudeEnv: the folder of an extra login cannot be the empty string')
   }
-  set['CLAUDE_SECURESTORAGE_CONFIG_DIR'] = input.secureStorageDir ?? DEFAULT_SECURE_STORAGE_DIR
-  return { set, unset }
-}
-
-/**
- * An environment with a `RoutedEnv` applied to it. The input is not changed. On Windows
- * (`windows`), variable names are matched without regard to case, as Windows does, so an
- * inherited `Anthropic_Api_Key` is removed too and a set variable replaces any spelling of it.
- */
-export function applyRoutedEnv(env: Readonly<Record<string, string | undefined>>, routed: RoutedEnv,
-  windows = false): Record<string, string> {
-  const same = (a: string, b: string): boolean => (windows ? a.toUpperCase() === b.toUpperCase() : a === b)
-  const replaced = [...routed.unset, ...Object.keys(routed.set)]
-  const out: Record<string, string> = {}
-  for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || replaced.some((other) => same(name, other))) continue
-    out[name] = value
+  const patch: EnvPatch = {
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(input.port)}`,
+    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login, startedOn),
+    ENABLE_TOOL_SEARCH: 'true',
+    CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES),
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: input.secureStorageDir ?? DEFAULT_SECURE_STORAGE_DIR
   }
-  return { ...out, ...routed.set }
+  for (const name of [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES]) patch[name] = undefined
+  return patch
 }
 
 /**

@@ -44,7 +44,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { readdirSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
-import { OAUTH_TOKEN_VARIABLES, ROUTING_VARIABLES, USER_OWNED_ROUTING_VARIABLES, type RoutedEnv } from '../core/routed-env.ts'
+import { OAUTH_TOKEN_VARIABLES, ROUTING_VARIABLES, USER_OWNED_ROUTING_VARIABLES, type EnvPatch } from '../core/routed-env.ts'
 import { writeFileAtomicSync } from '../data/json-file.ts'
 import { isProcessAlive } from '../data/lock.ts'
 import { wrapperSettingsFolder } from '../data/paths.ts'
@@ -142,11 +142,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** The routing variables of a routed environment: the entries of `routed.set` named in `ROUTING_VARIABLES`. */
-export function routingVariables(routed: RoutedEnv): Record<string, string> {
+/** The routing variables of a routed environment: the values `routed` sets for `ROUTING_VARIABLES`. */
+export function routingVariables(routed: EnvPatch): Record<string, string> {
   const out: Record<string, string> = {}
   for (const name of ROUTING_VARIABLES) {
-    const value = routed.set[name]
+    const value = routed[name]
     if (value !== undefined) out[name] = value
   }
   return out
@@ -160,7 +160,7 @@ export function routingVariables(routed: RoutedEnv): Record<string, string> {
  * `CLAUDE_CODE_OAUTH_TOKEN` for a value that is not empty wherever it reads it, and takes the
  * same path for an empty `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` as for an unset one.
  */
-export function settingsEnv(routed: RoutedEnv): Record<string, string> {
+export function settingsEnv(routed: EnvPatch): Record<string, string> {
   const out = routingVariables(routed)
   for (const name of OAUTH_TOKEN_VARIABLES) out[name] = ''
   return out

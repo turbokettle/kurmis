@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023094733" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101334" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -701,6 +701,19 @@ function nonEmpty(value) {
 }
 
 // src/core/routed-env.ts
+function applyEnvPatch(env, patch, windows = process.platform === "win32") {
+  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
+  const names = Object.keys(patch);
+  const out = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value === void 0 || names.some((other) => same(name, other))) continue;
+    out[name] = value;
+  }
+  for (const [name, value] of Object.entries(patch)) {
+    if (value !== void 0) out[name] = value;
+  }
+  return out;
+}
 var ROUTED_CLI_MAX_RETRIES = 15;
 var UNROUTED_KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
 var OAUTH_TOKEN_VARIABLES = ["CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR"];
@@ -712,9 +725,9 @@ var ROUTING_VARIABLES = [
 ];
 var USER_OWNED_ROUTING_VARIABLES = ["ENABLE_TOOL_SEARCH", "CLAUDE_CODE_MAX_RETRIES"];
 function withoutRoutedVariables(routed, names) {
-  const set = {};
-  for (const [name, value] of Object.entries(routed.set)) if (!names.includes(name)) set[name] = value;
-  return { set, unset: routed.unset };
+  const out = {};
+  for (const [name, value] of Object.entries(routed)) if (!names.includes(name)) out[name] = value;
+  return out;
 }
 var DEFAULT_SECURE_STORAGE_DIR = "";
 function routedClaudeEnv(input) {
@@ -722,28 +735,18 @@ function routedClaudeEnv(input) {
   if (input.login !== null && startedOn !== null && startedOn !== input.login) {
     throw new Error(`routedClaudeEnv: a CLI pinned to ${input.login} is started on that login, not on ${startedOn}`);
   }
-  const set = {
-    ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(input.port)}`,
-    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login, startedOn),
-    ENABLE_TOOL_SEARCH: "true",
-    CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES)
-  };
-  const unset = [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES];
   if (input.secureStorageDir !== null && input.secureStorageDir.length === 0) {
     throw new Error("routedClaudeEnv: the folder of an extra login cannot be the empty string");
   }
-  set["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = input.secureStorageDir ?? DEFAULT_SECURE_STORAGE_DIR;
-  return { set, unset };
-}
-function applyRoutedEnv(env, routed, windows = false) {
-  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
-  const replaced = [...routed.unset, ...Object.keys(routed.set)];
-  const out = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value === void 0 || replaced.some((other) => same(name, other))) continue;
-    out[name] = value;
-  }
-  return { ...out, ...routed.set };
+  const patch = {
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${String(input.port)}`,
+    ANTHROPIC_CUSTOM_HEADERS: withRouteHeaders(input.inheritedCustomHeaders, input.key, input.login, startedOn),
+    ENABLE_TOOL_SEARCH: "true",
+    CLAUDE_CODE_MAX_RETRIES: String(ROUTED_CLI_MAX_RETRIES),
+    CLAUDE_SECURESTORAGE_CONFIG_DIR: input.secureStorageDir ?? DEFAULT_SECURE_STORAGE_DIR
+  };
+  for (const name of [...UNROUTED_KEY_VARIABLES, ...OAUTH_TOKEN_VARIABLES]) patch[name] = void 0;
+  return patch;
 }
 function inheritedOAuthTokenVariables(env, windows = false) {
   return Object.entries(env).filter(([name, value]) => value !== void 0 && value !== "" && OAUTH_TOKEN_VARIABLES.some((other) => windows ? other.toUpperCase() === name.toUpperCase() : other === name)).map(([name]) => name);
@@ -1962,19 +1965,6 @@ function realFilePath(path, hops = 0) {
   }
   const parent = (0, import_node_path4.dirname)(path);
   return parent === path ? path : (0, import_node_path4.join)(realFilePath(parent, hops + 1), (0, import_node_path4.basename)(path));
-}
-function applyEnvPatch(env, patch, windows = process.platform === "win32") {
-  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
-  const names = Object.keys(patch);
-  const out = {};
-  for (const [name, value] of Object.entries(env)) {
-    if (value === void 0 || names.some((other) => same(name, other))) continue;
-    out[name] = value;
-  }
-  for (const [name, value] of Object.entries(patch)) {
-    if (value !== void 0) out[name] = value;
-  }
-  return out;
 }
 
 // src/platform/programs.ts
@@ -3503,7 +3493,7 @@ function isPlainObject2(value) {
 function routingVariables(routed) {
   const out = {};
   for (const name of ROUTING_VARIABLES) {
-    const value = routed.set[name];
+    const value = routed[name];
     if (value !== void 0) out[name] = value;
   }
   return out;
@@ -3761,7 +3751,7 @@ async function runClaude(args, login, context, deps) {
   for (const note of oauthTokenNotes(context.env, layers.layers, userSettings, claudeUserSettingsPath(context.env, deps.homeDir()))) {
     writeLine(context.stderr, `kurmis claude: ${note}`);
   }
-  const env = applyRoutedEnv(context.env, routed, deps.platform === "win32");
+  const env = applyEnvPatch(context.env, routed, deps.platform === "win32");
   let claudeArgs;
   try {
     claudeArgs = claudeArgsWithSettings(userSettings, settingsEnv(routed), deps.storeSettings);
@@ -8942,7 +8932,7 @@ function kurmisEnvValues(values, existingHeaders) {
   });
   const out = {};
   for (const name of ROUTING_VARIABLES) {
-    const value = routed.set[name];
+    const value = routed[name];
     if (value !== void 0) out[name] = value;
   }
   if (values.credentialsOfItsOwn === true) out[CUSTOM_HEADERS2] = withRouteHeaders(null, values.key, null, STARTED_ON_NONE);

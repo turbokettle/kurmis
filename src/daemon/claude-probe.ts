@@ -38,8 +38,9 @@
 // `skip_behaviors` leaves out the walk over the last week's transcripts that fills the answer's
 // `behaviors` block, which kurmis does not read; a CLI older than 2.1.272 ignores it.
 import type { AccountUsage } from '../core/claude-usage.ts'
+import { applyEnvPatch } from '../core/routed-env.ts'
 import { usageFromGetUsage } from '../core/usage.ts'
-import { applyEnvPatch, claudeProbeEnv } from '../data/login-env.ts'
+import { claudeProbeEnv } from '../data/login-env.ts'
 import type { LoginRef } from '../data/login-id.ts'
 import { ownClaudeProbeFolder, probeWorkFolder } from '../data/paths.ts'
 import { makePrivateDirSync } from '../platform/files.ts'

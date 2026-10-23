@@ -370,7 +370,7 @@ export function kurmisEnvValues(values: SetupValues, existingHeaders: string | n
   })
   const out: Record<string, string> = {}
   for (const name of ROUTING_VARIABLES) {
-    const value = routed.set[name]
+    const value = routed[name]
     if (value !== undefined) out[name] = value
   }
   if (values.credentialsOfItsOwn === true) out[CUSTOM_HEADERS] = withRouteHeaders(null, values.key, null, STARTED_ON_NONE)

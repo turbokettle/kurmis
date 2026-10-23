@@ -19,7 +19,7 @@ import { homedir } from 'node:os'
 import { autoStartLogin, type StartableLogin } from '../../core/account-router.ts'
 import type { StatusAnswer } from '../../core/control-api.ts'
 import {
-  applyRoutedEnv,
+  applyEnvPatch,
   inheritedOAuthTokenVariables,
   OAUTH_TOKEN_VARIABLES,
   routedClaudeEnv,
@@ -243,7 +243,7 @@ async function runClaude(args: string[], login: string | null, context: CliConte
   for (const note of oauthTokenNotes(context.env, layers.layers, userSettings, claudeUserSettingsPath(context.env, deps.homeDir()))) {
     writeLine(context.stderr, `kurmis claude: ${note}`)
   }
-  const env = applyRoutedEnv(context.env, routed, deps.platform === 'win32')
+  const env = applyEnvPatch(context.env, routed, deps.platform === 'win32')
   let claudeArgs: { args: string[]; remove: () => void }
   try {
     claudeArgs = claudeArgsWithSettings(userSettings, settingsEnv(routed), deps.storeSettings)
