@@ -125,8 +125,6 @@ export interface FakeAnthropic {
   setDefault(reply: ReplyRule): void
   /** Resolves once `count` requests other than `/api/hello` have arrived. */
   waitForRequests(count: number, timeoutMs?: number): Promise<RecordedRequest[]>
-  /** Drops the queues, keeps the recorded requests. */
-  reset(): void
   /** Closes open connections and stops listening. */
   close(): Promise<void>
 }
@@ -251,11 +249,6 @@ export async function startFakeAnthropic(): Promise<FakeAnthropic> {
       waiters.add(check)
       check()
     }),
-    reset: () => {
-      shared.length = 0
-      byToken.clear()
-      fallback = { kind: 'ok' }
-    },
     close: async () => {
       server.closeAllConnections()
       await new Promise<void>((resolve) => server.close(() => resolve()))

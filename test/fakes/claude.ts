@@ -1,10 +1,9 @@
-// Test-side helpers for the fake `claude` in claude/fake-claude.js: install it on PATH, write a
-// made-up login for it to read, script it per login, and read back what it recorded.
+// Test-side helpers for the fake `claude` in claude/fake-claude.js: run it, write a made-up
+// login for it to read, script it per login, and read back what it recorded.
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { installLauncher, type InstalledFake } from './launcher.ts'
 
 /** Absolute path of the fake `claude` script. Run it as `[process.execPath, FAKE_CLAUDE_SCRIPT, ...args]`. */
 export const FAKE_CLAUDE_SCRIPT = fileURLToPath(new URL('./claude/fake-claude.js', import.meta.url))
@@ -14,11 +13,6 @@ export const FAKE_CLAUDE_VERSION = '2.1.301'
 
 /** The file name of the per-login scenario, read from the login's credentials folder. */
 export const FAKE_CLAUDE_SCENARIO_FILE = 'fake-claude-scenario.json'
-
-/** Writes `<binDir>/claude` (POSIX) or `<binDir>\claude.cmd` (Windows) that runs the fake. */
-export function installFakeClaude(binDir: string, platform: NodeJS.Platform = process.platform): InstalledFake {
-  return installLauncher(binDir, 'claude', FAKE_CLAUDE_SCRIPT, platform)
-}
 
 /** A made-up OAuth access token: `sk-ant-oat01-fake-<label>`. The fakes record only tokens of this form. */
 export function fakeToken(label: string): string {
@@ -169,18 +163,13 @@ export interface RunResult {
  * Runs the fake once with `node` and collects its output. `env` replaces the environment
  * entirely when `replaceEnv` is set, and is merged over `process.env` otherwise.
  */
-export function runFakeClaude(args: string[], options: { env?: Record<string, string | undefined>; replaceEnv?: boolean; input?: string; cwd?: string } = {}): Promise<RunResult> {
-  return runScript(FAKE_CLAUDE_SCRIPT, args, options)
-}
-
-/** Runs `script` once with `node` and collects its output, as `runFakeClaude` describes. */
-export function runScript(script: string, args: string[], options: { env?: Record<string, string | undefined>; replaceEnv?: boolean; input?: string; cwd?: string } = {}): Promise<RunResult> {
+export function runFakeClaude(args: string[], options: { env?: Record<string, string | undefined>; replaceEnv?: boolean; input?: string } = {}): Promise<RunResult> {
   const env: Record<string, string> = {}
   for (const [name, value] of Object.entries(options.replaceEnv === true ? (options.env ?? {}) : { ...process.env, ...options.env })) {
     if (value !== undefined) env[name] = value
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...args], { env, cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn(process.execPath, [FAKE_CLAUDE_SCRIPT, ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })

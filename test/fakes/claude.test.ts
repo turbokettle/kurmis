@@ -6,8 +6,8 @@ import { createInterface } from 'node:readline'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { reply, startFakeAnthropic, type FakeAnthropic } from './anthropic.ts'
 import {
-  FAKE_CLAUDE_SCRIPT, FAKE_CLAUDE_VERSION, fakeToken, installFakeClaude, readClaudeCredentials, readFakeClaudeRecord,
-  runFakeClaude, runScript, writeClaudeCredentials, writeClaudeIdentity, writeClaudeScenario
+  FAKE_CLAUDE_SCRIPT, FAKE_CLAUDE_VERSION, fakeToken, readClaudeCredentials, readFakeClaudeRecord,
+  runFakeClaude, writeClaudeCredentials, writeClaudeIdentity, writeClaudeScenario
 } from './claude.ts'
 
 let root: string
@@ -347,21 +347,4 @@ describe('an interactive start', () => {
     expect(code).toBe(130)
     expect(readFakeClaudeRecord(recordFile).some((line) => line.kind === 'signal')).toBe(true)
   })
-})
-
-it.skipIf(process.platform === 'win32')('runs as `claude` from PATH through the installed launcher', async () => {
-  const bin = join(root, 'bin dir')
-  const installed = installFakeClaude(bin)
-  expect(installed.path).toBe(join(bin, 'claude'))
-  const result = await new Promise<{ code: number | null; stdout: string }>((resolve, reject) => {
-    // PATH holds only the launcher's folder, so no other `claude` can be found; the launcher
-    // names its shell and Node by full path.
-    const child = spawn('claude', ['--version'], { env: { ...envOf(), PATH: bin } })
-    let stdout = ''
-    child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ code, stdout }))
-  })
-  expect(result).toEqual({ code: 0, stdout: `${FAKE_CLAUDE_VERSION} (Claude Code)\n` })
-  expect((await runScript(installed.script, ['--version'])).stdout).toBe(result.stdout)
 })

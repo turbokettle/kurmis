@@ -5,39 +5,27 @@ Stand-ins for `claude` and Anthropic's API, so tests never reach the network, th
 
 - `anthropic.ts`: an in-process HTTP server on `127.0.0.1` standing in for the Messages API.
 - `claude/fake-claude.js` and `claude.ts`: the fake `claude` and its helpers.
-- `launcher.ts`: writes a launcher so a fake can be found on `PATH` by the real program's name.
 
 The fake claude is plain ESM JavaScript because tests start it as a child process. Node 22,
-kurmis' minimum, cannot run a `.ts` file without a flag, and a launcher or a daemon that starts
-`claude` should not need to know about one. It imports every Node global it uses other than
+kurmis' minimum, cannot run a `.ts` file without a flag, and a daemon that starts `claude` should
+not need to know about one. It imports every Node global it uses other than
 `process`, `console`, `Buffer` and `URL`, so eslint's `no-undef` passes with the shared config.
 tsc does not check it.
 
 ## Starting a fake
 
-Run the fake as `[process.execPath, FAKE_CLAUDE_SCRIPT, ...args]`, or put it on `PATH`:
-
-```ts
-const claude = installFakeClaude(binDir) // { path, script, command }
-spawn('claude', ['--version'], { env: { ...env, PATH: `${binDir}${delimiter}${env.PATH}` } })
-```
-
-On POSIX the launcher is `<binDir>/claude`, a shell script that runs the fake with the Node that
-runs the tests. On Windows it is `<binDir>\claude.cmd`, which only a test that goes through
-`cmd.exe` itself can use; kurmis never starts `.cmd` shims (docs/architecture.md, "Windows").
-
-Kurmis does not start the launcher either. While the guard `test/setup.ts` turns on is set
-(`src/platform/system-program-guard.ts`), kurmis refuses every program whose file name is
-`claude`, the launcher included, and the test fails. So a test that has kurmis start the fake
-names the fake's script in `KURMIS_CLAUDE_BIN` (a `.js` file, which kurmis runs through Node, on
-every OS). The launcher is for tests that start it themselves, and for tests of how kurmis finds
-a program on PATH that do not start it. A real `claude.exe` cannot be faked without building a
-Node single-executable application, which these fakes do not do.
+Run the fake as `[process.execPath, FAKE_CLAUDE_SCRIPT, ...args]`, or once with
+`runFakeClaude` (below). A test that has kurmis start the fake names the fake's script in
+`KURMIS_CLAUDE_BIN` (a `.js` file, which kurmis runs through Node, on every OS). While the guard
+`test/setup.ts` turns on is set (`src/platform/system-program-guard.ts`), kurmis refuses every
+program whose file name is `claude`, so a fake put on `PATH` under that name would not start. A
+real `claude.exe` cannot be faked without building a Node single-executable application, which
+these fakes do not do.
 
 ## Fake Anthropic API
 
 ```ts
-const api = await startFakeAnthropic() // { url, port, requests, apiRequests(), script, scriptFor, setDefault, waitForRequests, reset, close }
+const api = await startFakeAnthropic() // { url, port, requests, apiRequests(), script, scriptFor, setDefault, waitForRequests, close }
 api.scriptFor(fakeToken('one'), reply.quota({ claim: 'five_hour', resetsAt: Date.now() + 3_600_000 }))
 api.script(reply.overloaded(), reply.ok({ text: 'Hi' }))
 // ... run the code under test against api.url ...
@@ -229,5 +217,5 @@ start. Objects are merged key by key.
 A token is written only when it looks like a fake one (`sk-ant-<kind>-fake-...`). Any other token
 is replaced with its length.
 
-`runFakeClaude(args, { env, replaceEnv, input, cwd })` runs the fake once and returns
+`runFakeClaude(args, { env, replaceEnv, input })` runs the fake once and returns
 `{code, signal, stdout, stderr}`.
