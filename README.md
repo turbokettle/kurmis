@@ -12,8 +12,7 @@ login changes is which subscription is billed.
 
 ## Requirements
 
-- **Node.js 22 or newer.** Node 22 is the oldest Node line that still gets security fixes, and
-  the bundle is built for it.
+- **Node.js 22 or newer.** The bundle is built for Node 22.
 - **git**, and ssh access to the `turbokettle/kurmis` repository on GitHub, because npm clones it.
 - Claude Code (`claude`) installed as usual and on your `PATH`.
 - macOS or Windows. Linux should work but is not tested.
@@ -27,10 +26,9 @@ login changes is which subscription is billed.
 npm i -g git+ssh://git@github.com/turbokettle/kurmis.git
 ```
 
-To install a given release or branch, add it after `#`:
+To install a given commit, tag or branch, add it after `#`:
 
 ```sh
-npm i -g "git+ssh://git@github.com/turbokettle/kurmis.git#v0.1.0"
 npm i -g "git+ssh://git@github.com/turbokettle/kurmis.git#main"
 ```
 
@@ -80,34 +78,27 @@ browser. The second form signs an existing login in again, for example after it 
 **Naming a login.** Every command takes a login by its alias or its id, and upper and lower
 case count the same.
 
-**The alias.** Right after the sign-in, kurmis prints the account's email and gives the login
-the alias made from it: the email without its top-level domain, in lowercase, with every run of
-other characters than letters and digits turned into `-`, at most 32 characters. When another
-login has that alias already, the new one gets `-2`, `-3`, and so on. The login plain `claude`
-uses gets its alias when the daemon first reads its usage. The alias follows the email when the
-account changes. While kurmis cannot read the email, the login keeps the alias it has. Kurmis
-keeps no email in its files.
+**The alias.** Kurmis names a login after its account's email: `work@example.com` gives
+`work-example`. When another login has that name already, the new one gets `-2`, `-3`, and so
+on. The login plain `claude` uses gets its alias when the daemon first reads its usage. The
+alias follows the email when the account changes. Kurmis keeps no email in its files.
 
-`--alias` sets an alias of your own instead. It is 1 to 32 lowercase letters, digits, `-` or
-`_` and starts with a letter or digit. No other login may have it, and it may not be another
-login's id. `kurmis set <login> --alias <alias>` changes it. Kurmis never
-replaces an alias you set, and no command makes it follow the email again.
+`--alias` sets an alias of your own instead: 1 to 32 lowercase letters, digits, `-` or `_`,
+starting with a letter or digit, and not the alias or id of another login.
+`kurmis set <login> --alias <alias>` changes it. Kurmis never replaces an alias you set.
 
-**An account that is already a login.** When you sign in to an account that is already a kurmis
-login, the login plain `claude` uses included, kurmis signs the new sign-in out again, adds
-nothing, and says which login the account is. `kurmis login <that login>` signs that login in
-again. A `--alias` you gave is then not used, and kurmis says so. When `kurmis login <login>`
-signs an existing login in to an account that another login already has, kurmis warns that the
-two logins are now the same account. It signs neither of them out.
+**An account that is already a login.** Signing in to an account that is already a kurmis
+login, the login plain `claude` uses included, adds nothing: kurmis signs the new sign-in out
+again and says which login the account is. When `kurmis login <login>` signs an existing login
+in to an account that another login already has, kurmis warns that the two logins are now the
+same account.
 
-An account is its email together with its organization, which Claude Code records in its
-profile. One email can have a personal plan and a seat in a Team or Enterprise organization;
-those are two subscriptions, so `kurmis login` adds the second as a login of its own, and its
-alias gets `-2` at the end (`work-example-2`). When the organization of either login is not
-recorded, the email alone decides.
+An account is its email together with its organization. One email can have a personal plan and
+a seat in a Team or Enterprise organization. Those are two subscriptions, so they become two
+logins, and the second one's alias gets `-2` at the end (`work-example-2`). When the
+organization of either login is not recorded, the email alone decides.
 
-If the sign-in fails, nothing is added. Only one `kurmis login` or `kurmis logout` of the same
-login runs at a time; a second one stops and says so.
+If the sign-in fails, nothing is added.
 
 ### `kurmis claude`
 
@@ -116,28 +107,26 @@ kurmis [--login <login>] claude [<claude arguments...>]
 ```
 
 Starts Claude Code with the terminal attached and exits with its exit code. kurmis' options go
-before `claude`, and claude's arguments after it, unchanged, as in `kurmis claude --resume` or
-`kurmis --login work-example claude mcp list`. `kurmis help claude` shows kurmis' help;
-`kurmis claude --help` shows claude's. To use kurmis every time you run claude, add
-`alias claude='kurmis claude'` to your shell.
+before `claude`, and claude's arguments after it, as in `kurmis claude --resume` or
+`kurmis --login work-example claude mcp list`. Claude's arguments are passed on unchanged,
+except a `--settings` of yours, which kurmis merges with its own (below). `kurmis help claude`
+shows kurmis' help; `kurmis claude --help` shows claude's. To use kurmis every time you run
+claude, add `alias claude='kurmis claude'` to your shell.
 
 - **Auto** (no `--login`): each request goes to a login that is opted in to routing and is
-  under its limits. A login marked "use first" is taken first. Otherwise a new session goes to
-  the login whose weekly usage resets soonest, and a session stays on the login that served it
-  for as long as that login has room, because switching makes the next request rebuild the
-  prompt cache.
+  under its limits. Logins marked "use first" are taken before the others whenever one has room,
+  even by a session that was running on an unmarked login. Otherwise a new session goes to the
+  login whose weekly usage resets soonest, and a session stays on the login that served it for
+  as long as that login has room, because switching makes the next request rebuild the prompt
+  cache. When no login is opted in to routing, Auto sends every request with the login plain
+  `claude` uses.
 - **`--login <login>`** sends every request of the session with one login, even when it
   is out of usage, for example `--login work-example`.
 
 claude needs a signed-in login of its own to start, even though the daemon re-signs every
 request. On Auto, kurmis starts it on the login plain `claude` uses, or, when that login is
 signed out, on another signed-in login, and says so. This does not change where the requests
-go. Right after the daemon starts, it may not know yet whether the
-login plain `claude` uses is signed in; then `kurmis claude` waits up to 15 seconds for the
-daemon's first usage probe before it decides.
-
-When `~/.kurmis/config.json` cannot be read, `--login` is an error. Without `--login`, kurmis
-says why and starts claude on the login plain `claude` uses.
+go.
 
 If you pass your own `--settings`, kurmis adds its settings to yours; your file is not changed.
 The combined copy is kept in kurmis' data folder, readable only by you, and deleted when
@@ -158,32 +147,27 @@ kurmis status [--json]
 Shows every login by its alias, with its id (when the alias is not the id), its settings and
 its usage, whether the daemon is running, and whether global routing (`kurmis setup`) is on,
 paused or off, with the command that changes it. It does not start the daemon, and it exits 0
-whether the daemon runs or not. Like every other command, it gives the login plain `claude` uses
-its id in `~/.kurmis/config.json` when the file has none yet; it changes no other file.
+whether the daemon runs or not.
 
 The login plain `claude` uses is marked as such. A warning at the top says when two logins are
 the same account, because both then use one subscription. Another warning says when global
 routing is on but the daemon is not running, because a plain `claude` then cannot reach
 Anthropic.
 
-While the daemon runs, the status comes from it. When the daemon has read no usage yet, as
-right after it starts, `status` waits up to 15 seconds for its first usage probe. For each login it shows the account's email,
+While the daemon runs, the status comes from it. For each login it shows the account's email,
 whether the login is signed in, the five-hour and weekly usage with the time until each resets,
-its limits, whether routing may use it and how many sessions it serves. A line starting with
-"passed over" says why Auto would skip that login now (signed out, at its limit, cooling down
-after a usage-limit answer). When the daemon runs an older kurmis than the one you run, `status` says so: the
-next command that starts the daemon replaces it. When the daemon is newer, `status` says that too,
-and when this kurmis cannot read its status it says what to do.
+and the number of sessions placed on it in the last 7 days (kurmis keeps at most 2000). A line
+starting with "passed over" says why Auto would skip that login now (signed out, at its limit,
+cooling down after a usage-limit answer). When the daemon runs an older kurmis than the one you
+run, `status` says so: the next command that starts the daemon replaces it. When the daemon is
+newer, `status` says that too, and when this kurmis cannot read its status it says what to do.
 
 While the daemon is not running, the first line says so and names the commands that start it:
 `kurmis claude`, `kurmis setup` and `kurmis daemon start`. The logins and their settings come
-from `~/.kurmis/config.json`. The usage is the last the daemon read, with how long ago it read
-it. Kurmis cannot tell then whether a login is signed in, so it shows whether the login's
-credentials are on this machine instead. That is its token: in its `.credentials.json`, or else
-in the macOS Keychain or Windows Credential Manager, which kurmis asks whether the item exists
-without reading it. The check does not show that the credentials still work. When it cannot
-run, the login shows `credentials on this machine: unknown`. The same goes when the daemon runs
-but does not answer the status request; a note on stderr says so.
+from `~/.kurmis/config.json`, and the usage is the last the daemon read, with how long ago it
+read it. Kurmis cannot tell then whether a login is signed in, so it shows whether the login's
+token is on this machine, or `unknown` when it cannot check. That does not show that the token
+still works. The same goes when the daemon runs but does not answer; a note on stderr says so.
 
 `--json` prints the same as JSON (see `docs/architecture.md` for its shape).
 
@@ -220,7 +204,7 @@ uses cannot be removed; sign it out with `claude auth logout` if you want to.
 kurmis data folder, for example after a removal that stopped half-way, signs it out and deletes
 that folder.
 
-### `kurmis setup` (route every Claude Code)
+### `kurmis setup` (global routing)
 
 ```sh
 kurmis setup
@@ -244,30 +228,23 @@ a plain `claude`, and the Claude Code extensions in your editor, use kurmis too:
 - it makes the daemon start when you log in (a launch agent on macOS, a logon entry on
   Windows). On Linux there is no start at login; the next `kurmis claude` starts the daemon.
 
-A plain `claude` then runs on Auto. Restart Claude Code sessions and editors that were already
-open. If the file already points `ANTHROPIC_BASE_URL` at another proxy, setup stops and changes
-nothing.
+A plain `claude` then runs on Auto. If the file already points `ANTHROPIC_BASE_URL` at another
+proxy, setup stops and changes nothing.
 
 The login plain `claude` uses is the login in `~/.claude`. When you run setup with
-`CLAUDE_CONFIG_DIR` set, it writes `$CLAUDE_CONFIG_DIR/settings.json`, which only a `claude`
-with that variable reads. Such a `claude` signs in with the login in that folder, which kurmis
-does not know, so kurmis never signs its requests as the login plain `claude` uses: they go to
-your extra logins only. A `claude` with `CLAUDE_CONFIG_DIR` naming `~/.claude` itself, after a
-setup run without the variable, reads `~/.claude/settings.json` and counts as a plain `claude`
-on the login plain `claude` uses (see "Known limits" in
-[docs/architecture.md](docs/architecture.md)); unset the variable for it. `kurmis claude` is
-not affected; it always starts claude on the login it names, the one plain `claude` uses
-included.
-
-On macOS and Windows, setup stops when `CLAUDE_CONFIG_DIR` names `~/.claude` itself: Claude
-Code keeps separate credentials for a `claude` started with the variable set, even to that
-folder, and both kinds of `claude` read `~/.claude/settings.json`. On every platform it also
-stops when `$CLAUDE_CONFIG_DIR/settings.json` is a link to `~/.claude/settings.json`, for the
-same reason. Unset the variable and run setup again.
+`CLAUDE_CONFIG_DIR` set, it writes `$CLAUDE_CONFIG_DIR/settings.json`. A `claude` that reads
+that file signs in with the login in that folder, which kurmis does not know, so kurmis sends
+its requests only to your extra logins. Setup stops when `CLAUDE_CONFIG_DIR` names `~/.claude`
+itself (on macOS and Windows), or when `$CLAUDE_CONFIG_DIR/settings.json` is a link to
+`~/.claude/settings.json`. Claude Code keeps separate credentials for a `claude` started with
+the variable set, and both kinds of `claude` would read one settings file. Unset the variable
+and run setup again. After a setup without the variable, do not run a plain `claude` with
+`CLAUDE_CONFIG_DIR` naming `~/.claude` (see "Known limits" in
+[docs/architecture.md](docs/architecture.md)).
 
 Setup also warns when the file's `env` sets `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
-`CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, which make a plain
-`claude` sign with that key or token, and leaves them.
+`CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR`, which take the place of
+a login in a plain `claude`, and leaves them as they are.
 
 `kurmis setup --pause` takes kurmis' settings out of every settings file setup changed; a value
 you changed yourself is left and reported. A plain `claude` and the editor extensions then send
@@ -308,8 +285,9 @@ You seldom need these: `kurmis claude` and `kurmis setup` start the daemon when 
 and replace a daemon of an older kurmis. `kurmis daemon status` shows whether it runs, its pid
 and port; `stop` stops it after it finishes the requests it has open, waiting at most 30
 seconds for them; `stop --now` stops it at once and cuts those requests, and an open Claude
-session then sees a dropped connection and retries the request; `restart` stops it and starts a
-new one; `run` runs it in the terminal, which helps when looking into a problem.
+session then sees a dropped connection and retries the request; `restart` starts a new daemon
+at once, while the old one finishes its open requests in the background; `run` runs it in the
+terminal, which helps when looking into a problem.
 
 A daemon is older when it comes from an earlier build of kurmis, so updating kurmis replaces the
 running daemon at the next command that starts it. A newer daemon is never replaced. When this
@@ -332,28 +310,26 @@ anything; `--yes` skips the question, and without a terminal it needs `--yes`. I
 - every login you added to kurmis. Each is signed out first, which removes its Keychain item
   on macOS or its Windows Credential Manager record;
 - the daemon, which it stops;
-- the kurmis data folder, `~/.kurmis` (`%USERPROFILE%\.kurmis` on Windows). Files in the folder
-  that kurmis did not write are left.
+- the kurmis data folder, `~/.kurmis` (`%USERPROFILE%\.kurmis` on Windows). Kurmis deletes the
+  files and folders it knows by name, with everything in them. Other entries at the top of the
+  data folder are left, and then so is the folder.
 
-The login plain `claude` uses is not signed out, so a plain `claude` keeps working. When a login cannot be signed out, the start at login cannot be removed or the
-daemon cannot be stopped, the command says which, keeps the data folder, and exits 1; run it again
-once that is fixed. A login that cannot be signed out stays in kurmis with its folder. When its
-sign-out can never work (for example, `claude` is no longer installed), `kurmis logout <id>`
-removes it without signing it out; on macOS its Keychain item, and on Windows its Credential
-Manager record, may then be left, and the message names it. When every step worked, the
-command's last line tells you to run `npm uninstall -g kurmis`.
+The login plain `claude` uses is not signed out, so a plain `claude` keeps working. When a step
+fails, the command says which and what to do, keeps the data folder and exits 1; run it again
+once that is fixed. When every step worked, the command's last line tells you to run
+`npm uninstall -g kurmis`.
 
 ## Troubleshooting
 
 - **What is the daemon doing?** Its log is `~/.kurmis/daemon.log` (the previous one is
   `daemon.log.1`). It holds login ids, status codes and timings, never tokens, request contents,
   aliases or emails. `kurmis status` shows what it knows about each login, with its alias and id.
-- **Restarting the daemon.** `kurmis daemon restart`. Claude Code sessions that are open retry their
-  requests for a few minutes and carry on once it is back.
-- **The daemon cannot start because its port is in use.** Another program has kurmis' port (28411
-  unless you changed it). Pick a free one by adding `"port": 28412` (any number from 1024 to 65535)
-  to `~/.kurmis/config.json`, then run `kurmis daemon restart`. If you ran `kurmis setup`, run it
-  again so `settings.json` names the new port.
+- **Restarting the daemon.** `kurmis daemon restart`. Claude Code sessions that are open retry
+  their requests for a few minutes and carry on once it is back.
+- **The daemon cannot start because its port is in use.** Another program has kurmis' port
+  (28411 unless you changed it). Pick a free one by adding `"port": 28412` (any number from 1024
+  to 65535) to `~/.kurmis/config.json`, then run `kurmis daemon restart`. If you ran
+  `kurmis setup`, run it again so `settings.json` names the new port.
 - **"Not logged in" in Claude Code, or a login shown as signed out.** Sign it in again with
   `kurmis login <login>`, for example `kurmis login work-example`.
 - **macOS asks whether `security` may use a Keychain item.** That is the daemon reading a
@@ -370,15 +346,11 @@ command's last line tells you to run `npm uninstall -g kurmis`.
   with npm behaves on Windows.
 - **Windows: "Terminate batch job (Y/N)?" after Ctrl-C.** In `cmd.exe`, `kurmis` runs through
   npm's `kurmis.cmd`, and `cmd.exe` asks this whenever a batch file was interrupted. It asks
-  once kurmis has finished, so either answer just ends the batch file. This is standard for
-  programs installed with npm.
+  once kurmis has finished, so either answer just ends the batch file.
 - **Windows: setup says the logon entry was not written because of Windows Script Host.** The
   logon entry starts the daemon without a console window through `wscript.exe`. When Windows
   Script Host is missing or turned off, setup writes no entry, warns and still exits 0;
   `kurmis claude` starts the daemon anyway.
-- **"config.json … was written by an older kurmis".** This kurmis reads only version 3 of
-  `config.json`. Delete `~/.kurmis/config.json`, then add the extra logins again with
-  `kurmis login`.
 - **"Could not lock …config.json.lock".** Another kurmis command is changing the settings right
   now; try again. If no kurmis command is running, delete `~/.kurmis/config.json.lock`.
 - **A command says the daemon could not be reached.** Look at the end of `daemon.log`, or run
