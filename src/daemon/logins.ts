@@ -97,9 +97,11 @@ export class LoginTable {
    */
   private readonly refused = new Map<string, number>()
   /**
-   * The rate-limit headers of the last answer of each login (`noteObservation`). A probe that
-   * started before they arrived measured an older state, so they are applied again on top of
-   * its snapshot (`setProbeUsage`). In memory only; they hold no token or body.
+   * What the rate-limit headers of each login's answers said since its last probe started
+   * (`noteObservation`, `noteProbeStarted`), merged into one observation: for each window and
+   * for the status, the latest answer that reported it. The probe measured an older state, so
+   * this is applied again on top of its snapshot (`setProbeUsage`). In memory only; it holds no
+   * token or body.
    */
   private readonly observations = new Map<string, UnifiedObservation>()
   /** When each login's current cooldown was set; absent for one read from `state.json`. In memory only. */
@@ -249,28 +251,35 @@ export class LoginTable {
   }
 
   /**
-   * Folds the rate-limit headers of one of the login's answers into its usage, and keeps them
-   * for `setProbeUsage`. Headers that say nothing about usage change nothing.
+   * Folds the rate-limit headers of one of the login's answers into its usage, and merges them
+   * into what is kept for `setProbeUsage`. Headers that say nothing about usage change nothing.
    */
   noteObservation(id: string, observation: UnifiedObservation): void {
     if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return
     if (!isLoginId(id) || this.find(id) === undefined) return
-    this.observations.set(id, observation)
+    const kept = this.observations.get(id)
+    this.observations.set(id, kept === undefined ? observation : mergeObservations(kept, observation))
     this.setUsage(id, usageFromUnifiedHeaders(id, this.usage(id), observation))
   }
 
   /**
-   * Stores a successful probe's snapshot. A probe that started at `startedAt` measured the login
-   * at that time or a little later, so when an answer's rate-limit headers arrived after it
-   * started, they count as newer and are
-   * applied again on top of the probe's snapshot: the probe fills in what the headers do not
-   * carry, and does not undo what they said.
+   * Called when a probe of the login starts: forgets the headers kept so far, so that what
+   * `setProbeUsage` applies on top of the probe is only what answers said after it started.
+   * One probe per login runs at a time.
    */
-  setProbeUsage(id: string, usage: AccountUsage, startedAt: number): void {
+  noteProbeStarted(id: string): void {
+    this.observations.delete(id)
+  }
+
+  /**
+   * Stores a successful probe's snapshot. The probe measured the login when it started
+   * (`noteProbeStarted`), so what answers' rate-limit headers said since then is newer and is
+   * applied again on top of the snapshot: the probe fills in what the headers did not carry,
+   * and does not undo what they said.
+   */
+  setProbeUsage(id: string, usage: AccountUsage): void {
     const observation = this.observations.get(id)
-    this.setUsage(id, observation !== undefined && observation.observedAt > startedAt
-      ? usageFromUnifiedHeaders(id, usage, observation)
-      : usage)
+    this.setUsage(id, observation === undefined ? usage : usageFromUnifiedHeaders(id, usage, observation))
   }
 
   /** Until when routing skips the login: ms since epoch, `Infinity` for an unknown end, null for none. */
@@ -457,6 +466,31 @@ export class LoginTable {
     if (this.held.size <= MAX_SESSIONS) return
     const byUse = [...this.held].sort((a, b) => a[1].lastUsed - b[1].lastUsed)
     for (const [key] of byUse.slice(0, this.held.size - MAX_SESSIONS)) this.held.delete(key)
+  }
+}
+
+/**
+ * One observation that, applied with `usageFromUnifiedHeaders`, gives what applying `kept` and
+ * then `next` gives. Each window `next` reports with a utilization replaces the kept one; the
+ * others stay. `next`'s status replaces the kept status when it has one. The window the status
+ * is about (`representativeClaim`, with `resetsAt`) is `next`'s when it names one, none when
+ * `next` has a status without naming one, and the kept one otherwise.
+ */
+function mergeObservations(kept: UnifiedObservation, next: UnifiedObservation): UnifiedObservation {
+  const windows = { ...kept.windows }
+  for (const [suffix, window] of Object.entries(next.windows)) {
+    const key = suffix as keyof UnifiedObservation['windows']
+    if (window.utilization !== null || windows[key] === undefined) windows[key] = window
+  }
+  const claimFromNext = next.representativeClaim !== null || next.status !== null
+  return {
+    observedAt: next.observedAt,
+    status: next.status ?? kept.status,
+    resetsAt: claimFromNext ? next.resetsAt : kept.resetsAt,
+    representativeClaim: claimFromNext ? next.representativeClaim : kept.representativeClaim,
+    windows,
+    overageStatus: next.overageStatus ?? kept.overageStatus,
+    overageDisabledReason: next.overageDisabledReason ?? kept.overageDisabledReason
   }
 }
 

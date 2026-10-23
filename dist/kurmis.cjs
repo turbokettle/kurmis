@@ -4836,9 +4836,11 @@ var LoginTable = class {
    */
   refused = /* @__PURE__ */ new Map();
   /**
-   * The rate-limit headers of the last answer of each login (`noteObservation`). A probe that
-   * started before they arrived measured an older state, so they are applied again on top of
-   * its snapshot (`setProbeUsage`). In memory only; they hold no token or body.
+   * What the rate-limit headers of each login's answers said since its last probe started
+   * (`noteObservation`, `noteProbeStarted`), merged into one observation: for each window and
+   * for the status, the latest answer that reported it. The probe measured an older state, so
+   * this is applied again on top of its snapshot (`setProbeUsage`). In memory only; it holds no
+   * token or body.
    */
   observations = /* @__PURE__ */ new Map();
   /** When each login's current cooldown was set; absent for one read from `state.json`. In memory only. */
@@ -4964,25 +4966,33 @@ var LoginTable = class {
     this.changed();
   }
   /**
-   * Folds the rate-limit headers of one of the login's answers into its usage, and keeps them
-   * for `setProbeUsage`. Headers that say nothing about usage change nothing.
+   * Folds the rate-limit headers of one of the login's answers into its usage, and merges them
+   * into what is kept for `setProbeUsage`. Headers that say nothing about usage change nothing.
    */
   noteObservation(id, observation) {
     if (observation.status === null && observation.representativeClaim === null && Object.keys(observation.windows).length === 0) return;
     if (!isLoginId(id) || this.find(id) === void 0) return;
-    this.observations.set(id, observation);
+    const kept = this.observations.get(id);
+    this.observations.set(id, kept === void 0 ? observation : mergeObservations(kept, observation));
     this.setUsage(id, usageFromUnifiedHeaders(id, this.usage(id), observation));
   }
   /**
-   * Stores a successful probe's snapshot. A probe that started at `startedAt` measured the login
-   * at that time or a little later, so when an answer's rate-limit headers arrived after it
-   * started, they count as newer and are
-   * applied again on top of the probe's snapshot: the probe fills in what the headers do not
-   * carry, and does not undo what they said.
+   * Called when a probe of the login starts: forgets the headers kept so far, so that what
+   * `setProbeUsage` applies on top of the probe is only what answers said after it started.
+   * One probe per login runs at a time.
    */
-  setProbeUsage(id, usage, startedAt) {
+  noteProbeStarted(id) {
+    this.observations.delete(id);
+  }
+  /**
+   * Stores a successful probe's snapshot. The probe measured the login when it started
+   * (`noteProbeStarted`), so what answers' rate-limit headers said since then is newer and is
+   * applied again on top of the snapshot: the probe fills in what the headers did not carry,
+   * and does not undo what they said.
+   */
+  setProbeUsage(id, usage) {
     const observation = this.observations.get(id);
-    this.setUsage(id, observation !== void 0 && observation.observedAt > startedAt ? usageFromUnifiedHeaders(id, usage, observation) : usage);
+    this.setUsage(id, observation === void 0 ? usage : usageFromUnifiedHeaders(id, usage, observation));
   }
   /** Until when routing skips the login: ms since epoch, `Infinity` for an unknown end, null for none. */
   cooldown(id, now = this.options.now()) {
@@ -5152,6 +5162,23 @@ var LoginTable = class {
     for (const [key] of byUse.slice(0, this.held.size - MAX_SESSIONS)) this.held.delete(key);
   }
 };
+function mergeObservations(kept, next) {
+  const windows = { ...kept.windows };
+  for (const [suffix, window] of Object.entries(next.windows)) {
+    const key = suffix;
+    if (window.utilization !== null || windows[key] === void 0) windows[key] = window;
+  }
+  const claimFromNext = next.representativeClaim !== null || next.status !== null;
+  return {
+    observedAt: next.observedAt,
+    status: next.status ?? kept.status,
+    resetsAt: claimFromNext ? next.resetsAt : kept.resetsAt,
+    representativeClaim: claimFromNext ? next.representativeClaim : kept.representativeClaim,
+    windows,
+    overageStatus: next.overageStatus ?? kept.overageStatus,
+    overageDisabledReason: next.overageDisabledReason ?? kept.overageDisabledReason
+  };
+}
 function isLockTimeout(error) {
   return error instanceof Error && error.cause instanceof LockTimeoutError;
 }
@@ -6853,6 +6880,7 @@ var UsagePoller = class {
     const { table, log, now } = this.options;
     const id = login.id;
     const startedAt = now();
+    table.noteProbeStarted(id);
     log.write(cause === "renewal" ? "token_renewal_started" : "usage_probe_started", { login: id });
     const ref = { id, usedByPlainClaude: login.usedByPlainClaude };
     let answer2;
@@ -6866,7 +6894,7 @@ var UsagePoller = class {
     else this.options.tokens.markStale(id);
     const ms = now() - startedAt;
     if (answer2.ok) {
-      table.setProbeUsage(id, answer2.usage, startedAt);
+      table.setProbeUsage(id, answer2.usage);
       table.setSignedIn(id, answer2.signedIn);
       if (answer2.signedIn) table.clearRefused(id, startedAt);
       const before = table.cooldown(id);

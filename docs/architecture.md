@@ -323,8 +323,9 @@ daemon finishes the requests it has open.
   succeeds and finds the login signed in also gives the daemon the login's email, from which it
   sets an automatic alias ("Aliases", under "The data folder"). The daemon also
   updates usage from the rate-limit headers of every answer it forwards. A probe describes the
-  login as it was when the probe started, so what an answer said after that wins: the last
-  answer's rate-limit headers are applied again on top of the probe's snapshot, and a cooldown
+  login as it was when the probe started, so what an answer said after that wins: the rate-limit
+  headers of the answers since the probe started, for each window the latest that reported it,
+  are applied again on top of the probe's snapshot, and a cooldown
   or a refused token recorded after the probe started is not ended by it. The code is
   `src/daemon/usage-poller.ts`, with the probe in `claude-probe.ts`.
   A probe is `claude -p` in stream-json mode, sending `initialize` and `get_usage`, with

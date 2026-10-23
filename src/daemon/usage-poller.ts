@@ -161,6 +161,7 @@ export class UsagePoller {
     const { table, log, now } = this.options
     const id = login.id
     const startedAt = now()
+    table.noteProbeStarted(id)
     log.write(cause === 'renewal' ? 'token_renewal_started' : 'usage_probe_started', { login: id })
     const ref: LoginRef = { id, usedByPlainClaude: login.usedByPlainClaude }
     let answer: ProbeAnswer
@@ -179,7 +180,7 @@ export class UsagePoller {
     if (answer.ok) {
       // The probe measured the login as it was when it started. What an answer said since then
       // is newer: its rate-limit headers, a cooldown and a refused token stay.
-      table.setProbeUsage(id, answer.usage, startedAt)
+      table.setProbeUsage(id, answer.usage)
       table.setSignedIn(id, answer.signedIn)
       if (answer.signedIn) table.clearRefused(id, startedAt)
       const before = table.cooldown(id)

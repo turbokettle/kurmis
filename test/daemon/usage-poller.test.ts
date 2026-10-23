@@ -206,6 +206,74 @@ describe('a probe', () => {
     expect(table.isRefused(OWN_CLAUDE)).toBe(false)
   })
 
+  /** The headers of an answer that carries only these windows, as fractions, and no status. */
+  const windowsOnly = (observedAt: number, windows: { '5h'?: number; '7d'?: number }): Parameters<LoginTable['noteObservation']>[1] => ({
+    observedAt, status: null, resetsAt: null, representativeClaim: null,
+    windows: Object.fromEntries(Object.entries(windows).map(([key, utilization]) => [key, { utilization, resetsAt: null, status: null }])),
+    overageStatus: null, overageDisabledReason: null
+  })
+
+  test('keeps every window an answer reported after it started, not only the last answer\'s', async () => {
+    writeLogins({})
+    let release: () => void = () => undefined
+    // The probe measured the five-hour window at 10% when it started.
+    const { table, poller, clock } = clocked(({ id }) => new Promise((resolve) => {
+      release = () => { resolve({ ok: true, signedIn: true, usage: usage(id, 10) }) }
+    }))
+    const probing = poller.probe(OWN_CLAUDE, 'request')
+    clock.now += 500
+    table.noteObservation(OWN_CLAUDE, windowsOnly(clock.now, { '5h': 0.9 }))
+    clock.now += 500
+    // A later answer that reports only the weekly window.
+    table.noteObservation(OWN_CLAUDE, windowsOnly(clock.now, { '7d': 0.3 }))
+    clock.now += 500
+    release()
+    await probing
+    const after = table.usage(OWN_CLAUDE)
+    expect(after?.fiveHour?.utilization).toBe(90)
+    expect(after?.sevenDay?.utilization).toBe(30)
+  })
+
+  test('keeps an answer\'s refusal when a later answer reports only a window', async () => {
+    writeLogins({})
+    let release: () => void = () => undefined
+    const { table, poller, clock } = clocked(({ id }) => new Promise((resolve) => {
+      release = () => { resolve({ ok: true, signedIn: true, usage: usage(id, 40) }) }
+    }))
+    const probing = poller.probe(OWN_CLAUDE, 'request')
+    clock.now += 500
+    table.noteObservation(OWN_CLAUDE, refusal(clock.now))
+    clock.now += 500
+    table.noteObservation(OWN_CLAUDE, windowsOnly(clock.now, { '7d': 0.3 }))
+    clock.now += 500
+    release()
+    await probing
+    const after = table.usage(OWN_CLAUDE)
+    expect(after?.status).toBe('rejected')
+    expect(after?.limited?.window).toBe('five_hour')
+    expect(after?.fiveHour?.utilization).toBe(100)
+    expect(after?.sevenDay?.utilization).toBe(30)
+  })
+
+  test('wins over what an answer reported before it started', async () => {
+    writeLogins({})
+    let release: () => void = () => undefined
+    const { table, poller, clock } = clocked(({ id }) => new Promise((resolve) => {
+      release = () => { resolve({ ok: true, signedIn: true, usage: usage(id, 10) }) }
+    }))
+    table.noteObservation(OWN_CLAUDE, windowsOnly(clock.now, { '5h': 0.9 }))
+    clock.now += 500
+    const probing = poller.probe(OWN_CLAUDE, 'request')
+    clock.now += 500
+    table.noteObservation(OWN_CLAUDE, windowsOnly(clock.now, { '7d': 0.3 }))
+    clock.now += 500
+    release()
+    await probing
+    const after = table.usage(OWN_CLAUDE)
+    expect(after?.fiveHour?.utilization).toBe(10)
+    expect(after?.sevenDay?.utilization).toBe(30)
+  })
+
   test('for a stale reading is remembered for a minute, whether it succeeded or not', async () => {
     writeLogins({})
     let clock = 1_000_000
