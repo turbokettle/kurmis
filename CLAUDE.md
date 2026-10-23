@@ -6,7 +6,7 @@ Read `docs/scope.md` and `docs/architecture.md` before changing anything.
   type check and lint. Commit `dist/` together with the source change that produced it.
 - **Tests never touch the real machine.** Every test sets `KURMIS_HOME` and `HOME` to a
   temporary folder, uses the fakes in `test/fakes/`, and makes no network call. Nothing may read
-  or write the real `~/.claude`, `~/.claude/settings.json`, `~/.codex` or Keychain.
+  or write the real `~/.claude`, `~/.claude/settings.json` or Keychain.
 - **No personal data in the repo.** No real names, emails, machine names, account ids, tokens or
   paths from a real machine, in code, tests, fixtures, docs or commit messages. Use
   `example.com` addresses and made-up ids.

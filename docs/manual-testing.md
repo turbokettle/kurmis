@@ -10,16 +10,17 @@ never holds tokens or request bodies, so it can be shared.
 
 ## Before you start
 
-- **Install from the commit under test:** `npm i -g git+ssh://git@github.com/turbokettle/kurmis.git#<commit>`,
-  or `npm i -g git+file://<path to a clone>`. `kurmis --version` should answer.
+- **Install from the commit under test:**
+  `npm i -g git+ssh://git@github.com/turbokettle/kurmis.git#<commit>`, or
+  `npm i -g git+file://<path to a clone>`. `kurmis --version` should answer.
 - **Use a scratch data folder and port** when the machine already runs kurmis or another tool on
   port 28411: set `KURMIS_HOME` to an empty folder and, after the first command has written
   `config.json` there, change its `port` and run `kurmis daemon restart`.
 - **Keep requests small.** Use `--model haiku` and one-line prompts, so the tests use almost
   none of a subscription.
-- **`kurmis setup` changes every Claude Code on the machine.** Run it only on a machine where
-  that is fine, or with `HOME` (Windows: `USERPROFILE` too) pointed at a scratch folder that
-  holds a copy of `.claude/settings.json`.
+- **`kurmis setup` changes the settings file every plain `claude` and editor extension reads.**
+  Run it only on a machine where that is fine, or with `HOME` (Windows: `USERPROFILE` too)
+  pointed at a scratch folder that holds a copy of `.claude/settings.json`.
 - **Stopping things.** `kurmis daemon stop` stops the daemon. Only stop processes the test
   started.
 
@@ -64,7 +65,7 @@ The checks below call an extra login `<t1>`: use the alias `kurmis status` shows
 7. `daemon.log` should hold login ids only: search it for the aliases and the emails of the
    logins, which should not appear.
 
-### Routing Claude
+### Routing
 1. `kurmis claude -p --model haiku "Reply ok"` answers `ok`. `daemon.log` shows
    `session_placed` on the login whose weekly window resets soonest (`kurmis status` shows the
    reset times), then `request_forwarded ... status=200`.
@@ -79,13 +80,17 @@ The checks below call an extra login `<t1>`: use the alias `kurmis status` shows
 5. Start `kurmis claude -p --model haiku "Write the numbers from 1 to 400 as words"` and
    interrupt it from another terminal (macOS: `kill -INT <pid of kurmis>`; Windows: Ctrl-C in
    its own window). It should stop within a second or two.
-6. **A login at its limit.** When a login reaches a usage limit on its own (or set its
-   `--five-hour` limit just under its current use), keep using `kurmis claude`. Expect requests
+6. **A login over its limit setting.** In an interactive session, set the `--five-hour` limit of
+   the login it runs on just under that login's current use, and ask again. Expect the request
    to go to another login without an error in the CLI, and `daemon.log` showing
-   `usage_limit`, `retry_other_login` and `cooldown_started`. If Anthropic answers a real
-   usage-limit 429, note its `anthropic-ratelimit-unified-*` header names and the body's
-   `error.type` (not the body itself): kurmis decides from those.
-7. **Every login out.** With every routed login set to `--auto off` except one, and that one at
+   `session_moved`. No upstream refusal happens here, so there is no `cooldown_started`. Undo
+   the setting afterwards.
+7. **A real usage limit.** When a login reaches a usage limit on its own, keep using
+   `kurmis claude`. Expect requests to go to another login without an error in the CLI, and
+   `daemon.log` showing `cooldown_started` and `retry_other_login` with `reason=usage_limit`.
+   Note the 429's `anthropic-ratelimit-unified-*` header names and the body's `error.type` (not
+   the body itself): kurmis decides from those.
+8. **Every login out.** With every routed login set to `--auto off` except one, and that one at
    its limit, `kurmis claude -p` should fail exactly as a plain `claude` does on an exhausted
    account. `daemon.log` shows `pool_exhausted`. Undo the settings afterwards.
 
@@ -97,7 +102,8 @@ because a renewal replaces the refresh token.
    credentials, read with a script that prints only that field.
 2. Make the token look about to expire: change only `claudeAiOauth.expiresAt` to two minutes
    from now (macOS: in the Keychain item, see below; Windows: in the login's
-   `.credentials.json`).
+   `.credentials.json`). On Windows, run this test on a login whose token is in that file, not
+   in Credential Manager (see "Credentials" under "Windows only").
 3. Send a request through that login. Expect `token_renewal_started` and
    `token_renewal_finished` in `daemon.log`, a new expiry hours ahead, and the request answered.
 
@@ -105,8 +111,7 @@ because a renewal replaces the refresh token.
 1. `kurmis setup`. Expect the daemon running, four added settings, and the autostart entry
    (macOS: `~/Library/LaunchAgents/kurmis.daemon.plist`; Windows: the `kurmis` value under
    `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
-2. A plain `claude -p --model haiku "Reply ok"` now shows in `daemon.log` as
-   `session_placed`.
+2. A plain `claude -p --model haiku "Reply ok"` shows in `daemon.log` as `session_placed`.
 3. `kurmis --login <t1> claude -p ...` still lands on `<t1>` in global mode.
 4. Open the IDE extension (VS Code or JetBrains) and send one message. It should be routed too.
 5. Log out of the computer and in again, without running kurmis. `kurmis daemon status` should
@@ -116,8 +121,8 @@ because a renewal replaces the refresh token.
    `claude -p` does not show in `daemon.log`.
 7. `kurmis setup` again. Expect "Global routing was paused; it is on again." and a plain
    `claude -p` routed again.
-8. Run `kurmis setup` with `CLAUDE_CONFIG_DIR` set to the default `.claude` folder. It should
-   refuse and explain why.
+8. Run `kurmis setup` with `CLAUDE_CONFIG_DIR` set to the default `.claude` folder. On macOS
+   and Windows it should refuse and explain why.
 9. Run `kurmis setup --pause` with `CLAUDE_CONFIG_DIR` set to an empty folder of your own. It
    should still take kurmis' settings out of `~/.claude/settings.json`, and `kurmis status`
    without the variable should say global routing is paused. Run `kurmis setup` again.
@@ -143,9 +148,10 @@ Run this last, since it removes the logins added above.
    says the daemon is not running. With global routing on (after `kurmis setup`), `status` also
    warns that a plain `claude` cannot reach Anthropic. `kurmis claude -p "Reply ok"` starts the
    daemon again.
-2. Install a newer build over the running one, then run `kurmis status`. It should say the
-   daemon runs an older kurmis and leave it running. Then run `kurmis claude -p "Reply ok"`. Expect
-   `daemon_replacing_older` in `daemon.log`, and an interactive session that was open keeps
+2. Install a build of a later commit over the running one, then run `kurmis status`. It should
+   say the daemon runs an older kurmis and leave it running. Then run
+   `kurmis claude -p "Reply ok"`. Expect `daemon_replacing_older` in `daemon.log`, and an
+   interactive session that was open keeps
    working.
 3. Close the terminal that started the daemon. The daemon keeps running.
 4. Start `kurmis claude -p --model haiku "Write the numbers from 1 to 400 as words"` and, while
