@@ -2,7 +2,7 @@
   "name": "kurmis",
   "version": "0.1.0",
   "description": "Use several Claude Code subscription logins on one machine",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "bin": {
