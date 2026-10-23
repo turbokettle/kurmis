@@ -129,7 +129,7 @@ describe('kurmis claude on Auto', () => {
     // The key is in the settings file, never on claude's command line.
     expect(h.specs[0]?.args.some((arg) => arg.includes(KEY))).toBe(false)
     expect(h.runOptions).toEqual([{ platform: 'darwin' }])
-    expect(h.finished).toEqual([{ end: { kind: 'exit', code: 3 }, options: { stderr: out.context.stderr, name: 'claude', platform: 'darwin' } }])
+    expect(h.finished).toEqual([{ end: { kind: 'exit', code: 3 }, options: { stderr: out.context.stderr, platform: 'darwin' } }])
   })
 
   test('starts claude without a subscription token from the shell, and says so once', async () => {

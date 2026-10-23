@@ -240,7 +240,7 @@ async function signIn(run: SignInRun): Promise<number> {
     // Before `finishLikeChild`, which raises the child's signal on this process.
     lock.release()
     if (isNew) writeLine(context.stderr, `kurmis login:${notAdded}`)
-    return deps.runner.finishLikeChild(end, { stderr: context.stderr, name: 'claude' })
+    return deps.runner.finishLikeChild(end, { stderr: context.stderr })
   }
   if (end.code !== 0) {
     cleanUp()

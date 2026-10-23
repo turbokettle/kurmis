@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101928" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101954" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -3159,7 +3159,7 @@ function finishLikeChild(end, options) {
     case "exit":
       return end.code;
     case "not-started":
-      options.stderr.write(`kurmis: ${options.name}: ${end.message}
+      options.stderr.write(`kurmis: claude: ${end.message}
 `);
       return notStartedExitCode(end.code);
     case "signal": {
@@ -3702,7 +3702,7 @@ async function runClaude(args, login, context, deps) {
   } finally {
     claudeArgs.remove();
   }
-  return deps.child.finishLikeChild(end, { stderr: context.stderr, name: "claude", platform: deps.platform });
+  return deps.child.finishLikeChild(end, { stderr: context.stderr, platform: deps.platform });
 }
 async function withFirstProbe(connection, status2, context, deps) {
   const unknown = status2.logins.filter((login) => login.signedIn === null);
@@ -7830,7 +7830,7 @@ async function signIn(run2) {
     cleanUp();
     lock.release();
     if (isNew) writeLine(context.stderr, `kurmis login:${notAdded}`);
-    return deps.runner.finishLikeChild(end, { stderr: context.stderr, name: "claude" });
+    return deps.runner.finishLikeChild(end, { stderr: context.stderr });
   }
   if (end.code !== 0) {
     cleanUp();

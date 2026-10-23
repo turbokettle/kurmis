@@ -268,15 +268,15 @@ test('a spawn that throws is a child that was not started, and the handlers are 
 
 test('finishing: an exit code is passed on as it is', () => {
   const stderr = collector()
-  expect(finishLikeChild({ kind: 'exit', code: 0 }, { stderr, name: 'claude' })).toBe(0)
-  expect(finishLikeChild({ kind: 'exit', code: 42 }, { stderr, name: 'claude' })).toBe(42)
+  expect(finishLikeChild({ kind: 'exit', code: 0 }, { stderr })).toBe(0)
+  expect(finishLikeChild({ kind: 'exit', code: 42 }, { stderr })).toBe(42)
   expect(stderr.text()).toBe('')
 })
 
 test('finishing: a child that was not started prints its message and answers a shell\'s code', () => {
   const stderr = collector()
   const end: ChildEnd = { kind: 'not-started', code: 'ENOENT', message: 'could not start /x/claude: there is no such program (ENOENT)' }
-  expect(finishLikeChild(end, { stderr, name: 'claude' })).toBe(127)
+  expect(finishLikeChild(end, { stderr })).toBe(127)
   expect(stderr.text()).toBe('kurmis: claude: could not start /x/claude: there is no such program (ENOENT)\n')
   expect(notStartedExitCode('EACCES')).toBe(126)
   expect(notStartedExitCode('ENOEXEC')).toBe(126)
@@ -286,7 +286,7 @@ test('finishing: a child that was not started prints its message and answers a s
 test('finishing: a child ended by a signal makes the wrapper raise the same signal on itself, with no listener left', () => {
   const proc = new FakeProcess()
   proc.on('SIGTERM', () => {})
-  const code = finishLikeChild({ kind: 'signal', signal: 'SIGTERM' }, { stderr: collector(), name: 'claude', platform: 'darwin', process: proc })
+  const code = finishLikeChild({ kind: 'signal', signal: 'SIGTERM' }, { stderr: collector(), platform: 'darwin', process: proc })
   expect(proc.listenerCount('SIGTERM')).toBe(0)
   expect(proc.killed).toEqual([[proc.pid, 'SIGTERM']])
   expect(code).toBe(143)
@@ -294,9 +294,9 @@ test('finishing: a child ended by a signal makes the wrapper raise the same sign
 
 test('finishing: a core-dump signal and any signal on Windows give 128 + its number instead', () => {
   const proc = new FakeProcess()
-  expect(finishLikeChild({ kind: 'signal', signal: 'SIGQUIT' }, { stderr: collector(), name: 'claude', platform: 'linux', process: proc }))
+  expect(finishLikeChild({ kind: 'signal', signal: 'SIGQUIT' }, { stderr: collector(), platform: 'linux', process: proc }))
     .toBe(signalExitCode('SIGQUIT'))
-  expect(finishLikeChild({ kind: 'signal', signal: 'SIGINT' }, { stderr: collector(), name: 'claude', platform: 'win32', process: proc }))
+  expect(finishLikeChild({ kind: 'signal', signal: 'SIGINT' }, { stderr: collector(), platform: 'win32', process: proc }))
     .toBe(130)
   expect(proc.killed).toEqual([])
   expect(signalExitCode('SIGHUP')).toBe(129)

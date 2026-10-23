@@ -6,4 +6,4 @@ import { finishLikeChild, runInteractive, type ChildSpec } from '../../src/cli/w
 
 const spec = JSON.parse(readFileSync(process.argv[2] as string, 'utf8')) as ChildSpec
 const end = await runInteractive(spec)
-process.exitCode = finishLikeChild(end, { stderr: process.stderr, name: 'child' })
+process.exitCode = finishLikeChild(end, { stderr: process.stderr })

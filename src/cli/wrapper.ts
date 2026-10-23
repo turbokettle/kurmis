@@ -221,8 +221,6 @@ function notStarted(command: string, error: unknown): ChildEnd {
 
 export interface FinishOptions {
   stderr: Output
-  /** The program's name for the message when it could not be started, e.g. `claude`. */
-  name: string
   platform?: NodeJS.Platform
   /** Defaults to `process`. */
   process?: SignalProcess
@@ -264,7 +262,7 @@ export function finishLikeChild(end: ChildEnd, options: FinishOptions): number {
     case 'exit':
       return end.code
     case 'not-started':
-      options.stderr.write(`kurmis: ${options.name}: ${end.message}\n`)
+      options.stderr.write(`kurmis: claude: ${end.message}\n`)
       return notStartedExitCode(end.code)
     case 'signal': {
       const platform = options.platform ?? process.platform

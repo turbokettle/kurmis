@@ -253,7 +253,7 @@ async function runClaude(args: string[], login: string | null, context: CliConte
     // Before `finishLikeChild`, which may raise the child's signal on this process.
     claudeArgs.remove()
   }
-  return deps.child.finishLikeChild(end, { stderr: context.stderr, name: 'claude', platform: deps.platform })
+  return deps.child.finishLikeChild(end, { stderr: context.stderr, platform: deps.platform })
 }
 
 /**
