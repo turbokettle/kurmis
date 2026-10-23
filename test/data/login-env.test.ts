@@ -3,11 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { describe, expect, test } from 'vitest'
-import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, codexLoginEnv, namesDefaultClaudeFolder,
+import { applyEnvPatch, configDirHasOwnCredentials, claudeLoginEnv, claudeProbeEnv, namesDefaultClaudeFolder,
   sharesDefaultSettingsFile } from '../../src/data/login-env.ts'
 import { kurmisHome, ownClaudeProbeFolder } from '../../src/data/paths.ts'
 import { canCreateSymlinks, linkFolder } from '../host.ts'
-import { claudeRef, codexRef, OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
+import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
 
 const ROUTED = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS']
 
@@ -37,19 +37,6 @@ describe('claude', () => {
     const env = claudeProbeEnv(OWN_CLAUDE_REF)
     expect(env['CLAUDE_CONFIG_DIR']).toBe(ownClaudeProbeFolder())
     expect(env['CLAUDE_SECURESTORAGE_CONFIG_DIR']).toBe('')
-  })
-})
-
-describe('codex', () => {
-  test("an extra login gets its CODEX_HOME, the login plain codex uses keeps the inherited one", () => {
-    expect(codexLoginEnv(codexRef('workcodex1'))['CODEX_HOME']).toBe(join(kurmisHome(), 'codex', 'workcodex1'))
-    expect('CODEX_HOME' in codexLoginEnv(OWN_CODEX_REF)).toBe(false)
-    expect('CODEX_HOME' in codexLoginEnv(OWN_CODEX_REF, { CODEX_HOME: '/somewhere/else' })).toBe(false)
-  })
-
-  test("the login plain codex uses drops an inherited CODEX_HOME that is an extra login's home", () => {
-    const env = codexLoginEnv(OWN_CODEX_REF, { CODEX_HOME: join(kurmisHome(), 'codex', 'workcodex1') })
-    expect('CODEX_HOME' in env && env['CODEX_HOME'] === undefined).toBe(true)
   })
 })
 

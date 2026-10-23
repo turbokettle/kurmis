@@ -6,13 +6,6 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __commonJS = (cb, mod) => function __require() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
-};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -30,2922 +23,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/internal-utils/index.js
-var require_internal_utils = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/internal-utils/index.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.toKeyName = exports2.last = void 0;
-    function last(arr) {
-      var _a;
-      return (_a = arr[arr.length - 1]) !== null && _a !== void 0 ? _a : null;
-    }
-    exports2.last = last;
-    function toKeyName(node) {
-      return node.type === "TOMLBare" ? node.name : node.value;
-    }
-    exports2.toKeyName = toKeyName;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/parser-options.js
-var require_parser_options = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/parser-options.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.getTOMLVer = void 0;
-    var TOMLVerImpl = class {
-      constructor(major, minor) {
-        this.major = major;
-        this.minor = minor;
-      }
-      lt(major, minor) {
-        return this.major < major || this.major === major && this.minor < minor;
-      }
-      gte(major, minor) {
-        return this.major > major || this.major === major && this.minor >= minor;
-      }
-    };
-    var TOML_VERSION_1_0 = new TOMLVerImpl(1, 0);
-    var TOML_VERSION_1_1 = new TOMLVerImpl(1, 1);
-    var DEFAULT_TOML_VERSION = TOML_VERSION_1_0;
-    var SUPPORTED_TOML_VERSIONS = {
-      "1.0": TOML_VERSION_1_0,
-      "1.0.0": TOML_VERSION_1_0,
-      "1.1": TOML_VERSION_1_1,
-      "1.1.0": TOML_VERSION_1_1,
-      latest: TOML_VERSION_1_0,
-      next: TOML_VERSION_1_1
-    };
-    function getTOMLVer(v) {
-      return SUPPORTED_TOML_VERSIONS[v || "latest"] || DEFAULT_TOML_VERSION;
-    }
-    exports2.getTOMLVer = getTOMLVer;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/errors.js
-var require_errors = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/errors.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.ParseError = void 0;
-    var MESSAGES = {
-      "unterminated-string": "Unterminated string constant",
-      "unterminated-table-key": "Unterminated table-key",
-      "unterminated-array": "Unterminated array",
-      "unterminated-inline-table": "Unterminated inline table",
-      "missing-key": "Empty bare keys are not allowed",
-      "missing-newline": "Must be a newline",
-      "missing-equals-sign": "Expected equal (=) token",
-      "missing-value": "Unspecified values are invalid",
-      "missing-comma": "Expected comma (,) token",
-      "dupe-keys": "Defining a key multiple times is invalid",
-      "unexpected-char": "Unexpected character",
-      "unexpected-token": "Unexpected token",
-      "invalid-control-character": "Control characters (codes < 0x1f and 0x7f) are not allowed",
-      "invalid-comment-character": "Invalid code point {{cp}} within comments",
-      "invalid-key-value-newline": "The key, equals sign, and value must be on the same line",
-      "invalid-inline-table-newline": "No newlines are allowed between the curly braces unless they are valid within a value",
-      "invalid-underscore": "Underscores are allowed between digits",
-      "invalid-space": "Unexpected spaces",
-      "invalid-three-quotes": "Three or more quotes are not permitted",
-      "invalid-date": "Unexpected invalid date",
-      "invalid-time": "Unexpected invalid time",
-      "invalid-leading-zero": "Leading zeros are not allowed",
-      "invalid-trailing-comma-in-inline-table": "Trailing comma is not permitted in an inline table",
-      "invalid-char-in-escape-sequence": "Invalid character in escape sequence",
-      "invalid-code-point": "Invalid code point {{cp}}"
-    };
-    function getMessage(code, data) {
-      if (data) {
-        return MESSAGES[code].replace(/\{\{(.*?)\}\}/gu, (_, name) => {
-          if (name in data) {
-            return data[name];
-          }
-          return `{{${name}}}`;
-        });
-      }
-      return MESSAGES[code];
-    }
-    var ParseError = class extends SyntaxError {
-      /**
-       * Initialize this ParseError instance.
-       *
-       */
-      constructor(code, offset, line, column, data) {
-        super(getMessage(code, data));
-        this.index = offset;
-        this.lineNumber = line;
-        this.column = column;
-      }
-    };
-    exports2.ParseError = ParseError;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/locs.js
-var require_locs = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/locs.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.Locations = void 0;
-    function sortedLastIndex(array, value) {
-      let low = 0;
-      let high = array.length;
-      while (low < high) {
-        const mid = low + high >>> 1;
-        const val = array[mid];
-        if (val === value)
-          return mid + 1;
-        if (val < value) {
-          low = mid + 1;
-        } else {
-          high = mid;
-        }
-      }
-      return low;
-    }
-    var Locations = class {
-      constructor() {
-        this.offsets = [];
-      }
-      addOffset(offset) {
-        for (let i = this.offsets.length - 1; i >= 0; i--) {
-          const element = this.offsets[i];
-          if (element === offset)
-            return;
-          if (element < offset)
-            break;
-        }
-        this.offsets.push(offset);
-      }
-      /**
-       * Calculate the location of the given index.
-       * @param index The index to calculate their location.
-       * @returns The location of the index.
-       */
-      getLocFromIndex(offset) {
-        const line = sortedLastIndex(this.offsets, offset) + 1;
-        const column = offset - (line === 1 ? 0 : this.offsets[line - 2]);
-        return { line, column };
-      }
-    };
-    exports2.Locations = Locations;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/code-point-iterator.js
-var require_code_point_iterator = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/code-point-iterator.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.CodePointIterator = void 0;
-    var locs_1 = require_locs();
-    var CodePointIterator = class {
-      /**
-       * Initialize this char iterator.
-       */
-      constructor(text2) {
-        this.locs = new locs_1.Locations();
-        this.lastCodePoint = 0;
-        this.start = -1;
-        this.end = 0;
-        this.text = text2;
-      }
-      next() {
-        if (this.lastCodePoint === -1) {
-          return -1;
-        }
-        return this.lastCodePoint = this.moveAt(this.end);
-      }
-      getStartLoc() {
-        return this.getLocFromIndex(this.start);
-      }
-      getEndLoc() {
-        return this.getLocFromIndex(this.end);
-      }
-      getLocFromIndex(index) {
-        return this.locs.getLocFromIndex(index);
-      }
-      eat(cp) {
-        if (this.text.codePointAt(this.end) === cp) {
-          this.next();
-          return true;
-        }
-        return false;
-      }
-      moveAt(offset) {
-        var _a;
-        this.start = this.end = offset;
-        const cp = (_a = this.text.codePointAt(this.start)) !== null && _a !== void 0 ? _a : -1;
-        if (cp === -1) {
-          this.end = this.start;
-          return cp;
-        }
-        const shift = cp >= 65536 ? 2 : 1;
-        this.end += shift;
-        if (cp === 10) {
-          this.locs.addOffset(this.end);
-        } else if (cp === 13) {
-          if (this.text.codePointAt(this.end) === 10) {
-            this.end++;
-            this.locs.addOffset(this.end);
-          }
-          return 10;
-        }
-        return cp;
-      }
-    };
-    exports2.CodePointIterator = CodePointIterator;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/code-point.js
-var require_code_point = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/code-point.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.isUnicodeScalarValue = exports2.isLowSurrogate = exports2.isHighSurrogate = exports2.isOctalDig = exports2.isHexDig = exports2.isDigit = exports2.isLetter = exports2.isEOL = exports2.isWhitespace = exports2.isControl = void 0;
-    function isControl(cp) {
-      return cp >= 0 && cp <= 31;
-    }
-    exports2.isControl = isControl;
-    function isWhitespace3(cp) {
-      return cp === 9 || cp === 32;
-    }
-    exports2.isWhitespace = isWhitespace3;
-    function isEOL(cp) {
-      return cp === 10 || cp === 13;
-    }
-    exports2.isEOL = isEOL;
-    function isUpperLetter(cp) {
-      return cp >= 65 && cp <= 90;
-    }
-    function isLowerLetter(cp) {
-      return cp >= 97 && cp <= 122;
-    }
-    function isLetter(cp) {
-      return isLowerLetter(cp) || isUpperLetter(cp);
-    }
-    exports2.isLetter = isLetter;
-    function isDigit(cp) {
-      return cp >= 48 && cp <= 57;
-    }
-    exports2.isDigit = isDigit;
-    function isHexDig(cp) {
-      return isDigit(cp) || cp >= 97 && cp <= 102 || cp >= 65 && cp <= 70;
-    }
-    exports2.isHexDig = isHexDig;
-    function isOctalDig(cp) {
-      return cp >= 48 && cp <= 55;
-    }
-    exports2.isOctalDig = isOctalDig;
-    function isHighSurrogate(cp) {
-      return cp >= 55296 && cp <= 57343;
-    }
-    exports2.isHighSurrogate = isHighSurrogate;
-    function isLowSurrogate(cp) {
-      return cp >= 56320 && cp <= 57343;
-    }
-    exports2.isLowSurrogate = isLowSurrogate;
-    function isUnicodeScalarValue(cp) {
-      return cp >= 0 && cp <= 55295 || cp >= 57344 && cp <= 1114111;
-    }
-    exports2.isUnicodeScalarValue = isUnicodeScalarValue;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/tokenizer.js
-var require_tokenizer = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/tokenizer.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.Tokenizer = void 0;
-    var errors_1 = require_errors();
-    var parser_options_1 = require_parser_options();
-    var code_point_iterator_1 = require_code_point_iterator();
-    var code_point_1 = require_code_point();
-    var HAS_BIGINT = typeof BigInt !== "undefined";
-    var RADIX_PREFIXES = {
-      16: "0x",
-      10: "",
-      8: "0o",
-      2: "0b"
-    };
-    var ESCAPES_1_0 = {
-      // escape-seq-char =  %x22         ; "    quotation mark  U+0022
-      [
-        34
-        /* CodePoint.QUOTATION_MARK */
-      ]: 34,
-      // escape-seq-char =/ %x5C         ; \    reverse solidus U+005C
-      [
-        92
-        /* CodePoint.BACKSLASH */
-      ]: 92,
-      // escape-seq-char =/ %x62         ; b    backspace       U+0008
-      [
-        98
-        /* CodePoint.LATIN_SMALL_B */
-      ]: 8,
-      // escape-seq-char =/ %x66         ; f    form feed       U+000C
-      [
-        102
-        /* CodePoint.LATIN_SMALL_F */
-      ]: 12,
-      // escape-seq-char =/ %x6E         ; n    line feed       U+000A
-      [
-        110
-        /* CodePoint.LATIN_SMALL_N */
-      ]: 10,
-      // escape-seq-char =/ %x72         ; r    carriage return U+000D
-      [
-        114
-        /* CodePoint.LATIN_SMALL_R */
-      ]: 13,
-      // escape-seq-char =/ %x74         ; t    tab             U+0009
-      [
-        116
-        /* CodePoint.LATIN_SMALL_T */
-      ]: 9
-    };
-    var ESCAPES_LATEST = Object.assign(Object.assign({}, ESCAPES_1_0), {
-      // escape-seq-char =/ %x65         ; e    escape          U+001B
-      // Added in TOML 1.1
-      [
-        101
-        /* CodePoint.LATIN_SMALL_E */
-      ]: 27
-      /* CodePoint.ESCAPE */
-    });
-    var Tokenizer = class {
-      /**
-       * Initialize this tokenizer.
-       */
-      constructor(text2, parserOptions) {
-        this.backCode = false;
-        this.lastCodePoint = 0;
-        this.state = "DATA";
-        this.token = null;
-        this.tokenStart = -1;
-        this.valuesEnabled = false;
-        this.text = text2;
-        this.parserOptions = parserOptions || {};
-        this.codePointIterator = new code_point_iterator_1.CodePointIterator(text2);
-        this.tomlVersion = (0, parser_options_1.getTOMLVer)(this.parserOptions.tomlVersion);
-        this.ESCAPES = this.tomlVersion.gte(1, 1) ? ESCAPES_LATEST : ESCAPES_1_0;
-      }
-      get positions() {
-        return {
-          start: Object.assign(Object.assign({}, this.codePointIterator.getStartLoc()), { offset: this.codePointIterator.start }),
-          end: Object.assign(Object.assign({}, this.codePointIterator.getEndLoc()), { offset: this.codePointIterator.end })
-        };
-      }
-      /**
-       * Report an invalid character error.
-       */
-      reportParseError(code, data) {
-        const loc = this.codePointIterator.getStartLoc();
-        throw new errors_1.ParseError(code, this.codePointIterator.start, loc.line, loc.column, data);
-      }
-      /**
-       * Get the next token.
-       */
-      nextToken() {
-        let token = this.token;
-        if (token != null) {
-          this.token = null;
-          return token;
-        }
-        let cp = this.lastCodePoint;
-        while (cp !== -1 && !this.token) {
-          cp = this.nextCode();
-          const nextState = this[this.state](cp);
-          if (!nextState) {
-            throw new Error(`Unknown error: pre state=${this.state}`);
-          }
-          this.state = nextState;
-        }
-        token = this.token;
-        this.token = null;
-        return token;
-      }
-      /**
-       * Get the next code point.
-       */
-      nextCode() {
-        if (this.lastCodePoint === -1) {
-          return -1;
-        }
-        if (this.backCode) {
-          this.backCode = false;
-          return this.lastCodePoint;
-        }
-        return this.lastCodePoint = this.codePointIterator.next();
-      }
-      /**
-       * Eat the next code point.
-       */
-      eatCode(cp) {
-        if (this.lastCodePoint === -1) {
-          return false;
-        }
-        if (this.backCode) {
-          if (this.lastCodePoint === cp) {
-            this.backCode = false;
-            return true;
-          }
-          return false;
-        }
-        return this.codePointIterator.eat(cp);
-      }
-      /**
-       * Moves the character position to the given position.
-       */
-      moveAt(loc) {
-        if (this.backCode) {
-          this.backCode = false;
-        }
-        this.lastCodePoint = this.codePointIterator.moveAt(loc);
-      }
-      /**
-       * Back the current code point as the given state.
-       */
-      back(state) {
-        this.backCode = true;
-        return state;
-      }
-      punctuatorToken() {
-        this.startToken();
-        this.endToken("Punctuator", "end");
-      }
-      startToken() {
-        this.tokenStart = this.codePointIterator.start;
-      }
-      /**
-       * Commit the current token.
-       */
-      endToken(type, pos, option1, option2) {
-        const { tokenStart } = this;
-        const end = this.codePointIterator[pos];
-        const range = [tokenStart, end];
-        const loc = {
-          start: this.codePointIterator.getLocFromIndex(tokenStart),
-          end: this.codePointIterator.getLocFromIndex(end)
-        };
-        if (type === "Block") {
-          this.token = {
-            type,
-            value: this.text.slice(tokenStart + 1, end),
-            range,
-            loc
-          };
-        } else {
-          let token;
-          const value = this.text.slice(tokenStart, end);
-          if (type === "BasicString" || type === "LiteralString" || type === "MultiLineBasicString" || type === "MultiLineLiteralString") {
-            token = {
-              type,
-              value,
-              string: option1,
-              range,
-              loc
-            };
-          } else if (type === "Integer") {
-            const text2 = option1;
-            token = {
-              type,
-              value,
-              number: parseInt(text2, option2),
-              bigint: HAS_BIGINT ? BigInt(RADIX_PREFIXES[option2] + text2) : null,
-              range,
-              loc
-            };
-          } else if (type === "Float") {
-            token = {
-              type,
-              value,
-              number: option1,
-              range,
-              loc
-            };
-          } else if (type === "Boolean") {
-            token = {
-              type,
-              value,
-              boolean: option1,
-              range,
-              loc
-            };
-          } else if (type === "LocalDate" || type === "LocalTime" || type === "LocalDateTime" || type === "OffsetDateTime") {
-            token = {
-              type,
-              value,
-              date: option1,
-              range,
-              loc
-            };
-          } else {
-            token = {
-              type,
-              value,
-              range,
-              loc
-            };
-          }
-          this.token = token;
-        }
-      }
-      DATA(cp) {
-        while ((0, code_point_1.isWhitespace)(cp) || (0, code_point_1.isEOL)(cp)) {
-          cp = this.nextCode();
-        }
-        if (cp === 35) {
-          this.startToken();
-          return "COMMENT";
-        }
-        if (cp === 34) {
-          this.startToken();
-          return "BASIC_STRING";
-        }
-        if (cp === 39) {
-          this.startToken();
-          return "LITERAL_STRING";
-        }
-        if (cp === 46 || // .
-        cp === 61 || // =
-        cp === 91 || // [
-        cp === 93 || // ]
-        cp === 123 || // {
-        cp === 125 || // }
-        cp === 44) {
-          this.punctuatorToken();
-          return "DATA";
-        }
-        if (this.valuesEnabled) {
-          if (cp === 45 || cp === 43) {
-            this.startToken();
-            return "SIGN";
-          }
-          if (cp === 110 || cp === 105) {
-            this.startToken();
-            return this.back("NAN_OR_INF");
-          }
-          if ((0, code_point_1.isDigit)(cp)) {
-            this.startToken();
-            return this.back("NUMBER");
-          }
-          if (cp === 116 || cp === 102) {
-            this.startToken();
-            return this.back("BOOLEAN");
-          }
-        } else {
-          if (isUnquotedKeyChar(cp, this.tomlVersion)) {
-            this.startToken();
-            return "BARE";
-          }
-        }
-        if (cp === -1) {
-          return "DATA";
-        }
-        return this.reportParseError("unexpected-char");
-      }
-      COMMENT(cp) {
-        const processCommentChar = this.tomlVersion.gte(1, 1) ? (c) => {
-          if (!isAllowedCommentCharacter(c)) {
-            this.reportParseError("invalid-comment-character");
-          }
-        } : (c) => {
-          if (isControlOtherThanTab(c)) {
-            this.reportParseErrorControlChar();
-          }
-        };
-        while (!(0, code_point_1.isEOL)(cp) && cp !== -1) {
-          processCommentChar(cp);
-          cp = this.nextCode();
-        }
-        this.endToken("Block", "start");
-        return "DATA";
-      }
-      BARE(cp) {
-        while (isUnquotedKeyChar(cp, this.tomlVersion)) {
-          cp = this.nextCode();
-        }
-        this.endToken("Bare", "start");
-        return this.back("DATA");
-      }
-      BASIC_STRING(cp) {
-        if (cp === 34) {
-          cp = this.nextCode();
-          if (cp === 34) {
-            return "MULTI_LINE_BASIC_STRING";
-          }
-          this.endToken("BasicString", "start", "");
-          return this.back("DATA");
-        }
-        const out = [];
-        while (cp !== 34 && cp !== -1 && cp !== 10) {
-          if (isControlOtherThanTab(cp)) {
-            return this.reportParseErrorControlChar();
-          }
-          if (cp === 92) {
-            cp = this.nextCode();
-            const ecp = this.ESCAPES[cp];
-            if (ecp) {
-              out.push(ecp);
-              cp = this.nextCode();
-              continue;
-            } else if (cp === 117) {
-              const code = this.parseUnicode(4);
-              out.push(code);
-              cp = this.nextCode();
-              continue;
-            } else if (cp === 85) {
-              const code = this.parseUnicode(8);
-              out.push(code);
-              cp = this.nextCode();
-              continue;
-            } else if (cp === 120 && this.tomlVersion.gte(1, 1)) {
-              const code = this.parseUnicode(2);
-              out.push(code);
-              cp = this.nextCode();
-              continue;
-            }
-            return this.reportParseError("invalid-char-in-escape-sequence");
-          }
-          out.push(cp);
-          cp = this.nextCode();
-        }
-        if (cp !== 34) {
-          return this.reportParseError("unterminated-string");
-        }
-        this.endToken("BasicString", "end", String.fromCodePoint(...out));
-        return "DATA";
-      }
-      MULTI_LINE_BASIC_STRING(cp) {
-        const out = [];
-        if (cp === 10) {
-          cp = this.nextCode();
-        }
-        while (cp !== -1) {
-          if (cp !== 10 && isControlOtherThanTab(cp)) {
-            return this.reportParseErrorControlChar();
-          }
-          if (cp === 34) {
-            const startPos = this.codePointIterator.start;
-            if (this.eatCode(
-              34
-              /* CodePoint.QUOTATION_MARK */
-            ) && this.eatCode(
-              34
-              /* CodePoint.QUOTATION_MARK */
-            )) {
-              if (this.eatCode(
-                34
-                /* CodePoint.QUOTATION_MARK */
-              )) {
-                out.push(
-                  34
-                  /* CodePoint.QUOTATION_MARK */
-                );
-                if (this.eatCode(
-                  34
-                  /* CodePoint.QUOTATION_MARK */
-                )) {
-                  out.push(
-                    34
-                    /* CodePoint.QUOTATION_MARK */
-                  );
-                  if (this.eatCode(
-                    34
-                    /* CodePoint.QUOTATION_MARK */
-                  )) {
-                    this.moveAt(startPos);
-                    return this.reportParseError("invalid-three-quotes");
-                  }
-                }
-              }
-              this.endToken("MultiLineBasicString", "end", String.fromCodePoint(...out));
-              return "DATA";
-            }
-            this.moveAt(startPos);
-          }
-          if (cp === 92) {
-            cp = this.nextCode();
-            const ecp = this.ESCAPES[cp];
-            if (ecp) {
-              out.push(ecp);
-              cp = this.nextCode();
-              continue;
-            } else if (cp === 117) {
-              const code = this.parseUnicode(4);
-              out.push(code);
-              cp = this.nextCode();
-              continue;
-            } else if (cp === 85) {
-              const code = this.parseUnicode(8);
-              out.push(code);
-              cp = this.nextCode();
-              continue;
-            } else if (cp === 120 && this.tomlVersion.gte(1, 1)) {
-              const code = this.parseUnicode(2);
-              out.push(code);
-              cp = this.nextCode();
-              continue;
-            } else if (cp === 10) {
-              cp = this.nextCode();
-              while ((0, code_point_1.isWhitespace)(cp) || cp === 10) {
-                cp = this.nextCode();
-              }
-              continue;
-            } else if ((0, code_point_1.isWhitespace)(cp)) {
-              let valid = true;
-              const startPos = this.codePointIterator.start;
-              let nextCp;
-              while ((nextCp = this.nextCode()) !== -1) {
-                if (nextCp === 10) {
-                  break;
-                }
-                if (!(0, code_point_1.isWhitespace)(nextCp)) {
-                  this.moveAt(startPos);
-                  valid = false;
-                  break;
-                }
-              }
-              if (valid) {
-                cp = this.nextCode();
-                while ((0, code_point_1.isWhitespace)(cp) || cp === 10) {
-                  cp = this.nextCode();
-                }
-                continue;
-              }
-            }
-            return this.reportParseError("invalid-char-in-escape-sequence");
-          }
-          out.push(cp);
-          cp = this.nextCode();
-        }
-        return this.reportParseError("unterminated-string");
-      }
-      LITERAL_STRING(cp) {
-        if (cp === 39) {
-          cp = this.nextCode();
-          if (cp === 39) {
-            return "MULTI_LINE_LITERAL_STRING";
-          }
-          this.endToken("LiteralString", "start", "");
-          return this.back("DATA");
-        }
-        const out = [];
-        while (cp !== 39 && cp !== -1 && cp !== 10) {
-          if (isControlOtherThanTab(cp)) {
-            return this.reportParseErrorControlChar();
-          }
-          out.push(cp);
-          cp = this.nextCode();
-        }
-        if (cp !== 39) {
-          return this.reportParseError("unterminated-string");
-        }
-        this.endToken("LiteralString", "end", String.fromCodePoint(...out));
-        return "DATA";
-      }
-      MULTI_LINE_LITERAL_STRING(cp) {
-        const out = [];
-        if (cp === 10) {
-          cp = this.nextCode();
-        }
-        while (cp !== -1) {
-          if (cp !== 10 && isControlOtherThanTab(cp)) {
-            return this.reportParseErrorControlChar();
-          }
-          if (cp === 39) {
-            const startPos = this.codePointIterator.start;
-            if (this.eatCode(
-              39
-              /* CodePoint.SINGLE_QUOTE */
-            ) && this.eatCode(
-              39
-              /* CodePoint.SINGLE_QUOTE */
-            )) {
-              if (this.eatCode(
-                39
-                /* CodePoint.SINGLE_QUOTE */
-              )) {
-                out.push(
-                  39
-                  /* CodePoint.SINGLE_QUOTE */
-                );
-                if (this.eatCode(
-                  39
-                  /* CodePoint.SINGLE_QUOTE */
-                )) {
-                  out.push(
-                    39
-                    /* CodePoint.SINGLE_QUOTE */
-                  );
-                  if (this.eatCode(
-                    39
-                    /* CodePoint.SINGLE_QUOTE */
-                  )) {
-                    this.moveAt(startPos);
-                    return this.reportParseError("invalid-three-quotes");
-                  }
-                }
-              }
-              this.endToken("MultiLineLiteralString", "end", String.fromCodePoint(...out));
-              return "DATA";
-            }
-            this.moveAt(startPos);
-          }
-          out.push(cp);
-          cp = this.nextCode();
-        }
-        return this.reportParseError("unterminated-string");
-      }
-      SIGN(cp) {
-        if (cp === 110 || cp === 105) {
-          return this.back("NAN_OR_INF");
-        }
-        if ((0, code_point_1.isDigit)(cp)) {
-          return this.back("NUMBER");
-        }
-        return this.reportParseError("unexpected-char");
-      }
-      NAN_OR_INF(cp) {
-        if (cp === 110) {
-          const startPos = this.codePointIterator.start;
-          if (this.eatCode(
-            97
-            /* CodePoint.LATIN_SMALL_A */
-          ) && this.eatCode(
-            110
-            /* CodePoint.LATIN_SMALL_N */
-          )) {
-            this.endToken("Float", "end", NaN);
-            return "DATA";
-          }
-          this.moveAt(startPos);
-        } else if (cp === 105) {
-          const startPos = this.codePointIterator.start;
-          if (this.eatCode(
-            110
-            /* CodePoint.LATIN_SMALL_N */
-          ) && this.eatCode(
-            102
-            /* CodePoint.LATIN_SMALL_F */
-          )) {
-            this.endToken("Float", "end", this.text[this.tokenStart] === "-" ? -Infinity : Infinity);
-            return "DATA";
-          }
-          this.moveAt(startPos);
-        }
-        return this.reportParseError("unexpected-char");
-      }
-      NUMBER(cp) {
-        const start2 = this.text[this.tokenStart];
-        const sign = start2 === "+" ? 43 : start2 === "-" ? 45 : 0;
-        if (cp === 48) {
-          if (sign === 0) {
-            const startPos = this.codePointIterator.start;
-            const nextCp2 = this.nextCode();
-            if ((0, code_point_1.isDigit)(nextCp2)) {
-              const nextNextCp = this.nextCode();
-              if (nextNextCp === 58) {
-                const data = {
-                  hasDate: false,
-                  year: 0,
-                  month: 0,
-                  day: 0,
-                  hour: Number(String.fromCodePoint(48, nextCp2)),
-                  minute: 0,
-                  second: 0
-                };
-                this.data = data;
-                return "TIME_MINUTE";
-              }
-              if ((0, code_point_1.isDigit)(nextNextCp)) {
-                const nextNextNextCp = this.nextCode();
-                if ((0, code_point_1.isDigit)(nextNextNextCp) && this.eatCode(
-                  45
-                  /* CodePoint.DASH */
-                )) {
-                  const data = {
-                    hasDate: true,
-                    year: Number(String.fromCodePoint(48, nextCp2, nextNextCp, nextNextNextCp)),
-                    month: 0,
-                    day: 0,
-                    hour: 0,
-                    minute: 0,
-                    second: 0
-                  };
-                  this.data = data;
-                  return "DATE_MONTH";
-                }
-              }
-              this.moveAt(startPos);
-              return this.reportParseError("invalid-leading-zero");
-            }
-            this.moveAt(startPos);
-          }
-          cp = this.nextCode();
-          if (cp === 120 || cp === 111 || cp === 98) {
-            if (sign !== 0) {
-              return this.reportParseError("unexpected-char");
-            }
-            return cp === 120 ? "HEX" : cp === 111 ? "OCTAL" : "BINARY";
-          }
-          if (cp === 101 || cp === 69) {
-            const data = {
-              // Float values -0.0 and +0.0 are valid and should map according to IEEE 754.
-              minus: sign === 45,
-              left: [
-                48
-                /* CodePoint.DIGIT_0 */
-              ]
-            };
-            this.data = data;
-            return "EXPONENT_RIGHT";
-          }
-          if (cp === 46) {
-            const data = {
-              minus: sign === 45,
-              absInt: [
-                48
-                /* CodePoint.DIGIT_0 */
-              ]
-            };
-            this.data = data;
-            return "FRACTIONAL_RIGHT";
-          }
-          this.endToken("Integer", "start", "0", 10);
-          return this.back("DATA");
-        }
-        const { out, nextCp, hasUnderscore } = this.parseDigits(cp, code_point_1.isDigit);
-        if (nextCp === 45 && sign === 0 && !hasUnderscore && out.length === 4) {
-          const data = {
-            hasDate: true,
-            year: Number(String.fromCodePoint(...out)),
-            month: 0,
-            day: 0,
-            hour: 0,
-            minute: 0,
-            second: 0
-          };
-          this.data = data;
-          return "DATE_MONTH";
-        }
-        if (nextCp === 58 && sign === 0 && !hasUnderscore && out.length === 2) {
-          const data = {
-            hasDate: false,
-            year: 0,
-            month: 0,
-            day: 0,
-            hour: Number(String.fromCodePoint(...out)),
-            minute: 0,
-            second: 0
-          };
-          this.data = data;
-          return "TIME_MINUTE";
-        }
-        if (nextCp === 101 || nextCp === 69) {
-          const data = {
-            minus: sign === 45,
-            left: out
-          };
-          this.data = data;
-          return "EXPONENT_RIGHT";
-        }
-        if (nextCp === 46) {
-          const data = {
-            minus: sign === 45,
-            absInt: out
-          };
-          this.data = data;
-          return "FRACTIONAL_RIGHT";
-        }
-        this.endToken("Integer", "start", sign === 45 ? String.fromCodePoint(45, ...out) : String.fromCodePoint(...out), 10);
-        return this.back("DATA");
-      }
-      HEX(cp) {
-        const { out } = this.parseDigits(cp, code_point_1.isHexDig);
-        this.endToken("Integer", "start", String.fromCodePoint(...out), 16);
-        return this.back("DATA");
-      }
-      OCTAL(cp) {
-        const { out } = this.parseDigits(cp, code_point_1.isOctalDig);
-        this.endToken("Integer", "start", String.fromCodePoint(...out), 8);
-        return this.back("DATA");
-      }
-      BINARY(cp) {
-        const { out } = this.parseDigits(
-          cp,
-          (c) => c === 48 || c === 49
-          /* CodePoint.DIGIT_1 */
-        );
-        this.endToken("Integer", "start", String.fromCodePoint(...out), 2);
-        return this.back("DATA");
-      }
-      FRACTIONAL_RIGHT(cp) {
-        const { minus, absInt } = this.data;
-        const { out, nextCp } = this.parseDigits(cp, code_point_1.isDigit);
-        const absNum = [...absInt, 46, ...out];
-        if (nextCp === 101 || nextCp === 69) {
-          const data = {
-            minus,
-            left: absNum
-          };
-          this.data = data;
-          return "EXPONENT_RIGHT";
-        }
-        const value = Number(minus ? String.fromCodePoint(45, ...absNum) : String.fromCodePoint(...absNum));
-        this.endToken("Float", "start", value);
-        return this.back("DATA");
-      }
-      EXPONENT_RIGHT(cp) {
-        const { left, minus: leftMinus } = this.data;
-        let minus = false;
-        if (cp === 45 || cp === 43) {
-          minus = cp === 45;
-          cp = this.nextCode();
-        }
-        const { out } = this.parseDigits(cp, code_point_1.isDigit);
-        const right = out;
-        if (minus) {
-          right.unshift(
-            45
-            /* CodePoint.DASH */
-          );
-        }
-        const value = Number(leftMinus ? String.fromCodePoint(45, ...left, 101, ...right) : String.fromCodePoint(...left, 101, ...right));
-        this.endToken("Float", "start", value);
-        return this.back("DATA");
-      }
-      BOOLEAN(cp) {
-        if (cp === 116) {
-          const startPos = this.codePointIterator.start;
-          if (this.eatCode(
-            114
-            /* CodePoint.LATIN_SMALL_R */
-          ) && this.eatCode(
-            117
-            /* CodePoint.LATIN_SMALL_U */
-          ) && this.eatCode(
-            101
-            /* CodePoint.LATIN_SMALL_E */
-          )) {
-            this.endToken("Boolean", "end", true);
-            return "DATA";
-          }
-          this.moveAt(startPos);
-        } else if (cp === 102) {
-          const startPos = this.codePointIterator.start;
-          if (this.eatCode(
-            97
-            /* CodePoint.LATIN_SMALL_A */
-          ) && this.eatCode(
-            108
-            /* CodePoint.LATIN_SMALL_L */
-          ) && this.eatCode(
-            115
-            /* CodePoint.LATIN_SMALL_S */
-          ) && this.eatCode(
-            101
-            /* CodePoint.LATIN_SMALL_E */
-          )) {
-            this.endToken("Boolean", "end", false);
-            return "DATA";
-          }
-          this.moveAt(startPos);
-        }
-        return this.reportParseError("unexpected-char");
-      }
-      DATE_MONTH(cp) {
-        const start2 = this.codePointIterator.start;
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (cp !== 45) {
-          return this.reportParseError("unexpected-char");
-        }
-        const end = this.codePointIterator.start;
-        const data = this.data;
-        data.month = Number(this.text.slice(start2, end));
-        return "DATE_DAY";
-      }
-      DATE_DAY(cp) {
-        const start2 = this.codePointIterator.start;
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        const end = this.codePointIterator.end;
-        const data = this.data;
-        data.day = Number(this.text.slice(start2, end));
-        if (!isValidDate(data.year, data.month, data.day)) {
-          return this.reportParseError("invalid-date");
-        }
-        cp = this.nextCode();
-        if (cp === 84 || cp === 116) {
-          return "TIME_HOUR";
-        }
-        if (cp === 32) {
-          const startPos = this.codePointIterator.start;
-          if ((0, code_point_1.isDigit)(this.nextCode()) && (0, code_point_1.isDigit)(this.nextCode())) {
-            this.moveAt(startPos);
-            return "TIME_HOUR";
-          }
-          this.moveAt(startPos);
-        }
-        const dateValue = getDateFromDateTimeData(data, "");
-        this.endToken("LocalDate", "start", dateValue);
-        return this.back("DATA");
-      }
-      TIME_HOUR(cp) {
-        const start2 = this.codePointIterator.start;
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (cp !== 58) {
-          return this.reportParseError("unexpected-char");
-        }
-        const end = this.codePointIterator.start;
-        const data = this.data;
-        data.hour = Number(this.text.slice(start2, end));
-        return "TIME_MINUTE";
-      }
-      TIME_MINUTE(cp) {
-        const start2 = this.codePointIterator.start;
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        const end = this.codePointIterator.end;
-        const data = this.data;
-        data.minute = Number(this.text.slice(start2, end));
-        cp = this.nextCode();
-        if (cp === 58) {
-          return "TIME_SECOND";
-        }
-        if (this.tomlVersion.lt(1, 1)) {
-          return this.reportParseError("unexpected-char");
-        }
-        if (!isValidTime(data.hour, data.minute, data.second)) {
-          return this.reportParseError("invalid-time");
-        }
-        return this.processTimeEnd(cp, data);
-      }
-      TIME_SECOND(cp) {
-        const start2 = this.codePointIterator.start;
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        const end = this.codePointIterator.end;
-        const data = this.data;
-        data.second = Number(this.text.slice(start2, end));
-        if (!isValidTime(data.hour, data.minute, data.second)) {
-          return this.reportParseError("invalid-time");
-        }
-        cp = this.nextCode();
-        if (cp === 46) {
-          return "TIME_SEC_FRAC";
-        }
-        return this.processTimeEnd(cp, data);
-      }
-      TIME_SEC_FRAC(cp) {
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        const start2 = this.codePointIterator.start;
-        while ((0, code_point_1.isDigit)(cp)) {
-          cp = this.nextCode();
-        }
-        const end = this.codePointIterator.start;
-        const data = this.data;
-        data.frac = this.text.slice(start2, end);
-        return this.processTimeEnd(cp, data);
-      }
-      processTimeEnd(cp, data) {
-        if (data.hasDate) {
-          if (cp === 45 || cp === 43) {
-            data.offsetSign = cp;
-            return "TIME_OFFSET";
-          }
-          if (cp === 90 || cp === 122) {
-            const dateValue3 = getDateFromDateTimeData(data, "Z");
-            this.endToken("OffsetDateTime", "end", dateValue3);
-            return "DATA";
-          }
-          const dateValue2 = getDateFromDateTimeData(data, "");
-          this.endToken("LocalDateTime", "start", dateValue2);
-          return this.back("DATA");
-        }
-        const dateValue = getDateFromDateTimeData(data, "");
-        this.endToken("LocalTime", "start", dateValue);
-        return this.back("DATA");
-      }
-      TIME_OFFSET(cp) {
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        const hourStart = this.codePointIterator.start;
-        cp = this.nextCode();
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (cp !== 58) {
-          return this.reportParseError("unexpected-char");
-        }
-        const hourEnd = this.codePointIterator.start;
-        cp = this.nextCode();
-        const minuteStart = this.codePointIterator.start;
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        cp = this.nextCode();
-        if (!(0, code_point_1.isDigit)(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        const minuteEnd = this.codePointIterator.end;
-        const hour = Number(this.text.slice(hourStart, hourEnd));
-        const minute = Number(this.text.slice(minuteStart, minuteEnd));
-        if (!isValidTime(hour, minute, 0)) {
-          return this.reportParseError("invalid-time");
-        }
-        const data = this.data;
-        const dateValue = getDateFromDateTimeData(data, `${String.fromCodePoint(data.offsetSign)}${padStart(hour, 2)}:${padStart(minute, 2)}`);
-        this.endToken("OffsetDateTime", "end", dateValue);
-        return "DATA";
-      }
-      parseDigits(cp, checkDigit) {
-        if (cp === 95) {
-          return this.reportParseError("invalid-underscore");
-        }
-        if (!checkDigit(cp)) {
-          return this.reportParseError("unexpected-char");
-        }
-        const out = [];
-        let before = 0;
-        let hasUnderscore = false;
-        while (checkDigit(cp) || cp === 95) {
-          if (cp === 95) {
-            hasUnderscore = true;
-            if (before === 95) {
-              return this.reportParseError("invalid-underscore");
-            }
-          } else {
-            out.push(cp);
-          }
-          before = cp;
-          cp = this.nextCode();
-        }
-        if (before === 95) {
-          return this.reportParseError("invalid-underscore");
-        }
-        return {
-          out,
-          nextCp: cp,
-          hasUnderscore
-        };
-      }
-      parseUnicode(count) {
-        const startLoc = this.codePointIterator.start;
-        const start2 = this.codePointIterator.end;
-        let charCount = 0;
-        let cp;
-        while ((cp = this.nextCode()) !== -1) {
-          if (!(0, code_point_1.isHexDig)(cp)) {
-            this.moveAt(startLoc);
-            return this.reportParseError("invalid-char-in-escape-sequence");
-          }
-          charCount++;
-          if (charCount >= count) {
-            break;
-          }
-        }
-        const end = this.codePointIterator.end;
-        const code = this.text.slice(start2, end);
-        const codePoint = parseInt(code, 16);
-        if (!(0, code_point_1.isUnicodeScalarValue)(codePoint)) {
-          return this.reportParseError("invalid-code-point", { cp: code });
-        }
-        return codePoint;
-      }
-      reportParseErrorControlChar() {
-        return this.reportParseError("invalid-control-character");
-      }
-    };
-    exports2.Tokenizer = Tokenizer;
-    function isUnquotedKeyChar(cp, tomlVersion) {
-      if ((0, code_point_1.isLetter)(cp) || (0, code_point_1.isDigit)(cp) || cp === 95 || cp === 45) {
-        return true;
-      }
-      if (tomlVersion.lt(1, 1)) {
-        return false;
-      }
-      if (cp === 178 || cp === 179 || cp === 185 || 188 <= cp && cp <= 190) {
-        return true;
-      }
-      if (192 <= cp && cp <= 214 || 216 <= cp && cp <= 246 || 248 <= cp && cp <= 891) {
-        return true;
-      }
-      if (895 <= cp && cp <= 8191) {
-        return true;
-      }
-      if (8204 <= cp && cp <= 8205 || 8255 <= cp && cp <= 8256) {
-        return true;
-      }
-      if (8304 <= cp && cp <= 8591 || 9312 <= cp && cp <= 9471) {
-        return true;
-      }
-      if (11264 <= cp && cp <= 12271 || 12289 <= cp && cp <= 55295) {
-        return true;
-      }
-      if (63744 <= cp && cp <= 64975 || 65008 <= cp && cp <= 65533) {
-        return true;
-      }
-      if (65536 <= cp && cp <= 983039) {
-        return true;
-      }
-      return false;
-    }
-    function isControlOtherThanTab(cp) {
-      return (0, code_point_1.isControl)(cp) && cp !== 9 || cp === 127;
-    }
-    function isAllowedCommentCharacter(cp) {
-      return 1 <= cp && cp <= 9 || 14 <= cp && cp <= 127 || isNonAscii(cp);
-    }
-    function isNonAscii(cp) {
-      return 128 <= cp && cp <= 55295 || 57344 <= cp && cp <= 1114111;
-    }
-    function isValidDate(y, m, d) {
-      if (y >= 0 && m <= 12 && m >= 1 && d >= 1) {
-        const maxDayOfMonth = m === 2 ? y & 3 || !(y % 25) && y & 15 ? 28 : 29 : 30 + (m + (m >> 3) & 1);
-        return d <= maxDayOfMonth;
-      }
-      return false;
-    }
-    function isValidTime(h, m, s) {
-      if (h >= 24 || h < 0 || m > 59 || m < 0 || s > 60 || s < 0) {
-        return false;
-      }
-      return true;
-    }
-    function getDateFromDateTimeData(data, timeZone) {
-      const year = padStart(data.year, 4);
-      const month = data.month ? padStart(data.month, 2) : "01";
-      const day = data.day ? padStart(data.day, 2) : "01";
-      const hour = padStart(data.hour, 2);
-      const minute = padStart(data.minute, 2);
-      const second = padStart(data.second, 2);
-      const textDate = `${year}-${month}-${day}`;
-      const frac = data.frac ? `.${data.frac}` : "";
-      const dateValue = /* @__PURE__ */ new Date(`${textDate}T${hour}:${minute}:${second}${frac}${timeZone}`);
-      if (!isNaN(dateValue.getTime()) || data.second !== 60) {
-        return dateValue;
-      }
-      return /* @__PURE__ */ new Date(`${textDate}T${hour}:${minute}:59${frac}${timeZone}`);
-    }
-    function padStart(num, maxLength) {
-      return String(num).padStart(maxLength, "0");
-    }
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/index.js
-var require_tokenizer2 = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/tokenizer/index.js"(exports2) {
-    "use strict";
-    var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      var desc = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-        desc = { enumerable: true, get: function() {
-          return m[k];
-        } };
-      }
-      Object.defineProperty(o, k2, desc);
-    }) : (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      o[k2] = m[k];
-    }));
-    var __exportStar = exports2 && exports2.__exportStar || function(m, exports3) {
-      for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports3, p)) __createBinding(exports3, m, p);
-    };
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    __exportStar(require_tokenizer(), exports2);
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/toml-parser/keys-resolver.js
-var require_keys_resolver = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/toml-parser/keys-resolver.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.KeysResolver = void 0;
-    var internal_utils_1 = require_internal_utils();
-    var KeysResolver = class {
-      constructor(ctx) {
-        this.rootKeys = /* @__PURE__ */ new Map();
-        this.tables = [];
-        this.ctx = ctx;
-      }
-      applyResolveKeyForTable(node) {
-        let keys = this.rootKeys;
-        const peekKeyIndex = node.key.keys.length - 1;
-        for (let index = 0; index < peekKeyIndex; index++) {
-          const keyNode = node.key.keys[index];
-          const keyName = (0, internal_utils_1.toKeyName)(keyNode);
-          node.resolvedKey.push(keyName);
-          let keyStore = keys.get(keyName);
-          if (!keyStore) {
-            keyStore = { node: keyNode, keys: /* @__PURE__ */ new Map() };
-            keys.set(keyName, keyStore);
-          } else if (keyStore.table === "array") {
-            const peekIndex = keyStore.peekIndex;
-            node.resolvedKey.push(peekIndex);
-            keyStore = keyStore.keys.get(peekIndex);
-          }
-          keys = keyStore.keys;
-        }
-        const lastKeyNode = node.key.keys[peekKeyIndex];
-        const lastKeyName = (0, internal_utils_1.toKeyName)(lastKeyNode);
-        node.resolvedKey.push(lastKeyName);
-        const lastKeyStore = keys.get(lastKeyName);
-        if (!lastKeyStore) {
-          if (node.kind === "array") {
-            node.resolvedKey.push(0);
-            const newKeyStore = {
-              node: lastKeyNode,
-              keys: /* @__PURE__ */ new Map()
-            };
-            keys.set(lastKeyName, {
-              table: node.kind,
-              node: lastKeyNode,
-              keys: /* @__PURE__ */ new Map([[0, newKeyStore]]),
-              peekIndex: 0
-            });
-            this.tables.push({ node, keys: newKeyStore.keys });
-          } else {
-            const newKeyStore = {
-              table: node.kind,
-              node: lastKeyNode,
-              keys: /* @__PURE__ */ new Map()
-            };
-            keys.set(lastKeyName, newKeyStore);
-            this.tables.push({ node, keys: newKeyStore.keys });
-          }
-        } else if (!lastKeyStore.table) {
-          if (node.kind === "array") {
-            this.ctx.reportParseError("dupe-keys", lastKeyNode);
-          } else {
-            const transformKey = {
-              table: node.kind,
-              node: lastKeyNode,
-              keys: lastKeyStore.keys
-            };
-            keys.set(lastKeyName, transformKey);
-            this.tables.push({ node, keys: transformKey.keys });
-          }
-        } else if (lastKeyStore.table === "array") {
-          if (node.kind === "array") {
-            const newKeyStore = {
-              node: lastKeyNode,
-              keys: /* @__PURE__ */ new Map()
-            };
-            const newIndex = lastKeyStore.peekIndex + 1;
-            node.resolvedKey.push(newIndex);
-            lastKeyStore.keys.set(newIndex, newKeyStore);
-            lastKeyStore.peekIndex = newIndex;
-            this.tables.push({ node, keys: newKeyStore.keys });
-          } else {
-            this.ctx.reportParseError("dupe-keys", lastKeyNode);
-          }
-        } else {
-          this.ctx.reportParseError("dupe-keys", lastKeyNode);
-        }
-      }
-      verifyDuplicateKeys(node) {
-        for (const body of node.body) {
-          if (body.type === "TOMLKeyValue") {
-            verifyDuplicateKeysForKeyValue(this.ctx, this.rootKeys, body);
-          }
-        }
-        for (const { node: tableNode, keys } of this.tables) {
-          for (const body of tableNode.body) {
-            verifyDuplicateKeysForKeyValue(this.ctx, keys, body);
-          }
-        }
-      }
-    };
-    exports2.KeysResolver = KeysResolver;
-    function verifyDuplicateKeysForKeyValue(ctx, defineKeys, node) {
-      let keys = defineKeys;
-      const lastKey = (0, internal_utils_1.last)(node.key.keys);
-      for (const keyNode of node.key.keys) {
-        const key = (0, internal_utils_1.toKeyName)(keyNode);
-        let defineKey = keys.get(key);
-        if (defineKey) {
-          if (defineKey.value === 0) {
-            ctx.reportParseError("dupe-keys", getAfterNode(keyNode, defineKey.node));
-          } else if (lastKey === keyNode) {
-            ctx.reportParseError("dupe-keys", getAfterNode(keyNode, defineKey.node));
-          } else if (defineKey.table) {
-            ctx.reportParseError("dupe-keys", getAfterNode(keyNode, defineKey.node));
-          }
-          defineKey.value = 1;
-        } else {
-          if (lastKey === keyNode) {
-            const keyStore = {
-              value: 0,
-              node: keyNode,
-              keys: /* @__PURE__ */ new Map()
-            };
-            defineKey = keyStore;
-          } else {
-            const keyStore = {
-              value: 1,
-              node: keyNode,
-              keys: /* @__PURE__ */ new Map()
-            };
-            defineKey = keyStore;
-          }
-          keys.set(key, defineKey);
-        }
-        keys = defineKey.keys;
-      }
-      if (node.value.type === "TOMLInlineTable") {
-        verifyDuplicateKeysForInlineTable(ctx, keys, node.value);
-      } else if (node.value.type === "TOMLArray") {
-        verifyDuplicateKeysForArray(ctx, keys, node.value);
-      }
-    }
-    function verifyDuplicateKeysForInlineTable(ctx, defineKeys, node) {
-      for (const body of node.body) {
-        verifyDuplicateKeysForKeyValue(ctx, defineKeys, body);
-      }
-    }
-    function verifyDuplicateKeysForArray(ctx, defineKeys, node) {
-      const keys = defineKeys;
-      for (let index = 0; index < node.elements.length; index++) {
-        const element = node.elements[index];
-        let defineKey = keys.get(index);
-        if (defineKey) {
-          ctx.reportParseError("dupe-keys", getAfterNode(element, defineKey.node));
-        } else {
-          defineKey = {
-            value: 0,
-            node: element,
-            keys: /* @__PURE__ */ new Map()
-          };
-          defineKeys.set(index, defineKey);
-          if (element.type === "TOMLInlineTable") {
-            verifyDuplicateKeysForInlineTable(ctx, defineKey.keys, element);
-          } else if (element.type === "TOMLArray") {
-            verifyDuplicateKeysForArray(ctx, defineKey.keys, element);
-          }
-        }
-      }
-    }
-    function getAfterNode(a, b) {
-      return a.range[0] <= b.range[0] ? b : a;
-    }
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/toml-parser/context.js
-var require_context = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/toml-parser/context.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.Context = void 0;
-    var errors_1 = require_errors();
-    var tokenizer_1 = require_tokenizer2();
-    var keys_resolver_1 = require_keys_resolver();
-    var Context = class {
-      constructor(data) {
-        this.tokens = [];
-        this.comments = [];
-        this.back = null;
-        this.stateStack = [];
-        this.needNewLine = false;
-        this.needSameLine = false;
-        this.currToken = null;
-        this.prevToken = null;
-        this.valueContainerStack = [];
-        this.tokenizer = new tokenizer_1.Tokenizer(data.text, data.parserOptions);
-        this.topLevelTable = data.topLevelTable;
-        this.table = data.topLevelTable;
-        this.keysResolver = new keys_resolver_1.KeysResolver(this);
-      }
-      get startPos() {
-        return this.tokenizer.positions.start;
-      }
-      get endPos() {
-        return this.tokenizer.positions.end;
-      }
-      /**
-       * Get the next token.
-       */
-      nextToken(option) {
-        this.prevToken = this.currToken;
-        if (this.back) {
-          this.currToken = this.back;
-          this.back = null;
-        } else {
-          this.currToken = this._nextTokenFromTokenizer(option);
-        }
-        if ((this.needNewLine || this.needSameLine || (option === null || option === void 0 ? void 0 : option.needSameLine)) && this.prevToken && this.currToken) {
-          if (this.prevToken.loc.end.line === this.currToken.loc.start.line) {
-            if (this.needNewLine) {
-              return this.reportParseError("missing-newline", this.currToken);
-            }
-          } else {
-            const needSameLine = this.needSameLine || (option === null || option === void 0 ? void 0 : option.needSameLine);
-            if (needSameLine) {
-              return this.reportParseError(needSameLine, this.currToken);
-            }
-          }
-        }
-        this.needNewLine = false;
-        this.needSameLine = false;
-        return this.currToken;
-      }
-      _nextTokenFromTokenizer(option) {
-        const valuesEnabled = this.tokenizer.valuesEnabled;
-        if (option === null || option === void 0 ? void 0 : option.valuesEnabled) {
-          this.tokenizer.valuesEnabled = option.valuesEnabled;
-        }
-        let token = this.tokenizer.nextToken();
-        while (token && token.type === "Block") {
-          this.comments.push(token);
-          token = this.tokenizer.nextToken();
-        }
-        if (token) {
-          this.tokens.push(token);
-        }
-        this.tokenizer.valuesEnabled = valuesEnabled;
-        return token;
-      }
-      backToken() {
-        if (this.back) {
-          throw new Error("Illegal state");
-        }
-        this.back = this.currToken;
-        this.currToken = this.prevToken;
-      }
-      addValueContainer(valueContainer) {
-        this.valueContainerStack.push(valueContainer);
-        this.tokenizer.valuesEnabled = true;
-      }
-      consumeValueContainer() {
-        const valueContainer = this.valueContainerStack.pop();
-        this.tokenizer.valuesEnabled = this.valueContainerStack.length > 0;
-        return valueContainer;
-      }
-      applyResolveKeyForTable(node) {
-        this.keysResolver.applyResolveKeyForTable(node);
-      }
-      verifyDuplicateKeys() {
-        this.keysResolver.verifyDuplicateKeys(this.topLevelTable);
-      }
-      /**
-       * Report an invalid token error.
-       */
-      reportParseError(code, token) {
-        let offset, line, column;
-        if (token) {
-          offset = token.range[0];
-          line = token.loc.start.line;
-          column = token.loc.start.column;
-        } else {
-          const startPos = this.startPos;
-          offset = startPos.offset;
-          line = startPos.line;
-          column = startPos.column;
-        }
-        throw new errors_1.ParseError(code, offset, line, column);
-      }
-    };
-    exports2.Context = Context;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/toml-parser/index.js
-var require_toml_parser = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/toml-parser/index.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.TOMLParser = void 0;
-    var internal_utils_1 = require_internal_utils();
-    var parser_options_1 = require_parser_options();
-    var context_1 = require_context();
-    var STATE_FOR_ERROR = {
-      VALUE: "missing-value"
-    };
-    var STRING_VALUE_STYLE_MAP = {
-      BasicString: "basic",
-      MultiLineBasicString: "basic",
-      LiteralString: "literal",
-      MultiLineLiteralString: "literal"
-    };
-    var STRING_KEY_STYLE_MAP = {
-      BasicString: "basic",
-      LiteralString: "literal"
-    };
-    var DATETIME_VALUE_KIND_MAP = {
-      OffsetDateTime: "offset-date-time",
-      LocalDateTime: "local-date-time",
-      LocalDate: "local-date",
-      LocalTime: "local-time"
-    };
-    var TOMLParser = class {
-      /**
-       * Initialize this parser.
-       */
-      constructor(text2, parserOptions) {
-        this.text = text2;
-        this.parserOptions = parserOptions || {};
-        this.tomlVersion = (0, parser_options_1.getTOMLVer)(this.parserOptions.tomlVersion);
-      }
-      /**
-       * Parse TOML
-       */
-      parse() {
-        const ast = {
-          type: "Program",
-          body: [],
-          sourceType: "module",
-          tokens: [],
-          comments: [],
-          parent: null,
-          range: [0, 0],
-          loc: {
-            start: {
-              line: 1,
-              column: 0
-            },
-            end: {
-              line: 1,
-              column: 0
-            }
-          }
-        };
-        const node = {
-          type: "TOMLTopLevelTable",
-          body: [],
-          parent: ast,
-          range: cloneRange(ast.range),
-          loc: cloneLoc(ast.loc)
-        };
-        ast.body = [node];
-        const ctx = new context_1.Context({
-          text: this.text,
-          parserOptions: this.parserOptions,
-          topLevelTable: node
-        });
-        let token = ctx.nextToken();
-        if (token) {
-          node.range[0] = token.range[0];
-          node.loc.start = clonePos(token.loc.start);
-          while (token) {
-            const state2 = ctx.stateStack.pop() || "TABLE";
-            ctx.stateStack.push(...this[state2](token, ctx));
-            token = ctx.nextToken();
-          }
-          const state = ctx.stateStack.pop() || "TABLE";
-          if (state in STATE_FOR_ERROR) {
-            return ctx.reportParseError(STATE_FOR_ERROR[state], null);
-          }
-          if (ctx.table.type === "TOMLTable") {
-            applyEndLoc(ctx.table, (0, internal_utils_1.last)(ctx.table.body));
-          }
-          applyEndLoc(node, (0, internal_utils_1.last)(node.body));
-        }
-        ctx.verifyDuplicateKeys();
-        ast.tokens = ctx.tokens;
-        ast.comments = ctx.comments;
-        const endPos = ctx.endPos;
-        ast.range[1] = endPos.offset;
-        ast.loc.end = {
-          line: endPos.line,
-          column: endPos.column
-        };
-        return ast;
-      }
-      TABLE(token, ctx) {
-        if (isBare(token) || isString2(token)) {
-          return this.processKeyValue(token, ctx.table, ctx);
-        }
-        if (isLeftBracket(token)) {
-          return this.processTable(token, ctx.topLevelTable, ctx);
-        }
-        return ctx.reportParseError("unexpected-token", token);
-      }
-      VALUE(token, ctx) {
-        if (isString2(token) || isMultiLineString(token)) {
-          return this.processStringValue(token, ctx);
-        }
-        if (isNumber2(token)) {
-          return this.processNumberValue(token, ctx);
-        }
-        if (isBoolean(token)) {
-          return this.processBooleanValue(token, ctx);
-        }
-        if (isDateTime(token)) {
-          return this.processDateTimeValue(token, ctx);
-        }
-        if (isLeftBracket(token)) {
-          return this.processArray(token, ctx);
-        }
-        if (isLeftBrace(token)) {
-          return this.processInlineTable(token, ctx);
-        }
-        return ctx.reportParseError("unexpected-token", token);
-      }
-      processTable(token, topLevelTableNode, ctx) {
-        const tableNode = {
-          type: "TOMLTable",
-          kind: "standard",
-          key: null,
-          resolvedKey: [],
-          body: [],
-          parent: topLevelTableNode,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        if (ctx.table.type === "TOMLTable") {
-          applyEndLoc(ctx.table, (0, internal_utils_1.last)(ctx.table.body));
-        }
-        topLevelTableNode.body.push(tableNode);
-        ctx.table = tableNode;
-        let targetToken = ctx.nextToken({
-          needSameLine: "invalid-key-value-newline"
-        });
-        if (isLeftBracket(targetToken)) {
-          if (token.range[1] < targetToken.range[0]) {
-            return ctx.reportParseError("invalid-space", targetToken);
-          }
-          tableNode.kind = "array";
-          targetToken = ctx.nextToken({
-            needSameLine: "invalid-key-value-newline"
-          });
-        }
-        if (isRightBracket(targetToken)) {
-          return ctx.reportParseError("missing-key", targetToken);
-        }
-        if (!targetToken) {
-          return ctx.reportParseError("unterminated-table-key", null);
-        }
-        const keyNodeData = this.processKeyNode(targetToken, tableNode, ctx);
-        targetToken = keyNodeData.nextToken;
-        if (!isRightBracket(targetToken)) {
-          return ctx.reportParseError("unterminated-table-key", targetToken);
-        }
-        if (tableNode.kind === "array") {
-          const rightBracket = targetToken;
-          targetToken = ctx.nextToken({
-            needSameLine: "invalid-key-value-newline"
-          });
-          if (!isRightBracket(targetToken)) {
-            return ctx.reportParseError("unterminated-table-key", targetToken);
-          }
-          if (rightBracket.range[1] < targetToken.range[0]) {
-            return ctx.reportParseError("invalid-space", targetToken);
-          }
-        }
-        applyEndLoc(tableNode, targetToken);
-        ctx.applyResolveKeyForTable(tableNode);
-        ctx.needNewLine = true;
-        return [];
-      }
-      processKeyValue(token, tableNode, ctx) {
-        const keyValueNode = {
-          type: "TOMLKeyValue",
-          key: null,
-          value: null,
-          parent: tableNode,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        tableNode.body.push(keyValueNode);
-        const { nextToken: targetToken } = this.processKeyNode(token, keyValueNode, ctx);
-        if (!isEq(targetToken)) {
-          return ctx.reportParseError("missing-equals-sign", targetToken);
-        }
-        ctx.addValueContainer({
-          parent: keyValueNode,
-          set: (valNode) => {
-            keyValueNode.value = valNode;
-            applyEndLoc(keyValueNode, valNode);
-            ctx.needNewLine = true;
-            return [];
-          }
-        });
-        ctx.needSameLine = "invalid-key-value-newline";
-        return ["VALUE"];
-      }
-      processKeyNode(token, parent, ctx) {
-        const keyNode = {
-          type: "TOMLKey",
-          keys: [],
-          parent,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        parent.key = keyNode;
-        let targetToken = token;
-        while (targetToken) {
-          if (isBare(targetToken)) {
-            this.processBareKey(targetToken, keyNode);
-          } else if (isString2(targetToken)) {
-            this.processStringKey(targetToken, keyNode);
-          } else {
-            break;
-          }
-          targetToken = ctx.nextToken({
-            needSameLine: "invalid-key-value-newline"
-          });
-          if (isDot(targetToken)) {
-            targetToken = ctx.nextToken({
-              needSameLine: "invalid-key-value-newline"
-            });
-          } else {
-            break;
-          }
-        }
-        applyEndLoc(keyNode, (0, internal_utils_1.last)(keyNode.keys));
-        return { keyNode, nextToken: targetToken };
-      }
-      processBareKey(token, keyNode) {
-        const node = {
-          type: "TOMLBare",
-          name: token.value,
-          parent: keyNode,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        keyNode.keys.push(node);
-      }
-      processStringKey(token, keyNode) {
-        const node = {
-          type: "TOMLQuoted",
-          kind: "string",
-          value: token.string,
-          style: STRING_KEY_STYLE_MAP[token.type],
-          multiline: false,
-          parent: keyNode,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        keyNode.keys.push(node);
-      }
-      processStringValue(token, ctx) {
-        const valueContainer = ctx.consumeValueContainer();
-        const node = {
-          type: "TOMLValue",
-          kind: "string",
-          value: token.string,
-          style: STRING_VALUE_STYLE_MAP[token.type],
-          multiline: isMultiLineString(token),
-          parent: valueContainer.parent,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        return valueContainer.set(node);
-      }
-      processNumberValue(token, ctx) {
-        const valueContainer = ctx.consumeValueContainer();
-        const text2 = this.text;
-        const [startRange, endRange] = token.range;
-        let numberString = null;
-        const getNumberText = () => {
-          return numberString !== null && numberString !== void 0 ? numberString : numberString = text2.slice(startRange, endRange).replace(/_/g, "");
-        };
-        let node;
-        if (token.type === "Integer") {
-          node = {
-            type: "TOMLValue",
-            kind: "integer",
-            value: token.number,
-            bigint: token.bigint,
-            get number() {
-              return getNumberText();
-            },
-            parent: valueContainer.parent,
-            range: cloneRange(token.range),
-            loc: cloneLoc(token.loc)
-          };
-        } else {
-          node = {
-            type: "TOMLValue",
-            kind: "float",
-            value: token.number,
-            get number() {
-              return getNumberText();
-            },
-            parent: valueContainer.parent,
-            range: cloneRange(token.range),
-            loc: cloneLoc(token.loc)
-          };
-        }
-        return valueContainer.set(node);
-      }
-      processBooleanValue(token, ctx) {
-        const valueContainer = ctx.consumeValueContainer();
-        const node = {
-          type: "TOMLValue",
-          kind: "boolean",
-          value: token.boolean,
-          parent: valueContainer.parent,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        return valueContainer.set(node);
-      }
-      processDateTimeValue(token, ctx) {
-        const valueContainer = ctx.consumeValueContainer();
-        const node = {
-          type: "TOMLValue",
-          kind: DATETIME_VALUE_KIND_MAP[token.type],
-          value: token.date,
-          datetime: token.value,
-          parent: valueContainer.parent,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        return valueContainer.set(node);
-      }
-      processArray(token, ctx) {
-        const valueContainer = ctx.consumeValueContainer();
-        const node = {
-          type: "TOMLArray",
-          elements: [],
-          parent: valueContainer.parent,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        const nextToken = ctx.nextToken({ valuesEnabled: true });
-        if (isRightBracket(nextToken)) {
-          applyEndLoc(node, nextToken);
-          return valueContainer.set(node);
-        }
-        ctx.backToken();
-        return this.processArrayValue(node, valueContainer, ctx);
-      }
-      processArrayValue(node, valueContainer, ctx) {
-        ctx.addValueContainer({
-          parent: node,
-          set: (valNode) => {
-            node.elements.push(valNode);
-            let nextToken = ctx.nextToken({ valuesEnabled: true });
-            const hasComma = isComma(nextToken);
-            if (hasComma) {
-              nextToken = ctx.nextToken({ valuesEnabled: true });
-            }
-            if (isRightBracket(nextToken)) {
-              applyEndLoc(node, nextToken);
-              return valueContainer.set(node);
-            }
-            if (hasComma) {
-              ctx.backToken();
-              return this.processArrayValue(node, valueContainer, ctx);
-            }
-            return ctx.reportParseError(nextToken ? "missing-comma" : "unterminated-array", nextToken);
-          }
-        });
-        return ["VALUE"];
-      }
-      processInlineTable(token, ctx) {
-        const valueContainer = ctx.consumeValueContainer();
-        const node = {
-          type: "TOMLInlineTable",
-          body: [],
-          parent: valueContainer.parent,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        const needSameLine = this.tomlVersion.gte(1, 1) ? (
-          // Line breaks in inline tables are allowed.
-          // Added in TOML 1.1
-          void 0
-        ) : "invalid-inline-table-newline";
-        const nextToken = ctx.nextToken({
-          needSameLine
-        });
-        if (nextToken) {
-          if (isBare(nextToken) || isString2(nextToken)) {
-            return this.processInlineTableKeyValue(nextToken, node, valueContainer, ctx);
-          }
-          if (isRightBrace(nextToken)) {
-            applyEndLoc(node, nextToken);
-            return valueContainer.set(node);
-          }
-        }
-        return ctx.reportParseError("unexpected-token", nextToken);
-      }
-      processInlineTableKeyValue(token, inlineTableNode, valueContainer, ctx) {
-        const keyValueNode = {
-          type: "TOMLKeyValue",
-          key: null,
-          value: null,
-          parent: inlineTableNode,
-          range: cloneRange(token.range),
-          loc: cloneLoc(token.loc)
-        };
-        inlineTableNode.body.push(keyValueNode);
-        const { nextToken: targetToken } = this.processKeyNode(token, keyValueNode, ctx);
-        if (!isEq(targetToken)) {
-          return ctx.reportParseError("missing-equals-sign", targetToken);
-        }
-        const needSameLine = this.tomlVersion.gte(1, 1) ? (
-          // Line breaks in inline tables are allowed.
-          // Added in TOML 1.1
-          void 0
-        ) : "invalid-inline-table-newline";
-        ctx.addValueContainer({
-          parent: keyValueNode,
-          set: (valNode) => {
-            keyValueNode.value = valNode;
-            applyEndLoc(keyValueNode, valNode);
-            let nextToken = ctx.nextToken({ needSameLine });
-            if (isComma(nextToken)) {
-              nextToken = ctx.nextToken({ needSameLine });
-              if (nextToken && (isBare(nextToken) || isString2(nextToken))) {
-                return this.processInlineTableKeyValue(nextToken, inlineTableNode, valueContainer, ctx);
-              }
-              if (isRightBrace(nextToken)) {
-                if (this.tomlVersion.lt(1, 1)) {
-                  return ctx.reportParseError("invalid-trailing-comma-in-inline-table", nextToken);
-                }
-              } else {
-                return ctx.reportParseError(nextToken ? "unexpected-token" : "unterminated-inline-table", nextToken);
-              }
-            }
-            if (isRightBrace(nextToken)) {
-              applyEndLoc(inlineTableNode, nextToken);
-              return valueContainer.set(inlineTableNode);
-            }
-            return ctx.reportParseError(nextToken ? "missing-comma" : "unterminated-inline-table", nextToken);
-          }
-        });
-        ctx.needSameLine = "invalid-key-value-newline";
-        return ["VALUE"];
-      }
-    };
-    exports2.TOMLParser = TOMLParser;
-    function isDot(token) {
-      return isPunctuator(token) && token.value === ".";
-    }
-    function isEq(token) {
-      return isPunctuator(token) && token.value === "=";
-    }
-    function isLeftBracket(token) {
-      return isPunctuator(token) && token.value === "[";
-    }
-    function isRightBracket(token) {
-      return isPunctuator(token) && token.value === "]";
-    }
-    function isLeftBrace(token) {
-      return isPunctuator(token) && token.value === "{";
-    }
-    function isRightBrace(token) {
-      return isPunctuator(token) && token.value === "}";
-    }
-    function isComma(token) {
-      return isPunctuator(token) && token.value === ",";
-    }
-    function isPunctuator(token) {
-      return Boolean(token && token.type === "Punctuator");
-    }
-    function isBare(token) {
-      return token.type === "Bare";
-    }
-    function isString2(token) {
-      return token.type === "BasicString" || token.type === "LiteralString";
-    }
-    function isMultiLineString(token) {
-      return token.type === "MultiLineBasicString" || token.type === "MultiLineLiteralString";
-    }
-    function isNumber2(token) {
-      return token.type === "Integer" || token.type === "Float";
-    }
-    function isBoolean(token) {
-      return token.type === "Boolean";
-    }
-    function isDateTime(token) {
-      return token.type === "OffsetDateTime" || token.type === "LocalDateTime" || token.type === "LocalDate" || token.type === "LocalTime";
-    }
-    function applyEndLoc(node, child2) {
-      if (child2) {
-        node.range[1] = child2.range[1];
-        node.loc.end = clonePos(child2.loc.end);
-      }
-    }
-    function cloneRange(range) {
-      return [range[0], range[1]];
-    }
-    function cloneLoc(loc) {
-      return {
-        start: clonePos(loc.start),
-        end: clonePos(loc.end)
-      };
-    }
-    function clonePos(pos) {
-      return {
-        line: pos.line,
-        column: pos.column
-      };
-    }
-  }
-});
-
-// node_modules/.pnpm/eslint-visitor-keys@3.4.3/node_modules/eslint-visitor-keys/dist/eslint-visitor-keys.cjs
-var require_eslint_visitor_keys = __commonJS({
-  "node_modules/.pnpm/eslint-visitor-keys@3.4.3/node_modules/eslint-visitor-keys/dist/eslint-visitor-keys.cjs"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    var KEYS = {
-      ArrayExpression: [
-        "elements"
-      ],
-      ArrayPattern: [
-        "elements"
-      ],
-      ArrowFunctionExpression: [
-        "params",
-        "body"
-      ],
-      AssignmentExpression: [
-        "left",
-        "right"
-      ],
-      AssignmentPattern: [
-        "left",
-        "right"
-      ],
-      AwaitExpression: [
-        "argument"
-      ],
-      BinaryExpression: [
-        "left",
-        "right"
-      ],
-      BlockStatement: [
-        "body"
-      ],
-      BreakStatement: [
-        "label"
-      ],
-      CallExpression: [
-        "callee",
-        "arguments"
-      ],
-      CatchClause: [
-        "param",
-        "body"
-      ],
-      ChainExpression: [
-        "expression"
-      ],
-      ClassBody: [
-        "body"
-      ],
-      ClassDeclaration: [
-        "id",
-        "superClass",
-        "body"
-      ],
-      ClassExpression: [
-        "id",
-        "superClass",
-        "body"
-      ],
-      ConditionalExpression: [
-        "test",
-        "consequent",
-        "alternate"
-      ],
-      ContinueStatement: [
-        "label"
-      ],
-      DebuggerStatement: [],
-      DoWhileStatement: [
-        "body",
-        "test"
-      ],
-      EmptyStatement: [],
-      ExperimentalRestProperty: [
-        "argument"
-      ],
-      ExperimentalSpreadProperty: [
-        "argument"
-      ],
-      ExportAllDeclaration: [
-        "exported",
-        "source"
-      ],
-      ExportDefaultDeclaration: [
-        "declaration"
-      ],
-      ExportNamedDeclaration: [
-        "declaration",
-        "specifiers",
-        "source"
-      ],
-      ExportSpecifier: [
-        "exported",
-        "local"
-      ],
-      ExpressionStatement: [
-        "expression"
-      ],
-      ForInStatement: [
-        "left",
-        "right",
-        "body"
-      ],
-      ForOfStatement: [
-        "left",
-        "right",
-        "body"
-      ],
-      ForStatement: [
-        "init",
-        "test",
-        "update",
-        "body"
-      ],
-      FunctionDeclaration: [
-        "id",
-        "params",
-        "body"
-      ],
-      FunctionExpression: [
-        "id",
-        "params",
-        "body"
-      ],
-      Identifier: [],
-      IfStatement: [
-        "test",
-        "consequent",
-        "alternate"
-      ],
-      ImportDeclaration: [
-        "specifiers",
-        "source"
-      ],
-      ImportDefaultSpecifier: [
-        "local"
-      ],
-      ImportExpression: [
-        "source"
-      ],
-      ImportNamespaceSpecifier: [
-        "local"
-      ],
-      ImportSpecifier: [
-        "imported",
-        "local"
-      ],
-      JSXAttribute: [
-        "name",
-        "value"
-      ],
-      JSXClosingElement: [
-        "name"
-      ],
-      JSXClosingFragment: [],
-      JSXElement: [
-        "openingElement",
-        "children",
-        "closingElement"
-      ],
-      JSXEmptyExpression: [],
-      JSXExpressionContainer: [
-        "expression"
-      ],
-      JSXFragment: [
-        "openingFragment",
-        "children",
-        "closingFragment"
-      ],
-      JSXIdentifier: [],
-      JSXMemberExpression: [
-        "object",
-        "property"
-      ],
-      JSXNamespacedName: [
-        "namespace",
-        "name"
-      ],
-      JSXOpeningElement: [
-        "name",
-        "attributes"
-      ],
-      JSXOpeningFragment: [],
-      JSXSpreadAttribute: [
-        "argument"
-      ],
-      JSXSpreadChild: [
-        "expression"
-      ],
-      JSXText: [],
-      LabeledStatement: [
-        "label",
-        "body"
-      ],
-      Literal: [],
-      LogicalExpression: [
-        "left",
-        "right"
-      ],
-      MemberExpression: [
-        "object",
-        "property"
-      ],
-      MetaProperty: [
-        "meta",
-        "property"
-      ],
-      MethodDefinition: [
-        "key",
-        "value"
-      ],
-      NewExpression: [
-        "callee",
-        "arguments"
-      ],
-      ObjectExpression: [
-        "properties"
-      ],
-      ObjectPattern: [
-        "properties"
-      ],
-      PrivateIdentifier: [],
-      Program: [
-        "body"
-      ],
-      Property: [
-        "key",
-        "value"
-      ],
-      PropertyDefinition: [
-        "key",
-        "value"
-      ],
-      RestElement: [
-        "argument"
-      ],
-      ReturnStatement: [
-        "argument"
-      ],
-      SequenceExpression: [
-        "expressions"
-      ],
-      SpreadElement: [
-        "argument"
-      ],
-      StaticBlock: [
-        "body"
-      ],
-      Super: [],
-      SwitchCase: [
-        "test",
-        "consequent"
-      ],
-      SwitchStatement: [
-        "discriminant",
-        "cases"
-      ],
-      TaggedTemplateExpression: [
-        "tag",
-        "quasi"
-      ],
-      TemplateElement: [],
-      TemplateLiteral: [
-        "quasis",
-        "expressions"
-      ],
-      ThisExpression: [],
-      ThrowStatement: [
-        "argument"
-      ],
-      TryStatement: [
-        "block",
-        "handler",
-        "finalizer"
-      ],
-      UnaryExpression: [
-        "argument"
-      ],
-      UpdateExpression: [
-        "argument"
-      ],
-      VariableDeclaration: [
-        "declarations"
-      ],
-      VariableDeclarator: [
-        "id",
-        "init"
-      ],
-      WhileStatement: [
-        "test",
-        "body"
-      ],
-      WithStatement: [
-        "object",
-        "body"
-      ],
-      YieldExpression: [
-        "argument"
-      ]
-    };
-    var NODE_TYPES = Object.keys(KEYS);
-    for (const type of NODE_TYPES) {
-      Object.freeze(KEYS[type]);
-    }
-    Object.freeze(KEYS);
-    var KEY_BLACKLIST = /* @__PURE__ */ new Set([
-      "parent",
-      "leadingComments",
-      "trailingComments"
-    ]);
-    function filterKey(key) {
-      return !KEY_BLACKLIST.has(key) && key[0] !== "_";
-    }
-    function getKeys(node) {
-      return Object.keys(node).filter(filterKey);
-    }
-    function unionWith(additionalKeys) {
-      const retv = (
-        /** @type {{
-            [type: string]: ReadonlyArray<string>
-        }} */
-        Object.assign({}, KEYS)
-      );
-      for (const type of Object.keys(additionalKeys)) {
-        if (Object.prototype.hasOwnProperty.call(retv, type)) {
-          const keys = new Set(additionalKeys[type]);
-          for (const key of retv[type]) {
-            keys.add(key);
-          }
-          retv[type] = Object.freeze(Array.from(keys));
-        } else {
-          retv[type] = Object.freeze(Array.from(additionalKeys[type]));
-        }
-      }
-      return Object.freeze(retv);
-    }
-    exports2.KEYS = KEYS;
-    exports2.getKeys = getKeys;
-    exports2.unionWith = unionWith;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/visitor-keys.js
-var require_visitor_keys = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/visitor-keys.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.KEYS = void 0;
-    var eslint_visitor_keys_1 = require_eslint_visitor_keys();
-    var tomlKeys = {
-      Program: ["body"],
-      TOMLTopLevelTable: ["body"],
-      TOMLTable: ["key", "body"],
-      TOMLKeyValue: ["key", "value"],
-      TOMLKey: ["keys"],
-      TOMLArray: ["elements"],
-      TOMLInlineTable: ["body"],
-      TOMLBare: [],
-      TOMLQuoted: [],
-      TOMLValue: []
-    };
-    exports2.KEYS = (0, eslint_visitor_keys_1.unionWith)(tomlKeys);
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/parser.js
-var require_parser = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/parser.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.parseForESLint = void 0;
-    var toml_parser_1 = require_toml_parser();
-    var visitor_keys_1 = require_visitor_keys();
-    function parseForESLint(code, options) {
-      const parser = new toml_parser_1.TOMLParser(code, options);
-      const ast = parser.parse();
-      return {
-        ast,
-        visitorKeys: visitor_keys_1.KEYS,
-        services: {
-          isTOML: true
-        }
-      };
-    }
-    exports2.parseForESLint = parseForESLint;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/traverse.js
-var require_traverse = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/traverse.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.traverseNodes = exports2.getNodes = exports2.getKeys = exports2.getFallbackKeys = void 0;
-    var visitor_keys_1 = require_visitor_keys();
-    function fallbackKeysFilter(key) {
-      let value = null;
-      return key !== "comments" && key !== "leadingComments" && key !== "loc" && key !== "parent" && key !== "range" && key !== "tokens" && key !== "trailingComments" && (value = this[key]) !== null && typeof value === "object" && (typeof value.type === "string" || Array.isArray(value));
-    }
-    function getFallbackKeys(node) {
-      return Object.keys(node).filter(fallbackKeysFilter, node);
-    }
-    exports2.getFallbackKeys = getFallbackKeys;
-    function getKeys(node, visitorKeys) {
-      const keys = (visitorKeys || visitor_keys_1.KEYS)[node.type] || getFallbackKeys(node);
-      return keys.filter((key) => !getNodes(node, key).next().done);
-    }
-    exports2.getKeys = getKeys;
-    function* getNodes(node, key) {
-      const child2 = node[key];
-      if (Array.isArray(child2)) {
-        for (const c of child2) {
-          if (isNode2(c)) {
-            yield c;
-          }
-        }
-      } else if (isNode2(child2)) {
-        yield child2;
-      }
-    }
-    exports2.getNodes = getNodes;
-    function isNode2(x) {
-      return x !== null && typeof x === "object" && typeof x.type === "string";
-    }
-    function traverse(node, parent, visitor) {
-      visitor.enterNode(node, parent);
-      const keys = getKeys(node, visitor.visitorKeys);
-      for (const key of keys) {
-        for (const child2 of getNodes(node, key)) {
-          traverse(child2, node, visitor);
-        }
-      }
-      visitor.leaveNode(node, parent);
-    }
-    function traverseNodes(node, visitor) {
-      traverse(node, null, visitor);
-    }
-    exports2.traverseNodes = traverseNodes;
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/utils.js
-var require_utils = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/utils.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.generateConvertTOMLValue = exports2.getStaticTOMLValue = void 0;
-    var internal_utils_1 = require_internal_utils();
-    exports2.getStaticTOMLValue = generateConvertTOMLValue((node) => node.value);
-    function generateConvertTOMLValue(convertValue) {
-      function resolveValue(node, baseTable) {
-        return resolver[node.type](node, baseTable);
-      }
-      const resolver = {
-        Program(node, baseTable = {}) {
-          return resolveValue(node.body[0], baseTable);
-        },
-        TOMLTopLevelTable(node, baseTable = {}) {
-          for (const body of node.body) {
-            resolveValue(body, baseTable);
-          }
-          return baseTable;
-        },
-        TOMLKeyValue(node, baseTable = {}) {
-          const value = resolveValue(node.value);
-          set(baseTable, resolveValue(node.key), value);
-          return baseTable;
-        },
-        TOMLTable(node, baseTable = {}) {
-          const table = getTable(baseTable, resolveValue(node.key), node.kind === "array");
-          for (const body of node.body) {
-            resolveValue(body, table);
-          }
-          return baseTable;
-        },
-        TOMLArray(node) {
-          return node.elements.map((e) => resolveValue(e));
-        },
-        TOMLInlineTable(node) {
-          const table = {};
-          for (const body of node.body) {
-            resolveValue(body, table);
-          }
-          return table;
-        },
-        TOMLKey(node) {
-          return node.keys.map((key) => resolveValue(key));
-        },
-        TOMLBare(node) {
-          return node.name;
-        },
-        TOMLQuoted(node) {
-          return node.value;
-        },
-        TOMLValue(node) {
-          return convertValue(node);
-        }
-      };
-      return (node) => resolveValue(node);
-    }
-    exports2.generateConvertTOMLValue = generateConvertTOMLValue;
-    function getTable(baseTable, keys, array) {
-      let target = baseTable;
-      for (let index = 0; index < keys.length - 1; index++) {
-        const key = keys[index];
-        target = getNextTargetFromKey(target, key);
-      }
-      const lastKey = (0, internal_utils_1.last)(keys);
-      const lastTarget = target[lastKey];
-      if (lastTarget == null) {
-        const tableValue3 = {};
-        target[lastKey] = array ? [tableValue3] : tableValue3;
-        return tableValue3;
-      }
-      if (isValue(lastTarget)) {
-        const tableValue3 = {};
-        target[lastKey] = array ? [tableValue3] : tableValue3;
-        return tableValue3;
-      }
-      if (!array) {
-        if (Array.isArray(lastTarget)) {
-          const tableValue3 = {};
-          target[lastKey] = tableValue3;
-          return tableValue3;
-        }
-        return lastTarget;
-      }
-      if (Array.isArray(lastTarget)) {
-        const tableValue3 = {};
-        lastTarget.push(tableValue3);
-        return tableValue3;
-      }
-      const tableValue2 = {};
-      target[lastKey] = [tableValue2];
-      return tableValue2;
-      function getNextTargetFromKey(currTarget, key) {
-        const nextTarget = currTarget[key];
-        if (nextTarget == null) {
-          const val = {};
-          currTarget[key] = val;
-          return val;
-        }
-        if (isValue(nextTarget)) {
-          const val = {};
-          currTarget[key] = val;
-          return val;
-        }
-        let resultTarget = nextTarget;
-        while (Array.isArray(resultTarget)) {
-          const lastIndex = resultTarget.length - 1;
-          const nextElement = resultTarget[lastIndex];
-          if (isValue(nextElement)) {
-            const val = {};
-            resultTarget[lastIndex] = val;
-            return val;
-          }
-          resultTarget = nextElement;
-        }
-        return resultTarget;
-      }
-    }
-    function set(baseTable, keys, value) {
-      let target = baseTable;
-      for (let index = 0; index < keys.length - 1; index++) {
-        const key = keys[index];
-        const nextTarget = target[key];
-        if (nextTarget == null) {
-          const val = {};
-          target[key] = val;
-          target = val;
-        } else {
-          if (isValue(nextTarget) || Array.isArray(nextTarget)) {
-            const val = {};
-            target[key] = val;
-            target = val;
-          } else {
-            target = nextTarget;
-          }
-        }
-      }
-      target[(0, internal_utils_1.last)(keys)] = value;
-    }
-    function isValue(value) {
-      return typeof value !== "object" || value instanceof Date;
-    }
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/meta.js
-var require_meta = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/meta.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.version = exports2.name = void 0;
-    exports2.name = "toml-eslint-parser";
-    exports2.version = "0.10.0";
-  }
-});
-
-// node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/index.js
-var require_lib = __commonJS({
-  "node_modules/.pnpm/toml-eslint-parser@0.10.0/node_modules/toml-eslint-parser/lib/index.js"(exports2) {
-    "use strict";
-    var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      var desc = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-        desc = { enumerable: true, get: function() {
-          return m[k];
-        } };
-      }
-      Object.defineProperty(o, k2, desc);
-    }) : (function(o, m, k, k2) {
-      if (k2 === void 0) k2 = k;
-      o[k2] = m[k];
-    }));
-    var __setModuleDefault = exports2 && exports2.__setModuleDefault || (Object.create ? (function(o, v) {
-      Object.defineProperty(o, "default", { enumerable: true, value: v });
-    }) : function(o, v) {
-      o["default"] = v;
-    });
-    var __importStar = exports2 && exports2.__importStar || function(mod) {
-      if (mod && mod.__esModule) return mod;
-      var result = {};
-      if (mod != null) {
-        for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-      }
-      __setModuleDefault(result, mod);
-      return result;
-    };
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.parseTOML = exports2.getStaticTOMLValue = exports2.traverseNodes = exports2.VisitorKeys = exports2.parseForESLint = exports2.ParseError = exports2.name = exports2.meta = void 0;
-    var parser_1 = require_parser();
-    Object.defineProperty(exports2, "parseForESLint", { enumerable: true, get: function() {
-      return parser_1.parseForESLint;
-    } });
-    var traverse_1 = require_traverse();
-    Object.defineProperty(exports2, "traverseNodes", { enumerable: true, get: function() {
-      return traverse_1.traverseNodes;
-    } });
-    var utils_1 = require_utils();
-    Object.defineProperty(exports2, "getStaticTOMLValue", { enumerable: true, get: function() {
-      return utils_1.getStaticTOMLValue;
-    } });
-    var visitor_keys_1 = require_visitor_keys();
-    var errors_1 = require_errors();
-    Object.defineProperty(exports2, "ParseError", { enumerable: true, get: function() {
-      return errors_1.ParseError;
-    } });
-    exports2.meta = __importStar(require_meta());
-    var meta_1 = require_meta();
-    Object.defineProperty(exports2, "name", { enumerable: true, get: function() {
-      return meta_1.name;
-    } });
-    exports2.VisitorKeys = visitor_keys_1.KEYS;
-    function parseTOML2(code, options) {
-      return (0, parser_1.parseForESLint)(code, options).ast;
-    }
-    exports2.parseTOML = parseTOML2;
-  }
-});
-
 // src/version.ts
 var kurmisVersion = true ? "0.1.0" : "dev";
 
@@ -2954,8 +31,8 @@ var import_node_util = require("node:util");
 var EXIT_OK = 0;
 var EXIT_FAILURE = 1;
 var EXIT_USAGE = 2;
-function writeLine(output, text2 = "") {
-  output.write(`${text2}
+function writeLine(output, text = "") {
+  output.write(`${text}
 `);
 }
 function usageError(command, message, context) {
@@ -2976,8 +53,8 @@ function parseCommandArgs(command, args, options, context, allowPositionals = fa
 }
 
 // src/cli/commands/claude.ts
-var import_node_fs12 = require("node:fs");
-var import_node_os8 = require("node:os");
+var import_node_fs11 = require("node:fs");
+var import_node_os7 = require("node:os");
 
 // src/core/claude-usage.ts
 var FIVE_HOUR_MINS = 5 * 60;
@@ -3040,7 +117,6 @@ function isoFromSeconds(value) {
 function emptyAccountUsage(accountId, now) {
   return {
     accountId,
-    provider: "claude",
     fetchedAt: now,
     source: "probe",
     subscriptionType: null,
@@ -3204,8 +280,8 @@ function asNumber(value) {
 // src/core/countdown.ts
 function parseTime(value) {
   if (value === null || value === void 0) return null;
-  const at2 = value instanceof Date ? value.getTime() : typeof value === "number" ? value : Date.parse(value);
-  return Number.isFinite(at2) ? at2 : null;
+  const at = value instanceof Date ? value.getTime() : typeof value === "number" ? value : Date.parse(value);
+  return Number.isFinite(at) ? at : null;
 }
 function spanText(milliseconds) {
   const totalMinutes = Number.isFinite(milliseconds) ? Math.max(0, Math.floor(milliseconds / 6e4)) : 0;
@@ -3217,204 +293,15 @@ function spanText(milliseconds) {
   if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
   return `${minutes}m`;
 }
-var COUNTDOWN_NOW = "now";
-function resetIn(resetsAt, now) {
-  const at2 = parseTime(resetsAt);
-  if (at2 === null) return null;
-  const left = at2 - now;
-  return left < 6e4 ? COUNTDOWN_NOW : spanText(left);
-}
 function resetsInText(resetsAt, now = Date.now()) {
-  const at2 = parseTime(resetsAt);
-  if (at2 === null || at2 <= now) return null;
-  return `resets in ${spanText(at2 - now)}`;
-}
-function countdownIn(value, now = Date.now()) {
-  const until = resetIn(value, now);
-  if (until === null) return null;
-  return until === COUNTDOWN_NOW ? COUNTDOWN_NOW : `in ${until}`;
-}
-
-// src/core/codex-usage.ts
-var CODEX_GENERAL_LIMIT_ID = "codex";
-function codexWindowKey(limitId, half) {
-  return `${limitId}:${half}`;
-}
-function codexWindowLimitId(key) {
-  const cut = key.lastIndexOf(":");
-  return cut <= 0 ? key : key.slice(0, cut);
-}
-function emptyCodexUsage(accountId, now) {
-  return {
-    accountId,
-    provider: "codex",
-    fetchedAt: now,
-    source: "probe",
-    subscriptionType: null,
-    rateLimitsAvailable: false,
-    fiveHour: null,
-    sevenDay: null,
-    sevenDayOverage: null,
-    sevenDayOpus: null,
-    sevenDaySonnet: null,
-    modelScoped: [],
-    windows: [],
-    creditBalance: null,
-    bankedResets: null,
-    extraUsage: null,
-    status: null,
-    limited: null,
-    error: null
-  };
-}
-function codexUsageFromResult(accountId, result, now) {
-  const read = parseCodexRateLimitsRead(result);
-  return read === null ? null : usageFromCodexRateLimits(accountId, read, now);
-}
-function usageFromCodexRateLimits(accountId, response, now) {
-  const main = response?.rateLimits ?? null;
-  const buckets = bucketList(response);
-  const windows = sortCodexUsageWindows(buckets.flatMap((bucket) => windowsOfBucket(bucket)));
-  return {
-    ...emptyCodexUsage(accountId, now),
-    subscriptionType: main?.planType ?? buckets[0]?.planType ?? null,
-    rateLimitsAvailable: windows.length > 0,
-    windows,
-    creditBalance: main?.credits?.balance ?? null,
-    bankedResets: bankedResetsOf(response?.rateLimitResetCredits),
-    status: statusOf(buckets)
-  };
-}
-function bankedResetsOf(summary) {
-  if (summary === null || summary === void 0) return null;
-  const available = (summary.credits ?? []).filter((credit) => credit.status === "available");
-  const expiresAt = available.map((credit) => isoFromSeconds(credit.expiresAt)).sort((a, b) => (a === null ? 1 : 0) - (b === null ? 1 : 0) || (a ?? "").localeCompare(b ?? ""));
-  const reported = Number(summary.availableCount);
-  const count = Math.max(Number.isFinite(reported) && reported > 0 ? Math.floor(reported) : 0, available.length);
-  return { count, expiresAt };
-}
-function codexWindowLabel(windowDurationMins) {
-  if (typeof windowDurationMins !== "number" || !Number.isFinite(windowDurationMins)) return "window";
-  if (windowDurationMins < 60) return `${Math.round(windowDurationMins)}m`;
-  const hours = windowDurationMins / 60;
-  if (hours < 24) return `${String(roundTenth(hours))}h`;
-  return `${String(roundTenth(hours / 24))}d`;
-}
-function sortCodexUsageWindows(windows) {
-  return [...windows].sort(
-    (a, b) => (a.windowDurationMins ?? Number.MAX_SAFE_INTEGER) - (b.windowDurationMins ?? Number.MAX_SAFE_INTEGER) || Number(a.key.endsWith("secondary")) - Number(b.key.endsWith("secondary")) || a.key.localeCompare(b.key)
-  );
-}
-function bucketList(response) {
-  const byId = response?.rateLimitsByLimitId;
-  if (byId !== null && byId !== void 0) {
-    const rows = Object.values(byId).filter(isSnapshot);
-    if (rows.length > 0) return rows;
-  }
-  const single = response?.rateLimits;
-  return single === null || single === void 0 ? [] : [single];
-}
-function codexLimitName(bucket) {
-  const named = bucket.limitName;
-  if (typeof named === "string" && named.length > 0) return named;
-  const limitId = bucket.limitId ?? CODEX_GENERAL_LIMIT_ID;
-  return limitId === CODEX_GENERAL_LIMIT_ID ? "Codex" : limitId;
-}
-function windowsOfBucket(bucket) {
-  const limitId = bucket.limitId ?? CODEX_GENERAL_LIMIT_ID;
-  const group = codexLimitName(bucket);
-  const out = [];
-  for (const [name, window] of [
-    ["primary", bucket.primary],
-    ["secondary", bucket.secondary]
-  ]) {
-    if (window === null || window === void 0) continue;
-    out.push({
-      key: codexWindowKey(limitId, name),
-      label: `${group} ${codexWindowLabel(window.windowDurationMins)}`,
-      group,
-      windowDurationMins: window.windowDurationMins,
-      utilization: window.usedPercent,
-      resetsAt: isoFromSeconds(window.resetsAt)
-    });
-  }
-  return out;
-}
-function statusOf(buckets) {
-  if (buckets.some((bucket) => bucket.spendControlReached === true)) return "rejected";
-  const general = buckets.filter((bucket) => (bucket.limitId ?? CODEX_GENERAL_LIMIT_ID) === CODEX_GENERAL_LIMIT_ID);
-  const plan = general.length > 0 ? general : buckets;
-  return plan.some((bucket) => typeof bucket.rateLimitReachedType === "string") ? "rejected" : null;
-}
-function isSnapshot(value) {
-  return typeof value === "object" && value !== null;
-}
-function isObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function stringOrNull(value) {
-  return typeof value === "string" ? value : null;
-}
-function finiteOrNull(value) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-function parseWindow(value) {
-  if (!isObject(value)) return null;
-  const usedPercent = finiteOrNull(value["usedPercent"]);
-  if (usedPercent === null) return null;
-  return {
-    usedPercent,
-    windowDurationMins: finiteOrNull(value["windowDurationMins"]),
-    resetsAt: finiteOrNull(value["resetsAt"])
-  };
-}
-function parseSnapshot(value) {
-  if (!isObject(value)) return null;
-  const credits = value["credits"];
-  return {
-    limitId: stringOrNull(value["limitId"]),
-    limitName: stringOrNull(value["limitName"]),
-    primary: parseWindow(value["primary"]),
-    secondary: parseWindow(value["secondary"]),
-    credits: isObject(credits) ? { balance: stringOrNull(credits["balance"]) } : null,
-    spendControlReached: typeof value["spendControlReached"] === "boolean" ? value["spendControlReached"] : null,
-    planType: stringOrNull(value["planType"]),
-    rateLimitReachedType: stringOrNull(value["rateLimitReachedType"])
-  };
-}
-function parseResetCredits(value) {
-  if (!isObject(value)) return null;
-  const list = value["credits"];
-  const credits = Array.isArray(list) ? list.flatMap((credit) => isObject(credit) && typeof credit["status"] === "string" ? [{ status: credit["status"], expiresAt: finiteOrNull(credit["expiresAt"]) }] : []) : null;
-  return { availableCount: finiteOrNull(value["availableCount"]) ?? 0, credits };
-}
-function parseCodexRateLimitsRead(result) {
-  if (!isObject(result)) return null;
-  const byId = result["rateLimitsByLimitId"];
-  let rateLimitsByLimitId = null;
-  if (isObject(byId)) {
-    rateLimitsByLimitId = /* @__PURE__ */ Object.create(null);
-    for (const [limitId, bucket] of Object.entries(byId)) {
-      const parsed = parseSnapshot(bucket);
-      if (parsed !== null) rateLimitsByLimitId[limitId] = parsed;
-    }
-  }
-  return {
-    rateLimits: parseSnapshot(result["rateLimits"]),
-    rateLimitsByLimitId,
-    rateLimitResetCredits: parseResetCredits(result["rateLimitResetCredits"])
-  };
+  const at = parseTime(resetsAt);
+  if (at === null || at <= now) return null;
+  return `resets in ${spanText(at - now)}`;
 }
 
 // src/core/usage-rules.ts
-var CODEX_HIDDEN_LIMIT_ID = "codex_bengalfox";
-function shownUsageWindows(provider, windows) {
-  if (provider !== "codex") return [...windows];
-  return windows.filter((window) => codexWindowLimitId(window.key) !== CODEX_HIDDEN_LIMIT_ID);
-}
 function allUsageWindows(usage) {
   if (!usage) return [];
-  if (usage.provider === "codex") return shownUsageWindows("codex", usage.windows ?? []);
   const out = [];
   for (const spec of CLAUDE_WINDOWS) {
     const window = spec.field === "sevenDayOverage" ? extraUsageWindow(usage) : usage[spec.field];
@@ -3456,11 +343,6 @@ function extraUsageWindow(usage) {
 }
 function planUsageWindows(usage) {
   if (!usage) return [];
-  if (usage.provider === "codex") {
-    const shown = shownUsageWindows("codex", usage.windows ?? []);
-    const general = shown.filter((window) => codexWindowLimitId(window.key) === CODEX_GENERAL_LIMIT_ID);
-    return general.length > 0 ? general : shown;
-  }
   const plan = new Set(CLAUDE_WINDOWS.filter((spec) => spec.plan).map((spec) => spec.key));
   return allUsageWindows(usage).filter((window) => plan.has(window.key));
 }
@@ -3472,8 +354,8 @@ function busiestPlanWindow(usage) {
   return busiest;
 }
 function windowHasReset(window, now) {
-  const at2 = parseTime(window?.resetsAt ?? null);
-  return at2 !== null && at2 <= now;
+  const at = parseTime(window?.resetsAt ?? null);
+  return at !== null && at <= now;
 }
 function usageResetPassed(usage, now) {
   if (!usage) return false;
@@ -3491,9 +373,6 @@ function usageAsOf(usage, now) {
     sevenDaySonnet: fieldAsOf(usage.sevenDaySonnet, now),
     modelScoped: usage.modelScoped.map((window) => emptyIfReset(window, now))
   };
-  if (usage.windows !== void 0) {
-    next.windows = usage.windows.map((window) => emptyIfReset(window, now));
-  }
   if (usage.limited !== null && windowHasReset(usage.limited, now)) {
     next.limited = null;
     next.status = null;
@@ -3513,7 +392,6 @@ function everyWindowOf(usage) {
     if (window !== null && window !== void 0) out.push(window);
   }
   for (const window of usage.modelScoped) out.push(window);
-  for (const window of usage.windows ?? []) out.push(window);
   return out;
 }
 function resetsAtFromUsage(usage) {
@@ -3547,10 +425,10 @@ function latest(times) {
   let best = null;
   let bestAt = -Infinity;
   for (const time of times) {
-    const at2 = Date.parse(time);
-    if (!Number.isFinite(at2) || at2 <= bestAt) continue;
+    const at = Date.parse(time);
+    if (!Number.isFinite(at) || at <= bestAt) continue;
     best = time;
-    bestAt = at2;
+    bestAt = at;
   }
   return best;
 }
@@ -3681,13 +559,13 @@ function effectivePin(session, accounts) {
   return session.homeAccountId;
 }
 function autoStartLogin(accounts, preferred) {
-  const own2 = accounts.find((account) => account.usedByPlainCli);
-  if (own2 === void 0) throw new Error("autoStartLogin: the list has no login that plain claude uses");
-  if (own2.loggedIn) return own2.id;
+  const own = accounts.find((account) => account.usedByPlainClaude);
+  if (own === void 0) throw new Error("autoStartLogin: the list has no login that plain claude uses");
+  if (own.loggedIn) return own.id;
   const pool = accounts.filter((account) => account.autoRoute);
   const signedIn = pool.filter((account) => account.loggedIn);
   const from = signedIn.length > 0 ? signedIn : pool;
-  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? own2.id;
+  return (from.find((account) => account.id === preferred) ?? from[0])?.id ?? own.id;
 }
 function rankAccounts(session, accounts, now, exclude) {
   return accounts.filter((account) => !exclude.has(account.id) && eligible(account, now)).sort((a, b) => {
@@ -3744,9 +622,9 @@ function headerText(value) {
   return value == null || value.trim() === "" ? null : value.trim();
 }
 function headerNumber(value) {
-  const text2 = headerText(value);
-  if (text2 === null) return null;
-  const number = Number(text2);
+  const text = headerText(value);
+  if (text === null) return null;
+  const number = Number(text);
   return Number.isFinite(number) ? number : null;
 }
 function secondsFromIso(value) {
@@ -3760,14 +638,13 @@ function windowName(value) {
 var import_node_crypto = require("node:crypto");
 
 // src/core/accounts.ts
-var ACCOUNT_PROVIDERS = ["claude", "codex"];
 var DEFAULT_FIVE_HOUR_LIMIT_PERCENT = 100;
 var DEFAULT_WEEKLY_LIMIT_PERCENT = 100;
 var DEFAULT_AUTO_ROUTE = true;
 var LOGIN_ID = /^[a-z0-9]{1,32}$/;
-var RESERVED_IDS = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|none|invalid|claude|codex)$/;
-function isLoginIdText(text2) {
-  return LOGIN_ID.test(text2) && !RESERVED_IDS.test(text2);
+var RESERVED_IDS = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|none|invalid)$/;
+function isLoginIdText(text) {
+  return LOGIN_ID.test(text) && !RESERVED_IDS.test(text);
 }
 
 // src/core/route-headers.ts
@@ -3792,11 +669,11 @@ function formatCustomHeaders(headers) {
   return headers.map((header) => `${header.name}: ${header.value}`).join("\n");
 }
 function withRouteHeaders(existing, key, login, startedOn = null) {
-  const own2 = parseCustomHeaders(existing).filter((header) => !KURMIS_HEADERS.includes(header.name.toLowerCase()));
+  const own = parseCustomHeaders(existing).filter((header) => !KURMIS_HEADERS.includes(header.name.toLowerCase()));
   const added = [{ name: KEY_HEADER, value: key }];
   if (login !== null) added.push({ name: LOGIN_HEADER, value: login });
   if (startedOn !== null) added.push({ name: STARTED_ON_HEADER, value: startedOn });
-  return formatCustomHeaders([...own2, ...added]);
+  return formatCustomHeaders([...own, ...added]);
 }
 function readRouteRequest(get, ownClaude) {
   const key = nonEmpty(get(KEY_HEADER));
@@ -3819,8 +696,8 @@ function routeKeyMatches(given, secret) {
   return a.length === b.length && (0, import_node_crypto.timingSafeEqual)(a, b);
 }
 function nonEmpty(value) {
-  const text2 = value?.trim() ?? "";
-  return text2.length === 0 ? null : text2;
+  const text = value?.trim() ?? "";
+  return text.length === 0 ? null : text;
 }
 
 // src/core/routed-env.ts
@@ -3859,11 +736,11 @@ function routedClaudeEnv(input) {
   return { set, unset };
 }
 function applyRoutedEnv(env, routed, windows = false) {
-  const same2 = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
+  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
   const replaced = [...routed.unset, ...Object.keys(routed.set)];
   const out = {};
   for (const [name, value] of Object.entries(env)) {
-    if (value === void 0 || replaced.some((other) => same2(name, other))) continue;
+    if (value === void 0 || replaced.some((other) => same(name, other))) continue;
     out[name] = value;
   }
   return { ...out, ...routed.set };
@@ -3942,19 +819,19 @@ function rewriteUserId(userId, accountUuid) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return userId;
   if (value["account_uuid"] === accountUuid) return userId;
   const bytes = Buffer.from(userId, "utf8");
-  const open4 = skipWhitespace(bytes, 0);
-  const found = memberValue(bytes, open4, "account_uuid");
+  const open3 = skipWhitespace(bytes, 0);
+  const found = memberValue(bytes, open3, "account_uuid");
   const uuid = Buffer.from(JSON.stringify(accountUuid), "utf8");
   if (found.span !== null) return splice(bytes, found.span.start, found.span.end, uuid).toString("utf8");
-  const close = skipValue(bytes, open4) - 1;
+  const close = skipValue(bytes, open3) - 1;
   const member = Buffer.concat([Buffer.from(`${found.members > 0 ? "," : ""}"account_uuid":`, "utf8"), uuid]);
   return splice(bytes, close, close, member).toString("utf8");
 }
 function outgoingBody(body, accountUuid) {
   if (accountUuid === null) return body;
-  const open4 = skipWhitespace(body, 0);
-  if (body[open4] !== BRACE_OPEN) return body;
-  const metadata = memberValue(body, open4, "metadata").span;
+  const open3 = skipWhitespace(body, 0);
+  if (body[open3] !== BRACE_OPEN) return body;
+  const metadata = memberValue(body, open3, "metadata").span;
   if (metadata === null || body[metadata.start] !== BRACE_OPEN) return body;
   const userId = memberValue(body, metadata.start, "user_id").span;
   if (userId === null || body[userId.start] !== QUOTE) return body;
@@ -3975,65 +852,65 @@ function isWhitespace(byte) {
   return byte === 32 || byte === 9 || byte === 10 || byte === 13;
 }
 function skipWhitespace(bytes, index) {
-  let at2 = index;
-  while (at2 < bytes.length && isWhitespace(bytes[at2])) at2++;
-  return at2;
+  let at = index;
+  while (at < bytes.length && isWhitespace(bytes[at])) at++;
+  return at;
 }
 function skipString(bytes, index) {
-  let at2 = index + 1;
-  while (at2 < bytes.length) {
-    const byte = bytes[at2];
-    if (byte === BACKSLASH) at2 += 2;
-    else if (byte === QUOTE) return at2 + 1;
-    else at2++;
+  let at = index + 1;
+  while (at < bytes.length) {
+    const byte = bytes[at];
+    if (byte === BACKSLASH) at += 2;
+    else if (byte === QUOTE) return at + 1;
+    else at++;
   }
-  return at2;
+  return at;
 }
 function skipValue(bytes, index) {
   const first = bytes[index];
   if (first === QUOTE) return skipString(bytes, index);
   if (first === BRACE_OPEN || first === BRACKET_OPEN) {
     let depth = 0;
-    let at3 = index;
-    while (at3 < bytes.length) {
-      const byte = bytes[at3];
+    let at2 = index;
+    while (at2 < bytes.length) {
+      const byte = bytes[at2];
       if (byte === QUOTE) {
-        at3 = skipString(bytes, at3);
+        at2 = skipString(bytes, at2);
         continue;
       }
       if (byte === BRACE_OPEN || byte === BRACKET_OPEN) depth++;
       else if (byte === BRACE_CLOSE || byte === BRACKET_CLOSE) {
         depth--;
-        if (depth === 0) return at3 + 1;
+        if (depth === 0) return at2 + 1;
       }
-      at3++;
+      at2++;
     }
-    return at3;
+    return at2;
   }
-  let at2 = index;
-  while (at2 < bytes.length) {
-    const byte = bytes[at2];
+  let at = index;
+  while (at < bytes.length) {
+    const byte = bytes[at];
     if (byte === COMMA || byte === BRACE_CLOSE || byte === BRACKET_CLOSE || isWhitespace(byte)) break;
-    at2++;
+    at++;
   }
-  return at2;
+  return at;
 }
-function memberValue(bytes, open4, name) {
+function memberValue(bytes, open3, name) {
   let span = null;
   let members = 0;
-  let at2 = skipWhitespace(bytes, open4 + 1);
-  while (at2 < bytes.length && bytes[at2] === QUOTE) {
-    const keyEnd = skipString(bytes, at2);
-    const key = JSON.parse(bytes.subarray(at2, keyEnd).toString("utf8"));
-    at2 = skipWhitespace(bytes, keyEnd);
-    if (bytes[at2] !== COLON) break;
-    const start2 = skipWhitespace(bytes, at2 + 1);
+  let at = skipWhitespace(bytes, open3 + 1);
+  while (at < bytes.length && bytes[at] === QUOTE) {
+    const keyEnd = skipString(bytes, at);
+    const key = JSON.parse(bytes.subarray(at, keyEnd).toString("utf8"));
+    at = skipWhitespace(bytes, keyEnd);
+    if (bytes[at] !== COLON) break;
+    const start2 = skipWhitespace(bytes, at + 1);
     const end = skipValue(bytes, start2);
     members++;
     if (key === name) span = { start: start2, end };
-    at2 = skipWhitespace(bytes, end);
-    if (bytes[at2] !== COMMA) break;
-    at2 = skipWhitespace(bytes, at2 + 1);
+    at = skipWhitespace(bytes, end);
+    if (bytes[at] !== COMMA) break;
+    at = skipWhitespace(bytes, at + 1);
   }
   return { span, members };
 }
@@ -4114,7 +991,7 @@ function routeBlockText(block, keychain = false, startedOn = false, platform = p
 }
 
 // src/core/control-api.ts
-var CONTROL_API_VERSION = 3;
+var CONTROL_API_VERSION = 4;
 var CONTROL_PATHS = {
   /** `GET`: `StatusAnswer`. */
   status: `${CONTROL_PREFIX}status`,
@@ -4194,13 +1071,13 @@ var MAX_ANSWER_BYTES = 4 * 1024 * 1024;
 function controlRequest(options) {
   const timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
   const payload = options.body === void 0 ? void 0 : JSON.stringify(options.body);
-  return new Promise((resolve9) => {
+  return new Promise((resolve8) => {
     let settled = false;
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve9(result);
+      resolve8(result);
     };
     const headers = { [KEY_HEADER]: options.key, connection: "close" };
     if (payload !== void 0) {
@@ -4231,10 +1108,10 @@ function controlRequest(options) {
         });
         incoming.on("error", (error) => finish({ kind: "failed", reason: error.message }));
         incoming.on("end", () => {
-          const text2 = Buffer.concat(chunks).toString("utf8");
+          const text = Buffer.concat(chunks).toString("utf8");
           let body;
           try {
-            body = text2 === "" ? null : JSON.parse(text2);
+            body = text === "" ? null : JSON.parse(text);
           } catch {
             body = null;
           }
@@ -4263,12 +1140,12 @@ async function portHolder(port, key, timeoutMs = CONTROL_TIMEOUT_MS) {
   return { kind: "other", reason: `it answered ${String(result.status)} to a kurmis status request`, status: result.status };
 }
 function portAcceptsConnections(port, timeoutMs = 1e3) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve8) => {
     const socket = (0, import_node_net.createConnection)({ host: DAEMON_HOST, port });
     const done = (accepted) => {
       clearTimeout(timer);
       socket.destroy();
-      resolve9(accepted);
+      resolve8(accepted);
     };
     const timer = setTimeout(() => done(true), timeoutMs);
     socket.once("connect", () => done(true));
@@ -4290,8 +1167,8 @@ function compareVersions(a, b) {
   if (right.pre === null) return -1;
   return left.pre < right.pre ? -1 : 1;
 }
-function parseVersion(text2) {
-  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(text2.trim());
+function parseVersion(text) {
+  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(text.trim());
   if (match === null) return null;
   return { parts: (match[1] ?? "").split(".").map(Number), pre: match[2] ?? null };
 }
@@ -4312,8 +1189,8 @@ function versionText(version, apiVersion) {
   return `${version} with ${apiVersion === void 0 ? "no control API version" : `control API version ${String(apiVersion)}`}`;
 }
 function delay(ms) {
-  return new Promise((resolve9) => {
-    setTimeout(resolve9, ms);
+  return new Promise((resolve8) => {
+    setTimeout(resolve8, ms);
   });
 }
 function processExists(pid) {
@@ -4330,28 +1207,27 @@ var import_node_crypto5 = require("node:crypto");
 var import_node_fs4 = require("node:fs");
 
 // src/core/login-alias.ts
-var RESERVED_ALIASES = /* @__PURE__ */ new Set(["claude", "codex"]);
 var ALIAS = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 var MAX_ALIAS_LENGTH = 32;
-var ALIAS_RULE = '1 to 32 lowercase letters, digits, "-" or "_", starting with a letter or digit, and not "claude" or "codex"';
-function isAliasText(text2) {
-  return ALIAS.test(text2) && !RESERVED_ALIASES.has(text2);
+var ALIAS_RULE = '1 to 32 lowercase letters, digits, "-" or "_", starting with a letter or digit';
+function isAliasText(text) {
+  return ALIAS.test(text);
 }
 function aliasFromEmail(email) {
-  const text2 = email.trim().toLowerCase();
-  const at2 = text2.lastIndexOf("@");
-  const domainDot = at2 < 0 ? -1 : text2.lastIndexOf(".");
-  const withoutTld = domainDot > at2 ? text2.slice(0, domainDot) : text2;
+  const text = email.trim().toLowerCase();
+  const at = text.lastIndexOf("@");
+  const domainDot = at < 0 ? -1 : text.lastIndexOf(".");
+  const withoutTld = domainDot > at ? text.slice(0, domainDot) : text;
   return trimDashes(trimDashes(withoutTld.replace(/[^a-z0-9]+/g, "-")).slice(0, MAX_ALIAS_LENGTH));
 }
-function trimDashes(text2) {
-  return text2.replace(/^-+|-+$/g, "");
+function trimDashes(text) {
+  return text.replace(/^-+|-+$/g, "");
 }
 function automaticAlias(email, id, current, neighbours) {
   const base = email === null ? "" : aliasFromEmail(email);
   if (base === "") return id;
   const taken = /* @__PURE__ */ new Set([...neighbours.aliases, ...neighbours.ids]);
-  const free = (alias) => !taken.has(alias) && !RESERVED_ALIASES.has(alias);
+  const free = (alias) => !taken.has(alias);
   if (current !== null && free(current) && isNumbered(current, base)) return current;
   if (free(base)) return base;
   for (let number = 2; ; number++) {
@@ -4403,9 +1279,9 @@ function retryWhileLockedSync(operation, platform = process.platform) {
     try {
       return operation();
     } catch (error) {
-      const delay3 = RENAME_RETRY_DELAYS_MS[attempt];
-      if (platform !== "win32" || delay3 === void 0 || !isLockedFileError(error)) throw error;
-      sleepSync(delay3);
+      const delay2 = RENAME_RETRY_DELAYS_MS[attempt];
+      if (platform !== "win32" || delay2 === void 0 || !isLockedFileError(error)) throw error;
+      sleepSync(delay2);
     }
   }
 }
@@ -4414,9 +1290,9 @@ async function retryWhileLocked(operation, platform = process.platform) {
     try {
       return await operation();
     } catch (error) {
-      const delay3 = RENAME_RETRY_DELAYS_MS[attempt];
-      if (platform !== "win32" || delay3 === void 0 || !isLockedFileError(error)) throw error;
-      await new Promise((resolve9) => setTimeout(resolve9, delay3));
+      const delay2 = RENAME_RETRY_DELAYS_MS[attempt];
+      if (platform !== "win32" || delay2 === void 0 || !isLockedFileError(error)) throw error;
+      await new Promise((resolve8) => setTimeout(resolve8, delay2));
     }
   }
 }
@@ -4509,50 +1385,36 @@ async function writeJsonFile(path, value, options) {
 function isMissing(error) {
   return error?.code === "ENOENT";
 }
-function parseJsonText(text2) {
+function parseJsonText(text) {
   try {
-    return { status: "ok", value: JSON.parse(text2), text: text2 };
+    return { status: "ok", value: JSON.parse(text), text };
   } catch (error) {
     return { status: "corrupt", reason: error instanceof Error ? error.message : String(error) };
   }
 }
 function readJsonFileSync(path) {
-  let text2;
+  let text;
   try {
-    text2 = (0, import_node_fs2.readFileSync)(path, "utf8");
+    text = (0, import_node_fs2.readFileSync)(path, "utf8");
   } catch (error) {
     if (isMissing(error)) return { status: "missing" };
     throw error;
   }
-  return parseJsonText(text2);
-}
-async function readJsonFile(path) {
-  let text2;
-  try {
-    text2 = await (0, import_promises2.readFile)(path, "utf8");
-  } catch (error) {
-    if (isMissing(error)) return { status: "missing" };
-    throw error;
-  }
-  return parseJsonText(text2);
+  return parseJsonText(text);
 }
 
 // src/data/login-id.ts
 var import_node_crypto3 = require("node:crypto");
-var LOGIN_PROVIDERS = ACCOUNT_PROVIDERS;
 var NEW_LOGIN_ID_LENGTH = 10;
 var ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
-function isLoginProvider(value) {
-  return value === "claude" || value === "codex";
+function isLoginId(text) {
+  return typeof text === "string" && isLoginIdText(text);
 }
-function isLoginId(text2) {
-  return typeof text2 === "string" && isLoginIdText(text2);
-}
-function toLoginId(text2) {
-  if (!isLoginId(text2)) {
-    throw new Error(`"${text2}" is not a login id. A login id is 1 to 32 lowercase letters and digits.`);
+function toLoginId(text) {
+  if (!isLoginId(text)) {
+    throw new Error(`"${text}" is not a login id. A login id is 1 to 32 lowercase letters and digits.`);
   }
-  return text2;
+  return text;
 }
 function newLoginId(taken = []) {
   const used = new Set(taken);
@@ -4595,9 +1457,9 @@ function isProcessAlive(pid, kill = (p, s) => process.kill(p, s)) {
   }
 }
 function readLock(path) {
-  const text2 = (0, import_node_fs3.readFileSync)(path, "utf8");
+  const text = (0, import_node_fs3.readFileSync)(path, "utf8");
   try {
-    const value = JSON.parse(text2);
+    const value = JSON.parse(text);
     if (value === null || typeof value !== "object") return null;
     const { pid, createdAt, token } = value;
     if (typeof pid !== "number" || typeof createdAt !== "number" || typeof token !== "string") return null;
@@ -4620,7 +1482,7 @@ function sleepSync2(ms) {
 function codeOf(error) {
   return error?.code;
 }
-function createExclusive(path, text2, platform) {
+function createExclusive(path, text, platform) {
   let fd;
   try {
     fd = (0, import_node_fs3.openSync)(path, "wx", PRIVATE_FILE_MODE);
@@ -4630,7 +1492,7 @@ function createExclusive(path, text2, platform) {
     throw error;
   }
   try {
-    (0, import_node_fs3.writeSync)(fd, text2);
+    (0, import_node_fs3.writeSync)(fd, text);
   } catch (error) {
     (0, import_node_fs3.closeSync)(fd);
     (0, import_node_fs3.rmSync)(path, { force: true });
@@ -4785,27 +1647,22 @@ function pausedFilePath() {
 function setupSettingsRecordPath() {
   return (0, import_node_path3.join)(kurmisHome(), "settings-files.json");
 }
-function providerFolder(provider) {
-  return (0, import_node_path3.join)(kurmisHome(), provider);
+function extraLoginsFolder() {
+  return (0, import_node_path3.join)(kurmisHome(), "claude");
 }
 function loginFolder(login) {
   const id = toLoginId(login.id);
-  if (login.usedByPlainCli) {
-    throw new Error(`${id} is the login plain ${login.provider} uses and has no folder in the kurmis data folder.`);
+  if (login.usedByPlainClaude) {
+    throw new Error(`${id} is the login plain claude uses and has no folder in the kurmis data folder.`);
   }
-  return (0, import_node_path3.join)(providerFolder(login.provider), id);
+  return (0, import_node_path3.join)(extraLoginsFolder(), id);
 }
 function loginLockPath(id) {
   return (0, import_node_path3.join)(kurmisHome(), "locks", `${toLoginId(id)}.lock`);
 }
-function codexMergedRecordPath(login) {
-  const id = toLoginId(login.id);
-  if (login.usedByPlainCli || login.provider !== "codex") throw new Error(`${id} is not an extra Codex login.`);
-  return (0, import_node_path3.join)(kurmisHome(), "codex-merged", `${id}.json`);
-}
 
 // src/data/config.ts
-var CONFIG_VERSION = 2;
+var CONFIG_VERSION = 3;
 var DEFAULT_PORT = 28411;
 var MIN_PORT = 1024;
 var MAX_PORT = 65535;
@@ -4815,19 +1672,18 @@ var ConfigError = class extends Error {
     this.name = "ConfigError";
   }
 };
-function plainCliLogin(config, provider) {
-  const own2 = config.logins.find((login) => login.usedByPlainCli && login.provider === provider);
-  if (own2 === void 0) throw new ConfigError(`The config has no login that plain ${provider} uses.`);
-  return own2;
+function plainClaudeLogin(config) {
+  const own = config.logins.find((login) => login.usedByPlainClaude);
+  if (own === void 0) throw new ConfigError("The config has no login that plain claude uses.");
+  return own;
 }
-function extraLogins(config, provider) {
-  return config.logins.filter((login) => !login.usedByPlainCli && (provider === void 0 || login.provider === provider));
+function extraLogins(config) {
+  return config.logins.filter((login) => !login.usedByPlainClaude);
 }
 function newLoginSettings(ref, patch = {}) {
   const login = {
     id: ref.id,
-    provider: ref.provider,
-    usedByPlainCli: ref.usedByPlainCli,
+    usedByPlainClaude: ref.usedByPlainClaude,
     alias: ref.id,
     aliasSetByUser: false,
     routing: DEFAULT_AUTO_ROUTE,
@@ -4849,22 +1705,15 @@ function emptyConfig() {
   return { version: CONFIG_VERSION, port: DEFAULT_PORT, logins: [] };
 }
 function defaultConfig() {
-  return ensurePlainCliLogins(emptyConfig());
+  return ensurePlainClaudeLogin(emptyConfig());
 }
-function ensurePlainCliLogins(config) {
-  const missing = LOGIN_PROVIDERS.filter((provider) => !config.logins.some((login) => login.usedByPlainCli && login.provider === provider));
-  if (missing.length === 0) return config;
-  const ids = [...loginIds(config), ...config.logins.map((login) => login.alias)];
-  const added = missing.map((provider) => {
-    const id = newLoginId(ids);
-    ids.push(id);
-    return newLoginSettings({ id, provider, usedByPlainCli: true });
-  });
-  return { ...config, logins: ordered([...config.logins, ...added]) };
+function ensurePlainClaudeLogin(config) {
+  if (config.logins.some((login) => login.usedByPlainClaude)) return config;
+  const id = newLoginId([...loginIds(config), ...config.logins.map((login) => login.alias)]);
+  return { ...config, logins: ordered([...config.logins, newLoginSettings({ id, usedByPlainClaude: true })]) };
 }
 function ordered(logins) {
-  const own2 = LOGIN_PROVIDERS.flatMap((provider) => logins.filter((login) => login.usedByPlainCli && login.provider === provider));
-  return [...own2, ...logins.filter((login) => !login.usedByPlainCli)];
+  return [...logins.filter((login) => login.usedByPlainClaude), ...logins.filter((login) => !login.usedByPlainClaude)];
 }
 function checkLimit(value, where) {
   return expectInteger(value, where, 1, 100);
@@ -4890,14 +1739,12 @@ function parseLogin(value, where) {
   const raw = expectObject(value, where);
   const id = expectString(raw.id, child(where, "id"));
   if (!isLoginId(id)) fail(child(where, "id"), "must be 1 to 32 lowercase letters and digits");
-  const provider = expectString(raw.provider, child(where, "provider"));
-  if (!isLoginProvider(provider)) fail(child(where, "provider"), 'must be "claude" or "codex"');
-  const usedByPlainCli = raw.usedByPlainCli === void 0 ? false : expectBoolean(raw.usedByPlainCli, child(where, "usedByPlainCli"));
+  const usedByPlainClaude = raw.usedByPlainClaude === void 0 ? false : expectBoolean(raw.usedByPlainClaude, child(where, "usedByPlainClaude"));
   const patch = {};
   for (const key of ["routing", "fiveHourLimit", "weeklyLimit", "useFirst"]) {
     if (raw[key] !== void 0) patch[key] = raw[key];
   }
-  const login = applyPatch(newLoginSettings({ id, provider, usedByPlainCli }), patch, where);
+  const login = applyPatch(newLoginSettings({ id, usedByPlainClaude }), patch, where);
   if (raw.alias !== void 0) login.alias = checkAlias(raw.alias, child(where, "alias"));
   if (raw.aliasSetByUser !== void 0) login.aliasSetByUser = expectBoolean(raw.aliasSetByUser, child(where, "aliasSetByUser"));
   return login;
@@ -4917,7 +1764,7 @@ function checkVersion(raw, file) {
   if (version < CONFIG_VERSION) {
     fail(
       topOf(file),
-      `was written by an older kurmis (config version ${String(version)}), and this kurmis reads only version ${String(CONFIG_VERSION)}. Delete the file, then add the extra logins again with "kurmis login claude" and "kurmis login codex"`
+      `was written by an older kurmis (config version ${String(version)}), and this kurmis reads only version ${String(CONFIG_VERSION)}. Delete the file, then add the extra logins again with "kurmis login"`
     );
   }
 }
@@ -4929,18 +1776,15 @@ function parseConfig(value, file) {
   const listed = raw.logins === void 0 ? [] : expectArray(raw.logins, child(where, "logins"));
   const logins = [];
   listed.forEach((entry, index) => {
-    const at2 = child(child(where, "logins"), index);
-    const login = parseLogin(entry, at2);
-    if (logins.some((other) => other.id === login.id)) fail(child(at2, "id"), `repeats "${login.id}"`);
-    if (login.usedByPlainCli && logins.some((other) => other.usedByPlainCli && other.provider === login.provider)) {
-      fail(
-        child(at2, "usedByPlainCli"),
-        `is true for a second ${login.provider} login; only one ${login.provider} login can be the one plain ${login.provider} uses`
-      );
+    const at = child(child(where, "logins"), index);
+    const login = parseLogin(entry, at);
+    if (logins.some((other) => other.id === login.id)) fail(child(at, "id"), `repeats "${login.id}"`);
+    if (login.usedByPlainClaude && logins.some((other) => other.usedByPlainClaude)) {
+      fail(child(at, "usedByPlainClaude"), "is true for a second login; only one login can be the one plain claude uses");
     }
-    const clash = logins.find((other) => other.id === login.alias || other.alias === login.id || other.provider === login.provider && other.alias === login.alias);
+    const clash = logins.find((other) => other.id === login.alias || other.alias === login.id || other.alias === login.alias);
     if (clash !== void 0) {
-      fail(child(at2, "alias"), clash.provider === login.provider && clash.alias === login.alias ? `repeats "${login.alias}" of another ${login.provider} login` : `"${login.alias}" and the id "${login.id}" must not be the id or alias of another login`);
+      fail(child(at, "alias"), clash.alias === login.alias ? `repeats "${login.alias}" of another login` : `"${login.alias}" and the id "${login.id}" must not be the id or alias of another login`);
     }
     logins.push(login);
   });
@@ -4957,7 +1801,7 @@ function readConfig(path = configPath()) {
 }
 function loadConfig(path = configPath(), lockOptions = {}) {
   const config = readConfigFile(path);
-  if (ensurePlainCliLogins(config) === config) return config;
+  if (ensurePlainClaudeLogin(config) === config) return config;
   return changeConfig((current) => current, path, lockOptions);
 }
 function saveConfig(config, path = configPath()) {
@@ -4972,52 +1816,26 @@ function loginIds(config) {
 function newLoginIdFor(config) {
   return newLoginId([...loginIds(config), ...config.logins.map((login) => login.alias)]);
 }
-var PROVIDER_NAMES = { claude: "Claude", codex: "Codex" };
-function resolveLogin(config, text2, provider) {
-  const typed = text2.trim().toLowerCase();
-  const colon = typed.indexOf(":");
-  let scope = provider;
-  let name = typed;
-  if (colon >= 0) {
-    const prefix = typed.slice(0, colon);
-    if (!isLoginProvider(prefix)) return { error: `"${text2}" names no login; give an alias or id, or claude:<alias> or codex:<alias>` };
-    if (provider !== void 0 && prefix !== provider) {
-      return { error: `"${text2}" is a ${PROVIDER_NAMES[prefix]} login; this takes a ${PROVIDER_NAMES[provider]} login` };
-    }
-    scope = prefix;
-    name = typed.slice(colon + 1);
-  }
-  const inScope = config.logins.filter((login) => scope === void 0 || login.provider === scope);
-  const byId = inScope.find((login) => login.id === name);
-  if (byId !== void 0) return { login: byId };
-  const byAlias = inScope.filter((login) => login.alias === name);
-  if (byAlias.length === 1) return { login: byAlias[0] };
-  if (byAlias.length > 1) {
-    return { error: `a Claude login and a Codex login are both called "${name}"; give claude:${name} or codex:${name}` };
-  }
-  const other = provider === void 0 ? void 0 : config.logins.find((login) => login.provider !== provider && (login.id === name || login.alias === name));
-  if (other !== void 0 && provider !== void 0) {
-    return { error: `"${name}" is a ${PROVIDER_NAMES[other.provider]} login; this takes a ${PROVIDER_NAMES[provider]} login` };
-  }
-  const what = scope === void 0 ? "login" : `${PROVIDER_NAMES[scope]} login`;
-  return { error: `there is no ${what} called "${name}"` };
+function resolveLogin(config, text) {
+  const name = text.trim().toLowerCase();
+  const found = config.logins.find((login) => login.id === name) ?? config.logins.find((login) => login.alias === name);
+  if (found !== void 0) return { login: found };
+  return { error: `there is no login called "${name}"` };
 }
 function aliasProblem(config, login, alias) {
   if (!isAliasText(alias)) return `"${alias}" is not an alias; an alias is ${ALIAS_RULE}`;
   for (const other of config.logins) {
     if (other.id === login.id) continue;
     if (other.id === alias) return `"${alias}" is the id of another login`;
-    if (other.provider === login.provider && other.alias === alias) {
-      return `another ${PROVIDER_NAMES[login.provider]} login is already called "${alias}"`;
-    }
+    if (other.alias === alias) return `another login is already called "${alias}"`;
   }
   return null;
 }
-function addLogin(config, ref, patch = {}) {
-  if (!isLoginId(ref.id)) throw new ConfigError(`"${ref.id}" is not a login id.`);
-  if (findLogin(config, ref.id) !== void 0) throw new ConfigError(`There is already a login ${ref.id}.`);
-  if (config.logins.some((other) => other.alias === ref.id)) throw new ConfigError(`"${ref.id}" is the alias of another login.`);
-  const login = newLoginSettings({ id: ref.id, provider: ref.provider, usedByPlainCli: false }, patch);
+function addLogin(config, id, patch = {}) {
+  if (!isLoginId(id)) throw new ConfigError(`"${id}" is not a login id.`);
+  if (findLogin(config, id) !== void 0) throw new ConfigError(`There is already a login ${id}.`);
+  if (config.logins.some((other) => other.alias === id)) throw new ConfigError(`"${id}" is the alias of another login.`);
+  const login = newLoginSettings({ id, usedByPlainClaude: false }, patch);
   const problem = aliasProblem(config, login, login.alias);
   if (problem !== null) throw new ConfigError(`${capitalized(problem)}.`);
   return { ...config, logins: [...config.logins, login] };
@@ -5025,7 +1843,7 @@ function addLogin(config, ref, patch = {}) {
 function removeLogin(config, id) {
   const login = findLogin(config, id);
   if (login === void 0) throw new ConfigError(`There is no login ${id}.`);
-  if (login.usedByPlainCli) throw new ConfigError(`${login.alias} is the login plain ${login.provider} uses and cannot be removed.`);
+  if (login.usedByPlainClaude) throw new ConfigError(`${login.alias} is the login plain claude uses and cannot be removed.`);
   return { ...config, logins: config.logins.filter((other) => other.id !== id) };
 }
 function updateLogin(config, id, patch) {
@@ -5043,20 +1861,20 @@ function followEmail(config, id, email) {
   if (email === null || login === void 0 || login.aliasSetByUser) return config;
   const others = config.logins.filter((other) => other.id !== id);
   const alias = automaticAlias(email, login.id, login.alias, {
-    aliases: others.filter((other) => other.provider === login.provider).map((other) => other.alias),
+    aliases: others.map((other) => other.alias),
     ids: others.map((other) => other.id)
   });
   if (alias === login.alias) return config;
   return { ...config, logins: config.logins.map((other) => other.id === id ? { ...login, alias } : other) };
 }
-function capitalized(text2) {
-  return text2.charAt(0).toUpperCase() + text2.slice(1);
+function capitalized(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 function changeConfig(change, path = configPath(), lockOptions = {}) {
   const lockPath = path === configPath() ? configLockPath() : `${path}.lock`;
   try {
     return withFileLockSync(lockPath, () => {
-      const next = change(ensurePlainCliLogins(readConfigFile(path)));
+      const next = change(ensurePlainClaudeLogin(readConfigFile(path)));
       saveConfig(next, path);
       return next;
     }, lockOptions);
@@ -5078,111 +1896,6 @@ function configStamp(path = configPath()) {
 var import_node_fs5 = require("node:fs");
 var import_node_os2 = require("node:os");
 var import_node_path4 = require("node:path");
-
-// src/core/codex-choice.ts
-var CODEX_USAGE_MAX_AGE_MS = 20 * 6e4;
-function codexSignedIn(login) {
-  return login.signedIn !== false;
-}
-function codexRouteAccounts(status2) {
-  return status2.logins.filter((login) => login.provider === "codex").map((login) => {
-    const signedIn = codexSignedIn(login);
-    return {
-      id: login.id,
-      loggedIn: signedIn,
-      // Codex signs its own requests, so a login it is signed in to is one it can use.
-      credentialsReadable: signedIn,
-      tokenExpiresAt: null,
-      usage: login.usage,
-      autoRoute: login.routing,
-      fiveHourLimitPercent: login.fiveHourLimit,
-      weeklyLimitPercent: login.weeklyLimit,
-      useFirst: login.useFirst,
-      cooldownUntil: refusedUntil(login.usage)
-    };
-  });
-}
-function refusedUntil(usage) {
-  if (usage?.status !== "rejected") return null;
-  const reset = resetsAtFromUsage(usage);
-  const at2 = reset === null ? NaN : Date.parse(reset);
-  return Number.isFinite(at2) ? at2 : Infinity;
-}
-function ownCodexLogin(status2) {
-  const own2 = status2.logins.find((login) => login.provider === "codex" && login.usedByPlainCli);
-  if (own2 === void 0) throw new Error("The daemon's status has no login that plain codex uses.");
-  return own2;
-}
-function aliasIn(status2, id) {
-  return status2.logins.find((login) => login.id === id)?.alias ?? id;
-}
-function chooseCodexLogin(status2, now) {
-  const ownId = ownCodexLogin(status2).id;
-  const session = { homeAccountId: ownId, currentAccountId: null, pinnedAccountId: null };
-  const rows = codexRouteAccounts(status2);
-  const chosen = chooseAccount(session, rows, now, /* @__PURE__ */ new Set());
-  const pinned = effectivePin(session, rows);
-  if (chosen !== null) return { login: chosen.id, kind: pinned === null ? "ranked" : "used-by-plain-cli", note: null };
-  if (pinned !== null) {
-    return {
-      login: pinned,
-      kind: "none-signed-in",
-      note: `${aliasIn(status2, pinned)} does not look signed in; starting Codex on it anyway.`
-    };
-  }
-  const inScope = accountsInScope(session, rows);
-  if (inScope.length === 0) {
-    return {
-      login: ownId,
-      kind: "none-signed-in",
-      note: `No Codex login that routing may use is signed in; starting on ${aliasIn(status2, ownId)}, the login plain codex uses.`
-    };
-  }
-  let best = null;
-  for (const row of inScope) {
-    const readyAt = poolReadyAt([row], now, null, ownId);
-    if (readyAt !== null && (best === null || readyAt < best.readyAt)) best = { id: row.id, readyAt };
-  }
-  if (best === null) {
-    const first = inScope[0];
-    return {
-      login: first.id,
-      kind: "all-out",
-      note: `Every Codex login is at its limit and none says when it resets; starting on ${aliasIn(status2, first.id)}.`
-    };
-  }
-  const when = countdownIn(best.readyAt, now) ?? "now";
-  return {
-    login: best.id,
-    kind: "all-out",
-    note: `Every Codex login is at its limit; starting on ${aliasIn(status2, best.id)}, whose usage comes back first (${when}).`
-  };
-}
-function codexRouteBlock(status2, id, now) {
-  const row = codexRouteAccounts(status2).find((account) => account.id === id);
-  return row === void 0 ? null : routeBlock(row, now);
-}
-function codexUsageStale(login, now) {
-  return login.usage === null || now - login.usage.fetchedAt > CODEX_USAGE_MAX_AGE_MS;
-}
-function codexLoginsToProbe(status2, now) {
-  const candidates = status2.logins.filter((login) => login.provider === "codex" && login.routing && codexSignedIn(login));
-  if (candidates.length < 2) return [];
-  return candidates.filter((login) => codexUsageStale(login, now)).map((login) => login.id);
-}
-function isKurmisCodexHome(codexHome, codexLoginsFolder, windows) {
-  if (codexHome === void 0 || codexHome === "") return false;
-  const normal = (path) => {
-    const slashes = windows ? path.replace(/\//g, "\\") : path;
-    const trimmed = slashes.replace(windows ? /\\+$/ : /\/+$/, "");
-    return windows ? trimmed.toLowerCase() : trimmed;
-  };
-  const home = normal(codexHome);
-  const folder = normal(codexLoginsFolder);
-  return home.startsWith(folder + (windows ? "\\" : "/"));
-}
-
-// src/data/login-env.ts
 var NOT_INHERITED = {
   ANTHROPIC_API_KEY: void 0,
   ANTHROPIC_AUTH_TOKEN: void 0,
@@ -5194,22 +1907,16 @@ var NOT_INHERITED = {
 var FORCE_CREDENTIAL_MANAGER_VARIABLE = "CLAUDE_CODE_FORCE_WINDOWS_CREDMAN";
 function claudeLoginEnv(login, forceCredentialManager = false) {
   const force = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: "1" } : {};
-  if (login.usedByPlainCli) {
+  if (login.usedByPlainClaude) {
     return { CLAUDE_CONFIG_DIR: void 0, CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
   }
   return { CLAUDE_CONFIG_DIR: loginFolder(login), CLAUDE_SECURESTORAGE_CONFIG_DIR: void 0, ...NOT_INHERITED, ...force };
 }
 function claudeProbeEnv(login) {
-  if (login.usedByPlainCli) {
+  if (login.usedByPlainClaude) {
     return { CLAUDE_CONFIG_DIR: ownClaudeProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: "", ...NOT_INHERITED };
   }
   return claudeLoginEnv(login);
-}
-function codexLoginEnv(login, inherited = {}, platform = process.platform) {
-  if (!login.usedByPlainCli) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED };
-  const windows = platform === "win32";
-  const home = windows ? Object.entries(inherited).find(([name]) => name.toUpperCase() === "CODEX_HOME")?.[1] : inherited["CODEX_HOME"];
-  return isKurmisCodexHome(home, providerFolder("codex"), windows) ? { CODEX_HOME: void 0, ...NOT_INHERITED } : { ...NOT_INHERITED };
 }
 function configDirHasOwnCredentials(env, platform = process.platform, home = (0, import_node_os2.homedir)()) {
   const value = env["CLAUDE_CONFIG_DIR"];
@@ -5253,11 +1960,11 @@ function realFilePath(path, hops = 0) {
   return parent === path ? path : (0, import_node_path4.join)(realFilePath(parent, hops + 1), (0, import_node_path4.basename)(path));
 }
 function applyEnvPatch(env, patch, windows = process.platform === "win32") {
-  const same2 = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
+  const same = (a, b) => windows ? a.toUpperCase() === b.toUpperCase() : a === b;
   const names = Object.keys(patch);
   const out = {};
   for (const [name, value] of Object.entries(env)) {
-    if (value === void 0 || names.some((other) => same2(name, other))) continue;
+    if (value === void 0 || names.some((other) => same(name, other))) continue;
     out[name] = value;
   }
   for (const [name, value] of Object.entries(patch)) {
@@ -5293,25 +2000,16 @@ var GUARDED_PROGRAMS = /* @__PURE__ */ new Set([
   "wmic",
   "schtasks",
   "cmd",
-  "claude",
-  "codex"
+  "claude"
 ]);
 function guardOn(env) {
   return process.env[GUARD_VARIABLE] === "1" || env?.[GUARD_VARIABLE] === "1";
 }
 var REAL_CLI_PATHS = [
   /\/@anthropic-ai\/claude-code[^/]*\//,
-  /\/@openai\/codex[^/]*\//,
   /\/\.local\/share\/claude\/versions\//
 ];
-var TEST_HOME_VARIABLES = [
-  "HOME",
-  "USERPROFILE",
-  "KURMIS_HOME",
-  "KURMIS_CLAUDE_BIN",
-  "KURMIS_CODEX_BIN",
-  "KURMIS_UPSTREAM_URL"
-];
+var TEST_HOME_VARIABLES = ["HOME", "USERPROFILE", "KURMIS_HOME", "KURMIS_CLAUDE_BIN", "KURMIS_UPSTREAM_URL"];
 function refusedByGuard(command, env, args = []) {
   if (!guardOn(env)) return null;
   let refused = isRealProgram(command);
@@ -5397,13 +2095,13 @@ function temporaryFolders(env = process.env, platform = process.platform) {
 }
 function isTemporaryPath(path, folders, platform) {
   const separators = platform === "win32" ? /[\\/]+/ : /\/+/;
-  const fold = (text2) => platform === "win32" ? text2.toLowerCase() : text2;
+  const fold = (text) => platform === "win32" ? text.toLowerCase() : text;
   if (path.split(separators).some((part) => fold(part) === "fnm_multishells")) return true;
-  const join17 = platform === "win32" ? "\\" : "/";
-  const plain = fold(path.split(separators).join(join17));
+  const join16 = platform === "win32" ? "\\" : "/";
+  const plain = fold(path.split(separators).join(join16));
   return folders.some((folder) => {
-    const root = fold(folder.split(separators).join(join17)).replace(/[\\/]+$/, "");
-    return root !== "" && (plain === root || plain.startsWith(root + join17));
+    const root = fold(folder.split(separators).join(join16)).replace(/[\\/]+$/, "");
+    return root !== "" && (plain === root || plain.startsWith(root + join16));
   });
 }
 function nodeForJobs(options = {}) {
@@ -5438,7 +2136,7 @@ function nodeForJobs(options = {}) {
   return running;
 }
 function spawnDetached(start2) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve8, reject) => {
     const guarded = refusedByGuard(start2.command, start2.env, start2.args);
     if (guarded !== null) {
       reject(new Error(guarded));
@@ -5461,7 +2159,7 @@ function spawnDetached(start2) {
     child2.once("spawn", () => {
       child2.unref();
       if (child2.pid === void 0) reject(new Error(`${start2.command} could not be started`));
-      else resolve9({ pid: child2.pid, exited });
+      else resolve8({ pid: child2.pid, exited });
     });
   });
 }
@@ -5493,9 +2191,9 @@ function decodeCmdShim(bytes) {
     return null;
   }
 }
-function parseCmdShim(text2, shimPath) {
+function parseCmdShim(text, shimPath) {
   const folder = import_node_path7.win32.dirname(import_node_path7.win32.resolve(shimPath));
-  const lines = text2.split(/\r?\n/).map((line) => line.trim());
+  const lines = text.split(/\r?\n/).map((line) => line.trim());
   const progValues = lines.map((line) => /^@?set\s+"_prog=([^"]*)"$/i.exec(line)?.[1]).filter((value) => value !== void 0);
   const runLines = [];
   for (const line of lines) {
@@ -5660,7 +2358,7 @@ function runProgram(program, args, options) {
       error: `${program} could not be started: ${reason}`
     });
   }
-  return new Promise((resolve9) => {
+  return new Promise((resolve8) => {
     const stdout = [];
     const stderr = [];
     let stdoutBytes = 0;
@@ -5672,7 +2370,7 @@ function runProgram(program, args, options) {
       if (settled) return;
       settled = true;
       (0, import_node_timers.clearTimeout)(timer);
-      resolve9({
+      resolve8({
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
         code,
@@ -5728,14 +2426,7 @@ var ProgramNotFoundError = class extends Error {
   }
   tool;
 };
-var PROGRAM_VARIABLES = {
-  claude: "KURMIS_CLAUDE_BIN",
-  codex: "KURMIS_CODEX_BIN"
-};
-var TOOL_NAMES = {
-  claude: "Claude Code",
-  codex: "Codex"
-};
+var PROGRAM_VARIABLE = "KURMIS_CLAUDE_BIN";
 var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
 var MAX_SHIM_BYTES = 64 * 1024;
 function findProgram(tool, options = {}) {
@@ -5743,33 +2434,32 @@ function findProgram(tool, options = {}) {
   const platform = options.platform ?? process.platform;
   const nodePath = options.nodePath ?? process.execPath;
   const files = options.files ?? realFiles;
-  const variable = PROGRAM_VARIABLES[tool];
-  const named = namedProgram(env, variable, platform);
+  const named = namedProgram(env, PROGRAM_VARIABLE, platform);
   if (named !== void 0) {
     const invocation = invocationFor(named, [], nodePath);
-    if ("refused" in invocation) throw new ProgramNotFoundError(tool, `${variable}: ${invocation.refused}`);
+    if ("refused" in invocation) throw new ProgramNotFoundError(tool, `${PROGRAM_VARIABLE}: ${invocation.refused}`);
     return { command: invocation.command, args: invocation.args, source: "env" };
   }
   const ownEntry = options.ownEntry === void 0 ? kurmisEntry({ env }) : options.ownEntry;
-  const own2 = ownEntry === null ? null : files.realPath(ownEntry) ?? ownEntry;
-  return platform === "win32" ? findOnWindows(tool, env, nodePath, files, own2) : findOnPosix(tool, env, nodePath, files, own2);
+  const own = ownEntry === null ? null : files.realPath(ownEntry) ?? ownEntry;
+  return platform === "win32" ? findOnWindows(tool, env, nodePath, files, own) : findOnPosix(tool, env, nodePath, files, own);
 }
 function namedProgram(env, variable, platform) {
-  const own2 = platform === "win32" ? windowsEnv(env, variable) : env[variable];
-  if (own2 !== void 0 && own2 !== "") return own2;
+  const own = platform === "win32" ? windowsEnv(env, variable) : env[variable];
+  if (own !== void 0 && own !== "") return own;
   if (!guardOn(env) || hasVariable(env, variable)) return void 0;
   const inherited = process.env[variable];
   return inherited === void 0 || inherited === "" ? void 0 : inherited;
 }
 var OWN_BUNDLE = "it is kurmis itself, not the real program";
-function findOnPosix(tool, env, nodePath, files, own2) {
+function findOnPosix(tool, env, nodePath, files, own) {
   const folders = posixPathFolders(env.PATH);
   const skipped = [];
   for (const folder of folders) {
     const candidate = import_node_path8.posix.join(folder, tool);
     if (!files.isExecutable(candidate)) continue;
     const real = files.realPath(candidate);
-    if (own2 !== null && real === own2) {
+    if (own !== null && real === own) {
       skipped.push(`${candidate}: ${OWN_BUNDLE}`);
       continue;
     }
@@ -5777,26 +2467,26 @@ function findOnPosix(tool, env, nodePath, files, own2) {
     return { command: candidate, args: [], source: "path" };
   }
   const looked = [`the ${countFolders(folders.length)} on PATH`];
-  if (tool === "claude" && env.HOME !== void 0 && import_node_path8.posix.isAbsolute(env.HOME)) {
+  if (env.HOME !== void 0 && import_node_path8.posix.isAbsolute(env.HOME)) {
     const native = import_node_path8.posix.join(env.HOME, ".local", "bin", "claude");
-    if (files.isExecutable(native) && (own2 === null || files.realPath(native) !== own2)) {
+    if (files.isExecutable(native) && (own === null || files.realPath(native) !== own)) {
       return { command: native, args: [], source: "native-installer" };
     }
     looked.push(native);
   }
   throw notFound(tool, looked, skipped);
 }
-function findOnWindows(tool, env, nodePath, files, own2) {
+function findOnWindows(tool, env, nodePath, files, own) {
   const folders = windowsPathFolders(windowsEnv(env, "PATH"));
   const extensions = pathExtensions(windowsEnv(env, "PATHEXT"));
   const skipped = [];
-  const isOwn = (path) => own2 !== null && path !== void 0 && (files.realPath(path) ?? path).toLowerCase() === own2.toLowerCase();
+  const isOwn = (path) => own !== null && path !== void 0 && (files.realPath(path) ?? path).toLowerCase() === own.toLowerCase();
   for (const folder of folders) {
     for (const extension of extensions) {
       const candidate = import_node_path8.win32.join(folder, tool + extension);
       if (!files.isFile(candidate)) continue;
       if (extension === ".exe" || extension === ".com") return { command: candidate, args: [], source: "path" };
-      const resolved = resolveShim(tool, candidate, nodePath, files);
+      const resolved = resolveShim(candidate, nodePath, files);
       if ("refused" in resolved) skipped.push(`${candidate}: ${resolved.refused}`);
       else if (isOwn(resolved.args[0])) skipped.push(`${candidate}: ${OWN_BUNDLE}`);
       else return resolved;
@@ -5804,26 +2494,26 @@ function findOnWindows(tool, env, nodePath, files, own2) {
   }
   const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => tool + extension).join(", ")})`];
   const home = windowsEnv(env, "USERPROFILE");
-  if (tool === "claude" && home !== void 0 && isAbsoluteWindowsPath(home)) {
+  if (home !== void 0 && isAbsoluteWindowsPath(home)) {
     const native = import_node_path8.win32.join(home, ".local", "bin", "claude.exe");
     if (files.isFile(native)) return { command: native, args: [], source: "native-installer" };
     looked.push(native);
   }
   throw notFound(tool, looked, skipped);
 }
-function resolveShim(tool, shimPath, nodePath, files) {
+function resolveShim(shimPath, nodePath, files) {
   const bytes = files.read(shimPath, MAX_SHIM_BYTES);
   if (bytes === null) return { refused: "it could not be read" };
-  const text2 = decodeCmdShim(bytes);
-  if (text2 === null) return { refused: "it is not a package manager shim kurmis can read (it is not UTF-8 text)" };
-  const shim = parseCmdShim(text2, shimPath);
+  const text = decodeCmdShim(bytes);
+  if (text === null) return { refused: "it is not a package manager shim kurmis can read (it is not UTF-8 text)" };
+  const shim = parseCmdShim(text, shimPath);
   if ("unreadable" in shim) return { refused: `it is not a package manager shim kurmis can read (${shim.unreadable})` };
   if (!files.isFile(shim.target)) return { refused: `it starts ${shim.target}, which does not exist` };
   const invocation = cmdShimInvocation(shim, { nodePath, isFile: (path) => files.isFile(path) });
   if ("refused" in invocation) return invocation;
   if (invocation.command === shim.target && !startsLikeWindowsProgram(files, shim.target)) {
     const wrapper = import_node_path8.win32.join(import_node_path8.win32.dirname(import_node_path8.win32.dirname(shim.target)), "cli-wrapper.cjs");
-    if (tool === "claude" && files.isFile(wrapper)) {
+    if (files.isFile(wrapper)) {
       return { command: nodePath, args: [wrapper, ...invocation.args], source: "npm-shim" };
     }
     return {
@@ -5837,10 +2527,10 @@ function startsLikeWindowsProgram(files, path) {
   return head !== null && head[0] === 77 && head[1] === 90;
 }
 function notFound(tool, looked, skipped) {
-  const lines = [`${TOOL_NAMES[tool]} (${tool}) was not found. Looked in ${looked.join(" and at ")}.`];
+  const lines = [`Claude Code (${tool}) was not found. Looked in ${looked.join(" and at ")}.`];
   if (skipped.length > 0) lines.push(`Skipped:
 ${skipped.map((line) => `  ${line}`).join("\n")}`);
-  lines.push(`Install ${TOOL_NAMES[tool]}, or set ${PROGRAM_VARIABLES[tool]} to the full path of the program.`);
+  lines.push(`Install Claude Code, or set ${PROGRAM_VARIABLE} to the full path of the program.`);
   return new ProgramNotFoundError(tool, lines.join("\n"));
 }
 function countFolders(count) {
@@ -5911,1183 +2601,32 @@ var realFiles = {
   }
 };
 
-// src/cli/codex-home-files.ts
-var import_node_crypto6 = require("node:crypto");
-var import_node_fs9 = require("node:fs");
-var import_promises4 = require("node:fs/promises");
-var import_promises5 = require("node:timers/promises");
-var import_node_os4 = require("node:os");
-var import_node_path11 = require("node:path");
-
-// src/core/codex-home.ts
-var import_node_path9 = require("node:path");
-
-// src/core/codex-account-config.ts
-var import_toml_eslint_parser = __toESM(require_lib(), 1);
-var SECRET_TABLES = /* @__PURE__ */ new Set(["env", "set", "http_headers", "headers", "query_params"]);
-var SECRET_LAST_WORDS = /* @__PURE__ */ new Set(["token", "secret", "secrets", "password", "passwd", "passphrase", "authorization", "cookie", "apikey"]);
-var PUBLIC_KEY_WORDS = /* @__PURE__ */ new Set(["env", "public"]);
-var PUBLIC_NAMES = /* @__PURE__ */ new Set(["client-private-key"]);
-function keyWords(key) {
-  return key.replace(/([a-z\d])([A-Z])/g, "$1_$2").toLowerCase().split(/[^a-z\d]+/).filter((word) => word.length > 0);
-}
-function secretKeyName(key) {
-  const lower = key.toLowerCase();
-  if (SECRET_TABLES.has(lower)) return true;
-  if (PUBLIC_NAMES.has(lower)) return false;
-  const words = keyWords(key);
-  const last = words.at(-1);
-  if (last === void 0) return false;
-  if (SECRET_LAST_WORDS.has(last)) return true;
-  return last === "key" && !PUBLIC_KEY_WORDS.has(words.at(-2) ?? "");
-}
-var SECRET_TEXT = /(?:\bBearer\s+\S+|\b(?:sk|ghp|github_pat|xox[baprs])[-_][a-z\d_-]{8,}|-----BEGIN [\w ]*PRIVATE KEY-----|https?:\/\/[^\s/@:]*:[^\s/@]+@|[?&](?:token|key|secret|signature|password)=[^&#\s]+|(?:api[_-]?key|secret|password|authorization|access[_-]?token)\s*[=:]\s*["']?[^\s,"'}]+)/i;
-function secretLooking(text2) {
-  return SECRET_TEXT.test(text2) || /--(?:token|api-key|password|secret)(?:[=\s]+)\S+/i.test(text2);
-}
-function secretArguments(value) {
-  return value.some((arg) => typeof arg === "string" && /^(?:-H|--(?:env|header|headers|token|api-key|password|secret|authorization))(?:=|$)/i.test(arg));
-}
-var TRUST_TABLES = [
-  { parent: ["projects"], fields: ["trust_level"] },
-  { parent: ["hooks", "state"], fields: ["trusted_hash", "trusted_content_hash", "enabled"] }
-];
-function trustNameIndex(path) {
-  for (const { parent } of TRUST_TABLES) {
-    if (path.length >= parent.length + 2 && parent.every((key, index) => path[index] === key)) return parent.length;
-  }
-  return -1;
-}
-function trustValue(path) {
-  for (const { parent, fields } of TRUST_TABLES) {
-    if (path.length === parent.length + 2 && parent.every((key, index) => path[index] === key) && fields.includes(path.at(-1))) return true;
-  }
-  return false;
-}
-var NAMED_TABLES = /* @__PURE__ */ new Set(["mcp_servers", "model_providers", "profiles"]);
-function nameIndex(path) {
-  const trust = trustNameIndex(path);
-  if (trust !== -1) return trust;
-  return path.length >= 3 && typeof path[0] === "string" && NAMED_TABLES.has(path[0]) ? 1 : -1;
-}
-function secretPath(path) {
-  const name = nameIndex(path);
-  return path.some((key, index) => index !== name && typeof key === "string" && secretKeyName(key));
-}
-function secretValue(value, named) {
-  if (typeof value === "string") return named || secretLooking(value);
-  if (Array.isArray(value)) return secretArguments(value) || value.some((item) => secretValue(item, named));
-  if (isTable(value)) return Object.entries(value).some(([key, child2]) => secretValue(child2, named || secretKeyName(key)));
-  return false;
-}
-function secretSetting(path, value) {
-  return secretValue(value, secretPath(path));
-}
-var MASK = /* @__PURE__ */ Symbol("secret");
-function masked(value, named) {
-  if (typeof value === "string") return named || secretLooking(value) ? MASK : value;
-  if (Array.isArray(value)) return secretArguments(value) ? MASK : value.map((item) => masked(item, named));
-  if (!isTable(value)) return value;
-  const out = dict();
-  for (const [key, child2] of Object.entries(value)) out[key] = masked(child2, named || secretKeyName(key));
-  return out;
-}
-var TomlScalar = class {
-  kind;
-  text;
-  constructor(kind, text2) {
-    this.kind = kind;
-    this.text = text2;
-  }
-};
-function floatText(value) {
-  if (Number.isNaN(value)) return "nan";
-  if (!Number.isFinite(value)) return value > 0 ? "inf" : "-inf";
-  if (Object.is(value, -0)) return "-0.0";
-  const text2 = String(value);
-  return /[.e]/.test(text2) ? text2 : `${text2}.0`;
-}
-function scalar(node) {
-  switch (node.kind) {
-    case "string":
-    case "boolean":
-      return node.value;
-    case "integer":
-      return new TomlScalar("integer", node.bigint.toString());
-    case "float":
-      return new TomlScalar("float", floatText(node.value));
-    default:
-      return new TomlScalar(node.kind, node.datetime.replace(/^(\d{4}-\d{2}-\d{2})[ t]/i, "$1T").toUpperCase());
-  }
-}
-function isTable(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof TomlScalar);
-}
-function dict() {
-  return /* @__PURE__ */ Object.create(null);
-}
-function own(value, key) {
-  return isTable(value) && Object.hasOwn(value, key) ? value[key] : void 0;
-}
-function record(value) {
-  return isTable(value) ? value : dict();
-}
-function at(root, path) {
-  return path.reduce((value, key) => typeof key === "number" ? Array.isArray(value) ? value[key] : void 0 : own(value, key), root);
-}
-function setAt(root, path, value) {
-  let table = root;
-  for (const key of path.slice(0, -1)) {
-    if (!isTable(own(table, key))) table[key] = dict();
-    table = table[key];
-  }
-  table[path.at(-1)] = value;
-}
-function removeAt(root, path) {
-  const parent = at(root, path.slice(0, -1));
-  if (isTable(parent) && Object.hasOwn(parent, path.at(-1))) delete parent[path.at(-1)];
-}
-function copyTables(value) {
-  if (!isTable(value)) return value;
-  const out = dict();
-  for (const [key, child2] of Object.entries(value)) out[key] = copyTables(child2);
-  return out;
-}
-function stableJson(value) {
-  if (value === MASK) return '"<secret>"';
-  if (value instanceof TomlScalar) return `${value.kind}:${JSON.stringify(value.text)}`;
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-function same(a, b) {
-  return stableJson(a) === stableJson(b);
-}
-function settingsOf(value, base = []) {
-  return Object.entries(record(value)).flatMap(([key, child2]) => isTable(child2) ? settingsOf(child2, [...base, key]) : [{ path: [...base, key], value: child2 }]);
-}
-function tablePaths(value, base = []) {
-  return Object.entries(record(value)).flatMap(([key, child2]) => isTable(child2) ? [[...base, key], ...tablePaths(child2, [...base, key])] : []);
-}
-function holdsOrdinarySetting(value, path) {
-  return settingsOf(value, path).some((setting) => !secretSetting(setting.path, setting.value));
-}
-function withoutEmptyTables(value) {
-  if (!isTable(value)) return value;
-  const out = dict();
-  for (const [key, child2] of Object.entries(value)) {
-    const kept = withoutEmptyTables(child2);
-    if (!isTable(kept) || Object.keys(kept).length > 0) out[key] = kept;
-  }
-  return out;
-}
-function withoutBom(text2) {
-  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
-}
-function parseToml(text2) {
-  try {
-    return (0, import_toml_eslint_parser.parseTOML)(text2, { tomlVersion: "1.0" });
-  } catch {
-    throw new Error("config.toml is not valid TOML");
-  }
-}
-function keyParts(key) {
-  return key.keys.map((part) => part.type === "TOMLBare" ? part.name : part.value);
-}
-function tableValue(ast, convert) {
-  const child2 = (table, key) => {
-    if (!Object.hasOwn(table, key)) table[key] = dict();
-    return table[key];
-  };
-  const put = (table, keys, value) => {
-    let into = table;
-    for (const key of keys.slice(0, -1)) into = child2(into, key);
-    into[keys.at(-1)] = value;
-  };
-  const content = (node) => {
-    if (node.type === "TOMLArray") return node.elements.map(content);
-    if (node.type !== "TOMLInlineTable") return convert(node);
-    const table = dict();
-    for (const entry of node.body) put(table, keyParts(entry.key), content(entry.value));
-    return table;
-  };
-  const root = dict();
-  for (const node of ast.body[0].body) {
-    if (node.type === "TOMLKeyValue") {
-      put(root, keyParts(node.key), content(node.value));
-      continue;
-    }
-    let table = root;
-    node.resolvedKey.forEach((key, index) => {
-      if (typeof key === "number") {
-        const list = table;
-        table = list[key] ??= dict();
-        return;
-      }
-      const parent = table;
-      if (!Object.hasOwn(parent, key)) parent[key] = typeof node.resolvedKey[index + 1] === "number" ? [] : dict();
-      table = parent[key];
-    });
-    for (const entry of node.body) put(table, keyParts(entry.key), content(entry.value));
-  }
-  return root;
-}
-function tomlValue(text2) {
-  return tableValue(parseToml(withoutBom(text2)), (node) => node.value);
-}
-function typedValue(ast) {
-  return tableValue(ast, scalar);
-}
-function typedToml(text2) {
-  return typedValue(parseToml(text2));
-}
-function valueTexts(text2, ast) {
-  const out = /* @__PURE__ */ new Map();
-  const visit = (node, base) => {
-    const path = [...base, ...keyParts(node.key)];
-    if (node.value.type === "TOMLInlineTable") {
-      for (const child2 of node.value.body) visit(child2, path);
-    } else if (node.value.type === "TOMLValue") {
-      out.set(JSON.stringify(path), { text: text2.slice(node.value.range[0], node.value.range[1]), value: scalar(node.value) });
-    }
-  };
-  for (const node of ast.body[0].body) {
-    if (node.type === "TOMLKeyValue") visit(node, []);
-    else if (!node.resolvedKey.some((key) => typeof key === "number")) {
-      for (const child2 of node.body) visit(child2, node.resolvedKey);
-    }
-  }
-  return out;
-}
-function tomlLiteral(value) {
-  if (typeof value === "string") return JSON.stringify(value).replace(/\u007f/g, "\\u007f");
-  if (typeof value === "boolean") return String(value);
-  if (value instanceof TomlScalar) return value.text;
-  if (Array.isArray(value)) return `[${value.map(tomlLiteral).join(", ")}]`;
-  if (value !== null && typeof value === "object") return `{ ${Object.entries(value).map(([k, v]) => `${tomlKey(k)} = ${tomlLiteral(v)}`).join(", ")} }`;
-  throw new Error("config.toml holds a value that cannot be written back");
-}
-function tomlKey(key) {
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlLiteral(key);
-}
-function dottedKey(path) {
-  return path.map((key) => tomlKey(String(key))).join(".");
-}
-function literalFor(path, value, texts) {
-  const known = texts.get(JSON.stringify(path));
-  return known !== void 0 && same(known.value, value) ? known.text : tomlLiteral(value);
-}
-function samePath(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-function newline(text2) {
-  return text2.includes("\r\n") ? "\r\n" : "\n";
-}
-function lineEnd(text2, offset) {
-  const end = text2.indexOf("\n", offset);
-  return end < 0 ? text2.length : end + 1;
-}
-function lineStart(text2, offset) {
-  return text2.lastIndexOf("\n", offset - 1) + 1;
-}
-function cutRange(text2, [start2, end]) {
-  const from = lineStart(text2, start2);
-  const to = lineEnd(text2, end);
-  return text2.slice(from, start2).trim() === "" && /^[ \t]*(?:#[^\r\n]*)?\r?\n?$/.test(text2.slice(end, to)) ? [from, to] : [start2, end];
-}
-function insertLines(text2, offset, lines, nl) {
-  const before = text2.slice(0, offset);
-  return `${before}${before.length === 0 || before.endsWith("\n") ? "" : nl}${lines}${text2.slice(offset)}`;
-}
-function arrayTables(path, value, nl) {
-  const header = `[[${dottedKey(path)}]]${nl}`;
-  return value.map((table) => header + Object.entries(record(table)).map(([key, child2]) => `${tomlKey(key)} = ${tomlLiteral(child2)}${nl}`).join("")).join("");
-}
-function isArrayOfTables(value) {
-  return Array.isArray(value) && value.length > 0 && value.every(isTable);
-}
-function rewriteInOnePass(text2, desired, texts) {
-  const ast = parseToml(text2);
-  const current = typedValue(ast);
-  const nl = newline(text2);
-  const edits = [];
-  const held = /* @__PURE__ */ new Set();
-  const headers = /* @__PURE__ */ new Map();
-  const dotted = /* @__PURE__ */ new Map();
-  const sectionEnds = /* @__PURE__ */ new Map([[JSON.stringify([]), 0]]);
-  const cut = (range) => {
-    const [start2, end] = cutRange(text2, range);
-    edits.push({ start: start2, end, text: "" });
-  };
-  const visitKeyValue = (node, section) => {
-    const keys = keyParts(node.key);
-    const path = [...section, ...keys];
-    const want = at(desired, path);
-    const inline = node.value.type === "TOMLInlineTable";
-    if (want === void 0 || isTable(want) && !inline) {
-      cut(node.range);
-      return;
-    }
-    for (let depth = 1; depth < keys.length; depth++) dotted.set(JSON.stringify(path.slice(0, section.length + depth)), section);
-    sectionEnds.set(JSON.stringify(section), lineEnd(text2, node.range[1]));
-    held.add(JSON.stringify(path));
-    if (same(want, at(current, path))) return;
-    edits.push({ start: node.value.range[0], end: node.value.range[1], text: inline ? tomlLiteral(want) : literalFor(path, want, texts) });
-  };
-  const arrays = /* @__PURE__ */ new Map();
-  for (const node of ast.body[0].body) {
-    if (node.type === "TOMLKeyValue") {
-      visitKeyValue(node, []);
-      continue;
-    }
-    const index = node.resolvedKey.findIndex((key) => typeof key === "number");
-    if (index >= 0) {
-      const path2 = node.resolvedKey.slice(0, index);
-      const id = JSON.stringify(path2);
-      const array = arrays.get(id) ?? { path: path2, tables: [] };
-      array.tables.push(node);
-      arrays.set(id, array);
-      continue;
-    }
-    const path = node.resolvedKey;
-    if (!isTable(at(desired, path))) {
-      cut(node.range);
-      continue;
-    }
-    headers.set(JSON.stringify(path), node);
-    sectionEnds.set(JSON.stringify(path), lineEnd(text2, node.range[1]));
-    for (const child2 of node.body) visitKeyValue(child2, path);
-  }
-  for (const [id, { path, tables }] of arrays) {
-    const want = at(desired, path);
-    if (want === void 0) {
-      for (const table of tables) cut(table.range);
-      continue;
-    }
-    held.add(id);
-  }
-  const isHeld = (path) => path.some((_, index) => held.has(JSON.stringify(path.slice(0, index + 1))));
-  const inserts = /* @__PURE__ */ new Map();
-  const insertAt = (offset, lines) => {
-    inserts.set(offset, (inserts.get(offset) ?? "") + lines);
-  };
-  const newTables = /* @__PURE__ */ new Map();
-  const appendToNewTable = (path, line) => {
-    const id = JSON.stringify(path);
-    const table = newTables.get(id) ?? { path, lines: "" };
-    table.lines += line;
-    newTables.set(id, table);
-  };
-  let newArrays = "";
-  for (const { path, value } of settingsOf(desired)) {
-    if (isHeld(path)) continue;
-    if (isArrayOfTables(value)) {
-      newArrays += arrayTables(path, value, nl);
-      continue;
-    }
-    const literal = literalFor(path, value, texts);
-    const parent = path.slice(0, -1);
-    let placed = false;
-    for (let depth = parent.length; depth >= 1 && !placed; depth--) {
-      const table = parent.slice(0, depth);
-      const id = JSON.stringify(table);
-      const section = headers.has(id) ? table : dotted.get(id);
-      if (section === void 0) continue;
-      if (headers.has(id) && depth < parent.length) appendToNewTable(parent, `${tomlKey(path.at(-1))} = ${literal}${nl}`);
-      else insertAt(sectionEnds.get(JSON.stringify(section)), `${dottedKey(path.slice(section.length))} = ${literal}${nl}`);
-      placed = true;
-    }
-    if (placed) continue;
-    if (parent.length === 0) insertAt(sectionEnds.get(JSON.stringify([])), `${tomlKey(path[0])} = ${literal}${nl}`);
-    else appendToNewTable(parent, `${tomlKey(path.at(-1))} = ${literal}${nl}`);
-  }
-  const atEnd = [...newTables.values()].map(({ path, lines }) => `[${dottedKey(path)}]${nl}${lines}`).join("") + newArrays;
-  if (atEnd !== "") insertAt(text2.length, atEnd);
-  for (const [offset, lines] of inserts) {
-    const lead = offset > 0 && text2[offset - 1] !== "\n" ? nl : "";
-    edits.push({ start: offset, end: offset, text: lead + lines });
-  }
-  edits.sort((a, b) => b.start - a.start || b.end - a.end);
-  let out = text2;
-  for (const { start: start2, end, text: replacement } of edits) out = out.slice(0, start2) + replacement + out.slice(end);
-  return out;
-}
-function inArray(path) {
-  return path.some((key) => typeof key === "number");
-}
-function tomlEntries(ast) {
-  const entries = [];
-  const visit = (node, base, holder) => {
-    const path = [...base, ...keyParts(node.key)];
-    entries.push({ path, node, holder, tables: [] });
-    if (node.value.type === "TOMLInlineTable") for (const child2 of node.value.body) visit(child2, path, node.value);
-  };
-  for (const node of ast.body[0].body) {
-    if (node.type === "TOMLKeyValue") {
-      visit(node, [], null);
-      continue;
-    }
-    const index = node.resolvedKey.findIndex((key) => typeof key === "number");
-    if (index >= 0) {
-      const path = node.resolvedKey.slice(0, index);
-      const array = entries.find((entry) => entry.node === null && samePath(entry.path, path));
-      if (array === void 0) entries.push({ path, node: null, holder: null, tables: [node] });
-      else array.tables.push(node);
-    }
-    for (const child2 of node.body) visit(child2, [...node.resolvedKey], null);
-  }
-  return entries;
-}
-function topEntries(ast) {
-  return tomlEntries(ast).filter((entry) => !inArray(entry.path));
-}
-function inlineEntry(entry) {
-  return entry.node?.value.type === "TOMLInlineTable";
-}
-function entryStart(entry) {
-  return entry.node?.range[0] ?? entry.tables[0].range[0];
-}
-function insertions(text2, ast, entries, path, value) {
-  const nl = newline(text2);
-  const literal = tomlLiteral(value);
-  const tables = ast.body[0].body.filter((node) => node.type === "TOMLTable");
-  const inTable = (depth) => {
-    const rest = path.slice(depth);
-    if (inArray(rest)) return null;
-    const line = `${dottedKey(rest)} = ${literal}`;
-    const prefix = path.slice(0, depth);
-    const inline = entries.find((row) => inlineEntry(row) && samePath(row.path, prefix))?.node?.value;
-    if (inline?.type === "TOMLInlineTable") {
-      const last = inline.body.at(-1);
-      if (last !== void 0) return `${text2.slice(0, last.range[1])}, ${line}${text2.slice(last.range[1])}`;
-      const close = inline.range[1] - 1;
-      return `${text2.slice(0, close)} ${line} ${text2.slice(close)}`;
-    }
-    if (depth === 0) return `${line}${nl}${text2}`;
-    const table = tables.find((node) => samePath(node.resolvedKey, prefix));
-    if (table === void 0) return null;
-    return insertLines(text2, lineEnd(text2, table.range[1]), `${line}${nl}`, nl);
-  };
-  const parents = path.slice(0, -1);
-  const candidates = [];
-  if (!inArray(path) && isArrayOfTables(value)) candidates.push(insertLines(text2, text2.length, arrayTables(path, value, nl), nl));
-  candidates.push(inTable(parents.length));
-  if (parents.length > 0 && !inArray(path)) {
-    const header = `[${dottedKey(parents)}]${nl}${tomlKey(String(path.at(-1)))} = ${literal}${nl}`;
-    candidates.push(insertLines(text2, text2.length, header, nl));
-  }
-  for (let depth = parents.length - 1; depth >= 0; depth--) candidates.push(inTable(depth));
-  return candidates.filter((candidate) => candidate !== null);
-}
-function leaves(value, base = []) {
-  return Object.entries(record(value)).flatMap(([key, child2]) => isTable(child2) && Object.keys(child2).length > 0 ? leaves(child2, [...base, key]) : [[...base, key]]);
-}
-function replaceArrayOfTables(text2, path, old, value) {
-  if (!Array.isArray(old) || !isArrayOfTables(value)) return null;
-  const nl = newline(text2);
-  const array = (current) => tomlEntries(parseToml(current)).find((entry) => entry.node === null && samePath(entry.path, path));
-  let out = text2;
-  try {
-    for (let index = 0; index < Math.min(old.length, value.length); index++) {
-      for (const leaf of leaves(old[index])) {
-        if (at(value[index], leaf) !== void 0) continue;
-        const row = tomlEntries(parseToml(out)).find((entry) => samePath(entry.path, [...path, index, ...leaf]));
-        if (row === void 0) return null;
-        out = removeEntry(out, row);
-      }
-      for (const leaf of leaves(value[index])) out = patchToml(out, [...path, index, ...leaf], at(value[index], leaf));
-    }
-    const extra = array(out)?.tables.filter((table) => table.resolvedKey[path.length] >= value.length) ?? [];
-    if (extra.length > 0) out = removeEntry(out, { path: [...path], node: null, holder: null, tables: extra });
-    if (value.length > old.length) {
-      const tables = array(out)?.tables ?? [];
-      if (tables.length === 0) return null;
-      const end = lineEnd(out, Math.max(...tables.map((table) => table.range[1])));
-      out = insertLines(out, end, arrayTables(path, value.slice(old.length), nl), nl);
-    }
-    return out;
-  } catch {
-    return null;
-  }
-}
-function patchToml(text2, path, value) {
-  if (path.length === 0 || secretSetting(path, value)) throw new Error("a secret cannot be copied");
-  const ast = parseToml(text2);
-  const literal = tomlLiteral(value);
-  const current = typedValue(ast);
-  const entries = tomlEntries(ast);
-  const entry = entries.find((row) => samePath(row.path, path));
-  if (entry && same(at(current, path), value)) return text2;
-  const wanted = stableJson(withValue(current, path, value));
-  const fits = (candidate) => {
-    try {
-      return stableJson(typedValue((0, import_toml_eslint_parser.parseTOML)(candidate, { tomlVersion: "1.0" }))) === wanted;
-    } catch {
-      return false;
-    }
-  };
-  let candidates;
-  if (entry?.node) candidates = [text2.slice(0, entry.node.value.range[0]) + literal + text2.slice(entry.node.value.range[1])];
-  else if (entry) {
-    const inPlace = replaceArrayOfTables(text2, path, at(current, path), value);
-    const rest = removeEntry(text2, entry);
-    const restAst = parseToml(rest);
-    candidates = [...inPlace === null ? [] : [inPlace], ...insertions(rest, restAst, tomlEntries(restAst), path, value)];
-  } else candidates = insertions(text2, ast, entries, path, value);
-  const found = candidates.find(fits);
-  if (found === void 0) throw new Error("config.toml has no place for a setting that keeps it valid TOML");
-  return found;
-}
-function withValue(root, path, value) {
-  if (path.length === 0) return value;
-  const [key, ...rest] = path;
-  if (typeof key === "number") {
-    const list = Array.isArray(root) ? [...root] : [];
-    list[key] = withValue(list[key], rest, value);
-    return list;
-  }
-  const table = Object.assign(dict(), record(root));
-  table[key] = withValue(own(root, key), rest, value);
-  return table;
-}
-function removeEntry(text2, { node, holder, tables }) {
-  if (node === null) {
-    return tables.map((table) => table.range).sort((a, b) => b[0] - a[0]).reduce((out, [start3, end2]) => out.slice(0, start3) + out.slice(end2), text2);
-  }
-  let [start2, end] = node.range;
-  if (holder !== null) {
-    const index = holder.body.indexOf(node);
-    if (index > 0) start2 = holder.body[index - 1].range[1];
-    else if (holder.body.length > 1) end = holder.body[1].range[0];
-  }
-  return text2.slice(0, start2) + text2.slice(end);
-}
-function settle(text2, desired) {
-  let out = text2;
-  const now = typedToml(out);
-  for (const { path, value } of settingsOf(desired).filter((setting) => !same(at(now, setting.path), setting.value))) {
-    out = patchToml(out, path, value);
-  }
-  for (; ; ) {
-    const remove = topEntries(parseToml(out)).filter((entry) => !inlineEntry(entry) && at(desired, entry.path) === void 0);
-    const last = remove.sort((a, b) => entryStart(b) - entryStart(a))[0];
-    if (last === void 0) break;
-    out = removeEntry(out, last);
-  }
-  for (; ; ) {
-    const table = parseToml(out).body[0].body.find((node) => node.type === "TOMLTable" && !inArray(node.resolvedKey) && !isTable(at(desired, node.resolvedKey)));
-    if (table === void 0) break;
-    out = out.slice(0, table.range[0]) + out.slice(table.range[1]);
-  }
-  return out;
-}
-function holds(text2, desired) {
-  try {
-    return same(withoutEmptyTables(typedToml(text2)), withoutEmptyTables(desired));
-  } catch {
-    return false;
-  }
-}
-function rewrite(text2, desired, texts) {
-  if (same(typedToml(text2), desired)) return text2;
-  for (const start2 of [() => rewriteInOnePass(text2, desired, texts), () => text2]) {
-    try {
-      const out = settle(start2(), desired);
-      if (holds(out, desired)) return out;
-    } catch {
-    }
-  }
-  throw new Error("config.toml could not be written so that it holds the merged settings");
-}
-function publicSettings(values) {
-  const out = dict();
-  for (const setting of settingsOf(values)) {
-    if (!secretSetting(setting.path, setting.value)) setAt(out, setting.path, setting.value);
-  }
-  return out;
-}
-function mergedTrust(path, own2, fromDefault) {
-  const field = path.at(-1);
-  if (field === "enabled") return own2 === false || fromDefault === false ? false : own2;
-  if (field === "trust_level") return fromDefault === "untrusted" ? fromDefault : own2;
-  return own2;
-}
-function mergeAccountConfig(source, target, lastMerged) {
-  const sourceText = withoutBom(source);
-  const targetText = withoutBom(target);
-  const sourceAst = parseToml(sourceText);
-  const sourceValues = typedValue(sourceAst);
-  const targetValues = typedToml(targetText);
-  const fromSource = publicSettings(sourceValues);
-  let base = null;
-  if (lastMerged !== null && settingsOf(targetValues).length > 0) {
-    try {
-      base = typedToml(withoutBom(lastMerged));
-    } catch {
-      base = null;
-    }
-  }
-  const desired = copyTables(targetValues);
-  const heldBack = [];
-  for (const { path, value } of settingsOf(targetValues)) {
-    if (secretSetting(path, value) || at(sourceValues, path) !== void 0) continue;
-    const trust = trustValue(path);
-    if (base === null) {
-      if (!trust) removeAt(desired, path);
-      continue;
-    }
-    const last = at(base, path);
-    if (last === void 0 || trust && !same(value, last)) continue;
-    removeAt(desired, path);
-  }
-  for (const { path, value } of settingsOf(fromSource)) {
-    const prefixSecret = path.some((_, index) => {
-      const above = at(targetValues, path.slice(0, index + 1));
-      return above !== void 0 && !isTable(above) && secretSetting(path.slice(0, index + 1), above);
-    });
-    const belowSecret = isTable(at(targetValues, path)) && !holdsOnlyOrdinary(at(targetValues, path), path);
-    if (prefixSecret || belowSecret) {
-      if (!same(masked(value, secretPath(path)), masked(at(targetValues, path), secretPath(path)))) heldBack.push(dottedKey(path));
-      continue;
-    }
-    const own2 = at(targetValues, path);
-    if (base !== null && (own2 === void 0 || isTable(own2))) {
-      const unit = unitOf(path);
-      const whole = unit !== null && at(targetValues, unit) === void 0 ? unit : path;
-      const lastWhole = at(base, whole);
-      if (lastWhole !== void 0 && same(at(fromSource, whole), lastWhole)) continue;
-    }
-    const ownValue = own2 !== void 0 && !isTable(own2) ? own2 : void 0;
-    const last = base === null ? void 0 : at(base, path);
-    let next = value;
-    if (trustValue(path)) {
-      if (ownValue !== void 0 && (last === void 0 || !same(ownValue, last))) next = mergedTrust(path, ownValue, value);
-    } else if (ownValue !== void 0 && last !== void 0 && same(value, last) && !same(ownValue, last)) {
-      next = ownValue;
-    }
-    setAt(desired, path, next);
-  }
-  if (base !== null) {
-    for (const unit of unitPaths(targetValues)) {
-      if (at(base, unit) !== void 0 && at(sourceValues, unit) === void 0) removeAt(desired, unit);
-    }
-  }
-  for (const path of tablePaths(targetValues)) {
-    if (!holdsOrdinarySetting(at(targetValues, path), path)) continue;
-    const now = at(desired, path);
-    if (isTable(now) && !holdsOrdinarySetting(now, path)) removeAt(desired, path);
-  }
-  for (const unit of unitPaths(desired)) {
-    const value = at(desired, unit);
-    if (!holdsOrdinarySetting(value, unit) && !UNIT_KEYS[unit[0]].some((key) => own(value, key) !== void 0)) removeAt(desired, unit);
-  }
-  let missingSecrets = false;
-  for (const { path, value } of settingsOf(sourceValues)) {
-    if (!secretSetting(path, value)) continue;
-    const unit = unitOf(path);
-    if (unit !== null && at(desired, unit) === void 0 && at(fromSource, unit) !== void 0) continue;
-    const kept = at(desired, path);
-    if (kept === void 0) missingSecrets = true;
-    else if (!same(masked(value, secretPath(path)), masked(kept, secretPath(path)))) heldBack.push(dottedKey(path));
-  }
-  const texts = valueTexts(sourceText, sourceAst);
-  return {
-    content: rewrite(targetText, desired, texts),
-    merged: rewrite("", fromSource, texts),
-    missingSecrets,
-    heldBack: [...new Set(heldBack)]
-  };
-}
-var UNIT_TABLES = /* @__PURE__ */ new Set(["mcp_servers", "model_providers"]);
-var UNIT_KEYS = { mcp_servers: ["command", "url"], model_providers: ["name"] };
-function unitOf(path) {
-  return path.length >= 3 && UNIT_TABLES.has(path[0]) ? path.slice(0, 2) : null;
-}
-function unitPaths(values) {
-  return [...UNIT_TABLES].flatMap((key) => Object.entries(record(own(values, key))).filter(([, child2]) => isTable(child2)).map(([name]) => [key, name]));
-}
-function holdsOnlyOrdinary(value, path) {
-  return settingsOf(value, path).every((setting) => !secretSetting(setting.path, setting.value));
-}
-function sameTomlSettings(a, b) {
-  return same(typedToml(withoutBom(a)), typedToml(withoutBom(b)));
-}
-function validToml(text2) {
-  try {
-    parseToml(withoutBom(text2));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// src/core/codex-home.ts
-var CODEX_CONFIG_FILE = "config.toml";
-var CODEX_AGENTS_FILES = ["AGENTS.md", "AGENTS.override.md"];
-var CODEX_CONFIG_MERGE_ATTEMPTS = 3;
-var PRIVATE_DIRS = /* @__PURE__ */ new Set([".tmp", "tmp"]);
-function sandboxFolder(name) {
-  return /^\.sandbox(?:[-_.].*)?$/i.test(name);
-}
-function codexPrivateName(name) {
-  return /^(?:auth\.json|\.credentials\.json|secrets(?:\..*)?|\.env(?:\..*)?|vault(?:\..*)?|.*keychain.*|.*keyring.*|.*keystore.*|(?:.*[-_.])?(?:credentials?|oauth|tokens?)(?:[-_.].*)?|.*\.(?:db|sqlite|sqlite3|p12|pfx))$/i.test(name);
-}
-function codexHomeEntryAction(name, kind) {
-  if (kind === "directory" || kind === "directory-link") return PRIVATE_DIRS.has(name) || sandboxFolder(name) || codexPrivateName(name) ? "skip" : "link";
-  if (kind !== "file") return "skip";
-  if (name === CODEX_CONFIG_FILE) return "merge";
-  if (CODEX_AGENTS_FILES.includes(name)) return "copy";
-  return "skip";
-}
-function codexLinkAction(place, source, platform = process.platform) {
-  if (place.kind === "missing") return "create";
-  if (place.kind === "link" && sameFolderPath(place.target, source, platform)) return "linked";
-  return "conflict";
-}
-function sameFolderPath(a, b, platform) {
-  if (platform !== "win32") return import_node_path9.posix.resolve(a) === import_node_path9.posix.resolve(b);
-  return import_node_path9.win32.resolve(a).toLowerCase() === import_node_path9.win32.resolve(b).toLowerCase();
-}
-function codexStaleLink(link, source, shared, platform = process.platform) {
-  const paths = platform === "win32" ? import_node_path9.win32 : import_node_path9.posix;
-  const recorded = link.recorded !== null && sameFolderPath(link.target, link.recorded, platform);
-  if (sameFolderPath(link.target, paths.join(source, link.name), platform)) return !shared && (link.end !== "other" || recorded);
-  return link.end === "nothing" && recorded;
-}
-function codexAgentsCopy(source, current, copiedBefore) {
-  if (source !== null) return current === source ? null : { action: "write", content: source };
-  return current !== null && copiedBefore ? { action: "remove" } : null;
-}
-function errorText(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-function codexConfigRefresh(source, current, lastMerged) {
-  const keep = (merged, missingSecrets, heldBack, mergeFailure) => ({ action: "keep", content: null, merged, missingSecrets, heldBack, mergeFailure });
-  if (source === null) return keep(lastMerged === null ? "" : null, false, [], null);
-  if (current !== null && !validToml(current)) return keep(null, false, [], "the login's config.toml is not valid TOML, so it was left as it is");
-  let merge;
-  try {
-    merge = mergeAccountConfig(source, current ?? "", lastMerged);
-  } catch (error) {
-    return keep(null, false, [], `the default home's config.toml could not be merged in: ${errorText(error)}`);
-  }
-  try {
-    if (current !== null && sameTomlSettings(current, merge.content)) return keep(merge.merged, merge.missingSecrets, merge.heldBack, null);
-  } catch (error) {
-    return keep(null, merge.missingSecrets, merge.heldBack, `the merged config.toml could not be compared: ${errorText(error)}`);
-  }
-  return { action: "write", content: merge.content, merged: merge.merged, missingSecrets: merge.missingSecrets, heldBack: merge.heldBack, mergeFailure: null };
-}
-
-// src/platform/links.ts
-var import_promises3 = require("node:fs/promises");
-var import_node_path10 = require("node:path");
-function pathsOf2(platform) {
-  return platform === "win32" ? import_node_path10.win32 : import_node_path10.posix;
-}
-function normaliseLinkTarget(target, platform) {
-  if (platform !== "win32") return target;
-  const unc = /^(?:\\\\\?\\|\\\?\?\\)UNC\\/i.exec(target);
-  if (unc !== null) return `\\\\${target.slice(unc[0].length)}`;
-  const long = /^(?:\\\\\?\\|\\\?\?\\)(?=[a-z]:)/i.exec(target);
-  if (long !== null) return target.slice(long[0].length);
-  return target;
-}
-function linkTargetPath(place, target, platform) {
-  const paths = pathsOf2(platform);
-  return paths.resolve(paths.dirname(place), normaliseLinkTarget(target, platform));
-}
-function errorCode(error) {
-  const code = error?.code;
-  return typeof code === "string" ? code : void 0;
-}
-async function readFolderLink(place, platform = process.platform) {
-  let stats;
-  try {
-    stats = await (0, import_promises3.lstat)(place);
-  } catch (error) {
-    if (errorCode(error) === "ENOENT") return { kind: "missing" };
-    throw error;
-  }
-  if (!stats.isSymbolicLink()) return { kind: "other" };
-  return { kind: "link", target: linkTargetPath(place, await (0, import_promises3.readlink)(place), platform) };
-}
-async function linkFolder(target, place, platform = process.platform) {
-  const absolute = pathsOf2(platform).resolve(target);
-  if (platform !== "win32") {
-    await (0, import_promises3.symlink)(absolute, place, "dir");
-    return;
-  }
-  try {
-    await (0, import_promises3.symlink)(absolute, place, "junction");
-  } catch (error) {
-    if (errorCode(error) === "EEXIST") throw error;
-    try {
-      await (0, import_promises3.symlink)(absolute, place, "dir");
-    } catch {
-      throw error;
-    }
-  }
-}
-async function removeFolderLink(place, platform = process.platform) {
-  if (!(await (0, import_promises3.lstat)(place)).isSymbolicLink()) throw new Error(`${place} is not a link`);
-  if (platform !== "win32") {
-    await (0, import_promises3.unlink)(place);
-    return;
-  }
-  try {
-    await (0, import_promises3.unlink)(place);
-  } catch (error) {
-    const code = errorCode(error);
-    if (code !== "EPERM" && code !== "EISDIR" && code !== "EACCES") throw error;
-    await (0, import_promises3.rmdir)(place);
-  }
-}
-
-// src/cli/codex-home-files.ts
-function emptyRecord(config) {
-  return { config, copied: {}, links: {}, conflicts: [] };
-}
-async function prepareCodexHome(login, options) {
-  const name = login.alias ?? login.id;
-  if (login.provider !== "codex") throw new Error(`${name} is not a Codex login.`);
-  if (login.usedByPlainCli) return { codexHome: null, warnings: [] };
-  const platform = options.platform ?? process.platform;
-  const home = loginFolder(login);
-  try {
-    makePrivateDirSync(home);
-  } catch (error) {
-    throw new Error(`Could not create the Codex home of ${name} at ${home}: ${errorText2(error)}`, { cause: error });
-  }
-  const source = codexSourceHome(options.env, platform);
-  const warnings = [];
-  const recordPath = codexMergedRecordPath(login);
-  const isNew = await isEmptyFolder(home);
-  const record2 = isNew ? emptyRecord("") : await readRecord(recordPath, warnings);
-  const next = { config: record2.config, copied: { ...record2.copied }, links: {}, conflicts: [] };
-  await linkSharedFolders(source, home, platform, warnings, record2, next);
-  for (const file of CODEX_AGENTS_FILES) await copyAgents(source, home, file, warnings, record2, next);
-  await refreshConfig(source, home, warnings, record2, next);
-  next.conflicts.sort();
-  if (isNew || formatJson(next) !== formatJson(record2)) {
-    try {
-      await writeJsonFile(recordPath, next, { mode: PRIVATE_FILE_MODE });
-    } catch (error) {
-      warnings.push(`Could not save what was merged into ${home} to ${recordPath}: ${errorText2(error)}`);
-    }
-  }
-  return { codexHome: home, warnings };
-}
-async function isEmptyFolder(folder) {
-  try {
-    return (await (0, import_promises4.readdir)(folder)).length === 0;
-  } catch {
-    return false;
-  }
-}
-async function readRecord(path, warnings) {
-  let read;
-  try {
-    read = await readJsonFile(path);
-  } catch (error) {
-    warnings.push(`Could not read ${path}, so this start keeps every setting of the login's config.toml: ${errorText2(error)}`);
-    return emptyRecord("");
-  }
-  if (read.status === "missing") return emptyRecord(null);
-  if (read.status !== "ok" || read.value === null || typeof read.value !== "object" || Array.isArray(read.value)) {
-    warnings.push(`${path} is damaged, so this start keeps every setting of the login's config.toml.`);
-    return emptyRecord("");
-  }
-  const value = read.value;
-  const conflicts = value["conflicts"];
-  const config = value["config"];
-  return {
-    config: typeof config === "string" ? config : config === null ? null : "",
-    copied: stringRecord(value["copied"]),
-    links: stringRecord(value["links"]),
-    conflicts: Array.isArray(conflicts) ? conflicts.filter((name) => typeof name === "string") : []
-  };
-}
-function stringRecord(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter((entry) => typeof entry[1] === "string"));
-}
-function sha256(text2) {
-  return (0, import_node_crypto6.createHash)("sha256").update(text2).digest("hex");
-}
-function codexSourceHome(env, platform = process.platform) {
-  const fallback = (0, import_node_path11.join)((0, import_node_os4.homedir)(), ".codex");
-  const named = env.CODEX_HOME;
-  if (named === void 0 || named === "") return fallback;
-  const home = (0, import_node_path11.resolve)(named);
-  return insideFolder(providerFolder("codex"), home, platform) ? fallback : home;
-}
-function insideFolder(folder, path, platform) {
-  const paths = pathsOf2(platform);
-  const fold = (text2) => platform === "win32" ? text2.toLowerCase() : text2;
-  const relative2 = paths.relative(fold(paths.resolve(folder)), fold(paths.resolve(path)));
-  return relative2 === "" || !relative2.startsWith("..") && !paths.isAbsolute(relative2);
-}
-function errorText2(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-function errorCode2(error) {
-  const code = error?.code;
-  return typeof code === "string" ? code : void 0;
-}
-async function entryKind(source, entry) {
-  if (entry.isSymbolicLink()) {
-    try {
-      return (await (0, import_promises4.stat)((0, import_node_path11.join)(source, entry.name))).isDirectory() ? "directory-link" : "symlink";
-    } catch {
-      return "symlink";
-    }
-  }
-  if (entry.isDirectory()) return "directory";
-  if (entry.isFile()) return "file";
-  return "other";
-}
-async function sharedFolders(source, home, warnings) {
-  let entries;
-  try {
-    entries = await (0, import_promises4.readdir)(source, { withFileTypes: true });
-  } catch (error) {
-    if (errorCode2(error) === "ENOENT") return [];
-    warnings.push(`Could not list ${source} to link its folders into ${home}: ${errorText2(error)}`);
-    return null;
-  }
-  const shared = [];
-  for (const entry of entries) {
-    if (codexHomeEntryAction(entry.name, await entryKind(source, entry)) === "link") shared.push(entry.name);
-  }
-  return shared;
-}
-async function linkSharedFolders(source, home, platform, warnings, record2, next) {
-  const shared = await sharedFolders(source, home, warnings);
-  if (shared === null) {
-    next.conflicts = [...record2.conflicts];
-    next.links = { ...record2.links };
-    return;
-  }
-  await removeStaleLinks(source, home, new Set(shared), platform, warnings, record2, next);
-  for (const name of shared) {
-    const from = (0, import_node_path11.join)(source, name);
-    const place = (0, import_node_path11.join)(home, name);
-    try {
-      if (await placeLink(from, place, platform) === "linked") {
-        next.links[name] = from;
-        continue;
-      }
-      next.conflicts.push(name);
-      if (!record2.conflicts.includes(name)) {
-        warnings.push(`${place} is a folder of this login's own with something in it, or a link to somewhere else, so it was left as it is and not linked to ${from}. Move it away to share ${from} with this login. This is said once.`);
-      }
-    } catch (error) {
-      warnings.push(`Could not link ${place} to ${from}: ${errorText2(error)}`);
-    }
-  }
-}
-async function linkEnd(place) {
-  try {
-    return (await (0, import_promises4.stat)(place)).isDirectory() ? "folder" : "other";
-  } catch (error) {
-    const code = errorCode2(error);
-    return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP" ? "nothing" : "other";
-  }
-}
-async function removeStaleLinks(source, home, shared, platform, warnings, record2, next) {
-  let entries;
-  try {
-    entries = await (0, import_promises4.readdir)(home, { withFileTypes: true });
-  } catch (error) {
-    warnings.push(`Could not list ${home} to remove the links that lead nowhere: ${errorText2(error)}`);
-    return;
-  }
-  for (const entry of entries) {
-    if (entry.isFile()) continue;
-    const place = (0, import_node_path11.join)(home, entry.name);
-    try {
-      const found = await readFolderLink(place, platform);
-      if (found.kind !== "link") continue;
-      const recorded = Object.hasOwn(record2.links, entry.name) ? record2.links[entry.name] : null;
-      const link = { name: entry.name, target: found.target, end: await linkEnd(place), recorded };
-      if (!codexStaleLink(link, source, shared.has(entry.name), platform)) {
-        if (recorded !== null) next.links[entry.name] = recorded;
-        continue;
-      }
-      try {
-        await removeFolderLink(place, platform);
-      } catch (error) {
-        if (errorCode2(error) !== "ENOENT") throw error;
-      }
-    } catch (error) {
-      warnings.push(`Could not remove ${place}, a link that leads nowhere or to a folder this login no longer shares: ${errorText2(error)}`);
-    }
-  }
-}
-var LINK_ATTEMPTS = 4;
-var LINK_RETRY_DELAY_MS = 25;
-function retryableLinkError(code, platform) {
-  if (code === "EEXIST" || code === "ENOENT") return true;
-  return platform === "win32" && (code === "EBUSY" || code === "EPERM" || code === "EACCES");
-}
-async function placeLink(from, place, platform, link = linkFolder) {
-  let failure2 = null;
-  for (let attempt = 1; attempt <= LINK_ATTEMPTS; attempt++) {
-    if (attempt > 1) await (0, import_promises5.setTimeout)(LINK_RETRY_DELAY_MS);
-    const found = await readFolderLink(place, platform);
-    const action = codexLinkAction(found, from, platform);
-    if (action === "linked") return "linked";
-    if (action === "conflict") {
-      if (found.kind !== "other") return "conflict";
-      const removed = await removeEmptyFolder(place, platform);
-      if (removed === "kept") return "conflict";
-      if (removed === "again") continue;
-    }
-    try {
-      await link(from, place, platform);
-      return "linked";
-    } catch (error) {
-      if (!retryableLinkError(errorCode2(error), platform)) throw error;
-      failure2 = error;
-    }
-  }
-  if (codexLinkAction(await readFolderLink(place, platform), from, platform) === "linked") return "linked";
-  if (failure2 !== null && errorCode2(failure2) !== "EEXIST") throw failure2;
-  return "conflict";
-}
-async function removeEmptyFolder(place, platform) {
-  try {
-    const stats = await (0, import_promises4.lstat)(place);
-    if (stats.isSymbolicLink()) return "again";
-    if (!stats.isDirectory()) return "kept";
-    await (0, import_promises4.rmdir)(place);
-    return "removed";
-  } catch (error) {
-    const code = errorCode2(error);
-    return code === "ENOTDIR" || code !== "EEXIST" && retryableLinkError(code, platform) ? "again" : "kept";
-  }
-}
-async function copyAgents(source, home, file, warnings, record2, next) {
-  const from = (0, import_node_path11.join)(source, file);
-  const target = (0, import_node_path11.join)(home, file);
-  try {
-    const text2 = await readText(from);
-    const said = { decision: null };
-    const outcome = await writeIfUnchanged(target, (current) => {
-      said.decision = codexAgentsCopy(text2, current, current !== null && record2.copied[file] === sha256(current));
-      return said.decision?.action === "write" ? said.decision.content : null;
-    }, 420);
-    if (outcome === "changing") {
-      warnings.push(changingWarning(target));
-      return;
-    }
-    if (said.decision?.action === "remove") {
-      const current = await readText(target);
-      if (current !== null && record2.copied[file] === sha256(current)) await (0, import_promises4.rm)(target, { force: true });
-    }
-    if (text2 === null) delete next.copied[file];
-    else next.copied[file] = sha256(text2);
-  } catch (error) {
-    warnings.push(`Could not copy ${from} to ${target}: ${errorText2(error)}`);
-  }
-}
-async function refreshConfig(source, home, warnings, record2, next) {
-  const from = (0, import_node_path11.join)(source, CODEX_CONFIG_FILE);
-  const target = (0, import_node_path11.join)(home, CODEX_CONFIG_FILE);
-  try {
-    const text2 = await readText(from);
-    const said = { missingSecrets: false, heldBack: [], mergeFailure: null, merged: null };
-    const outcome = await writeIfUnchanged(target, (current) => {
-      const refresh = codexConfigRefresh(text2, current, record2.config);
-      said.missingSecrets = refresh.missingSecrets;
-      said.heldBack = refresh.heldBack;
-      said.mergeFailure = refresh.mergeFailure;
-      said.merged = refresh.merged;
-      return refresh.action === "write" ? refresh.content : null;
-    }, PRIVATE_FILE_MODE);
-    if (said.mergeFailure !== null) warnings.push(`Could not refresh ${target} from ${from}: ${said.mergeFailure}.`);
-    if (said.missingSecrets) {
-      warnings.push(`${from} has a secret, such as an MCP server's env table, that ${target} lacks. It is never copied; add it to ${target} if this login needs it.`);
-    }
-    if (said.heldBack.length > 0) {
-      warnings.push(`${from} sets ${said.heldBack.join(", ")} differently from ${target}, and a secret stands in the way, so ${target} keeps its own. Secrets are never copied; change ${target} by hand if this login needs the default home's.`);
-    }
-    if (outcome === "changing") warnings.push(changingWarning(target));
-    else if (said.merged !== null) next.config = said.merged;
-  } catch (error) {
-    warnings.push(`Could not refresh ${target} from ${from}: ${errorText2(error)}`);
-  }
-}
-function changingWarning(target) {
-  return `${target} kept changing while kurmis refreshed it, so it was left as it is. The next start refreshes it again.`;
-}
-async function readText(path) {
-  try {
-    return await (0, import_promises4.readFile)(path, "utf8");
-  } catch (error) {
-    if (errorCode2(error) === "ENOENT") return null;
-    throw error;
-  }
-}
-var TEMP_FLAGS2 = import_node_fs9.constants.O_WRONLY | import_node_fs9.constants.O_CREAT | import_node_fs9.constants.O_EXCL;
-async function writeIfUnchanged(target, next, mode) {
-  for (let attempt = 1; attempt <= CODEX_CONFIG_MERGE_ATTEMPTS; attempt++) {
-    const current = await readText(target);
-    const text2 = next(current);
-    if (text2 === null) return "unchanged";
-    const temp = `${target}.${String(process.pid)}.${(0, import_node_crypto6.randomBytes)(4).toString("hex")}.tmp`;
-    const handle = await (0, import_promises4.open)(temp, TEMP_FLAGS2, mode);
-    try {
-      try {
-        await handle.writeFile(text2);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      if (await readText(target) !== current) {
-        await (0, import_promises4.rm)(temp, { force: true });
-        continue;
-      }
-      await replaceFile(temp, target);
-    } catch (error) {
-      await (0, import_promises4.rm)(temp, { force: true });
-      throw error;
-    }
-    await syncDirectory((0, import_node_path11.dirname)(target));
-    return "written";
-  }
-  return "changing";
-}
-
 // src/cli/daemon-client.ts
-var import_node_os5 = require("node:os");
-var import_node_path13 = require("node:path");
+var import_node_os4 = require("node:os");
+var import_node_path10 = require("node:path");
 
 // src/data/daemon-file.ts
-var import_node_crypto7 = require("node:crypto");
-var import_node_fs10 = require("node:fs");
-var import_node_path12 = require("node:path");
+var import_node_crypto6 = require("node:crypto");
+var import_node_fs9 = require("node:fs");
+var import_node_path9 = require("node:path");
 function generateDaemonSecret() {
-  return (0, import_node_crypto7.randomBytes)(32).toString("hex");
+  return (0, import_node_crypto6.randomBytes)(32).toString("hex");
 }
 var SECRET_PATTERN = /^[0-9a-f]{64}$/;
 function readKey(path = keyPath()) {
-  let text2;
+  let text;
   try {
-    text2 = (0, import_node_fs10.readFileSync)(path, "utf8").trim();
+    text = (0, import_node_fs9.readFileSync)(path, "utf8").trim();
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
-  return SECRET_PATTERN.test(text2) ? text2 : null;
+  return SECRET_PATTERN.test(text) ? text : null;
 }
 function readOrCreateKey(path = keyPath()) {
   const existing = readKey(path);
   if (existing !== null) return existing;
-  makePrivateDirSync((0, import_node_path12.dirname)(path));
+  makePrivateDirSync((0, import_node_path9.dirname)(path));
   const key = generateDaemonSecret();
   if (!createKeyFile(path, key)) {
     const theirs = readKeySettled(path);
@@ -7098,19 +2637,19 @@ function readOrCreateKey(path = keyPath()) {
   return key;
 }
 function createKeyFile(path, key) {
-  const temporary = (0, import_node_path12.join)((0, import_node_path12.dirname)(path), `.key-${process.pid}-${(0, import_node_crypto7.randomBytes)(4).toString("hex")}`);
+  const temporary = (0, import_node_path9.join)((0, import_node_path9.dirname)(path), `.key-${process.pid}-${(0, import_node_crypto6.randomBytes)(4).toString("hex")}`);
   writeFileAtomicSync(temporary, `${key}
 `, { mode: PRIVATE_FILE_MODE });
   try {
-    (0, import_node_fs10.linkSync)(temporary, path);
+    (0, import_node_fs9.linkSync)(temporary, path);
     return true;
   } catch (error) {
     if (error.code === "EEXIST") return false;
   } finally {
-    (0, import_node_fs10.rmSync)(temporary, { force: true });
+    (0, import_node_fs9.rmSync)(temporary, { force: true });
   }
   try {
-    (0, import_node_fs10.writeFileSync)(path, `${key}
+    (0, import_node_fs9.writeFileSync)(path, `${key}
 `, { flag: "wx", mode: PRIVATE_FILE_MODE });
     return true;
   } catch (error) {
@@ -7156,10 +2695,10 @@ function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
   if (read.status === "missing") return false;
   if (read.status === "ok" && read.info.pid !== pid) return false;
   afterCheck?.();
-  const aside = `${path}.${String(process.pid)}-${(0, import_node_crypto7.randomBytes)(4).toString("hex")}.removing`;
+  const aside = `${path}.${String(process.pid)}-${(0, import_node_crypto6.randomBytes)(4).toString("hex")}.removing`;
   try {
     retryWhileLockedSync(() => {
-      (0, import_node_fs10.renameSync)(path, aside);
+      (0, import_node_fs9.renameSync)(path, aside);
     });
   } catch (error) {
     if (error.code === "ENOENT") return false;
@@ -7170,12 +2709,12 @@ function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
     const moved = readDaemonFile(aside);
     if (moved.status === "ok" && moved.info.pid !== pid) {
       try {
-        (0, import_node_fs10.linkSync)(aside, path);
+        (0, import_node_fs9.linkSync)(aside, path);
       } catch (error) {
-        if (error.code !== "EEXIST" && !(0, import_node_fs10.existsSync)(path)) {
+        if (error.code !== "EEXIST" && !(0, import_node_fs9.existsSync)(path)) {
           try {
             retryWhileLockedSync(() => {
-              (0, import_node_fs10.renameSync)(aside, path);
+              (0, import_node_fs9.renameSync)(aside, path);
             });
           } catch {
             keepAside = true;
@@ -7186,7 +2725,7 @@ function removeDaemonFile(pid, path = daemonFilePath(), afterCheck) {
     }
     return true;
   } finally {
-    if (!keepAside) (0, import_node_fs10.rmSync)(aside, { force: true });
+    if (!keepAside) (0, import_node_fs9.rmSync)(aside, { force: true });
   }
 }
 
@@ -7324,7 +2863,7 @@ var NOT_FOR_THE_DAEMON = [
 function daemonEnvironment(env, processEnv = process.env) {
   const out = { ...env, ...inheritedTestHooks(env, processEnv) };
   for (const name of NOT_FOR_THE_DAEMON) delete out[name];
-  if (out.KURMIS_HOME !== void 0 && out.KURMIS_HOME !== "") out.KURMIS_HOME = (0, import_node_path13.resolve)(out.KURMIS_HOME);
+  if (out.KURMIS_HOME !== void 0 && out.KURMIS_HOME !== "") out.KURMIS_HOME = (0, import_node_path10.resolve)(out.KURMIS_HOME);
   return out;
 }
 function portBusyMessage(port, reason) {
@@ -7399,7 +2938,7 @@ async function startDaemon(options) {
   const env = daemonEnvironment(options.env);
   let child2;
   try {
-    child2 = await spawnDetached({ command: process.execPath, args: [entry, "daemon", "run"], env, cwd: (0, import_node_os5.homedir)() });
+    child2 = await spawnDetached({ command: process.execPath, args: [entry, "daemon", "run"], env, cwd: (0, import_node_os4.homedir)() });
   } catch (error) {
     throw new DaemonError(`The kurmis daemon could not be started: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -7548,16 +3087,16 @@ function silentDaemon() {
 
 // src/cli/wrapper.ts
 var import_node_child_process3 = require("node:child_process");
-var import_node_os6 = require("node:os");
+var import_node_os5 = require("node:os");
 var WRAPPER_PIDS_VARIABLE = "KURMIS_WRAPPER_PIDS";
 var MAX_WRAPPER_DEPTH = 8;
 function wrapperPids(env) {
-  return (env[WRAPPER_PIDS_VARIABLE] ?? "").split(",").map((text2) => Number(text2)).filter((pid) => Number.isInteger(pid) && pid > 0);
+  return (env[WRAPPER_PIDS_VARIABLE] ?? "").split(",").map((text) => Number(text)).filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 function wrapperLoop(env, parentPid) {
   const pids = wrapperPids(env);
   if (!pids.includes(parentPid) && pids.length < MAX_WRAPPER_DEPTH) return null;
-  return `kurmis was started by the program it started, so that program runs kurmis again instead of being the real one (${pids.includes(parentPid) ? "its parent is a kurmis wrapper" : `${String(pids.length)} kurmis wrappers run inside each other`}). Take that program off PATH, or set KURMIS_CLAUDE_BIN or KURMIS_CODEX_BIN to the real program`;
+  return `kurmis was started by the program it started, so that program runs kurmis again instead of being the real one (${pids.includes(parentPid) ? "its parent is a kurmis wrapper" : `${String(pids.length)} kurmis wrappers run inside each other`}). Take that program off PATH, or set KURMIS_CLAUDE_BIN to the real program`;
 }
 function withWrapperPid(env, pid) {
   return { ...env, [WRAPPER_PIDS_VARIABLE]: [...wrapperPids(env), pid].join(",") };
@@ -7575,7 +3114,7 @@ async function runInteractive(spec, options = {}) {
   const proc = options.process ?? process;
   const spawn4 = options.spawn ?? import_node_child_process3.spawn;
   const stdinIsTerminal = options.stdinIsTerminal ?? process.stdin.isTTY === true;
-  return await new Promise((resolve9) => {
+  return await new Promise((resolve8) => {
     const installed = [];
     let child2;
     let started = false;
@@ -7584,7 +3123,7 @@ async function runInteractive(spec, options = {}) {
       if (settled) return;
       settled = true;
       for (const [signal, listener] of installed) proc.removeListener(signal, listener);
-      resolve9(end);
+      resolve8(end);
     };
     const forward = (signal) => {
       if (child2?.pid === void 0) return;
@@ -7670,7 +3209,7 @@ var CORE_SIGNALS = /* @__PURE__ */ new Set([
   "SIGIOT"
 ]);
 function signalExitCode(signal) {
-  const number = import_node_os6.constants.signals[signal];
+  const number = import_node_os5.constants.signals[signal];
   return 128 + (number ?? 0);
 }
 function finishLikeChild(end, options) {
@@ -7700,7 +3239,6 @@ function finishLikeChild(end, options) {
 var realDaemonClient = { findDaemon, ensureDaemon, readStatus: readStatus3, requestProbe, requestReload };
 var realChildRunner = { runInteractive, finishLikeChild };
 var realFindProgram = findProgram;
-var realPrepareCodexHome = prepareCodexHome;
 async function reloadIfRunning(client, env) {
   try {
     const connection = await client.findDaemon({ env });
@@ -7724,8 +3262,8 @@ function reloadText(result) {
 async function settleWithin(start2, ms) {
   const controller = new AbortController();
   let timer;
-  const timeout = new Promise((resolve9) => {
-    timer = setTimeout(() => resolve9({ kind: "timeout" }), ms);
+  const timeout = new Promise((resolve8) => {
+    timer = setTimeout(() => resolve8({ kind: "timeout" }), ms);
   });
   let promise;
   try {
@@ -7748,37 +3286,37 @@ async function settleWithin(start2, ms) {
 }
 
 // src/cli/settings-arg.ts
-var import_node_crypto8 = require("node:crypto");
-var import_node_fs11 = require("node:fs");
-var import_node_os7 = require("node:os");
-var import_node_path14 = require("node:path");
+var import_node_crypto7 = require("node:crypto");
+var import_node_fs10 = require("node:fs");
+var import_node_os6 = require("node:os");
+var import_node_path11 = require("node:path");
 
 // src/cli/json-error.ts
 var NotJson = class extends Error {
-  constructor(at2) {
+  constructor(at) {
     super("not JSON");
-    this.at = at2;
+    this.at = at;
   }
   at;
 };
 var WHITESPACE = /* @__PURE__ */ new Set([" ", "	", "\n", "\r"]);
-function jsonErrorPlace(text2) {
+function jsonErrorPlace(text) {
   let pos = 0;
   const fail4 = () => {
     throw new NotJson(pos);
   };
   const skip = () => {
-    while (pos < text2.length && WHITESPACE.has(text2[pos])) pos++;
+    while (pos < text.length && WHITESPACE.has(text[pos])) pos++;
   };
   const expect = (char) => {
-    if (text2[pos] !== char) fail4();
+    if (text[pos] !== char) fail4();
     pos++;
   };
   const string = () => {
     expect('"');
     for (; ; ) {
-      if (pos >= text2.length) fail4();
-      const char = text2[pos];
+      if (pos >= text.length) fail4();
+      const char = text[pos];
       if (char === '"') {
         pos++;
         return;
@@ -7786,10 +3324,10 @@ function jsonErrorPlace(text2) {
       if (char.charCodeAt(0) < 32) fail4();
       if (char === "\\") {
         pos++;
-        const escaped = text2[pos];
+        const escaped = text[pos];
         if (escaped === "u") {
           for (let i = 1; i <= 4; i++) {
-            if (!/[0-9a-fA-F]/.test(text2[pos + i] ?? "")) {
+            if (!/[0-9a-fA-F]/.test(text[pos + i] ?? "")) {
               pos += i;
               fail4();
             }
@@ -7803,20 +3341,20 @@ function jsonErrorPlace(text2) {
     }
   };
   const digits = () => {
-    if (!/[0-9]/.test(text2[pos] ?? "")) fail4();
-    while (/[0-9]/.test(text2[pos] ?? "")) pos++;
+    if (!/[0-9]/.test(text[pos] ?? "")) fail4();
+    while (/[0-9]/.test(text[pos] ?? "")) pos++;
   };
   const number = () => {
-    if (text2[pos] === "-") pos++;
-    if (text2[pos] === "0") pos++;
+    if (text[pos] === "-") pos++;
+    if (text[pos] === "0") pos++;
     else digits();
-    if (text2[pos] === ".") {
+    if (text[pos] === ".") {
       pos++;
       digits();
     }
-    if (text2[pos] === "e" || text2[pos] === "E") {
+    if (text[pos] === "e" || text[pos] === "E") {
       pos++;
-      if (text2[pos] === "+" || text2[pos] === "-") pos++;
+      if (text[pos] === "+" || text[pos] === "-") pos++;
       digits();
     }
   };
@@ -7825,11 +3363,11 @@ function jsonErrorPlace(text2) {
   };
   const value = () => {
     skip();
-    const char = text2[pos];
+    const char = text[pos];
     if (char === "{") {
       pos++;
       skip();
-      if (text2[pos] === "}") {
+      if (text[pos] === "}") {
         pos++;
         return;
       }
@@ -7840,7 +3378,7 @@ function jsonErrorPlace(text2) {
         expect(":");
         value();
         skip();
-        if (text2[pos] === "}") {
+        if (text[pos] === "}") {
           pos++;
           return;
         }
@@ -7850,14 +3388,14 @@ function jsonErrorPlace(text2) {
     if (char === "[") {
       pos++;
       skip();
-      if (text2[pos] === "]") {
+      if (text[pos] === "]") {
         pos++;
         return;
       }
       for (; ; ) {
         value();
         skip();
-        if (text2[pos] === "]") {
+        if (text[pos] === "]") {
           pos++;
           return;
         }
@@ -7874,26 +3412,26 @@ function jsonErrorPlace(text2) {
   try {
     value();
     skip();
-    if (pos < text2.length) fail4();
+    if (pos < text.length) fail4();
     return null;
   } catch (error) {
     if (!(error instanceof NotJson)) throw error;
-    return placeOf(text2, Math.min(error.at, text2.length));
+    return placeOf(text, Math.min(error.at, text.length));
   }
 }
-function placeOf(text2, at2) {
+function placeOf(text, at) {
   let line = 1;
-  let lineStart2 = 0;
-  for (let i = 0; i < at2; i++) {
-    if (text2[i] === "\n") {
+  let lineStart = 0;
+  for (let i = 0; i < at; i++) {
+    if (text[i] === "\n") {
       line++;
-      lineStart2 = i + 1;
+      lineStart = i + 1;
     }
   }
-  return { line, column: at2 - lineStart2 + 1 };
+  return { line, column: at - lineStart + 1 };
 }
-function notJsonText(text2) {
-  const place = jsonErrorPlace(text2);
+function notJsonText(text) {
+  const place = jsonErrorPlace(text);
   return place === null ? "not valid JSON" : `not valid JSON (line ${String(place.line)}, column ${String(place.column)})`;
 }
 
@@ -7922,15 +3460,15 @@ function readUserSettingsArg(args, options) {
   rest.push(...args.slice(index));
   if (value === null) return { settings: null, source: null, rest };
   if (value.trim() === "") return { error: `${FLAG} needs a value: a settings file or a JSON object` };
-  const text2 = value.trim();
-  if (text2.startsWith("{") && text2.endsWith("}")) {
-    const settings2 = parseSettings(text2, `the JSON given to ${FLAG}`);
+  const text = value.trim();
+  if (text.startsWith("{") && text.endsWith("}")) {
+    const settings2 = parseSettings(text, `the JSON given to ${FLAG}`);
     return "error" in settings2 ? settings2 : { settings: settings2.value, source: "inline", rest };
   }
-  const path = (0, import_node_path14.isAbsolute)(value) ? value : (0, import_node_path14.resolve)(options.cwd, value);
+  const path = (0, import_node_path11.isAbsolute)(value) ? value : (0, import_node_path11.resolve)(options.cwd, value);
   let fileText;
   try {
-    fileText = (options.readFile ?? ((file) => (0, import_node_fs11.readFileSync)(file, "utf8")))(path);
+    fileText = (options.readFile ?? ((file) => (0, import_node_fs10.readFileSync)(file, "utf8")))(path);
   } catch (error) {
     const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
     const why = code === "ENOENT" ? "it does not exist" : error instanceof Error ? error.message : String(error);
@@ -7939,12 +3477,12 @@ function readUserSettingsArg(args, options) {
   const settings = parseSettings(fileText, `the settings file ${path}`);
   return "error" in settings ? settings : { settings: settings.value, source: path, rest };
 }
-function parseSettings(text2, what) {
+function parseSettings(text, what) {
   let value;
   try {
-    value = JSON.parse(withoutBom2(text2));
+    value = JSON.parse(withoutBom(text));
   } catch {
-    return { error: `${FLAG}: ${what} is ${notJsonText(withoutBom2(text2))}` };
+    return { error: `${FLAG}: ${what} is ${notJsonText(withoutBom(text))}` };
   }
   if (!isPlainObject2(value)) return { error: `${FLAG}: ${what} is not a JSON object` };
   if (value.env !== void 0 && !isPlainObject2(value.env)) {
@@ -7952,8 +3490,8 @@ function parseSettings(text2, what) {
   }
   return { value };
 }
-function withoutBom2(text2) {
-  return text2.charCodeAt(0) === 65279 ? text2.slice(1) : text2;
+function withoutBom(text) {
+  return text.charCodeAt(0) === 65279 ? text.slice(1) : text;
 }
 function isPlainObject2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -7982,35 +3520,35 @@ function claudeArgsWithSettings(user, routing, store = storeSettings) {
 var SETTINGS_FILE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 var SETTINGS_FILE_NAME = /^[0-9a-f]{32}\.json$/;
 var RUN_SETTINGS_FILE_NAME = /^run-(\d+)-[0-9a-f]{16}\.json$/;
-function storeSettings(text2, holdsUserSettings, folder = wrapperSettingsFolder(), now = Date.now(), pid = process.pid) {
-  if (!holdsUserSettings) return { path: storeSettingsFile(text2, folder, now), remove: () => void 0 };
+function storeSettings(text, holdsUserSettings, folder = wrapperSettingsFolder(), now = Date.now(), pid = process.pid) {
+  if (!holdsUserSettings) return { path: storeSettingsFile(text, folder, now), remove: () => void 0 };
   pruneSettingsFiles(folder, now, null);
-  const path = (0, import_node_path14.join)(folder, `run-${String(pid)}-${(0, import_node_crypto8.randomBytes)(8).toString("hex")}.json`);
-  writeFileAtomicSync(path, text2, { mode: PRIVATE_FILE_MODE });
+  const path = (0, import_node_path11.join)(folder, `run-${String(pid)}-${(0, import_node_crypto7.randomBytes)(8).toString("hex")}.json`);
+  writeFileAtomicSync(path, text, { mode: PRIVATE_FILE_MODE });
   return {
     path,
     remove: () => {
       try {
-        (0, import_node_fs11.rmSync)(path, { force: true });
+        (0, import_node_fs10.rmSync)(path, { force: true });
       } catch {
       }
     }
   };
 }
-function storeSettingsFile(text2, folder = wrapperSettingsFolder(), now = Date.now()) {
-  const path = (0, import_node_path14.join)(folder, `${(0, import_node_crypto8.createHash)("sha256").update(text2).digest("hex").slice(0, 32)}.json`);
+function storeSettingsFile(text, folder = wrapperSettingsFolder(), now = Date.now()) {
+  const path = (0, import_node_path11.join)(folder, `${(0, import_node_crypto7.createHash)("sha256").update(text).digest("hex").slice(0, 32)}.json`);
   let current = false;
   try {
-    current = (0, import_node_fs11.readFileSync)(path, "utf8") === text2;
+    current = (0, import_node_fs10.readFileSync)(path, "utf8") === text;
   } catch {
   }
   if (current) {
     try {
-      (0, import_node_fs11.utimesSync)(path, now / 1e3, now / 1e3);
+      (0, import_node_fs10.utimesSync)(path, now / 1e3, now / 1e3);
     } catch {
     }
   } else {
-    writeFileAtomicSync(path, text2, { mode: PRIVATE_FILE_MODE });
+    writeFileAtomicSync(path, text, { mode: PRIVATE_FILE_MODE });
   }
   pruneSettingsFiles(folder, now, path);
   return path;
@@ -8018,29 +3556,29 @@ function storeSettingsFile(text2, folder = wrapperSettingsFolder(), now = Date.n
 function pruneSettingsFiles(folder, now, keep) {
   let names;
   try {
-    names = (0, import_node_fs11.readdirSync)(folder);
+    names = (0, import_node_fs10.readdirSync)(folder);
   } catch {
     return;
   }
   for (const name of names) {
-    const file = (0, import_node_path14.join)(folder, name);
+    const file = (0, import_node_path11.join)(folder, name);
     const run2 = RUN_SETTINGS_FILE_NAME.exec(name);
     if (!SETTINGS_FILE_NAME.test(name) && run2 === null || file === keep) continue;
     try {
-      const old = now - (0, import_node_fs11.statSync)(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS;
-      if (old || run2 !== null && !isProcessAlive(Number(run2[1]))) (0, import_node_fs11.rmSync)(file, { force: true });
+      const old = now - (0, import_node_fs10.statSync)(file).mtimeMs > SETTINGS_FILE_MAX_AGE_MS;
+      if (old || run2 !== null && !isProcessAlive(Number(run2[1]))) (0, import_node_fs10.rmSync)(file, { force: true });
     } catch {
     }
   }
 }
-function claudeUserSettingsPath(env, home = (0, import_node_os7.homedir)()) {
+function claudeUserSettingsPath(env, home = (0, import_node_os6.homedir)()) {
   const configDir = env.CLAUDE_CONFIG_DIR;
-  return configDir !== void 0 && configDir !== "" ? (0, import_node_path14.join)(configDir, "settings.json") : (0, import_node_path14.join)(home, ".claude", "settings.json");
+  return configDir !== void 0 && configDir !== "" ? (0, import_node_path11.join)(configDir, "settings.json") : (0, import_node_path11.join)(home, ".claude", "settings.json");
 }
-function readUserSettingsEnv(path, readFile3 = (file) => (0, import_node_fs11.readFileSync)(file, "utf8")) {
-  let text2;
+function readUserSettingsEnv(path, readFile2 = (file) => (0, import_node_fs10.readFileSync)(file, "utf8")) {
+  let text;
   try {
-    text2 = readFile3(path);
+    text = readFile2(path);
   } catch (error) {
     const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
     if (code === "ENOENT" || code === "ENOTDIR") return { env: null, warning: null };
@@ -8048,9 +3586,9 @@ function readUserSettingsEnv(path, readFile3 = (file) => (0, import_node_fs11.re
   }
   let value;
   try {
-    value = JSON.parse(withoutBom2(text2));
+    value = JSON.parse(withoutBom(text));
   } catch {
-    return { env: null, warning: `${path} is ${notJsonText(withoutBom2(text2))}, so custom headers set there are not kept` };
+    return { env: null, warning: `${path} is ${notJsonText(withoutBom(text))}, so custom headers set there are not kept` };
   }
   if (!isPlainObject2(value) || !isPlainObject2(value.env)) return { env: null, warning: null };
   return { env: value.env, warning: null };
@@ -8063,8 +3601,8 @@ function inheritedVariable(layers, variable) {
     if (typeof value === "string") return value;
   }
   for (const [name, value] of Object.entries(layers.processEnv)) {
-    const same2 = layers.windows === true ? name.toUpperCase() === variable.toUpperCase() : name === variable;
-    if (same2 && value !== void 0) return value;
+    const same = layers.windows === true ? name.toUpperCase() === variable.toUpperCase() : name === variable;
+    if (same && value !== void 0) return value;
   }
   return null;
 }
@@ -8082,17 +3620,12 @@ function userOwnedRoutingVariables(layers) {
 }
 
 // src/cli/login-names.ts
-var PROVIDER_NAMES2 = { claude: "Claude", codex: "Codex" };
-function plainCliLoginText(provider) {
-  return `the login plain ${provider} uses`;
-}
-function loginArgument(config, login) {
-  const found = resolveLogin(config, login.alias);
-  return "login" in found && found.login.id === login.id ? login.alias : `${login.provider}:${login.alias}`;
+function plainClaudeLoginText() {
+  return "the login plain claude uses";
 }
 
 // src/cli/wrapper-args.ts
-function parseWrapperArgs(args, cli) {
+function parseWrapperArgs(args) {
   const result = { help: false, login: null, passThrough: [] };
   let index = 0;
   while (index < args.length) {
@@ -8114,7 +3647,7 @@ function parseWrapperArgs(args, cli) {
       value = arg.slice("--login=".length);
       index++;
     } else {
-      return { error: `kurmis does not know ${arg}. Put ${cli}'s arguments after --, for example "kurmis ${cli} -- ${arg}"` };
+      return { error: `kurmis does not know ${arg}. Put claude's arguments after --, for example "kurmis claude -- ${arg}"` };
     }
     if (value === void 0 || value === "") return { error: "--login needs the alias or id of a login, for example --login work-example" };
     if (result.login !== null) return { error: "--login was given twice" };
@@ -8132,10 +3665,9 @@ which signs each one with a login that has room, and the command exits with clau
 The daemon is started first when it is not running.
 
 Options:
-  --login <login>   Send every request of the session with one Claude login, even when it
-                    is out of usage. <login> is the login's alias or its id, as
-                    "kurmis status" shows them, for example --login work-example. Only Claude
-                    logins are looked at, so a Codex login with the same alias does not count.
+  --login <login>   Send every request of the session with one login, even when it is out
+                    of usage. <login> is the login's alias or its id, as "kurmis status"
+                    shows them, for example --login work-example.
                     Without --login, each request goes to a login that has room (Auto).
   -h, --help        Show this help.
   --                Pass everything after it to claude unchanged. claude's own arguments
@@ -8158,9 +3690,9 @@ function createClaudeCommand(overrides = {}) {
     loadConfig: () => loadConfig(),
     platform: process.platform,
     cwd: () => process.cwd(),
-    homeDir: () => (0, import_node_os8.homedir)(),
-    folderExists: (path) => (0, import_node_fs12.existsSync)(path) && (0, import_node_fs12.statSync)(path).isDirectory(),
-    storeSettings: (text2, holdsUserSettings) => storeSettings(text2, holdsUserSettings),
+    homeDir: () => (0, import_node_os7.homedir)(),
+    folderExists: (path) => (0, import_node_fs11.existsSync)(path) && (0, import_node_fs11.statSync)(path).isDirectory(),
+    storeSettings: (text, holdsUserSettings) => storeSettings(text, holdsUserSettings),
     probeWaitMs: START_PROBE_WAIT_MS,
     ...overrides
   };
@@ -8174,7 +3706,7 @@ function createClaudeCommand(overrides = {}) {
 }
 var claudeCommand = createClaudeCommand();
 async function runClaude(args, context, deps) {
-  const parsed = parseWrapperArgs(args, "claude");
+  const parsed = parseWrapperArgs(args);
   if ("error" in parsed) return usageError("claude", parsed.error, context);
   if (parsed.help) {
     writeLine(context.stdout, USAGE);
@@ -8199,14 +3731,14 @@ async function runClaude(args, context, deps) {
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
     if (parsed.login !== null) return fail4(error.message);
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainCliLoginText("claude")}.`);
+    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainClaudeLoginText()}.`);
     config = null;
   }
   let pinned = null;
   if (parsed.login !== null && config !== null) {
-    const resolved = resolveLogin(config, parsed.login, "claude");
+    const resolved = resolveLogin(config, parsed.login);
     if ("error" in resolved) {
-      return fail4(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login claude" adds one.`);
+      return fail4(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login" adds one.`);
     }
     pinned = resolved.login;
   }
@@ -8227,28 +3759,27 @@ async function runClaude(args, context, deps) {
     } catch (error) {
       return fail4(daemonUnreachable(error));
     }
-    const ownRow = status2.logins.find((login) => login.provider === "claude" && login.usedByPlainCli);
+    const ownRow = status2.logins.find((login) => login.usedByPlainClaude);
     if (config === null) {
-      startedOn = ownRow ?? { id: null, alias: plainCliLoginText("claude"), usedByPlainCli: true };
+      startedOn = ownRow ?? { id: null, alias: plainClaudeLoginText(), usedByPlainClaude: true };
     } else {
       status2 = await withFirstProbe(connection, status2, context, deps);
       const startId = autoStartLogin(startableLogins(status2));
-      startedOn = status2.logins.find((login) => login.id === startId) ?? plainCliLogin(config, "claude");
-      if (!startedOn.usedByPlainCli) {
-        const own2 = ownRow ?? plainCliLogin(config, "claude");
-        writeLine(context.stderr, `kurmis claude: ${own2.alias}, ${plainCliLoginText("claude")}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
+      startedOn = status2.logins.find((login) => login.id === startId) ?? plainClaudeLogin(config);
+      if (!startedOn.usedByPlainClaude) {
+        const own = ownRow ?? plainClaudeLogin(config);
+        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${plainClaudeLoginText()}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
       }
     }
   }
   let secureStorageDir = null;
-  if (!startedOn.usedByPlainCli && startedOn.id !== null) {
-    secureStorageDir = loginFolder({ id: startedOn.id, provider: "claude", usedByPlainCli: false });
+  if (!startedOn.usedByPlainClaude && startedOn.id !== null) {
+    secureStorageDir = loginFolder({ id: startedOn.id, usedByPlainClaude: false });
     if (!deps.folderExists(secureStorageDir)) {
-      const argument = config === null ? startedOn.alias : loginArgument(config, { id: startedOn.id, provider: "claude", alias: startedOn.alias });
-      return fail4(`the folder of ${startedOn.alias} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${argument}".`);
+      return fail4(`the folder of ${startedOn.alias} is missing (${secureStorageDir}). Sign it in again with "kurmis login ${startedOn.alias}".`);
     }
   }
-  if (startedOn.usedByPlainCli && configDirHasOwnCredentials(context.env, deps.platform)) {
+  if (startedOn.usedByPlainClaude && configDirHasOwnCredentials(context.env, deps.platform)) {
     writeLine(context.stderr, `kurmis claude: ${configDirNote(context.env["CLAUDE_CONFIG_DIR"] ?? "", deps)}`);
   }
   const layers = settingsLayers(userSettings, context.env, deps);
@@ -8283,19 +3814,19 @@ async function runClaude(args, context, deps) {
   return deps.child.finishLikeChild(end, { stderr: context.stderr, name: "claude", platform: deps.platform });
 }
 async function withFirstProbe(connection, status2, context, deps) {
-  const unknown = status2.logins.filter((login) => login.provider === "claude" && login.signedIn === null);
-  if (!unknown.some((login) => login.usedByPlainCli)) return status2;
+  const unknown = status2.logins.filter((login) => login.signedIn === null);
+  if (!unknown.some((login) => login.usedByPlainClaude)) return status2;
   const ids = unknown.map((login) => login.id);
   const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, ids, signal), deps.probeWaitMs);
   if (probed.kind === "done") return probed.value;
-  writeLine(context.stderr, probed.kind === "timeout" ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1e3)} s, so it is not known yet whether ${plainCliLoginText("claude")} is signed in; claude starts on it.` : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ${plainCliLoginText("claude")} is signed in; claude starts on it.`);
+  writeLine(context.stderr, probed.kind === "timeout" ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1e3)} s, so it is not known yet whether ${plainClaudeLoginText()} is signed in; claude starts on it.` : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ${plainClaudeLoginText()} is signed in; claude starts on it.`);
   return status2;
 }
 function startableLogins(status2) {
-  return status2.logins.filter((login) => login.provider === "claude").map((login) => ({
+  return status2.logins.map((login) => ({
     id: login.id,
-    usedByPlainCli: login.usedByPlainCli,
-    loggedIn: login.signedIn ?? login.usedByPlainCli,
+    usedByPlainClaude: login.usedByPlainClaude,
+    loggedIn: login.signedIn ?? login.usedByPlainClaude,
     autoRoute: login.routing
   }));
 }
@@ -8350,147 +3881,12 @@ function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-// src/cli/commands/codex.ts
-var CODEX_PROBE_WAIT_MS = 5e3;
-var USAGE2 = `Usage: kurmis codex [--login <login>] [-- <codex arguments...>]
-
-Starts Codex with the terminal attached and exits with codex's exit code. Unlike claude, codex's
-requests do not go through the daemon: the whole session uses the login it started on. Without
-a --login, that is the login with room that ranks first, in the order Claude's Auto uses. The
-daemon is asked for each login's usage, and started first when it is not running.
-
-Options:
-  --login <login>   Start on this Codex login, even when it is out of usage. <login> is the
-                    login's alias or its id, as "kurmis status" shows them, for example
-                    --login work-example. Only Codex logins are looked at, so a Claude login
-                    with the same alias does not count.
-  -h, --help        Show this help.
-  --                Pass everything after it to codex unchanged. codex's own arguments
-                    always go here, for example "kurmis codex -- exec".
-
-To use kurmis every time you run codex: alias codex='kurmis codex --'`;
-function createCodexCommand(overrides = {}) {
-  const deps = {
-    daemon: realDaemonClient,
-    child: realChildRunner,
-    findProgram: realFindProgram,
-    prepareCodexHome: realPrepareCodexHome,
-    loadConfig: () => loadConfig(),
-    now: Date.now,
-    platform: process.platform,
-    probeWaitMs: CODEX_PROBE_WAIT_MS,
-    ...overrides
-  };
-  return {
-    name: "codex",
-    summary: "Start Codex on a login that has room",
-    usage: USAGE2,
-    passesArguments: true,
-    run: (args, context) => runCodex(args, context, deps)
-  };
-}
-var codexCommand = createCodexCommand();
-async function runCodex(args, context, deps) {
-  const parsed = parseWrapperArgs(args, "codex");
-  if ("error" in parsed) return usageError("codex", parsed.error, context);
-  if (parsed.help) {
-    writeLine(context.stdout, USAGE2);
-    return EXIT_OK;
-  }
-  let program;
-  try {
-    program = deps.findProgram("codex", { env: context.env, platform: deps.platform });
-  } catch (error) {
-    writeLine(context.stderr, `kurmis codex: ${messageOf2(error)}`);
-    return error instanceof ProgramNotFoundError ? notStartedExitCode("ENOENT") : EXIT_FAILURE;
-  }
-  const prepared = await preparedHome(parsed.login, context, deps);
-  if (prepared === null) return EXIT_FAILURE;
-  for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis codex: ${warning}`);
-  const env = applyEnvPatch(context.env, codexHomePatch(prepared, context.env, deps.platform), deps.platform === "win32");
-  const end = await deps.child.runInteractive(
-    { command: program.command, args: [...program.args, ...parsed.passThrough], env },
-    { platform: deps.platform }
-  );
-  return deps.child.finishLikeChild(end, { stderr: context.stderr, name: "codex", platform: deps.platform });
-}
-async function preparedHome(named, context, deps) {
-  let config;
-  try {
-    config = deps.loadConfig();
-  } catch (error) {
-    if (!(error instanceof ConfigError)) throw error;
-    if (named !== null) {
-      writeLine(context.stderr, `kurmis codex: ${error.message}`);
-      return null;
-    }
-    writeLine(context.stderr, `kurmis codex: ${error.message} Starting on ${plainCliLoginText("codex")}.`);
-    return { codexHome: null, warnings: [] };
-  }
-  let login;
-  if (named !== null) {
-    const resolved = resolveLogin(config, named, "codex");
-    if ("error" in resolved) {
-      writeLine(context.stderr, `kurmis codex: ${resolved.error}. "kurmis status" shows the logins, and "kurmis login codex" adds one.`);
-      return null;
-    }
-    login = resolved.login;
-  } else {
-    login = await chooseLogin(context, config, deps);
-  }
-  try {
-    return await deps.prepareCodexHome(login, { env: context.env, platform: deps.platform });
-  } catch (error) {
-    writeLine(context.stderr, `kurmis codex: could not prepare the Codex home of ${login.alias}: ${messageOf2(error)}`);
-    return null;
-  }
-}
-function codexHomePatch(prepared, env, platform) {
-  if (prepared.codexHome !== null) return { CODEX_HOME: prepared.codexHome };
-  const windows = platform === "win32";
-  const inherited = windows ? Object.entries(env).find(([name]) => name.toUpperCase() === "CODEX_HOME")?.[1] : env.CODEX_HOME;
-  return isKurmisCodexHome(inherited, providerFolder("codex"), windows) ? { CODEX_HOME: void 0 } : {};
-}
-async function chooseLogin(context, config, deps) {
-  const own2 = plainCliLogin(config, "codex");
-  let status2;
-  try {
-    const connection = await deps.daemon.ensureDaemon({ env: context.env });
-    status2 = await deps.daemon.readStatus(connection);
-    const stale = codexLoginsToProbe(status2, deps.now());
-    if (stale.length > 0) {
-      const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, stale, signal), deps.probeWaitMs);
-      if (probed.kind === "done") {
-        status2 = probed.value;
-      } else {
-        const why = probed.kind === "timeout" ? `did not finish within ${String(deps.probeWaitMs / 1e3)} s` : `failed (${messageOf2(probed.error)})`;
-        writeLine(context.stderr, `kurmis codex: the usage probe ${why}; choosing with the usage read before.`);
-      }
-    }
-  } catch (error) {
-    const starting = `starting on ${own2.alias}, ${plainCliLoginText("codex")}.`;
-    writeLine(context.stderr, error instanceof DaemonNotUsableError ? `kurmis codex: ${error.message} Until then, ${starting}` : `kurmis codex: the kurmis daemon could not be reached (${messageOf2(error)}); ${starting}`);
-    return own2;
-  }
-  const choice = chooseCodexLogin(status2, deps.now());
-  const chosen = findLogin(config, choice.login) ?? own2;
-  if (choice.note !== null) {
-    writeLine(context.stderr, `kurmis codex: ${choice.note}`);
-  } else if (status2.logins.filter((row) => row.provider === "codex").length > 1) {
-    writeLine(context.stderr, `kurmis codex: starting on ${chosen.alias}.`);
-  }
-  return chosen;
-}
-function messageOf2(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-
 // src/daemon/main.ts
 var import_node_http3 = require("node:http");
 
 // src/data/log.ts
-var import_node_fs13 = require("node:fs");
-var import_node_path15 = require("node:path");
+var import_node_fs12 = require("node:fs");
+var import_node_path12 = require("node:path");
 var LOG_EVENTS = [
   "daemon_started",
   "daemon_stopping",
@@ -8577,7 +3973,6 @@ var oneOf = (words) => (value) => typeof value === "string" && words.includes(va
 var FIELD_CHECKS = {
   login: isLoginId,
   fromLogin: isLoginId,
-  provider: isLoginProvider,
   reason: oneOf(LOG_REASONS),
   code: oneOf(LOG_ERROR_CODES),
   method: oneOf(LOG_METHODS),
@@ -8619,16 +4014,16 @@ function openDaemonLog(options = {}) {
   let size = null;
   const currentSize = () => {
     try {
-      return (0, import_node_fs13.statSync)(path).size;
+      return (0, import_node_fs12.statSync)(path).size;
     } catch {
       return 0;
     }
   };
   const rotate = () => {
     try {
-      retryWhileLockedSync(() => (0, import_node_fs13.renameSync)(path, previous));
+      retryWhileLockedSync(() => (0, import_node_fs12.renameSync)(path, previous));
     } catch {
-      (0, import_node_fs13.rmSync)(path, { force: true });
+      (0, import_node_fs12.rmSync)(path, { force: true });
     }
     size = 0;
   };
@@ -8638,14 +4033,14 @@ function openDaemonLog(options = {}) {
         const line = formatLogLine(event, fields, now());
         const bytes = Buffer.byteLength(line);
         if (size === null) {
-          makePrivateDirSync((0, import_node_path15.dirname)(path));
+          makePrivateDirSync((0, import_node_path12.dirname)(path));
           size = currentSize();
         }
         if (size + bytes > maxBytes) {
           size = currentSize();
           if (size + bytes > maxBytes && size > 0) rotate();
         }
-        (0, import_node_fs13.appendFileSync)(path, line, { mode: PRIVATE_FILE_MODE });
+        (0, import_node_fs12.appendFileSync)(path, line, { mode: PRIVATE_FILE_MODE });
         size += bytes;
       } catch {
       }
@@ -8654,18 +4049,18 @@ function openDaemonLog(options = {}) {
 }
 
 // src/data/identity.ts
-var import_node_fs14 = require("node:fs");
-var import_node_os9 = require("node:os");
-var import_node_path16 = require("node:path");
+var import_node_fs13 = require("node:fs");
+var import_node_os8 = require("node:os");
+var import_node_path13 = require("node:path");
 var CLAUDE_PROFILE_FILE = ".claude.json";
-function claudeIdentityFile(login, home = (0, import_node_os9.homedir)()) {
-  if (!login.usedByPlainCli) return (0, import_node_path16.join)(loginFolder(login), CLAUDE_PROFILE_FILE);
-  const probed = (0, import_node_path16.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE);
-  return (0, import_node_fs14.existsSync)(probed) ? probed : (0, import_node_path16.join)(home, CLAUDE_PROFILE_FILE);
+function claudeIdentityFile(login, home = (0, import_node_os8.homedir)()) {
+  if (!login.usedByPlainClaude) return (0, import_node_path13.join)(loginFolder(login), CLAUDE_PROFILE_FILE);
+  const probed = (0, import_node_path13.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE);
+  return (0, import_node_fs13.existsSync)(probed) ? probed : (0, import_node_path13.join)(home, CLAUDE_PROFILE_FILE);
 }
-function parseClaudeIdentity(text2) {
+function parseClaudeIdentity(text) {
   try {
-    const parsed = JSON.parse(text2);
+    const parsed = JSON.parse(text);
     if (parsed === null || typeof parsed !== "object") return null;
     const block = parsed["oauthAccount"];
     if (block === null || typeof block !== "object") return null;
@@ -8685,7 +4080,7 @@ function textOf(value) {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 var ClaudeIdentityReader = class {
-  constructor(home = import_node_os9.homedir) {
+  constructor(home = import_node_os8.homedir) {
     this.home = home;
   }
   home;
@@ -8696,15 +4091,15 @@ var ClaudeIdentityReader = class {
   }
   readFile(file) {
     try {
-      const stat2 = (0, import_node_fs14.statSync)(file);
+      const stat = (0, import_node_fs13.statSync)(file);
       const cached = this.cache.get(file);
-      if (cached?.mtime === stat2.mtimeMs && cached.size === stat2.size) return cached.value;
+      if (cached?.mtime === stat.mtimeMs && cached.size === stat.size) return cached.value;
       let value = null;
       try {
-        value = parseClaudeIdentity((0, import_node_fs14.readFileSync)(file, "utf8"));
+        value = parseClaudeIdentity((0, import_node_fs13.readFileSync)(file, "utf8"));
       } catch {
       }
-      this.cache.set(file, { mtime: stat2.mtimeMs, size: stat2.size, value });
+      this.cache.set(file, { mtime: stat.mtimeMs, size: stat.size, value });
       return value;
     } catch {
       this.cache.delete(file);
@@ -8720,7 +4115,7 @@ function isSameClaudeAccount(a, b) {
 function isSameEmail(a, b) {
   return a !== null && b !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
 }
-function readClaudeIdentity(login, home = (0, import_node_os9.homedir)()) {
+function readClaudeIdentity(login, home = (0, import_node_os8.homedir)()) {
   return new ClaudeIdentityReader(() => home).read(login);
 }
 
@@ -8740,15 +4135,15 @@ function createLineSplitter(maxLineBytes, onLine) {
   return (chunk) => {
     let start2 = 0;
     for (; ; ) {
-      const newline2 = chunk.indexOf(10, start2);
-      if (newline2 === -1) break;
-      const piece = chunk.subarray(start2, newline2);
+      const newline = chunk.indexOf(10, start2);
+      if (newline === -1) break;
+      const piece = chunk.subarray(start2, newline);
       if (pendingBytes + piece.length > maxLineBytes) return false;
       const line = pendingBytes === 0 ? piece : Buffer.concat([...pending, piece]);
       pending = [];
       pendingBytes = 0;
       onLine(line.toString("utf8").replace(/\r$/, ""));
-      start2 = newline2 + 1;
+      start2 = newline + 1;
     }
     if (start2 < chunk.length) {
       const rest = chunk.subarray(start2);
@@ -8777,7 +4172,7 @@ function startFrameProcess(program, args, options) {
       detached: platform !== "win32"
     });
   } catch (error) {
-    return endedBeforeStart("start_failed", errorCode3(error));
+    return endedBeforeStart("start_failed", errorCode(error));
   }
   const stdin = child2.stdin;
   const stdout = child2.stdout;
@@ -8795,8 +4190,8 @@ function startFrameProcess(program, args, options) {
   let pipeTimer;
   let graceTimer;
   let resolveExited;
-  const exited = new Promise((resolve9) => {
-    resolveExited = resolve9;
+  const exited = new Promise((resolve8) => {
+    resolveExited = resolve8;
   });
   const finish = (exit) => {
     if (settled) return;
@@ -8841,7 +4236,7 @@ function startFrameProcess(program, args, options) {
   });
   stdout.on("error", () => void 0);
   child2.on("error", (error) => {
-    if (child2.pid === void 0) finish({ end: "start_failed", code: null, signal: null, errorCode: errorCode3(error) });
+    if (child2.pid === void 0) finish({ end: "start_failed", code: null, signal: null, errorCode: errorCode(error) });
   });
   child2.on("exit", (code, signal) => {
     exitedAt = { code, signal };
@@ -8921,17 +4316,15 @@ function killTree(child2, platform, env) {
     fallback();
   }
 }
-function errorCode3(error) {
+function errorCode(error) {
   const code = error?.code;
   return typeof code === "string" ? code : null;
 }
 
 // src/daemon/probe-result.ts
 var PROBE_CLOSE_GRACE_MS = 5e3;
-function programMissingText(tool) {
-  const product = tool === "claude" ? "Claude Code" : "Codex";
-  const variable = tool === "claude" ? "KURMIS_CLAUDE_BIN" : "KURMIS_CODEX_BIN";
-  return `The ${tool} program was not found on the PATH the kurmis daemon was started with. Install ${product}, or put ${tool} on PATH, and run "kurmis daemon restart" from a shell that finds it; or set ${variable} to the program.`;
+function programMissingText() {
+  return 'The claude program was not found on the PATH the kurmis daemon was started with. Install Claude Code, or put claude on PATH, and run "kurmis daemon restart" from a shell that finds it; or set KURMIS_CLAUDE_BIN to the program.';
 }
 function probeFailure(signedIn, reason, error) {
   return { ok: false, signedIn, reason, error };
@@ -8942,25 +4335,25 @@ function abortedProbe(signedIn) {
 function seconds(ms) {
   return String(Math.round(ms / 100) / 10);
 }
-function failureForExit(program, exit, timeoutMs, signedIn) {
+function failureForExit(exit, timeoutMs, signedIn) {
   switch (exit.end) {
     case "aborted":
       return abortedProbe(signedIn);
     case "timeout":
       return probeFailure(signedIn, "timeout", `The usage probe timed out after ${seconds(timeoutMs)} s.`);
     case "output_too_large":
-      return probeFailure(signedIn, "invalid", `${program} printed more output than the usage probe accepts.`);
+      return probeFailure(signedIn, "invalid", "claude printed more output than the usage probe accepts.");
     case "refused":
-      return probeFailure(signedIn, "invalid", `${program} is a batch file, which kurmis never starts.`);
+      return probeFailure(signedIn, "invalid", "claude is a batch file, which kurmis never starts.");
     case "start_failed":
-      return probeFailure(signedIn, "missing", exit.errorCode === null ? `${program} could not be started.` : `${program} could not be started (${safeCode(exit.errorCode)}).`);
+      return probeFailure(signedIn, "missing", exit.errorCode === null ? "claude could not be started." : `claude could not be started (${safeCode(exit.errorCode)}).`);
     case "close_timeout":
     case "killed":
     case "exited":
       if (exit.code !== null) {
-        return probeFailure(signedIn, "exited", `${program} exited with code ${String(exit.code)} before it answered.`);
+        return probeFailure(signedIn, "exited", `claude exited with code ${String(exit.code)} before it answered.`);
       }
-      return probeFailure(signedIn, "exited", exit.signal === null ? `${program} ended before it answered.` : `${program} was ended by ${exit.signal} before it answered.`);
+      return probeFailure(signedIn, "exited", exit.signal === null ? "claude ended before it answered." : `claude was ended by ${exit.signal} before it answered.`);
   }
 }
 function safeCode(code) {
@@ -8976,16 +4369,16 @@ var PendingReplies = class {
   waiting = /* @__PURE__ */ new Map();
   /** A promise for the reply to request `id`. Ask for it before the request is sent. */
   wait(id) {
-    return new Promise((resolve9) => {
-      this.waiting.set(id, resolve9);
+    return new Promise((resolve8) => {
+      this.waiting.set(id, resolve8);
     });
   }
   /** Hands a reply to whoever waits for it. A reply nobody waits for is dropped. */
   settle(id, value) {
-    const resolve9 = this.waiting.get(id);
-    if (resolve9 === void 0) return;
+    const resolve8 = this.waiting.get(id);
+    if (resolve8 === void 0) return;
     this.waiting.delete(id);
-    resolve9(value);
+    resolve8(value);
   }
 };
 
@@ -9016,7 +4409,7 @@ async function probeClaudeUsage(login, options) {
     program = findProgram("claude", { env: options.env });
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, "missing", programMissingText("claude"));
+      return probeFailure(null, "missing", programMissingText());
     }
     return probeFailure(null, "other", "The claude program could not be looked up.");
   }
@@ -9024,7 +4417,7 @@ async function probeClaudeUsage(login, options) {
   const cwd = probeWorkFolder();
   try {
     makePrivateDirSync(cwd);
-    if (login.usedByPlainCli) makePrivateDirSync(ownClaudeProbeFolder());
+    if (login.usedByPlainClaude) makePrivateDirSync(ownClaudeProbeFolder());
   } catch {
     return probeFailure(null, "other", "The usage probe could not create its folder in the kurmis data folder.");
   }
@@ -9051,11 +4444,11 @@ async function converse(claude, replies, id, timeoutMs, now, previous) {
     return replyOrExit(reply, claude.exited);
   };
   const init = await ask("kurmis_1", { subtype: "initialize" });
-  if (init.kind === "ended") return failureForExit("claude", init.exit, timeoutMs, null);
+  if (init.kind === "ended") return failureForExit(init.exit, timeoutMs, null);
   if (!init.value.ok) return probeFailure(null, "upstream_error", "claude answered the start of the usage probe with an error.");
   const planAtStart = initializePlan(init.value.response);
   const usage = await ask("kurmis_2", { subtype: "get_usage", skip_behaviors: true });
-  if (usage.kind === "ended") return failureForExit("claude", usage.exit, timeoutMs, planAtStart);
+  if (usage.kind === "ended") return failureForExit(usage.exit, timeoutMs, planAtStart);
   if (!usage.value.ok) return probeFailure(planAtStart, "upstream_error", "Claude answered the usage request with an error.");
   const answer2 = usage.value.response;
   if (!isRecord(answer2)) return probeFailure(planAtStart, "invalid", "Claude's answer to the usage request could not be read.");
@@ -9082,156 +4475,34 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// src/core/codex-account.ts
-function isObject2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function text(value) {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-function parseCodexAccountRead(result) {
-  if (!isObject2(result)) return null;
-  const requiresOpenaiAuth = typeof result["requiresOpenaiAuth"] === "boolean" ? result["requiresOpenaiAuth"] : null;
-  const account = result["account"];
-  if (account === null || account === void 0) return { signIn: null, requiresOpenaiAuth };
-  if (!isObject2(account) || typeof account["type"] !== "string") return null;
-  const type = account["type"];
-  let signIn2;
-  if (type === "chatgpt") signIn2 = { type, planType: text(account["planType"]), email: text(account["email"]) };
-  else if (type === "apiKey") signIn2 = { type };
-  else signIn2 = { type: "other", name: type };
-  return { signIn: signIn2, requiresOpenaiAuth };
-}
-function codexLoginStatus(read) {
-  const signIn2 = read.signIn;
-  if (signIn2?.type === "chatgpt") return { loggedIn: true, subscriptionType: signIn2.planType, email: signIn2.email };
-  if (signIn2?.type === "apiKey") return { loggedIn: false, subscriptionType: "api key", email: null };
-  return { loggedIn: false, subscriptionType: null, email: null };
-}
-
-// src/daemon/codex-probe.ts
-var CODEX_PROBE_TIMEOUT_MS = 3e4;
-var CODEX_PROBE_ARGS = ["app-server"];
-async function probeCodexUsage(login, options) {
-  return await runProbe(login, options, false);
-}
-async function readCodexEmail(login, options) {
-  const result = await runProbe(login, options, true);
-  return result.ok ? result.email ?? null : null;
-}
-async function runProbe(login, options, accountOnly) {
-  const now = options.now ?? Date.now;
-  const timeoutMs = options.timeoutMs ?? CODEX_PROBE_TIMEOUT_MS;
-  if (options.signal?.aborted === true) return abortedProbe(null);
-  let program;
-  try {
-    program = findProgram("codex", { env: options.env });
-  } catch (error) {
-    if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, "missing", programMissingText("codex"));
-    }
-    return probeFailure(null, "other", "The codex program could not be looked up.");
-  }
-  const env = applyEnvPatch(options.env, codexLoginEnv(login, options.env));
-  const cwd = probeWorkFolder();
-  try {
-    makePrivateDirSync(cwd);
-  } catch {
-    return probeFailure(null, "other", "The usage probe could not create its folder in the kurmis data folder.");
-  }
-  const replies = new PendingReplies();
-  const codex = startFrameProcess(program.command, [...program.args, ...CODEX_PROBE_ARGS], {
-    env,
-    cwd,
-    timeoutMs,
-    signal: options.signal,
-    onFrame: (frame) => {
-      const reply = rpcReply(frame);
-      if (reply !== null) replies.settle(reply.id, reply.reply);
-    }
-  });
-  const result = await converse2(codex, replies, login.id, timeoutMs, now, accountOnly);
-  const exit = await codex.close(PROBE_CLOSE_GRACE_MS);
-  if (!result.ok && exit.end === "aborted") return abortedProbe(result.signedIn);
-  return result;
-}
-async function converse2(codex, replies, id, timeoutMs, now, accountOnly) {
-  let nextId = 1;
-  const ask = (method, params) => {
-    const requestId = nextId++;
-    const reply = replies.wait(String(requestId));
-    codex.send(params === void 0 ? { id: requestId, method } : { id: requestId, method, params });
-    return replyOrExit(reply, codex.exited);
-  };
-  const init = await ask("initialize", {
-    clientInfo: { name: "kurmis", title: "kurmis", version: kurmisVersion },
-    capabilities: { experimentalApi: true }
-  });
-  if (init.kind === "ended") return failureForExit("codex", init.exit, timeoutMs, null);
-  if (!init.value.ok) return probeFailure(null, "upstream_error", "codex app-server refused the start of the usage probe.");
-  codex.send({ method: "initialized" });
-  const account = await ask("account/read", {});
-  if (account.kind === "ended") return failureForExit("codex", account.exit, timeoutMs, null);
-  if (!account.value.ok) return probeFailure(null, "upstream_error", "codex app-server answered the sign-in question with an error.");
-  const read = parseCodexAccountRead(account.value.result);
-  if (read === null) return probeFailure(null, "invalid", "codex app-server's answer about the sign-in could not be read.");
-  const status2 = codexLoginStatus(read);
-  if (!status2.loggedIn) {
-    return { ok: true, signedIn: false, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status2.subscriptionType }, email: null };
-  }
-  if (accountOnly) {
-    return { ok: true, signedIn: true, usage: { ...emptyCodexUsage(id, now()), subscriptionType: status2.subscriptionType }, email: status2.email };
-  }
-  const limits = await ask("account/rateLimits/read");
-  if (limits.kind === "ended") return failureForExit("codex", limits.exit, timeoutMs, true);
-  if (!limits.value.ok) return probeFailure(true, "upstream_error", "Codex could not read the plan usage from OpenAI.");
-  const usage = codexUsageFromResult(id, limits.value.result, now());
-  if (usage === null) return probeFailure(true, "invalid", "codex app-server's answer about the plan usage could not be read.");
-  return { ok: true, signedIn: true, usage: withPlan(usage, status2.subscriptionType), email: status2.email };
-}
-function withPlan(usage, plan) {
-  return usage.subscriptionType === null && plan !== null ? { ...usage, subscriptionType: plan } : usage;
-}
-function rpcReply(frame) {
-  if (!isRecord2(frame) || !("id" in frame) || "method" in frame) return null;
-  const id = frame.id;
-  if (typeof id !== "number" && typeof id !== "string") return null;
-  if ("result" in frame) return { id: String(id), reply: { ok: true, result: frame.result } };
-  return { id: String(id), reply: { ok: false } };
-}
-function isRecord2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 // src/daemon/control.ts
 var DISCARD_BODY_MS = 3e4;
 function createControl(options) {
   const { table, tokens, identity, poller, log, now } = options;
   async function status2() {
     table.checkConfig();
-    await tokens.prime(table.claudeLogins().map((login) => login.id));
-    const rows = table.routeRows(table.ownLogin("claude").id, false);
-    const at2 = now();
+    await tokens.prime(table.logins().map((login) => login.id));
+    const rows = table.routeRows(table.plainClaudeLogin().id, false);
+    const at = now();
     const logins = table.logins().map((login) => {
       const row = rows.find((each) => each.id === login.id);
-      const cooldown = table.cooldown(login.id, at2);
-      const claude = login.provider === "claude" ? identity.read(login) : null;
+      const cooldown = table.cooldown(login.id, at);
+      const profile = identity.read(login);
       return {
         id: login.id,
-        provider: login.provider,
         alias: login.alias,
-        usedByPlainCli: login.usedByPlainCli,
+        usedByPlainClaude: login.usedByPlainClaude,
         routing: login.routing,
         fiveHourLimit: login.fiveHourLimit,
         weeklyLimit: login.weeklyLimit,
         useFirst: login.useFirst,
-        signedIn: login.provider === "claude" ? table.claudeSignedIn(login.id) : table.probedSignedIn(login.id),
+        signedIn: table.claudeSignedIn(login.id),
         usage: table.usage(login.id),
         cooldownUntil: cooldown === null ? null : Number.isFinite(cooldown) ? cooldown : "unknown",
-        block: row === void 0 ? null : routeBlock(row, at2),
-        sessions: login.provider === "claude" ? table.sessionCount(login.id) : 0,
-        email: login.provider === "claude" ? claude?.email ?? null : table.codexEmail(login.id),
-        organizationUuid: claude?.organizationUuid ?? null,
+        block: row === void 0 ? null : routeBlock(row, at),
+        sessions: table.sessionCount(login.id),
+        email: profile?.email ?? null,
+        organizationUuid: profile?.organizationUuid ?? null,
         probing: poller.isRunning(login.id)
       };
     });
@@ -9341,7 +4612,7 @@ var TOO_LARGE = /* @__PURE__ */ Symbol("too large");
 function readBody(req) {
   const declared = Number(req.headers["content-length"]);
   if (Number.isFinite(declared) && declared > MAX_CONTROL_BODY_BYTES) return Promise.resolve(TOO_LARGE);
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve8, reject) => {
     const chunks = [];
     let size = 0;
     const stopListening = () => {
@@ -9354,14 +4625,14 @@ function readBody(req) {
       size += bytes.length;
       if (size > MAX_CONTROL_BODY_BYTES) {
         stopListening();
-        resolve9(TOO_LARGE);
+        resolve8(TOO_LARGE);
         return;
       }
       chunks.push(bytes);
     };
     const onEnd = () => {
       stopListening();
-      resolve9(Buffer.concat(chunks).toString("utf8"));
+      resolve8(Buffer.concat(chunks).toString("utf8"));
     };
     const onError = (error) => {
       stopListening();
@@ -9389,11 +4660,11 @@ function refuseTooLarge(req, res) {
 async function readJsonObject(req, what) {
   const body = await readBody(req);
   if (body === TOO_LARGE) return TOO_LARGE;
-  const text2 = body.trim();
-  if (text2.length === 0) return {};
+  const text = body.trim();
+  if (text.length === 0) return {};
   let value;
   try {
-    value = JSON.parse(text2);
+    value = JSON.parse(text);
   } catch {
     return `The ${what} is not JSON.`;
   }
@@ -9444,7 +4715,7 @@ function isStringOrNull(value) {
 }
 function isStoredUsage(value, login) {
   if (!isPlainObject(value)) return false;
-  return value.accountId === login && isLoginProvider(value.provider) && isTime(value.fetchedAt) && (value.source === "probe" || value.source === "session") && isStringOrNull(value.subscriptionType) && typeof value.rateLimitsAvailable === "boolean" && isWindowOrNull(value.fiveHour) && isWindowOrNull(value.sevenDay) && isWindowOrNull(value.sevenDayOverage) && isWindowOrNull(value.sevenDayOpus) && isWindowOrNull(value.sevenDaySonnet) && Array.isArray(value.modelScoped) && value.modelScoped.every((window) => isWindow(window) && typeof window.displayName === "string") && (value.windows === void 0 || Array.isArray(value.windows) && value.windows.every(isWindow)) && (value.extraUsage === null || isPlainObject(value.extraUsage)) && (value.status === null || value.status === "allowed" || value.status === "allowed_warning" || value.status === "rejected") && (value.limited === null || isPlainObject(value.limited)) && isStringOrNull(value.error);
+  return value.accountId === login && isTime(value.fetchedAt) && (value.source === "probe" || value.source === "session") && isStringOrNull(value.subscriptionType) && typeof value.rateLimitsAvailable === "boolean" && isWindowOrNull(value.fiveHour) && isWindowOrNull(value.sevenDay) && isWindowOrNull(value.sevenDayOverage) && isWindowOrNull(value.sevenDayOpus) && isWindowOrNull(value.sevenDaySonnet) && Array.isArray(value.modelScoped) && value.modelScoped.every((window) => isWindow(window) && typeof window.displayName === "string") && (value.extraUsage === null || isPlainObject(value.extraUsage)) && (value.status === null || value.status === "allowed" || value.status === "allowed_warning" || value.status === "rejected") && (value.limited === null || isPlainObject(value.limited)) && isStringOrNull(value.error);
 }
 function parseState(value, now) {
   const state = emptyState();
@@ -9576,8 +4847,8 @@ var LoginTable = class {
   }
   options;
   /**
-   * Until a config has been read, a stand-in with the logins of plain claude and plain codex
-   * under new random ids, because the proxy and the control API always need those two logins.
+   * Until a config has been read, a stand-in with the login of plain claude under a new random
+   * id, because the proxy and the control API always need that login.
    * The stand-in is never saved. The first config that reads replaces it, and that drops the
    * usage and cooldowns kept under the stand-in's ids.
    */
@@ -9587,11 +4858,6 @@ var LoginTable = class {
   state = emptyState();
   /** What the last probe of each login said about its sign-in. Absent: not probed yet. */
   signedIn = /* @__PURE__ */ new Map();
-  /**
-   * The email the last successful probe of each Codex login named, null when it named none.
-   * In memory only, for the status answer: it is never logged or written to a file.
-   */
-  codexEmails = /* @__PURE__ */ new Map();
   /**
    * Sessions held to one login after a 400 on the login they had just moved to
    * (`replayDecision`'s `pin-back`). The proxy lets go of a hold when the held login cannot
@@ -9645,7 +4911,7 @@ var LoginTable = class {
       stamp = configStamp(this.configFile);
     } catch (error) {
       this.options.log.write("config_invalid", { code: errorCodeOf(error) });
-      return { ok: false, error: `${this.configFile} could not be read: ${messageOf3(error)}` };
+      return { ok: false, error: `${this.configFile} could not be read: ${messageOf2(error)}` };
     }
     if (stamp === this.stamp) return { ok: true, changed: false };
     const before = this.config;
@@ -9655,7 +4921,7 @@ var LoginTable = class {
       const busy = isLockTimeout(error);
       if (!busy) this.stamp = stamp;
       this.options.log.write("config_invalid", { reason: busy ? "timeout" : "invalid" });
-      return { ok: false, error: messageOf3(error) };
+      return { ok: false, error: messageOf2(error) };
     }
     this.stamp = stamp;
     const added = this.config.logins.map((login) => login.id).filter((id) => findLogin(before, id) === void 0);
@@ -9663,7 +4929,6 @@ var LoginTable = class {
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id);
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id);
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id);
-    for (const id of [...this.codexEmails.keys()]) if (!ids.has(id)) this.codexEmails.delete(id);
     for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id);
     for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id);
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id);
@@ -9677,28 +4942,22 @@ var LoginTable = class {
     if (this.options.now() - this.lastCheck < (this.options.configCheckMs ?? CONFIG_CHECK_MS)) return;
     this.reloadConfig();
   }
-  /** Every login in `config.json`, the logins of plain claude and plain codex first. */
+  /** Every login in `config.json`, the login of plain claude first. */
   logins() {
     return this.config.logins;
-  }
-  claudeLogins() {
-    return this.config.logins.filter((login) => login.provider === "claude");
   }
   find(id) {
     return findLogin(this.config, id);
   }
-  /**
-   * The login a plain `claude` or a plain `codex` uses: the one that CLI is signed in
-   * to. The config always has one for each provider.
-   */
-  ownLogin(provider) {
-    return plainCliLogin(this.config, provider);
+  /** The login a plain `claude` uses: the one that CLI is signed in to. The config always has one. */
+  plainClaudeLogin() {
+    return plainClaudeLogin(this.config);
   }
   port() {
     return this.config.port;
   }
   /**
-   * The routing rows of the Claude logins, for one request.
+   * The routing rows of every login, for one request.
    *
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
    * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
@@ -9714,8 +4973,8 @@ var LoginTable = class {
    */
   routeRows(startedOn, callerSigns, pinned = null) {
     const now = this.options.now();
-    return this.claudeLogins().map((login) => {
-      const notTheCli = startedOn === null && login.usedByPlainCli;
+    return this.config.logins.map((login) => {
+      const notTheCli = startedOn === null && login.usedByPlainClaude;
       const token = notTheCli ? null : this.options.tokens.read(login.id);
       const passThrough = token === null && callerSigns && login.id === startedOn;
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned;
@@ -9793,15 +5052,6 @@ var LoginTable = class {
     this.signedIn.set(id, value);
     this.changed();
   }
-  /** The email the last successful probe of a Codex login named, or null. In memory only. */
-  codexEmail(id) {
-    return this.codexEmails.get(id) ?? null;
-  }
-  /** Keeps what a successful probe of a Codex login said its email is (null: none). */
-  setCodexEmail(id, email) {
-    if (this.find(id)?.provider !== "codex") return;
-    this.codexEmails.set(id, email);
-  }
   /**
    * Gives the login the automatic alias its email makes (`followEmail` in `config.ts`) when its
    * alias is automatic and does not fit the email yet, by writing `config.json` and reading it
@@ -9839,13 +5089,13 @@ var LoginTable = class {
    * it ran is newer and stays.
    */
   clearRefused(id, probeStartedAt = Infinity) {
-    const at2 = this.refused.get(id);
-    if (at2 === void 0 || at2 > probeStartedAt) return;
+    const at = this.refused.get(id);
+    if (at === void 0 || at > probeStartedAt) return;
     this.refused.delete(id);
     this.changed();
   }
   /**
-   * Whether a Claude login has credentials here: a token read, or a probe that found it
+   * Whether a login has credentials here: a token read, or a probe that found it
    * signed in. Null when neither has said yet.
    */
   claudeSignedIn(id) {
@@ -9943,7 +5193,7 @@ var LoginTable = class {
 function isLockTimeout(error) {
   return error instanceof Error && error.cause instanceof LockTimeoutError;
 }
-function messageOf3(error) {
+function messageOf2(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -10122,7 +5372,7 @@ function createUpstream(options) {
   const transport = tls ? import_node_https.default : import_node_http2.default;
   let closed = false;
   function attempt(request2, retried) {
-    return new Promise((resolve9, reject) => {
+    return new Promise((resolve8, reject) => {
       const { signal } = request2;
       if (signal.aborted) {
         reject(abortedError());
@@ -10175,7 +5425,7 @@ function createUpstream(options) {
         const soonAfterWriting = writtenAt === null || Date.now() - writtenAt <= resendWindowMs;
         end();
         if (!retried && reusedSocket && soonAfterWriting && !signal.aborted && !closed && !(error instanceof UpstreamError) && RESET_CODES.has(errorCodeOf(error))) {
-          resolve9(attempt(request2, true));
+          resolve8(attempt(request2, true));
           return;
         }
         reject(toUpstreamError(error));
@@ -10192,7 +5442,7 @@ function createUpstream(options) {
           failure2 ??= toUpstreamError(error);
         });
         res.once("close", end);
-        resolve9(answerOf(res, () => failure2));
+        resolve8(answerOf(res, () => failure2));
       });
       req.end(request2.body);
     });
@@ -10248,9 +5498,9 @@ function answerOf(res, failure2) {
 }
 function forwardBody(answer2, res, signal) {
   const body = answer2.body;
-  return new Promise((resolve9) => {
+  return new Promise((resolve8) => {
     let settled = false;
-    const settle2 = (outcome) => {
+    const settle = (outcome) => {
       if (settled) return;
       settled = true;
       body.off("data", onData);
@@ -10260,7 +5510,7 @@ function forwardBody(answer2, res, signal) {
       res.off("close", onClose);
       signal.removeEventListener("abort", onAbort);
       stopWatching();
-      resolve9(outcome);
+      resolve8(outcome);
     };
     const onData = (chunk) => {
       if (!res.write(chunk)) body.pause();
@@ -10271,23 +5521,23 @@ function forwardBody(answer2, res, signal) {
     const onEnd = () => {
       res.end();
     };
-    const onFinish = () => settle2("done");
+    const onFinish = () => settle("done");
     const onClose = () => {
       if (res.writableFinished) {
-        settle2("done");
+        settle("done");
         return;
       }
-      settle2("aborted");
+      settle("aborted");
       body.destroy();
     };
     const onAbort = () => {
-      settle2("aborted");
+      settle("aborted");
       body.destroy();
       res.destroy();
     };
     const stopWatching = (0, import_node_stream.finished)(body, (error) => {
       if (error === void 0 || error === null || settled) return;
-      settle2("failed");
+      settle("failed");
       res.destroy();
     });
     if (signal.aborted) {
@@ -10325,18 +5575,18 @@ function createProxy(options) {
   const renewalWaitMs = options.renewalWaitMs ?? RENEWAL_WAIT_MS;
   const lingerMs = options.tooLargeLingerMs ?? TOO_LARGE_LINGER_MS;
   const keptAnswerTimeoutMs = options.keptAnswerTimeoutMs ?? KEPT_ANSWER_TIMEOUT_MS;
-  let open4 = 0;
+  let open3 = 0;
   let drainWaiters = [];
   const finished2 = () => {
-    open4--;
-    if (open4 === 0) {
+    open3--;
+    if (open3 === 0) {
       const waiters = drainWaiters;
       drainWaiters = [];
-      for (const resolve9 of waiters) resolve9();
+      for (const resolve8 of waiters) resolve8();
     }
   };
   async function handle(req, res) {
-    const info = readRouteRequest((name) => headerValue(req, name), table.ownLogin("claude").id);
+    const info = readRouteRequest((name) => headerValue(req, name), table.plainClaudeLogin().id);
     if (!routeKeyMatches(info.key, options.key)) {
       log.write("proxy_rejected", { reason: "bad_secret", method: methodOf(req.method) });
       req.resume();
@@ -10350,7 +5600,7 @@ function createProxy(options) {
       send(res, invalidRequest(problem));
       return;
     }
-    open4++;
+    open3++;
     const controller = new AbortController();
     const onClose = () => {
       if (!res.writableFinished) controller.abort(new ClientGone());
@@ -10377,7 +5627,7 @@ function createProxy(options) {
     if (info.startedOn === "invalid") return 'The x-kurmis-started-on header is neither a login id nor "none".';
     if (info.login === null) return null;
     table.checkConfig();
-    return table.find(info.login)?.provider === "claude" ? null : "The x-kurmis-login header does not name a Claude login.";
+    return table.find(info.login) === void 0 ? "The x-kurmis-login header does not name a login." : null;
   }
   function accountUuidOf(id) {
     const login = table.find(id);
@@ -10398,7 +5648,7 @@ function createProxy(options) {
       return;
     }
     table.checkConfig();
-    const ownClaude = table.ownLogin("claude").id;
+    const ownClaude = table.plainClaudeLogin().id;
     const sessionKey = info.sessionId !== null && isSessionId(info.sessionId) ? info.sessionId : NO_SESSION_KEY;
     let sentBack = info.login === null ? table.heldLogin(sessionKey) : null;
     let sentBackHere = false;
@@ -10445,7 +5695,7 @@ function createProxy(options) {
     };
     const pick = async () => {
       for (; ; ) {
-        await abortable(tokens.prime(table.claudeLogins().map((login) => login.id)), signal);
+        await abortable(tokens.prime(table.logins().map((login) => login.id)), signal);
         const rows = rowsNow();
         const stale = staleUsageLogins(session, rows, now(), /* @__PURE__ */ new Set([...refreshed, ...poller.recentStaleProbes()]));
         if (stale.length > 0) {
@@ -10671,16 +5921,16 @@ function createProxy(options) {
     handle: (req, res) => handle(req, res).catch(() => {
       if (!res.writableFinished) res.destroy();
     }),
-    openRequests: () => open4,
-    drained: () => open4 === 0 ? Promise.resolve() : new Promise((resolve9) => {
-      drainWaiters.push(resolve9);
+    openRequests: () => open3,
+    drained: () => open3 === 0 ? Promise.resolve() : new Promise((resolve8) => {
+      drainWaiters.push(resolve8);
     })
   };
 }
 function headerValue(req, name) {
   const value = req.headers[name.toLowerCase()];
-  const text2 = Array.isArray(value) ? value[0] : value;
-  return text2 === void 0 || text2.length === 0 ? void 0 : text2;
+  const text = Array.isArray(value) ? value[0] : value;
+  return text === void 0 || text.length === 0 ? void 0 : text;
 }
 function isJson(bytes) {
   try {
@@ -10712,10 +5962,10 @@ function apiError(status2, message) {
   };
 }
 function readBody2(req, max, signal) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve8, reject) => {
     const chunks = [];
     let size = 0;
-    const settle2 = () => {
+    const settle = () => {
       req.off("data", onData);
       req.off("end", onEnd);
       req.off("error", onError);
@@ -10726,27 +5976,27 @@ function readBody2(req, max, signal) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += bytes.length;
       if (size > max) {
-        settle2();
+        settle();
         chunks.length = 0;
-        resolve9("too-large");
+        resolve8("too-large");
         return;
       }
       chunks.push(bytes);
     };
     const onEnd = () => {
-      settle2();
-      resolve9(Buffer.concat(chunks));
+      settle();
+      resolve8(Buffer.concat(chunks));
     };
     const onError = (error) => {
-      settle2();
+      settle();
       reject(error);
     };
     const onClose = () => {
-      settle2();
+      settle();
       reject(new Error("the request ended before its body was complete"));
     };
     const onAbort = () => {
-      settle2();
+      settle();
       reject(signal.reason);
     };
     if (signal.aborted) {
@@ -10812,7 +6062,7 @@ async function keepBody(answer2, signal, timeoutMs) {
 }
 function abortable(promise, signal) {
   if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve8, reject) => {
     const aborted = () => {
       reject(signal.reason);
     };
@@ -10820,7 +6070,7 @@ function abortable(promise, signal) {
     promise.then(
       (value) => {
         signal.removeEventListener("abort", aborted);
-        resolve9(value);
+        resolve8(value);
       },
       (error) => {
         signal.removeEventListener("abort", aborted);
@@ -10830,29 +6080,29 @@ function abortable(promise, signal) {
   });
 }
 function withTimeout(promise, ms) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve8) => {
     const timer = setTimeout(() => {
-      resolve9(false);
+      resolve8(false);
     }, ms);
     void promise.finally(() => {
       clearTimeout(timer);
-      resolve9(true);
+      resolve8(true);
     });
   });
 }
 function waitForPool(table, until, now, signal) {
-  return new Promise((resolve9, reject) => {
-    const settle2 = () => {
+  return new Promise((resolve8, reject) => {
+    const settle = () => {
       clearTimeout(timer);
       unsubscribe();
       signal.removeEventListener("abort", aborted);
     };
     const woken = () => {
-      settle2();
-      resolve9();
+      settle();
+      resolve8();
     };
     const aborted = () => {
-      settle2();
+      settle();
       reject(signal.reason);
     };
     const timer = setTimeout(woken, Math.max(0, until - now()));
@@ -10863,18 +6113,18 @@ function waitForPool(table, until, now, signal) {
 }
 
 // src/daemon/tokens.ts
-var import_node_fs16 = require("node:fs");
-var import_node_os11 = require("node:os");
-var import_node_path18 = require("node:path");
+var import_node_fs15 = require("node:fs");
+var import_node_os10 = require("node:os");
+var import_node_path15 = require("node:path");
 
 // src/daemon/credentials.ts
-var import_node_fs15 = require("node:fs");
-var import_node_path17 = require("node:path");
+var import_node_fs14 = require("node:fs");
+var import_node_path14 = require("node:path");
 
 // src/core/credentials.ts
-function parseCredentials(text2) {
+function parseCredentials(text) {
   try {
-    const parsed = JSON.parse(text2);
+    const parsed = JSON.parse(text);
     const oauth = parsed?.claudeAiOauth;
     if (typeof oauth?.accessToken !== "string" || oauth.accessToken.trim().length === 0) return null;
     return {
@@ -10898,15 +6148,15 @@ var CredentialsFileReader = class {
   read(id) {
     const path = this.pathOf(id);
     try {
-      const stat2 = (0, import_node_fs15.statSync)(path);
+      const stat = (0, import_node_fs14.statSync)(path);
       const cached = this.cache.get(path);
-      if (cached?.mtime === stat2.mtimeMs && cached.size === stat2.size) return cached.value;
+      if (cached?.mtime === stat.mtimeMs && cached.size === stat.size) return cached.value;
       let value = null;
       try {
-        value = parseCredentials((0, import_node_fs15.readFileSync)(path, "utf8"));
+        value = parseCredentials((0, import_node_fs14.readFileSync)(path, "utf8"));
       } catch {
       }
-      this.cache.set(path, { mtime: stat2.mtimeMs, size: stat2.size, value });
+      this.cache.set(path, { mtime: stat.mtimeMs, size: stat.size, value });
       return value;
     } catch {
       this.cache.delete(path);
@@ -10924,25 +6174,25 @@ var CredentialsFileReader = class {
     this.cache.clear();
   }
   pathOf(id) {
-    return (0, import_node_path17.join)(this.options.credentialsDir(id), CREDENTIALS_FILE_NAME);
+    return (0, import_node_path14.join)(this.options.credentialsDir(id), CREDENTIALS_FILE_NAME);
   }
 };
 
 // src/platform/windows-credentials.ts
-var import_node_os10 = require("node:os");
+var import_node_os9 = require("node:os");
 
 // src/core/keychain-service.ts
-var import_node_crypto9 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
 function keychainService(secureStorageDir) {
   if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
-  const digest = (0, import_node_crypto9.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
+  const digest = (0, import_node_crypto8.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
   return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
 }
 
 // src/platform/windows-credentials.ts
-function powerShellQuote(text2) {
-  return `'${text2.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`;
+function powerShellQuote(text) {
+  return `'${text.replace(/['\u2018\u2019\u201a\u201b]/g, (quote) => quote + quote)}'`;
 }
 function powerShellInvocation(script, env) {
   return {
@@ -11063,7 +6313,7 @@ function powerShellCredentialRead(env, run2 = runProgram, blobs = true) {
     return all;
   };
 }
-function preferredAccounts(env = process.env, userName = () => (0, import_node_os10.userInfo)().username) {
+function preferredAccounts(env = process.env, userName = () => (0, import_node_os9.userInfo)().username) {
   let name;
   try {
     name = env.USER || userName();
@@ -11138,8 +6388,8 @@ async function readStoredRecords(secureStorageDirs, read, preferred = preferredA
 async function holdsStoredRecord(secureStorageDir, env, platform = process.platform, read = powerShellCredentialRead(env)) {
   if (platform !== "win32") return false;
   try {
-    const [record2] = await readStoredRecords([secureStorageDir], read);
-    return record2?.kind === "found";
+    const [record] = await readStoredRecords([secureStorageDir], read);
+    return record?.kind === "found";
   } catch {
     return false;
   }
@@ -11397,23 +6647,23 @@ var CredentialManagerReader = class {
   async load(ids) {
     const clears = this.clears;
     const started = new Map(ids.map((id) => [id, this.invalidations.get(id) ?? 0]));
-    const settle2 = (id, outcome) => {
+    const settle = (id, outcome) => {
       if (this.clears === clears && (this.invalidations.get(id) ?? 0) === started.get(id)) this.settle(id, outcome);
     };
     let records;
     try {
       records = await readStoredRecords(ids.map((id) => this.options.secureStorageDir(id)), this.options.read, this.options.accounts);
     } catch {
-      for (const id of ids) settle2(id, { kind: "failed", failure: "not_run" });
+      for (const id of ids) settle(id, { kind: "failed", failure: "not_run" });
       return;
     }
     ids.forEach((id, index) => {
-      const record2 = records[index];
-      if (record2 === void 0 || record2.kind === "missing") settle2(id, { kind: "missing" });
-      else if (record2.kind === "failed") settle2(id, { kind: "failed", failure: "failed" });
+      const record = records[index];
+      if (record === void 0 || record.kind === "missing") settle(id, { kind: "missing" });
+      else if (record.kind === "failed") settle(id, { kind: "failed", failure: "failed" });
       else {
-        const value = parseCredentials(record2.text);
-        settle2(id, value === null ? { kind: "failed", failure: "not_credentials" } : { kind: "found", value });
+        const value = parseCredentials(record.text);
+        settle(id, value === null ? { kind: "failed", failure: "not_credentials" } : { kind: "found", value });
       }
     });
   }
@@ -11447,37 +6697,37 @@ function securityProgramOf(env, processEnv = process.env) {
   return systemProgram("security", env, processEnv);
 }
 function claudeSecureStorageDir(login) {
-  return checkedClaude(login).usedByPlainCli ? null : loginFolder(login);
+  return login.usedByPlainClaude ? null : loginFolder(login);
 }
 function claudeCredentialsDir(login, home) {
-  return checkedClaude(login).usedByPlainCli ? (0, import_node_path18.join)(home, ".claude") : loginFolder(login);
+  return login.usedByPlainClaude ? (0, import_node_path15.join)(home, ".claude") : loginFolder(login);
 }
 function createTokenSource(options) {
-  const home = options.home ?? import_node_os11.homedir;
+  const home = options.home ?? import_node_os10.homedir;
   const known = /* @__PURE__ */ new Map();
-  const claudeLogin = (id) => {
+  const loginOf = (id) => {
     const seen = known.get(id);
     if (seen !== void 0) return seen;
     const found = isLoginId(id) ? options.login(id) : void 0;
-    if (found?.provider !== "claude" || found.id !== id) return null;
-    const login = { id: found.id, provider: "claude", usedByPlainCli: found.usedByPlainCli };
+    if (found === void 0 || found.id !== id) return null;
+    const login = { id: found.id, usedByPlainClaude: found.usedByPlainClaude };
     known.set(id, login);
     return login;
   };
-  const isClaude = (id) => claudeLogin(id) !== null;
+  const isKnownLogin = (id) => loginOf(id) !== null;
   const checked = (id) => {
-    const login = claudeLogin(id);
-    if (login === null) throw new Error(`${id} is not the id of a Claude login.`);
+    const login = loginOf(id);
+    if (login === null) throw new Error(`${id} is not the id of a login in the config.`);
     return login;
   };
   const file = new CredentialsFileReader({ credentialsDir: (id) => claudeCredentialsDir(checked(id), home()) });
   const credentialManager = (options.platform ?? process.platform) === "win32" ? new CredentialManagerReader({
     secureStorageDir: (id) => claudeSecureStorageDir(checked(id)),
-    fileExists: (id) => (0, import_node_fs16.existsSync)((0, import_node_path18.join)(claudeCredentialsDir(checked(id), home()), CREDENTIALS_FILE_NAME)),
+    fileExists: (id) => (0, import_node_fs15.existsSync)((0, import_node_path15.join)(claudeCredentialsDir(checked(id), home()), CREDENTIALS_FILE_NAME)),
     read: options.credentialRead ?? powerShellCredentialRead(options.env),
     now: options.now,
     onFailure: (failure2) => {
-      const login = claudeLogin(failure2.id);
+      const login = loginOf(failure2.id);
       if (login !== null) options.log?.write("token_read_failed", { login: login.id, reason: credentialManagerReasonOf(failure2.kind) });
     }
   }) : null;
@@ -11487,34 +6737,34 @@ function createTokenSource(options) {
     readTimeoutMs: options.keychainReadTimeoutMs,
     now: options.now,
     onFailure: (failure2) => {
-      const login = claudeLogin(failure2.id);
+      const login = loginOf(failure2.id);
       if (login !== null) options.log?.write("token_read_failed", { login: login.id, reason: logReasonOf(failure2.kind) });
     }
   }) : null;
   return {
     keychain: keychain !== null,
     read(id) {
-      if (!isClaude(id)) return null;
+      if (!isKnownLogin(id)) return null;
       return credentialManager?.read(id) ?? keychain?.read(id) ?? file.read(id);
     },
     async prime(ids) {
-      const claude = ids.filter(isClaude);
-      await Promise.all([keychain?.prime(claude), credentialManager?.prime(claude)]);
+      const inConfig = ids.filter(isKnownLogin);
+      await Promise.all([keychain?.prime(inConfig), credentialManager?.prime(inConfig)]);
     },
     invalidate(id) {
-      if (!isClaude(id)) return;
+      if (!isKnownLogin(id)) return;
       keychain?.invalidate(id);
       credentialManager?.invalidate(id);
       file.invalidate(id);
     },
     markStale(id) {
-      if (!isClaude(id)) return;
+      if (!isKnownLogin(id)) return;
       keychain?.invalidate(id);
       credentialManager?.markStale(id);
       file.invalidate(id);
     },
     inCredentialManager(id) {
-      return isClaude(id) && credentialManager !== null && credentialManager.holds(id);
+      return isKnownLogin(id) && credentialManager !== null && credentialManager.holds(id);
     },
     clear() {
       keychain?.clear();
@@ -11540,10 +6790,6 @@ function logReasonOf(kind) {
 }
 function credentialManagerReasonOf(kind) {
   return kind === "not_credentials" ? "invalid" : "other";
-}
-function checkedClaude(login) {
-  if (login.provider !== "claude") throw new Error(`${login.id} is not a Claude login.`);
-  return login;
 }
 
 // src/daemon/usage-poller.ts
@@ -11611,8 +6857,8 @@ var UsagePoller = class {
   recentStaleProbes() {
     const since = this.options.now() - (this.options.staleProbeIntervalMs ?? STALE_PROBE_INTERVAL_MS);
     const recent = /* @__PURE__ */ new Set();
-    for (const [id, at2] of this.staleProbedAt) {
-      if (at2 > since) recent.add(id);
+    for (const [id, at] of this.staleProbedAt) {
+      if (at > since) recent.add(id);
       else this.staleProbedAt.delete(id);
     }
     return recent;
@@ -11639,35 +6885,31 @@ var UsagePoller = class {
     return started;
   }
   signedInOrUnknown(login) {
-    if (login.provider === "claude") return this.options.table.claudeSignedIn(login.id) !== false;
-    return this.options.table.probedSignedIn(login.id) !== false;
+    return this.options.table.claudeSignedIn(login.id) !== false;
   }
   async run(login, cause) {
     const { table, log, now } = this.options;
     const id = login.id;
     const startedAt = now();
-    log.write(cause === "renewal" ? "token_renewal_started" : "usage_probe_started", { login: id, provider: login.provider });
-    const probe = login.provider === "claude" ? this.options.probeClaude : this.options.probeCodex;
-    const ref = { id, provider: login.provider, usedByPlainCli: login.usedByPlainCli };
+    log.write(cause === "renewal" ? "token_renewal_started" : "usage_probe_started", { login: id });
+    const ref = { id, usedByPlainClaude: login.usedByPlainClaude };
     let answer2;
     try {
-      answer2 = await probe(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) });
+      answer2 = await this.options.probeClaude(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) });
     } catch {
       answer2 = { ok: false, signedIn: null, reason: "other", error: "The usage probe failed unexpectedly." };
     }
     if (this.closed) return;
-    if (login.provider === "claude") {
-      if (cause === "renewal") this.options.tokens.invalidate(id);
-      else this.options.tokens.markStale(id);
-    }
+    if (cause === "renewal") this.options.tokens.invalidate(id);
+    else this.options.tokens.markStale(id);
     const ms = now() - startedAt;
     if (answer2.ok) {
       table.setProbeUsage(id, answer2.usage, startedAt);
       table.setSignedIn(id, answer2.signedIn);
       if (answer2.signedIn) table.clearRefused(id, startedAt);
       const before = table.cooldown(id);
-      const setAt2 = table.cooldownSince(id);
-      const after = setAt2 !== null && setAt2 > startedAt ? before : cooldownAfterProbe(before, answer2.usage);
+      const setAt = table.cooldownSince(id);
+      const after = setAt !== null && setAt > startedAt ? before : cooldownAfterProbe(before, answer2.usage);
       if (after !== before) {
         table.setCooldown(id, after);
         if (after === null) log.write("cooldown_ended", { login: id });
@@ -11676,23 +6918,20 @@ var UsagePoller = class {
       this.learnEmail(ref, answer2);
     } else {
       const previous = table.usage(id);
-      const base = previous ?? (login.provider === "claude" ? emptyAccountUsage(id, now()) : emptyCodexUsage(id, now()));
+      const base = previous ?? emptyAccountUsage(id, now());
       table.setUsage(id, { ...base, error: answer2.error });
       if (answer2.signedIn !== null) table.setSignedIn(id, answer2.signedIn);
       log.write(cause === "renewal" ? "token_renewal_finished" : "usage_probe_failed", { login: id, ms, ok: false, reason: answer2.reason });
     }
   }
   /**
-   * Keeps what a successful probe said about the login's email: a Codex login's email in the
-   * table's memory, and, when the probe found the login signed in and an email is known, the
-   * login's automatic alias made from it.
+   * After a successful probe that found the login signed in, gives the login the automatic alias
+   * made from the email its profile names, when it names one.
    */
   learnEmail(login, answer2) {
-    const { table, identity } = this.options;
-    if (login.provider === "codex") table.setCodexEmail(login.id, answer2.signedIn ? answer2.email ?? null : null);
     if (!answer2.signedIn) return;
-    const email = login.provider === "codex" ? answer2.email ?? null : identity.read(login)?.email ?? null;
-    if (email !== null) table.noteEmail(login.id, email);
+    const email = this.options.identity.read(login)?.email ?? null;
+    if (email !== null) this.options.table.noteEmail(login.id, email);
   }
 };
 
@@ -11724,7 +6963,6 @@ function createDaemonApp(options) {
     log,
     now,
     probeClaude: tuning.probeClaude ?? ((login, probe) => probeClaudeUsage(login, { ...probe, env: probeEnvironment(tokens, login.id, probe.env) })),
-    probeCodex: tuning.probeCodex ?? probeCodexUsage,
     ...tuning.pollIntervalMs === void 0 ? {} : { intervalMs: tuning.pollIntervalMs }
   });
   const upstream = createUpstream({
@@ -11771,7 +7009,7 @@ function createDaemonApp(options) {
       table.onLoginsAdded((ids) => {
         void poller.probeMany(ids, "config");
       });
-      await tokens.prime(table.claudeLogins().map((login) => login.id));
+      await tokens.prime(table.logins().map((login) => login.id));
       if (tuning.poll !== false) poller.start();
     },
     handle(req, res) {
@@ -11821,12 +7059,12 @@ async function runDaemon(options) {
   const events = options.processEvents ?? process;
   const drainCapMs = options.drainCapMs ?? DEFAULT_DRAIN_CAP_MS;
   const bindDeadlineMs = options.bindDeadlineMs ?? BIND_DEADLINE_MS;
-  const say = (text2) => {
-    options.stdout?.write(`${text2}
+  const say = (text) => {
+    options.stdout?.write(`${text}
 `);
   };
-  const complain = (text2) => {
-    options.stderr?.write(`kurmis daemon: ${text2}
+  const complain = (text) => {
+    options.stderr?.write(`kurmis daemon: ${text}
 `);
   };
   const log = openDaemonLog();
@@ -11841,7 +7079,7 @@ async function runDaemon(options) {
       complain(error.message);
     } else {
       log.write("internal_error", { code: errorCodeOf(error) });
-      complain(`could not read its files: ${messageOf4(error)}`);
+      complain(`could not read its files: ${messageOf3(error)}`);
     }
     return 1;
   }
@@ -11877,7 +7115,7 @@ async function serve(options) {
     });
   } catch (error) {
     log.write("internal_error", { code: errorCodeOf(error) });
-    complain(`could not set up its request handling: ${messageOf4(error)}`);
+    complain(`could not set up its request handling: ${messageOf3(error)}`);
     return 1;
   }
   let started = null;
@@ -11914,7 +7152,7 @@ async function serve(options) {
       writeDaemonFile({ pid, port, version, startedAt });
     } catch (error) {
       log.write("internal_error", { code: errorCodeOf(error) });
-      complain(`could not write daemon.json: ${messageOf4(error)}`);
+      complain(`could not write daemon.json: ${messageOf3(error)}`);
       stop2.request("error");
     }
   }
@@ -11928,7 +7166,7 @@ async function serve(options) {
       },
       (error) => {
         log.write("internal_error", { code: errorCodeOf(error) });
-        complain(`could not start its request handling: ${messageOf4(error)}`);
+        complain(`could not start its request handling: ${messageOf3(error)}`);
         stop2.request("error");
         return false;
       }
@@ -12038,14 +7276,14 @@ function unusablePortText(port, code, configFile) {
   return `could not listen on ${DAEMON_HOST}:${String(port)} (${code}): the system does not let this program use the port. On Windows a port inside a range the system reserves is refused this way; "netsh int ipv4 show excludedportrange protocol=tcp" lists those ranges. To use another port, set "port" in ${configFile} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)} outside them.`;
 }
 function listenOnce(server, port) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve8) => {
     const onError = (error) => {
       server.off("listening", onListening);
-      resolve9(error);
+      resolve8(error);
     };
     const onListening = () => {
       server.off("error", onError);
-      resolve9(null);
+      resolve8(null);
     };
     server.once("error", onError);
     server.once("listening", onListening);
@@ -12064,11 +7302,11 @@ var StopControl = class {
   resolveFirst;
   resolveSkip;
   constructor() {
-    this.firstRequest = new Promise((resolve9) => {
-      this.resolveFirst = resolve9;
+    this.firstRequest = new Promise((resolve8) => {
+      this.resolveFirst = resolve8;
     });
-    this.drainSkipped = new Promise((resolve9) => {
-      this.resolveSkip = resolve9;
+    this.drainSkipped = new Promise((resolve8) => {
+      this.resolveSkip = resolve8;
     });
   }
   request(reason, maxWaitMs) {
@@ -12094,23 +7332,23 @@ var StopControl = class {
   }
 };
 function waitAtMost(promise, ms, skip) {
-  return new Promise((resolve9) => {
-    const timer = setTimeout(() => resolve9({ kind: "timeout" }), ms);
+  return new Promise((resolve8) => {
+    const timer = setTimeout(() => resolve8({ kind: "timeout" }), ms);
     const finish = (outcome) => {
       clearTimeout(timer);
-      resolve9(outcome);
+      resolve8(outcome);
     };
     promise.then((value) => finish({ kind: "done", value }), (error) => finish({ kind: "failed", error }));
     void skip?.then(() => finish({ kind: "skipped" }));
   });
 }
-function messageOf4(error) {
+function messageOf3(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
 // src/platform/launchd.ts
-var import_node_os12 = require("node:os");
-var import_node_path19 = require("node:path");
+var import_node_os11 = require("node:os");
+var import_node_path16 = require("node:path");
 var LAUNCHCTL_PROGRAM = realSystemProgram("launchctl");
 var LAUNCHCTL_VARIABLE = SYSTEM_PROGRAM_VARIABLES.launchctl;
 var LAUNCHCTL_TIMEOUT_MS = 3e4;
@@ -12130,13 +7368,13 @@ function guiDomain(uid = currentUid()) {
   return `gui/${String(uid)}`;
 }
 function launchAgentsDir() {
-  return (0, import_node_path19.join)((0, import_node_os12.homedir)(), "Library", "LaunchAgents");
+  return (0, import_node_path16.join)((0, import_node_os11.homedir)(), "Library", "LaunchAgents");
 }
 function autostartPlistPath() {
-  return (0, import_node_path19.join)(launchAgentsDir(), `${AUTOSTART_LABEL}.plist`);
+  return (0, import_node_path16.join)(launchAgentsDir(), `${AUTOSTART_LABEL}.plist`);
 }
-function escapeXml(text2) {
-  return text2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function escapeXml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 function plistXml(root) {
   const lines = [
@@ -12146,15 +7384,15 @@ function plistXml(root) {
     "<dict>"
   ];
   const string = (value) => `<string>${escapeXml(value)}</string>`;
-  const scalar2 = (value) => typeof value === "boolean" ? value ? "<true/>" : "<false/>" : string(value);
+  const scalar = (value) => typeof value === "boolean" ? value ? "<true/>" : "<false/>" : string(value);
   for (const [key, value] of Object.entries(root)) {
     lines.push(`  <key>${escapeXml(key)}</key>`);
-    if (typeof value === "string" || typeof value === "boolean") lines.push(`  ${scalar2(value)}`);
+    if (typeof value === "string" || typeof value === "boolean") lines.push(`  ${scalar(value)}`);
     else if (Array.isArray(value)) lines.push("  <array>", ...value.map((item) => `    ${string(item)}`), "  </array>");
     else {
       lines.push("  <dict>");
       for (const [name, item] of Object.entries(value)) {
-        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar2(item)}`);
+        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar(item)}`);
       }
       lines.push("  </dict>");
     }
@@ -12165,7 +7403,6 @@ function plistXml(root) {
 var DAEMON_JOB_VARIABLES = [
   "KURMIS_HOME",
   "KURMIS_CLAUDE_BIN",
-  "KURMIS_CODEX_BIN",
   "KURMIS_UPSTREAM_URL",
   "KURMIS_SECURITY_PROGRAM",
   "KURMIS_ENTRY",
@@ -12176,14 +7413,14 @@ var DAEMON_JOB_VARIABLES = [
 var FALLBACK_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 function daemonJobEnvironment(env = process.env, processEnv = process.env) {
   const out = {
-    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os12.homedir)(),
+    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os11.homedir)(),
     PATH: env.PATH !== void 0 && env.PATH !== "" ? env.PATH : FALLBACK_PATH
   };
   const hooks = inheritedTestHooks(env, processEnv);
   for (const name of DAEMON_JOB_VARIABLES) {
     const value = env[name] || hooks[name];
     if (value === void 0 || value === "") continue;
-    out[name] = name === "KURMIS_HOME" ? (0, import_node_path19.resolve)(value) : value;
+    out[name] = name === "KURMIS_HOME" ? (0, import_node_path16.resolve)(value) : value;
   }
   return out;
 }
@@ -12192,7 +7429,7 @@ function daemonJobPlist(job) {
     Label: job.label,
     ProgramArguments: job.programArguments,
     EnvironmentVariables: job.environment,
-    WorkingDirectory: job.environment.HOME ?? (0, import_node_os12.homedir)(),
+    WorkingDirectory: job.environment.HOME ?? (0, import_node_os11.homedir)(),
     RunAtLoad: true,
     AbandonProcessGroup: true,
     StandardOutPath: "/dev/null",
@@ -12354,12 +7591,12 @@ var status = async (args, context) => {
       }, null, 2));
       return EXIT_OK;
     }
-    writeLine(context.stdout, `The kurmis daemon ${answer2.version} runs on ${address(answer2.port)}, pid ${String(answer2.pid)}, since ${new Date(answer2.startedAt).toISOString()}, with ${String(answer2.logins.length)} logins.`);
+    writeLine(context.stdout, `The kurmis daemon ${answer2.version} runs on ${address(answer2.port)}, pid ${String(answer2.pid)}, since ${new Date(answer2.startedAt).toISOString()}, with ${String(answer2.logins.length)} ${answer2.logins.length === 1 ? "login" : "logins"}.`);
     const age = daemonAge(answer2, kurmisVersion);
     const versions = `The daemon is ${versionText(answer2.version, answer2.apiVersion)}, this kurmis is ${versionText(kurmisVersion, CONTROL_API_VERSION)}.`;
     const sameApi = answer2.apiVersion === CONTROL_API_VERSION;
     if (age === "older") {
-      writeLine(context.stdout, `${versions} The daemon is older, so the next "kurmis claude", "kurmis codex", "kurmis setup" or "kurmis daemon start" replaces it.`);
+      writeLine(context.stdout, `${versions} The daemon is older, so the next "kurmis claude", "kurmis setup" or "kurmis daemon start" replaces it.`);
     } else if (age === "newer") {
       writeLine(context.stdout, sameApi ? `${versions} The daemon is newer; this kurmis can use it and does not replace it.` : `${versions} The daemon is newer, so this kurmis does not replace it, and it cannot use a daemon of another control API version. Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.`);
     } else if (age === "unknown" && !sameApi) {
@@ -12373,12 +7610,12 @@ var status = async (args, context) => {
 function daemonStartAssignments(values) {
   const out = {};
   for (const value of values) {
-    const at2 = value.indexOf("=");
-    const name = at2 === -1 ? value : value.slice(0, at2);
-    if (at2 === -1 || !DAEMON_JOB_VARIABLES.includes(name)) {
+    const at = value.indexOf("=");
+    const name = at === -1 ? value : value.slice(0, at);
+    if (at === -1 || !DAEMON_JOB_VARIABLES.includes(name)) {
       return `--env takes NAME=VALUE with NAME one of ${DAEMON_JOB_VARIABLES.join(", ")}, not "${name}"`;
     }
-    out[name] = value.slice(at2 + 1);
+    out[name] = value.slice(at + 1);
   }
   return out;
 }
@@ -12395,9 +7632,9 @@ var daemonCommand = {
   summary: "Start, stop or show the background process",
   usage: `Usage: kurmis daemon <start|stop|restart|status|run>
 
-The daemon is the background process that routes Claude requests. "kurmis claude",
-"kurmis codex" without --login and "kurmis setup" start it when it is not running, so
-"kurmis daemon start" is seldom needed.
+The daemon is the background process that routes Claude requests. "kurmis claude" and
+"kurmis setup" start it when it is not running, so "kurmis daemon start" is seldom
+needed.
 
   start                   Start it in the background. An older daemon is replaced, a newer
                           one is kept.
@@ -12425,43 +7662,43 @@ Options:
 };
 
 // src/cli/commands/login.ts
-var import_node_fs19 = require("node:fs");
-var import_node_os13 = require("node:os");
-var import_node_path22 = require("node:path");
+var import_node_fs18 = require("node:fs");
+var import_node_os12 = require("node:os");
+var import_node_path19 = require("node:path");
 
 // src/platform/remove-tree.ts
-var import_node_fs17 = require("node:fs");
-var import_node_path20 = require("node:path");
+var import_node_fs16 = require("node:fs");
+var import_node_path17 = require("node:path");
 var nodeFs = {
-  lstatSync: (path) => (0, import_node_fs17.lstatSync)(path),
-  readdirSync: (path) => (0, import_node_fs17.readdirSync)(path),
-  unlinkSync: (path) => (0, import_node_fs17.unlinkSync)(path),
-  rmdirSync: (path) => (0, import_node_fs17.rmdirSync)(path),
-  chmodSync: (path, mode) => (0, import_node_fs17.chmodSync)(path, mode),
-  realpathSync: (path) => import_node_fs17.realpathSync.native(path)
+  lstatSync: (path) => (0, import_node_fs16.lstatSync)(path),
+  readdirSync: (path) => (0, import_node_fs16.readdirSync)(path),
+  unlinkSync: (path) => (0, import_node_fs16.unlinkSync)(path),
+  rmdirSync: (path) => (0, import_node_fs16.rmdirSync)(path),
+  chmodSync: (path, mode) => (0, import_node_fs16.chmodSync)(path, mode),
+  realpathSync: (path) => import_node_fs16.realpathSync.native(path)
 };
 function codeOf2(error) {
   return error?.code;
 }
 function removeTreeSync(path, options = {}) {
-  removeEntry2(path, options.fs ?? nodeFs, options.platform ?? process.platform, options.root ?? null);
+  removeEntry(path, options.fs ?? nodeFs, options.platform ?? process.platform, options.root ?? null);
 }
 function insideWindowsFolder(path, root) {
-  const a = import_node_path20.win32.normalize(path).replace(/^\\\\\?\\/, "").toLowerCase();
-  const b = import_node_path20.win32.normalize(root).replace(/^\\\\\?\\/, "").replace(/\\+$/, "").toLowerCase();
+  const a = import_node_path17.win32.normalize(path).replace(/^\\\\\?\\/, "").toLowerCase();
+  const b = import_node_path17.win32.normalize(root).replace(/^\\\\\?\\/, "").replace(/\\+$/, "").toLowerCase();
   return a === b || a.startsWith(`${b}\\`);
 }
-function removeEntry2(path, fs, platform, root) {
-  let stat2;
+function removeEntry(path, fs, platform, root) {
+  let stat;
   try {
-    stat2 = fs.lstatSync(path);
+    stat = fs.lstatSync(path);
   } catch (error) {
     if (codeOf2(error) === "ENOENT") return;
     throw error;
   }
-  if (stat2.isSymbolicLink()) {
+  if (stat.isSymbolicLink()) {
     removeLink(path, fs, platform);
-  } else if (stat2.isDirectory()) {
+  } else if (stat.isDirectory()) {
     let inside = root;
     if (platform === "win32") {
       let real;
@@ -12476,7 +7713,7 @@ function removeEntry2(path, fs, platform, root) {
       }
       inside = root ?? real;
     }
-    for (const name of fs.readdirSync(path)) removeEntry2((0, import_node_path20.join)(path, name), fs, platform, inside);
+    for (const name of fs.readdirSync(path)) removeEntry((0, import_node_path17.join)(path, name), fs, platform, inside);
     retryWhileLockedSync(() => fs.rmdirSync(path), platform);
   } else {
     removeFile2(path, fs, platform);
@@ -12536,15 +7773,13 @@ function lockLogin(id, name = id) {
 // src/cli/sign-out.ts
 var LOGOUT_TIMEOUT_MS = 3e4;
 async function signOutLogin(login, env, deps) {
-  const cliName = login.provider === "claude" ? "claude auth logout" : "codex logout";
   let problem;
   try {
-    const program = deps.findProgram(login.provider, { env });
-    const patch = login.provider === "claude" ? claudeLoginEnv(login, deps.platform === "win32") : codexLoginEnv(login, env);
-    const cliArgs = login.provider === "claude" ? ["auth", "logout"] : ["logout"];
+    const program = deps.findProgram("claude", { env });
+    const patch = claudeLoginEnv(login, deps.platform === "win32");
     const result = await deps.runProgram(
       program.command,
-      [...program.args, ...cliArgs],
+      [...program.args, "auth", "logout"],
       { timeoutMs: LOGOUT_TIMEOUT_MS, env: applyEnvPatch(env, patch) }
     );
     if (result.code === 0) return null;
@@ -12553,10 +7788,9 @@ async function signOutLogin(login, env, deps) {
     if (!(error instanceof ProgramNotFoundError)) throw error;
     problem = error.message;
   }
-  return `"${cliName}" did not finish (${problem})`;
+  return `"claude auth logout" did not finish (${problem})`;
 }
 function leftBehindText(login, platform) {
-  if (login.provider !== "claude") return "";
   const service = keychainService(loginFolder(login));
   if (platform === "darwin") return ` Its Keychain item "${service}" may be left; Keychain Access can delete it.`;
   if (platform === "win32") return ` Its Windows credentials "${service}/\u2026" may be left; Credential Manager can delete them.`;
@@ -12564,19 +7798,18 @@ function leftBehindText(login, platform) {
 }
 
 // src/cli/local-credentials.ts
-var import_node_fs18 = require("node:fs");
-var import_node_path21 = require("node:path");
-var CODEX_LOGIN_STATUS_TIMEOUT_MS = 1e4;
+var import_node_fs17 = require("node:fs");
+var import_node_path18 = require("node:path");
 var KEYCHAIN_LOOKUP_TIMEOUT_MS = 3e3;
 function credentialsFileHasToken(dir) {
-  let text2;
+  let text;
   try {
-    text2 = (0, import_node_fs18.readFileSync)((0, import_node_path21.join)(dir, CREDENTIALS_FILE_NAME), "utf8");
+    text = (0, import_node_fs17.readFileSync)((0, import_node_path18.join)(dir, CREDENTIALS_FILE_NAME), "utf8");
   } catch (error) {
     const code = error.code;
     return code === "ENOENT" || code === "ENOTDIR" ? false : "unknown";
   }
-  return parseCredentials(text2) !== null;
+  return parseCredentials(text) !== null;
 }
 async function keychainItemExists(service, env, run2) {
   const security = (args) => run2(systemProgram("security", env), args, { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxOutputBytes: 64 * 1024 });
@@ -12597,7 +7830,7 @@ function either(a, b) {
   if (a === true || b === true) return true;
   return a === "unknown" || b === "unknown" ? "unknown" : false;
 }
-async function claudeCredentials(logins, env, home, deps) {
+async function checkCredentials(logins, env, home, deps) {
   const files = logins.map((login) => credentialsFileHasToken(claudeCredentialsDir(login, home)));
   const left = logins.filter((_login, index) => files[index] !== true);
   const platform = deps.platform ?? process.platform;
@@ -12608,63 +7841,11 @@ async function claudeCredentials(logins, env, home, deps) {
     const read = deps.readCredentialNames ?? powerShellCredentialRead(env, deps.runProgram, false);
     stores = await storedRecordsExist(left.map(claudeSecureStorageDir), read, preferredAccounts(env));
   }
-  return logins.map((login, index) => {
-    const file = files[index] ?? false;
-    if (file === true) return true;
-    return either(file, stores[left.indexOf(login)] ?? false);
-  });
-}
-function codexHomeOf(login, env, home, platform = process.platform) {
-  const patched = applyEnvPatch(env, codexLoginEnv(login, env, platform), platform === "win32");
-  const named = platform === "win32" ? windowsEnv(patched, "CODEX_HOME") : patched["CODEX_HOME"];
-  return named !== void 0 && named !== "" ? named : (0, import_node_path21.join)(home, ".codex");
-}
-function codexKeepsSignInElsewhere(codexHome) {
-  let text2;
-  try {
-    text2 = (0, import_node_fs18.readFileSync)((0, import_node_path21.join)(codexHome, "config.toml"), "utf8");
-  } catch {
-    return false;
-  }
-  try {
-    const store = tomlValue(text2)["cli_auth_credentials_store"];
-    return store !== void 0 && store !== "file";
-  } catch {
-    return true;
-  }
-}
-async function codexSignedIn2(login, env, deps) {
-  let program;
-  try {
-    program = deps.findProgram("codex", { env });
-  } catch (error) {
-    if (error instanceof ProgramNotFoundError) return "unknown";
-    throw error;
-  }
-  const result = await deps.runProgram(
-    program.command,
-    [...program.args, "login", "status"],
-    { timeoutMs: CODEX_LOGIN_STATUS_TIMEOUT_MS, env: applyEnvPatch(env, codexLoginEnv(login, env)), maxOutputBytes: 64 * 1024 }
-  );
-  if (result.error !== null) return "unknown";
-  return result.code === 0;
-}
-async function codexCredentials(login, env, home, deps) {
-  const codexHome = codexHomeOf(login, env, home);
-  if ((0, import_node_fs18.existsSync)((0, import_node_path21.join)(codexHome, "auth.json"))) return true;
-  if (!codexKeepsSignInElsewhere(codexHome)) return false;
-  return await codexSignedIn2(login, env, deps);
-}
-async function checkCredentials(logins, env, home, deps) {
-  const claude = logins.filter((login) => login.provider === "claude");
-  const codex = logins.filter((login) => login.provider === "codex");
-  const [claudeAnswers, codexAnswers] = await Promise.all([
-    claudeCredentials(claude, env, home, deps),
-    Promise.all(codex.map((login) => codexCredentials(login, env, home, deps)))
-  ]);
   const answers = /* @__PURE__ */ new Map();
-  claude.forEach((login, index) => answers.set(login.id, claudeAnswers[index] ?? "unknown"));
-  codex.forEach((login, index) => answers.set(login.id, codexAnswers[index] ?? "unknown"));
+  logins.forEach((login, index) => {
+    const file = files[index] ?? false;
+    answers.set(login.id, file === true ? true : either(file, stores[left.indexOf(login)] ?? false));
+  });
   return answers;
 }
 async function hasCredentials(login, env, home, deps) {
@@ -12674,27 +7855,22 @@ async function hasCredentials(login, env, home, deps) {
 // src/cli/commands/login.ts
 var LOGIN_PROBE_WAIT_MS = 15e3;
 function loginTarget(argument, config) {
-  const typed = argument.trim().toLowerCase();
-  if (isLoginProvider(typed)) return { kind: "new", provider: typed };
-  const prefix = typed.endsWith(":") ? typed.slice(0, -1).trim() : null;
-  if (prefix !== null && isLoginProvider(prefix)) {
-    return { error: `"${argument}" names no login. Put the alias or id of a ${PROVIDER_NAMES2[prefix]} login after "${prefix}:", for example ${prefix}:work-example, or run "kurmis login ${prefix}" to add a new ${PROVIDER_NAMES2[prefix]} login` };
-  }
+  if (argument === void 0) return { kind: "new" };
   const resolved = resolveLogin(config, argument);
   if ("error" in resolved) {
-    return { error: `${resolved.error}. "kurmis login claude" or "kurmis login codex" adds a new login, and "kurmis status" shows the logins there are` };
+    return { error: `${resolved.error}. "kurmis login" without a login adds a new one, and "kurmis status" shows the logins there are` };
   }
   return { kind: "existing", login: resolved.login };
 }
 function freshLoginId(config) {
   for (; ; ) {
     const id = newLoginIdFor(config);
-    if (LOGIN_PROVIDERS.every((provider) => !(0, import_node_fs19.existsSync)(loginFolder({ id, provider, usedByPlainCli: false })))) return id;
+    if (!(0, import_node_fs18.existsSync)(loginFolder({ id, usedByPlainClaude: false }))) return id;
   }
 }
 function homeIdentity(home) {
   try {
-    return parseClaudeIdentity((0, import_node_fs19.readFileSync)((0, import_node_path22.join)(home, CLAUDE_PROFILE_FILE), "utf8"));
+    return parseClaudeIdentity((0, import_node_fs18.readFileSync)((0, import_node_path19.join)(home, CLAUDE_PROFILE_FILE), "utf8"));
   } catch {
     return null;
   }
@@ -12703,40 +7879,23 @@ function fail2(context, message) {
   writeLine(context.stderr, `kurmis login: ${message}`);
   return EXIT_FAILURE;
 }
-async function sameAccount(config, login, account, env, deps) {
-  if (login.provider === "claude") return sameClaudeAccount(config, login, account, deps.home());
-  const others = config.logins.filter((other) => other.provider === login.provider && other.id !== login.id);
-  const known = /* @__PURE__ */ new Map();
-  try {
-    const connection = await deps.daemon.findDaemon({ env });
-    if (connection !== null) {
-      for (const row of (await deps.daemon.readStatus(connection)).logins) if (row.email !== null) known.set(row.id, row.email);
-    }
-  } catch {
-  }
-  const emails = await Promise.all(others.map(async (other) => known.get(other.id) ?? await deps.readCodexEmail(other, env)));
-  return others.find((_, index) => isSameEmail(emails[index] ?? null, account.email)) ?? null;
-}
-function sameClaudeAccount(config, login, account, home) {
-  return config.logins.find((other) => other.provider === "claude" && other.id !== login.id && isSameClaudeAccount(readClaudeIdentity(other, home) ?? { email: null, organizationUuid: null }, account)) ?? null;
+function sameAccount(config, login, account, home) {
+  return config.logins.find((other) => other.id !== login.id && isSameClaudeAccount(readClaudeIdentity(other, home) ?? { email: null, organizationUuid: null }, account)) ?? null;
 }
 function otherOrganization(config, login, account, home) {
-  if (login.provider !== "claude") return null;
   return config.logins.find((other) => {
-    if (other.provider !== "claude" || other.id === login.id) return false;
+    if (other.id === login.id) return false;
     const identity = readClaudeIdentity(other, home);
     return identity !== null && isSameEmail(identity.email, account.email) && !isSameClaudeAccount(identity, account);
   }) ?? null;
 }
 var AddedMeanwhile = class extends Error {
-  constructor(existing, config) {
+  constructor(existing) {
     super(`${existing.id} has the same account`);
     this.existing = existing;
-    this.config = config;
     this.name = "AddedMeanwhile";
   }
   existing;
-  config;
 };
 async function tellDaemon(daemon, login, env, probeWaitMs) {
   let connection;
@@ -12762,54 +7921,41 @@ async function tellDaemon(daemon, login, env, probeWaitMs) {
 }
 async function signIn(run2) {
   const { ref, isNew, name, lock, program, alias, context, deps } = run2;
-  const provider = ref.provider;
-  const folder = ref.usedByPlainCli ? null : loginFolder(ref);
+  const folder = ref.usedByPlainClaude ? null : loginFolder(ref);
   let created = false;
-  if (folder !== null && !(0, import_node_fs19.existsSync)(folder)) {
+  if (folder !== null && !(0, import_node_fs18.existsSync)(folder)) {
     makePrivateDirSync(folder);
     created = true;
   }
   const cleanUp = () => {
-    if (!created || folder === null) return;
-    removeTreeSync(folder);
-    if (provider === "codex") (0, import_node_fs19.rmSync)(codexMergedRecordPath(ref), { force: true });
+    if (created && folder !== null) removeTreeSync(folder);
   };
   const notAdded = isNew ? " No login was added." : "";
-  if (provider === "codex" && !ref.usedByPlainCli) {
-    try {
-      const prepared = await deps.prepareCodexHome({ ...ref, alias: name }, { env: context.env });
-      for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`);
-    } catch (error) {
-      cleanUp();
-      return fail2(context, `could not prepare the Codex home of ${name}: ${error instanceof Error ? error.message : String(error)}.${notAdded}`);
-    }
-  }
-  const cliName = provider === "claude" ? "claude auth login" : "codex login";
-  const what = isNew ? `a new ${PROVIDER_NAMES2[provider]} login (id ${ref.id})` : name;
+  const cliName = "claude auth login";
+  const what = isNew ? `a new login (id ${ref.id})` : name;
   writeLine(context.stdout, `Signing in ${what} with "${cliName}". Follow its steps.`);
-  const credentialManager = provider === "claude" && await deps.inCredentialManager(folder, context.env);
-  const env = applyEnvPatch(context.env, provider === "claude" ? claudeLoginEnv(ref, credentialManager) : codexLoginEnv(ref, context.env));
-  const cliArgs = provider === "claude" ? ["auth", "login", "--claudeai"] : ["login"];
-  const end = await deps.runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env });
+  const credentialManager = await deps.inCredentialManager(folder, context.env);
+  const env = applyEnvPatch(context.env, claudeLoginEnv(ref, credentialManager));
+  const end = await deps.runner.runInteractive({ command: program.command, args: [...program.args, "auth", "login", "--claudeai"], env });
   if (end.kind !== "exit") {
     cleanUp();
     lock.release();
     if (isNew) writeLine(context.stderr, `kurmis login:${notAdded}`);
-    return deps.runner.finishLikeChild(end, { stderr: context.stderr, name: provider });
+    return deps.runner.finishLikeChild(end, { stderr: context.stderr, name: "claude" });
   }
   if (end.code !== 0) {
     cleanUp();
     return fail2(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`);
   }
-  if (provider === "claude" && ref.usedByPlainCli) {
-    (0, import_node_fs19.rmSync)((0, import_node_path22.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
+  if (ref.usedByPlainClaude) {
+    (0, import_node_fs18.rmSync)((0, import_node_path19.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
   }
-  const identity = provider === "claude" ? ref.usedByPlainCli ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home()) : null;
+  const identity = ref.usedByPlainClaude ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home());
   if (identity === null && await hasCredentials(ref, context.env, deps.home(), deps) === false) {
     cleanUp();
     return fail2(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`);
   }
-  const email = provider === "claude" ? identity?.email ?? null : await deps.readCodexEmail(ref, context.env);
+  const email = identity?.email ?? null;
   const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null };
   if (isNew && account !== null) {
     let config;
@@ -12819,28 +7965,27 @@ async function signIn(run2) {
       if (!(error instanceof ConfigError)) throw error;
       return fail2(context, `${name} is signed in, but config.json could not be read: ${error.message} "kurmis logout ${ref.id}" removes its credentials and folder.`);
     }
-    const existing = await sameAccount(config, ref, account, context.env, deps);
-    if (existing !== null) return await dropDuplicate(run2, config, existing, account.email);
+    const existing = sameAccount(config, ref, account, deps.home());
+    if (existing !== null) return await dropDuplicate(run2, existing, account.email);
   }
   let saved;
   try {
     saved = changeConfig((config) => {
-      const meanwhile = isNew && provider === "claude" && account !== null ? sameClaudeAccount(config, ref, account, deps.home()) : null;
-      if (meanwhile !== null) throw new AddedMeanwhile(meanwhile, config);
-      let next = isNew ? addLogin(config, ref, alias === void 0 ? {} : { alias }) : config;
+      const meanwhile = isNew && account !== null ? sameAccount(config, ref, account, deps.home()) : null;
+      if (meanwhile !== null) throw new AddedMeanwhile(meanwhile);
+      let next = isNew ? addLogin(config, ref.id, alias === void 0 ? {} : { alias }) : config;
       if (!isNew && alias !== void 0) next = updateLogin(next, ref.id, { alias });
       return followEmail(next, ref.id, email);
     });
   } catch (error) {
-    if (error instanceof AddedMeanwhile && email !== null) return await dropDuplicate(run2, error.config, error.existing, email);
+    if (error instanceof AddedMeanwhile && email !== null) return await dropDuplicate(run2, error.existing, email);
     if (!(error instanceof ConfigError)) throw error;
     return fail2(context, isNew ? `${name} is signed in but could not be added: ${error.message} "kurmis logout ${ref.id}" removes its credentials and folder.` : `${name} is signed in again but its settings could not be saved: ${error.message}`);
   }
   const login = findLogin(saved, ref.id);
-  const argument = loginArgument(saved, login);
   writeLine(context.stdout, email === null ? "Signed in." : `Signed in as ${email}.`);
   if (isNew) {
-    writeLine(context.stdout, `Added ${login.alias} (id ${login.id}), a ${PROVIDER_NAMES2[provider]} login with Auto routing on and both limits at 100%. "kurmis set ${argument}" changes that.`);
+    writeLine(context.stdout, `Added ${login.alias} (id ${login.id}), a login with Auto routing on and both limits at 100%. "kurmis set ${login.alias}" changes that.`);
     const sibling = account === null ? null : otherOrganization(saved, ref, account, deps.home());
     if (sibling !== null) {
       writeLine(context.stdout, `${sibling.alias} has the same email in another organization. That is another subscription, so the two are separate logins.`);
@@ -12849,16 +7994,16 @@ async function signIn(run2) {
     writeLine(context.stdout, `${name} is now called ${login.alias}.`);
   }
   if (!isNew && account !== null) {
-    const other = await sameAccount(saved, ref, account, context.env, deps);
+    const other = sameAccount(saved, ref, account, deps.home());
     if (other !== null) {
-      const which = other.usedByPlainCli ? `${other.alias}, ${plainCliLoginText(other.provider)},` : other.alias;
-      writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. "kurmis login ${argument}" signs ${login.alias} in to another account.`);
+      const which = other.usedByPlainClaude ? `${other.alias}, ${plainClaudeLoginText()},` : other.alias;
+      writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. "kurmis login ${login.alias}" signs ${login.alias} in to another account.`);
     }
   }
   for (const line of await tellDaemon(deps.daemon, login, context.env, deps.probeWaitMs)) writeLine(context.stdout, line);
   return EXIT_OK;
 }
-async function dropDuplicate(run2, config, existing, email) {
+async function dropDuplicate(run2, existing, email) {
   const { ref, context, deps } = run2;
   const problem = await signOutLogin(ref, context.env, deps);
   if (problem !== null) {
@@ -12866,15 +8011,14 @@ async function dropDuplicate(run2, config, existing, email) {
   }
   try {
     removeTreeSync(loginFolder(ref));
-    if (ref.provider === "codex") (0, import_node_fs19.rmSync)(codexMergedRecordPath(ref), { force: true });
   } catch (error) {
     return fail2(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted (${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`);
   }
-  const which = existing.usedByPlainCli ? `${existing.alias}, ${plainCliLoginText(existing.provider)}` : existing.alias;
-  writeLine(context.stdout, `${email} is already a kurmis ${PROVIDER_NAMES2[ref.provider]} login: ${which} (id ${existing.id}). No login was added, and the new sign-in was signed out again.`);
-  writeLine(context.stdout, `"kurmis login ${loginArgument(config, existing)}" signs ${existing.alias} in again.`);
+  const which = existing.usedByPlainClaude ? `${existing.alias}, ${plainClaudeLoginText()}` : existing.alias;
+  writeLine(context.stdout, `${email} is already a kurmis login: ${which} (id ${existing.id}). No login was added, and the new sign-in was signed out again.`);
+  writeLine(context.stdout, `"kurmis login ${existing.alias}" signs ${existing.alias} in again.`);
   if (run2.alias !== void 0) {
-    writeLine(context.stderr, `kurmis login: --alias ${run2.alias} was not used, because no login was added. "kurmis set ${loginArgument(config, existing)} --alias ${run2.alias}" gives ${existing.alias} that alias.`);
+    writeLine(context.stderr, `kurmis login: --alias ${run2.alias} was not used, because no login was added. "kurmis set ${existing.alias} --alias ${run2.alias}" gives ${existing.alias} that alias.`);
   }
   return EXIT_OK;
 }
@@ -12884,28 +8028,24 @@ function createLoginCommand(deps = {}) {
     runner: deps.runner ?? realChildRunner,
     findProgram: deps.findProgram ?? realFindProgram,
     runProgram: deps.runProgram ?? runProgram,
-    home: deps.home ?? import_node_os13.homedir,
-    prepareCodexHome: deps.prepareCodexHome ?? realPrepareCodexHome,
+    home: deps.home ?? import_node_os12.homedir,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
     inCredentialManager: deps.inCredentialManager ?? ((folder, env) => holdsStoredRecord(folder, env)),
-    readCodexEmail: deps.readCodexEmail ?? ((login, env) => readCodexEmail(login, { env })),
     platform: deps.platform ?? process.platform
   };
   return {
     name: "login",
     summary: "Sign in a new login, or sign an existing one in again",
-    usage: `Usage: kurmis login claude|codex [--alias <alias>]
+    usage: `Usage: kurmis login [--alias <alias>]
        kurmis login <login> [--alias <alias>]
 
 Signs a login in through the browser.
 
-  kurmis login claude         Adds a new Claude login.
-  kurmis login codex          Adds a new Codex login.
+  kurmis login                Adds a new login.
   kurmis login work-example   Signs the login work-example in again, for example after it was
                               signed out.
 
-<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
-have the same alias, put claude: or codex: in front, for example claude:work-example.
+<login> is an alias or id that "kurmis status" shows.
 
 A new login's alias comes from its email: work@example.com gives work-example. When you sign in
 to an account kurmis already has, nothing is added and kurmis names the login it already is.
@@ -12913,12 +8053,12 @@ to an account kurmis already has, nothing is added and kurmis names the login it
 
 Options:
   --alias <alias>   Use this alias instead of the one from the email: 1 to 32 lowercase
-                    letters, digits, "-" or "_", and not "claude" or "codex".
+                    letters, digits, "-" or "_", starting with a letter or digit.
   -h, --help        Show this help.`,
     async run(args, context) {
       const parsed = parseCommandArgs("login", args, { alias: { type: "string" } }, context, true);
       if (typeof parsed === "number") return parsed;
-      if (parsed.positionals.length !== 1) return usageError("login", "takes claude, codex, or one login by its alias or id", context);
+      if (parsed.positionals.length > 1) return usageError("login", "takes at most one login, by its alias or id", context);
       const alias = parsed.values.alias;
       let config;
       try {
@@ -12930,7 +8070,7 @@ Options:
       const target = loginTarget(parsed.positionals[0], config);
       if ("error" in target) return usageError("login", target.error, context);
       const isNew = target.kind === "new";
-      const ref = isNew ? { id: freshLoginId(config), provider: target.provider, usedByPlainCli: false } : { id: target.login.id, provider: target.login.provider, usedByPlainCli: target.login.usedByPlainCli };
+      const ref = isNew ? { id: freshLoginId(config), usedByPlainClaude: false } : { id: target.login.id, usedByPlainClaude: target.login.usedByPlainClaude };
       const name = isNew ? ref.id : target.login.alias;
       if (alias !== void 0) {
         const problem = aliasProblem(config, ref, alias);
@@ -12938,7 +8078,7 @@ Options:
       }
       let program;
       try {
-        program = full.findProgram(ref.provider, { env: context.env });
+        program = full.findProgram("claude", { env: context.env });
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail2(context, error.message);
         throw error;
@@ -12971,10 +8111,10 @@ Options:
 var loginCommand = createLoginCommand();
 
 // src/cli/commands/logout.ts
-var import_node_fs20 = require("node:fs");
+var import_node_fs19 = require("node:fs");
 function exists(path) {
   try {
-    (0, import_node_fs20.lstatSync)(path);
+    (0, import_node_fs19.lstatSync)(path);
     return true;
   } catch {
     return false;
@@ -12984,7 +8124,7 @@ function fail3(context, message, prefix = "kurmis logout") {
   writeLine(context.stderr, `${prefix}: ${message}`);
   return EXIT_FAILURE;
 }
-function errorText3(error) {
+function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 function createLoginLogout(deps = {}) {
@@ -13004,8 +8144,8 @@ function createLoginLogout(deps = {}) {
     let listed = false;
     try {
       const found = findLogin(loadConfig(), id);
-      if (found?.usedByPlainCli === true) return fail3(context, `${found.alias} is ${plainCliLoginText(found.provider)} and cannot be removed.`, prefix);
-      if (found !== void 0 && found.provider === login.provider) {
+      if (found?.usedByPlainClaude === true) return fail3(context, `${found.alias} is ${plainClaudeLoginText()} and cannot be removed.`, prefix);
+      if (found !== void 0) {
         listed = true;
         name = found.alias;
       }
@@ -13014,13 +8154,7 @@ function createLoginLogout(deps = {}) {
       throw error;
     }
     const hasFolder = exists(folder);
-    if (!listed && !hasFolder) {
-      const record2 = login.provider === "codex" ? codexMergedRecordPath(login) : null;
-      if (record2 === null || !exists(record2)) return fail3(context, `there is no login ${id}; "kurmis status" shows the logins`, prefix);
-      (0, import_node_fs20.rmSync)(record2, { force: true });
-      writeLine(context.stdout, `Deleted the record of what was merged into the Codex home of ${id}, which ${id} left behind.`);
-      return EXIT_OK;
-    }
+    if (!listed && !hasFolder) return fail3(context, `there is no login ${id}; "kurmis status" shows the logins`, prefix);
     let reload = null;
     const unlist = async () => {
       if (!listed) return null;
@@ -13037,18 +8171,15 @@ function createLoginLogout(deps = {}) {
       const failed2 = await unlist();
       if (failed2 !== null) return failed2;
     }
-    if (hasFolder || login.provider === "claude") {
-      const problem = await signOutLogin(login, context.env, signOutDeps);
-      if (problem !== null) {
-        const left = leftBehindText(login, signOutDeps.platform);
-        if (keep) {
-          const kept = listed ? `${name} stays in kurmis${hasFolder ? ` with its folder ${folder}` : ""}` : `Its folder ${folder} is kept`;
-          const cli = login.provider === "claude" ? "claude" : "codex";
-          const wayOut = `If that cannot work, for example because ${cli} is not installed, "kurmis logout ${id}" removes ${name} and its folder without signing it out${left === "" ? "" : ", which leaves the item named above"}.`;
-          return fail3(context, `${problem}.${left} ${kept}, so that "${again}" runs it again. ${wayOut}`, prefix);
-        }
-        writeLine(context.stderr, `${prefix}: ${problem}; ${name} is removed anyway.${left}`);
+    const problem = await signOutLogin(login, context.env, signOutDeps);
+    if (problem !== null) {
+      const left = leftBehindText(login, signOutDeps.platform);
+      if (keep) {
+        const kept = listed ? `${name} stays in kurmis${hasFolder ? ` with its folder ${folder}` : ""}` : `Its folder ${folder} is kept`;
+        const wayOut = `If that cannot work, for example because claude is not installed, "kurmis logout ${id}" removes ${name} and its folder without signing it out${left === "" ? "" : ", which leaves the item named above"}.`;
+        return fail3(context, `${problem}.${left} ${kept}, so that "${again}" runs it again. ${wayOut}`, prefix);
       }
+      writeLine(context.stderr, `${prefix}: ${problem}; ${name} is removed anyway.${left}`);
     }
     if (keep) {
       const failed2 = await unlist();
@@ -13056,10 +8187,9 @@ function createLoginLogout(deps = {}) {
     }
     try {
       removeTreeSync(folder);
-      if (login.provider === "codex") (0, import_node_fs20.rmSync)(codexMergedRecordPath(login), { force: true });
     } catch (error) {
-      const problem = `its folder ${folder} could not be deleted (${errorText3(error)})`;
-      return fail3(context, listed ? `${name} is removed from kurmis, but ${problem}. Close what uses it and run "${again}".` : `${id} left a folder behind, but ${problem}. Close what uses it and run "${again}" again.`, prefix);
+      const problem2 = `its folder ${folder} could not be deleted (${errorText(error)})`;
+      return fail3(context, listed ? `${name} is removed from kurmis, but ${problem2}. Close what uses it and run "${again}".` : `${id} left a folder behind, but ${problem2}. Close what uses it and run "${again}" again.`, prefix);
     }
     writeLine(context.stdout, listed ? `Removed ${name} (id ${id}).` : `Deleted the folder that ${id} left behind.`);
     if (reload !== null) writeLine(context.stdout, reload);
@@ -13067,7 +8197,7 @@ function createLoginLogout(deps = {}) {
   }
   return async (login, context, options = {}) => {
     const prefix = options.prefix ?? "kurmis logout";
-    if (login.usedByPlainCli) return fail3(context, `${login.id} is ${plainCliLoginText(login.provider)} and cannot be removed.`, prefix);
+    if (login.usedByPlainClaude) return fail3(context, `${login.id} is ${plainClaudeLoginText()} and cannot be removed.`, prefix);
     let name;
     try {
       name = findLogin(loadConfig(), login.id)?.alias ?? login.id;
@@ -13089,31 +8219,23 @@ function createLoginLogout(deps = {}) {
     }
   };
 }
-function logoutTarget(config, text2) {
-  const resolved = resolveLogin(config, text2);
+function logoutTarget(config, text) {
+  const resolved = resolveLogin(config, text);
   if ("login" in resolved) {
     const login = resolved.login;
-    if (login.usedByPlainCli) {
-      const cli = login.provider === "claude" ? "claude auth logout" : "codex logout";
+    if (login.usedByPlainClaude) {
       return {
         kind: "error",
         usage: true,
-        message: `${login.alias} is ${plainCliLoginText(login.provider)} and cannot be removed. To sign it out, run "${cli}" yourself.`
+        message: `${login.alias} is ${plainClaudeLoginText()} and cannot be removed. To sign it out, run "claude auth logout" yourself.`
       };
     }
-    return { kind: "logins", logins: [{ id: login.id, provider: login.provider, usedByPlainCli: false }] };
+    return { kind: "login", login: { id: login.id, usedByPlainClaude: false } };
   }
-  const typed = text2.trim().toLowerCase();
-  const colon = typed.indexOf(":");
-  const prefix = colon < 0 ? null : typed.slice(0, colon);
-  const id = colon < 0 ? typed : typed.slice(colon + 1);
-  const providers = prefix === null ? LOGIN_PROVIDERS : isLoginProvider(prefix) ? [prefix] : [];
+  const id = text.trim().toLowerCase();
   if (isLoginId(id) && findLogin(config, id) === void 0) {
-    const refs = providers.map((provider) => ({ id, provider, usedByPlainCli: false }));
-    const withFolder = refs.filter((login) => exists(loginFolder(login)));
-    if (withFolder.length > 0) return { kind: "logins", logins: withFolder };
-    const recordOnly = refs.filter((login) => login.provider === "codex" && exists(codexMergedRecordPath(login)));
-    if (recordOnly.length > 0) return { kind: "logins", logins: recordOnly };
+    const login = { id, usedByPlainClaude: false };
+    if (exists(loginFolder(login))) return { kind: "login", login };
   }
   return { kind: "error", usage: false, message: `${resolved.error}; "kurmis status" shows the logins` };
 }
@@ -13126,11 +8248,9 @@ function createLogoutCommand(deps = {}) {
 
 Signs a login out and removes it from kurmis. A running daemon stops using it at once.
 
-<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
-have the same alias, put claude: or codex: in front, for example codex:work-example.
+<login> is an alias or id that "kurmis status" shows.
 
-The logins plain claude and plain codex use cannot be removed. To sign them out, run
-"claude auth logout" or "codex logout".
+The login plain claude uses cannot be removed. To sign it out, run "claude auth logout".
 
 Options:
   -h, --help   Show this help.`,
@@ -13146,41 +8266,37 @@ Options:
         throw error;
       }
       if (target.kind === "error") return target.usage ? usageError("logout", target.message, context) : fail3(context, target.message);
-      for (const login of target.logins) {
-        const code = await logOut(login, context);
-        if (code !== EXIT_OK) return code;
-      }
-      return EXIT_OK;
+      return await logOut(target.login, context);
     }
   };
 }
 var logoutCommand = createLogoutCommand();
 
 // src/cli/commands/set.ts
-function parseOnOff(text2) {
-  if (text2 === "on") return true;
-  if (text2 === "off") return false;
+function parseOnOff(text) {
+  if (text === "on") return true;
+  if (text === "off") return false;
   return null;
 }
-function parsePercent(text2) {
-  if (!/^\d{1,3}$/.test(text2)) return null;
-  const value = Number(text2);
+function parsePercent(text) {
+  if (!/^\d{1,3}$/.test(text)) return null;
+  const value = Number(text);
   return value >= 1 && value <= 100 ? value : null;
 }
 function patchFromOptions(options) {
   const patch = {};
   for (const [option, field] of [["auto", "routing"], ["use-first", "useFirst"]]) {
-    const text2 = options[option];
-    if (text2 === void 0) continue;
-    const value = parseOnOff(text2);
-    if (value === null) return { error: `--${option} takes on or off, not "${text2}"` };
+    const text = options[option];
+    if (text === void 0) continue;
+    const value = parseOnOff(text);
+    if (value === null) return { error: `--${option} takes on or off, not "${text}"` };
     patch[field] = value;
   }
   for (const [option, field] of [["five-hour", "fiveHourLimit"], ["weekly", "weeklyLimit"]]) {
-    const text2 = options[option];
-    if (text2 === void 0) continue;
-    const value = parsePercent(text2);
-    if (value === null) return { error: `--${option} takes a whole number from 1 to 100, not "${text2}"` };
+    const text = options[option];
+    if (text === void 0) continue;
+    const value = parsePercent(text);
+    if (value === null) return { error: `--${option} takes a whole number from 1 to 100, not "${text}"` };
     patch[field] = value;
   }
   if (options.alias !== void 0) patch.alias = options.alias;
@@ -13193,8 +8309,8 @@ function aliasSource(login) {
   return "made from the email";
 }
 function formatLoginSettings(login) {
-  const lines = [`${login.alias} (${PROVIDER_NAMES2[login.provider]}, id ${login.id})`];
-  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`);
+  const lines = [`${login.alias} (id ${login.id})`];
+  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`);
   lines.push(
     `  alias       ${login.alias} (${aliasSource(login)})`,
     `  auto        ${login.routing ? "on" : "off"}`,
@@ -13218,8 +8334,7 @@ function createSetCommand(deps = {}) {
 
 Changes a login's settings and prints them. A running daemon uses them at once.
 
-<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
-have the same alias, put claude: or codex: in front, for example claude:work-example.
+<login> is an alias or id that "kurmis status" shows.
 
 Options:
   --auto on|off         Whether Auto routing may use the login. "--login <login>" uses it
@@ -13228,9 +8343,9 @@ Options:
                         or above this percentage.
   --weekly <1-100>      The same for the weekly window.
   --use-first on|off    Take this login before every other one that has room.
-  --alias <alias>       Rename the login: 1 to 32 lowercase letters, digits, "-" or "_", and
-                        not "claude" or "codex". An alias you set no longer follows the
-                        account's email.
+  --alias <alias>       Rename the login: 1 to 32 lowercase letters, digits, "-" or "_",
+                        starting with a letter or digit. An alias you set no longer follows
+                        the account's email.
   -h, --help            Show this help.
 
 Example:
@@ -13273,15 +8388,15 @@ Example:
 var setCommand = createSetCommand();
 
 // src/cli/commands/setup.ts
-var import_node_fs26 = require("node:fs");
-var import_node_os14 = require("node:os");
-var import_node_path27 = require("node:path");
-var import_promises6 = require("node:readline/promises");
+var import_node_fs25 = require("node:fs");
+var import_node_os13 = require("node:os");
+var import_node_path24 = require("node:path");
+var import_promises3 = require("node:readline/promises");
 
 // src/data/remove-data-folder.ts
-var import_node_fs21 = require("node:fs");
-var import_node_path23 = require("node:path");
-var FOLDERS = ["claude", "codex", "codex-merged", "locks", "probe", "settings"];
+var import_node_fs20 = require("node:fs");
+var import_node_path20 = require("node:path");
+var FOLDERS = ["claude", "locks", "probe", "settings"];
 var FILES = [
   "autostart.js",
   "autostart.vbs",
@@ -13304,7 +8419,7 @@ function isDesktopFile(name) {
 }
 function lstatOrNull(path) {
   try {
-    return (0, import_node_fs21.lstatSync)(path);
+    return (0, import_node_fs20.lstatSync)(path);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -13312,29 +8427,29 @@ function lstatOrNull(path) {
 }
 function removeDataFolder(platform = process.platform) {
   const path = kurmisHome();
-  const stat2 = lstatOrNull(path);
-  if (stat2 === null) return { path, removed: true, left: [] };
-  const link = stat2.isSymbolicLink();
-  const folder = link ? import_node_fs21.realpathSync.native(path) : path;
-  const root = import_node_fs21.realpathSync.native(folder);
-  for (const name of (0, import_node_fs21.readdirSync)(folder)) {
-    if (isKurmisEntry(name)) removeTreeSync((0, import_node_path23.join)(folder, name), { platform, root });
+  const stat = lstatOrNull(path);
+  if (stat === null) return { path, removed: true, left: [] };
+  const link = stat.isSymbolicLink();
+  const folder = link ? import_node_fs20.realpathSync.native(path) : path;
+  const root = import_node_fs20.realpathSync.native(folder);
+  for (const name of (0, import_node_fs20.readdirSync)(folder)) {
+    if (isKurmisEntry(name)) removeTreeSync((0, import_node_path20.join)(folder, name), { platform, root });
   }
-  const others = (0, import_node_fs21.readdirSync)(folder);
+  const others = (0, import_node_fs20.readdirSync)(folder);
   const left = others.filter((name) => !isDesktopFile(name));
   if (left.length > 0) return { path, removed: false, left };
-  for (const name of others) removeTreeSync((0, import_node_path23.join)(folder, name), { platform, root });
-  retryWhileLockedSync(() => (0, import_node_fs21.rmdirSync)(folder), platform);
+  for (const name of others) removeTreeSync((0, import_node_path20.join)(folder, name), { platform, root });
+  retryWhileLockedSync(() => (0, import_node_fs20.rmdirSync)(folder), platform);
   if (link) removeTreeSync(path, { platform });
   return { path, removed: true, left: [] };
 }
 
 // src/platform/autostart.ts
-var import_node_fs23 = require("node:fs");
+var import_node_fs22 = require("node:fs");
 
 // src/platform/windows-autostart.ts
-var import_node_fs22 = require("node:fs");
-var import_node_path24 = require("node:path");
+var import_node_fs21 = require("node:fs");
+var import_node_path21 = require("node:path");
 var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 var RUN_VALUE_NAME = "kurmis";
 var REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg;
@@ -13390,16 +8505,16 @@ function parseRegQuery(stdout, name) {
   }
   return null;
 }
-function jscriptString(text2) {
-  if (/[\r\n\u2028\u2029]/.test(text2)) throw new Error("a value for the logon script has a line break in it");
-  return `"${text2.replace(/[\\"]/g, (char) => `\\${char}`)}"`;
+function jscriptString(text) {
+  if (/[\r\n\u2028\u2029]/.test(text)) throw new Error("a value for the logon script has a line break in it");
+  return `"${text.replace(/[\\"]/g, (char) => `\\${char}`)}"`;
 }
 function windowsAutostartEnvironment(env = process.env, processEnv = process.env) {
   const out = {};
   const hooks = inheritedTestHooks(env, processEnv);
   for (const name of DAEMON_JOB_VARIABLES) {
     const value = env[name] || hooks[name];
-    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path24.win32.resolve(value) : value;
+    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path21.win32.resolve(value) : value;
   }
   return out;
 }
@@ -13431,13 +8546,13 @@ function autostartScript(script) {
 `;
 }
 var UTF16_BOM = Buffer.from([255, 254]);
-function encodeScript(text2) {
-  return Buffer.concat([UTF16_BOM, Buffer.from(text2, "utf16le")]);
+function encodeScript(text) {
+  return Buffer.concat([UTF16_BOM, Buffer.from(text, "utf16le")]);
 }
 function readScript(path) {
   let bytes;
   try {
-    bytes = (0, import_node_fs22.readFileSync)(path);
+    bytes = (0, import_node_fs21.readFileSync)(path);
   } catch {
     return null;
   }
@@ -13452,10 +8567,10 @@ ${result.stdout}`.replace(/\s+/g, " ").trim();
 }
 var ok2 = (result) => result.code === 0 && result.error === null;
 function userProfile(env) {
-  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path24.dirname)(windowsAutostartScriptPath());
+  return env.USERPROFILE ?? env.HOME ?? (0, import_node_path21.dirname)(windowsAutostartScriptPath());
 }
 async function scriptHostProblem(wscript, reg) {
-  if (!(0, import_node_fs22.existsSync)(wscript)) {
+  if (!(0, import_node_fs21.existsSync)(wscript)) {
     return `${wscript} does not exist, so Windows Script Host, which starts the daemon at logon without a console window, is not installed or was removed.`;
   }
   for (const key of SCRIPT_HOST_SETTINGS_KEYS) {
@@ -13466,16 +8581,16 @@ async function scriptHostProblem(wscript, reg) {
   return null;
 }
 function removeOldVbsScript(scriptPath) {
-  const old = (0, import_node_path24.join)((0, import_node_path24.dirname)(scriptPath), "autostart.vbs");
-  if (old === scriptPath || !(0, import_node_fs22.existsSync)(old)) return false;
-  (0, import_node_fs22.rmSync)(old, { force: true });
+  const old = (0, import_node_path21.join)((0, import_node_path21.dirname)(scriptPath), "autostart.vbs");
+  if (old === scriptPath || !(0, import_node_fs21.existsSync)(old)) return false;
+  (0, import_node_fs21.rmSync)(old, { force: true });
   return true;
 }
 function percentWarning(wscript, scriptPath) {
   const named = [wscript, scriptPath].filter((path) => path.includes("%"));
   if (named.length === 0) return null;
-  const advice = scriptPath.includes("%") ? `To be sure, use a kurmis data folder whose path has no "%" instead of ${import_node_path24.win32.dirname(scriptPath)}: set KURMIS_HOME to that folder for your Windows user and run kurmis setup again. The extra logins then have to be added again there with "kurmis login".` : 'The Windows folder (SystemRoot) has the "%" in its path, which kurmis cannot change.';
-  return `The logon entry names ${named.join(" and ")}, and a "%" in a path there may be read as the start of a variable name (%NAME%) at login, so the daemon may not start at login. ${advice} The entry was written anyway, and the next "kurmis claude" or "kurmis codex" starts the daemon when it is not running.`;
+  const advice = scriptPath.includes("%") ? `To be sure, use a kurmis data folder whose path has no "%" instead of ${import_node_path21.win32.dirname(scriptPath)}: set KURMIS_HOME to that folder for your Windows user and run kurmis setup again. The extra logins then have to be added again there with "kurmis login".` : 'The Windows folder (SystemRoot) has the "%" in its path, which kurmis cannot change.';
+  return `The logon entry names ${named.join(" and ")}, and a "%" in a path there may be read as the start of a variable name (%NAME%) at login, so the daemon may not start at login. ${advice} The entry was written anyway, and the next "kurmis claude" starts the daemon when it is not running.`;
 }
 function withPercentWarning(result, wscript, scriptPath) {
   const warning = percentWarning(wscript, scriptPath);
@@ -13485,9 +8600,9 @@ async function registerWindowsAutostart(options) {
   const reg = options.reg ?? regFor(options.env);
   const scriptPath = options.scriptPath ?? windowsAutostartScriptPath();
   if (options.programArguments === void 0) throw new Error("registerWindowsAutostart needs programArguments");
-  let text2;
+  let text;
   try {
-    text2 = autostartScript({
+    text = autostartScript({
       programArguments: options.programArguments,
       environment: windowsAutostartEnvironment(options.env),
       cwd: userProfile(options.env)
@@ -13501,14 +8616,14 @@ async function registerWindowsAutostart(options) {
     return {
       changed: false,
       where: null,
-      warning: `The logon entry was not written: ${unusable} The next "kurmis claude" or "kurmis codex" starts the daemon anyway.`,
+      warning: `The logon entry was not written: ${unusable} The next "kurmis claude" starts the daemon anyway.`,
       noEntryPossible: true
     };
   }
   let changed = false;
-  if (readScript(scriptPath) !== text2) {
-    makePrivateDirSync((0, import_node_path24.dirname)(scriptPath));
-    (0, import_node_fs22.writeFileSync)(scriptPath, encodeScript(text2));
+  if (readScript(scriptPath) !== text) {
+    makePrivateDirSync((0, import_node_path21.dirname)(scriptPath));
+    (0, import_node_fs21.writeFileSync)(scriptPath, encodeScript(text));
     changed = true;
   }
   const data = runValueData(wscript, scriptPath);
@@ -13556,7 +8671,7 @@ async function unregisterWindowsAutostart(options) {
     changed = true;
   }
   if (readScript(scriptPath) !== null) {
-    (0, import_node_fs22.rmSync)(scriptPath, { force: true });
+    (0, import_node_fs21.rmSync)(scriptPath, { force: true });
     changed = true;
   }
   if (removeOldVbsScript(scriptPath)) changed = true;
@@ -13564,7 +8679,7 @@ async function unregisterWindowsAutostart(options) {
 }
 
 // src/platform/autostart.ts
-var UNSUPPORTED = 'Starting the daemon at login is not supported on this platform; the next "kurmis claude" or "kurmis codex" starts it.';
+var UNSUPPORTED = 'Starting the daemon at login is not supported on this platform; the next "kurmis claude" starts it.';
 var NO_ENTRY = "kurmis is not running from its bundle, so there is no program to start at login; run kurmis setup from the installed kurmis.";
 function loginProgram(options, platform) {
   const entry = options.entry === void 0 ? kurmisEntry({ env: options.env }) : options.entry;
@@ -13572,9 +8687,9 @@ function loginProgram(options, platform) {
   const node = options.nodePath ?? nodeForJobs({ env: options.env, platform });
   return [node, entry, ...DAEMON_START_ARGS];
 }
-function readText2(path) {
+function readText(path) {
   try {
-    return (0, import_node_fs23.readFileSync)(path, "utf8");
+    return (0, import_node_fs22.readFileSync)(path, "utf8");
   } catch {
     return null;
   }
@@ -13612,7 +8727,7 @@ async function registerLaunchAgent(options, programArguments) {
   const launchctl = options.launchctl ?? launchctlFor(options.env);
   const path = autostartPlistPath();
   const plist = daemonJobPlist({ label: AUTOSTART_LABEL, programArguments, environment: daemonJobEnvironment(options.env) });
-  const written = readText2(path) !== plist;
+  const written = readText(path) !== plist;
   if (written) await writeFileAtomic(path, plist, { mode: 420 });
   const state = await jobState(AUTOSTART_LABEL, launchctl, options.uid);
   if (state.loaded && !written && (state.path === null || state.path === path)) return { changed: false, where: path };
@@ -13639,20 +8754,20 @@ async function unregisterLaunchAgent(options) {
   } catch (error) {
     warning = `${error.message} The login item's file is removed, so it does not start the daemon at the next login.`;
   }
-  if (readText2(path) !== null) {
-    (0, import_node_fs23.rmSync)(path, { force: true });
+  if (readText(path) !== null) {
+    (0, import_node_fs22.rmSync)(path, { force: true });
     changed = true;
   }
   return warning === void 0 ? { changed, where: path } : { changed, where: path, warning };
 }
 
 // src/cli/global-routing.ts
-var import_node_fs25 = require("node:fs");
-var import_node_path26 = require("node:path");
+var import_node_fs24 = require("node:fs");
+var import_node_path23 = require("node:path");
 
 // src/cli/global-settings.ts
-var import_node_fs24 = require("node:fs");
-var import_node_path25 = require("node:path");
+var import_node_fs23 = require("node:fs");
+var import_node_path22 = require("node:path");
 var BASE_URL = "ANTHROPIC_BASE_URL";
 var CUSTOM_HEADERS2 = "ANTHROPIC_CUSTOM_HEADERS";
 var KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", ...OAUTH_TOKEN_VARIABLES];
@@ -13668,8 +8783,8 @@ function isWhitespace2(char) {
   return char === " " || char === "	" || char === "\n" || char === "\r";
 }
 var Scanner = class {
-  constructor(text2) {
-    this.text = text2;
+  constructor(text) {
+    this.text = text;
   }
   text;
   skipWhitespace(pos) {
@@ -13715,10 +8830,10 @@ var Scanner = class {
     throw new SettingsFileError("the file ends inside an object or a list");
   }
   /** The members of the object whose `{` is at `open`. */
-  object(open4) {
+  object(open3) {
     const members = [];
-    let pos = this.skipWhitespace(open4 + 1);
-    if (this.text[pos] === "}") return { open: open4, close: pos, members };
+    let pos = this.skipWhitespace(open3 + 1);
+    if (this.text[pos] === "}") return { open: open3, close: pos, members };
     for (; ; ) {
       const keyStart = pos;
       const keyEnd = this.stringEnd(keyStart);
@@ -13728,7 +8843,7 @@ var Scanner = class {
       const valueEnd = this.valueEnd(valueStart);
       members.push({ name, keyStart, keyEnd, valueStart, valueEnd });
       pos = this.skipWhitespace(valueEnd);
-      if (this.text[pos] === "}") return { open: open4, close: pos, members };
+      if (this.text[pos] === "}") return { open: open3, close: pos, members };
       pos = this.skipWhitespace(pos + 1);
     }
   }
@@ -13736,20 +8851,20 @@ var Scanner = class {
 function isPlainObject3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function parseSettings2(text2) {
+function parseSettings2(text) {
   let value;
   try {
-    value = JSON.parse(text2);
+    value = JSON.parse(text);
   } catch {
-    throw new SettingsFileError(`it is ${notJsonText(text2)}`);
+    throw new SettingsFileError(`it is ${notJsonText(text)}`);
   }
   if (!isPlainObject3(value)) throw new SettingsFileError("its top level is not a JSON object");
-  const scanner = new Scanner(text2);
+  const scanner = new Scanner(text);
   const top = scanner.object(scanner.skipWhitespace(0));
   const envMembers = top.members.filter((member) => member.name === "env");
   if (envMembers.length > 1) throw new SettingsFileError('it has more than one "env" key');
   const envMember = envMembers[0];
-  if (envMember === void 0) return { text: text2, top, env: null };
+  if (envMember === void 0) return { text, top, env: null };
   const envValue = value.env;
   if (!isPlainObject3(envValue)) throw new SettingsFileError('its "env" is not a JSON object');
   const node = scanner.object(envMember.valueStart);
@@ -13758,7 +8873,7 @@ function parseSettings2(text2) {
       throw new SettingsFileError(`its "env" has more than one "${name}" key`);
     }
   }
-  return { text: text2, top, env: { member: envMember, node, value: envValue } };
+  return { text, top, env: { member: envMember, node, value: envValue } };
 }
 function layoutOf(parsed) {
   const eol = parsed.text.includes("\r\n") ? "\r\n" : "\n";
@@ -13766,53 +8881,53 @@ function layoutOf(parsed) {
   let unit = "  ";
   if (first !== void 0) {
     const before = parsed.text.slice(parsed.top.open + 1, first.keyStart);
-    const newline2 = before.lastIndexOf("\n");
-    if (newline2 >= 0 && before.length > newline2 + 1) unit = before.slice(newline2 + 1);
+    const newline = before.lastIndexOf("\n");
+    if (newline >= 0 && before.length > newline + 1) unit = before.slice(newline + 1);
   }
   return { eol, unit, colon: colonOf(parsed.text, parsed.top, ": ") };
 }
-function lineIndent(text2, pos) {
-  const start2 = text2.lastIndexOf("\n", pos - 1) + 1;
+function lineIndent(text, pos) {
+  const start2 = text.lastIndexOf("\n", pos - 1) + 1;
   let end = start2;
-  while (text2[end] === " " || text2[end] === "	") end++;
-  return text2.slice(start2, end);
+  while (text[end] === " " || text[end] === "	") end++;
+  return text.slice(start2, end);
 }
-function colonOf(text2, node, fallback) {
+function colonOf(text, node, fallback) {
   const first = node.members[0];
-  return first === void 0 ? fallback : text2.slice(first.keyEnd, first.valueStart);
+  return first === void 0 ? fallback : text.slice(first.keyEnd, first.valueStart);
 }
-function separatorOf(text2, node, layout) {
+function separatorOf(text, node, layout) {
   const [first, second] = node.members;
-  const gap = second === void 0 ? text2.slice(node.open + 1, first.keyStart) : text2.slice(first.valueEnd, second.keyStart).replace(",", "");
-  const newline2 = gap.lastIndexOf("\n");
-  return newline2 >= 0 ? `${layout.eol}${gap.slice(newline2 + 1)}` : gap;
+  const gap = second === void 0 ? text.slice(node.open + 1, first.keyStart) : text.slice(first.valueEnd, second.keyStart).replace(",", "");
+  const newline = gap.lastIndexOf("\n");
+  return newline >= 0 ? `${layout.eol}${gap.slice(newline + 1)}` : gap;
 }
-function addMember(text2, node, name, valueJson, layout) {
-  const member = `${JSON.stringify(name)}${colonOf(text2, node, layout.colon)}${valueJson}`;
+function addMember(text, node, name, valueJson, layout) {
+  const member = `${JSON.stringify(name)}${colonOf(text, node, layout.colon)}${valueJson}`;
   const last = node.members.at(-1);
   if (last !== void 0) {
-    return `${text2.slice(0, last.valueEnd)},${separatorOf(text2, node, layout)}${member}${text2.slice(last.valueEnd)}`;
+    return `${text.slice(0, last.valueEnd)},${separatorOf(text, node, layout)}${member}${text.slice(last.valueEnd)}`;
   }
-  if (!text2.includes("\n")) {
-    return `${text2.slice(0, node.open + 1)}${member}${text2.slice(node.close)}`;
+  if (!text.includes("\n")) {
+    return `${text.slice(0, node.open + 1)}${member}${text.slice(node.close)}`;
   }
-  const outer = lineIndent(text2, node.open);
-  return `${text2.slice(0, node.open + 1)}${layout.eol}${outer}${layout.unit}${member}${layout.eol}${outer}${text2.slice(node.close)}`;
+  const outer = lineIndent(text, node.open);
+  return `${text.slice(0, node.open + 1)}${layout.eol}${outer}${layout.unit}${member}${layout.eol}${outer}${text.slice(node.close)}`;
 }
-function removeMember(text2, node, index) {
+function removeMember(text, node, index) {
   const member = node.members[index];
   if (node.members.length === 1) {
-    return `${text2.slice(0, node.open + 1)}${text2.slice(node.close)}`;
+    return `${text.slice(0, node.open + 1)}${text.slice(node.close)}`;
   }
   if (index > 0) {
     const previous = node.members[index - 1];
-    return `${text2.slice(0, previous.valueEnd)}${text2.slice(member.valueEnd)}`;
+    return `${text.slice(0, previous.valueEnd)}${text.slice(member.valueEnd)}`;
   }
   const next = node.members[1];
-  return `${text2.slice(0, member.keyStart)}${text2.slice(next.keyStart)}`;
+  return `${text.slice(0, member.keyStart)}${text.slice(next.keyStart)}`;
 }
-function replaceValue(text2, member, valueJson) {
-  return `${text2.slice(0, member.valueStart)}${valueJson}${text2.slice(member.valueEnd)}`;
+function replaceValue(text, member, valueJson) {
+  return `${text.slice(0, member.valueStart)}${valueJson}${text.slice(member.valueEnd)}`;
 }
 function newEnvJson(values, outerIndent, layout, oneLine) {
   const entries = Object.entries(values).map(([name, value]) => `${JSON.stringify(name)}${layout.colon}${JSON.stringify(value)}`);
@@ -13855,11 +8970,11 @@ function isKurmisBaseUrl(value, env, port) {
   if (match === null) return false;
   return port !== null && Number(match[1]) === port || hasKurmisHeader(env[CUSTOM_HEADERS2]);
 }
-function routesThroughKurmis(text2, port) {
-  if (text2 === null) return false;
+function routesThroughKurmis(text, port) {
+  if (text === null) return false;
   let value;
   try {
-    value = JSON.parse(withoutBom3(text2));
+    value = JSON.parse(withoutBom2(text));
   } catch {
     return false;
   }
@@ -13877,7 +8992,7 @@ function backupBefore(backupText) {
   if (backupText === null || backupText === void 0) return null;
   let value;
   try {
-    value = JSON.parse(withoutBom3(backupText));
+    value = JSON.parse(withoutBom2(backupText));
   } catch {
     return null;
   }
@@ -13888,18 +9003,18 @@ function backupBefore(backupText) {
   if (hasKurmisHeader(env[CUSTOM_HEADERS2])) return null;
   return { env };
 }
-function withoutBom3(text2) {
-  return text2.startsWith(BOM) ? text2.slice(BOM.length) : text2;
+function withoutBom2(text) {
+  return text.startsWith(BOM) ? text.slice(BOM.length) : text;
 }
-function emptyEdit(text2) {
-  return { text: text2, changed: false, changes: [], envCreated: false, envRemoved: false, hadKurmis: false, warnings: [] };
+function emptyEdit(text) {
+  return { text, changed: false, changes: [], envCreated: false, envRemoved: false, hadKurmis: false, warnings: [] };
 }
-function applySetupToText(text2, values) {
-  if (text2 === null || text2.trim().length === 0) {
+function applySetupToText(text, values) {
+  if (text === null || text.trim().length === 0) {
     const env2 = kurmisEnvValues(values, null);
     const created = `${JSON.stringify({ env: env2 }, null, 2)}
 `;
-    const eol = text2?.includes("\r\n") === true ? created.replace(/\n/g, "\r\n") : created;
+    const eol = text?.includes("\r\n") === true ? created.replace(/\n/g, "\r\n") : created;
     return {
       text: eol,
       changed: true,
@@ -13910,11 +9025,11 @@ function applySetupToText(text2, values) {
       warnings: []
     };
   }
-  const bom = text2.startsWith(BOM) ? BOM : "";
-  let body = text2.slice(bom.length);
+  const bom = text.startsWith(BOM) ? BOM : "";
+  let body = text.slice(bom.length);
   let parsed = parseSettings2(body);
   const layout = layoutOf(parsed);
-  const result = emptyEdit(text2);
+  const result = emptyEdit(text);
   const env = parsed.env?.value ?? {};
   result.warnings.push(...keyVariableWarnings(parsed.env?.value));
   const baseUrl = env[BASE_URL];
@@ -13963,15 +9078,15 @@ function applySetupToText(text2, values) {
     }
   }
   result.text = `${bom}${body}`;
-  result.changed = result.text !== text2;
+  result.changed = result.text !== text;
   return result;
 }
-function undoSetupInText(text2, values) {
-  if (text2.trim().length === 0) return emptyEdit(text2);
-  const bom = text2.startsWith(BOM) ? BOM : "";
-  let body = text2.slice(bom.length);
+function undoSetupInText(text, values) {
+  if (text.trim().length === 0) return emptyEdit(text);
+  const bom = text.startsWith(BOM) ? BOM : "";
+  let body = text.slice(bom.length);
   let parsed = parseSettings2(body);
-  const result = emptyEdit(text2);
+  const result = emptyEdit(text);
   if (parsed.env === null) return result;
   const env = parsed.env.value;
   const backup = backupBefore(values.backupText);
@@ -14023,7 +9138,7 @@ function undoSetupInText(text2, values) {
     result.envRemoved = true;
   }
   result.text = `${bom}${body}`;
-  result.changed = result.text !== text2;
+  result.changed = result.text !== text;
   return result;
 }
 function sameLines(a, b) {
@@ -14032,21 +9147,21 @@ function sameLines(a, b) {
 function claudeSettingsPath(env) {
   const configDir = env.CLAUDE_CONFIG_DIR;
   if (configDir === void 0 || configDir === "") return claudeUserSettingsPath(env);
-  const dir = (0, import_node_path25.resolve)(configDir);
-  const inside = (0, import_node_path25.relative)(kurmisHome(), dir);
-  if (inside === "" || !inside.startsWith("..") && !(0, import_node_path25.isAbsolute)(inside)) {
+  const dir = (0, import_node_path22.resolve)(configDir);
+  const inside = (0, import_node_path22.relative)(kurmisHome(), dir);
+  if (inside === "" || !inside.startsWith("..") && !(0, import_node_path22.isAbsolute)(inside)) {
     throw new SettingsFileError(
       `CLAUDE_CONFIG_DIR is ${dir}, which is inside kurmis' data folder. Run kurmis setup from a shell without it.`
     );
   }
-  return (0, import_node_path25.join)(dir, "settings.json");
+  return (0, import_node_path22.join)(dir, "settings.json");
 }
 function backupPathFor(settingsPath) {
   return `${settingsPath}.kurmis-backup`;
 }
-function readText3(path) {
+function readText2(path) {
   try {
-    return (0, import_node_fs24.readFileSync)(path, "utf8");
+    return (0, import_node_fs23.readFileSync)(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -14054,7 +9169,7 @@ function readText3(path) {
 }
 function writeTarget(path) {
   try {
-    return (0, import_node_fs24.realpathSync)(path);
+    return (0, import_node_fs23.realpathSync)(path);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
@@ -14062,19 +9177,19 @@ function writeTarget(path) {
   for (let hop = 0; hop < 40; hop++) {
     let stats;
     try {
-      stats = (0, import_node_fs24.lstatSync)(current);
+      stats = (0, import_node_fs23.lstatSync)(current);
     } catch (error) {
       if (error.code === "ENOENT") return current;
       throw error;
     }
     if (!stats.isSymbolicLink()) return current;
-    current = (0, import_node_path25.resolve)((0, import_node_path25.dirname)(current), (0, import_node_fs24.readlinkSync)(current));
+    current = (0, import_node_path22.resolve)((0, import_node_path22.dirname)(current), (0, import_node_fs23.readlinkSync)(current));
   }
   throw new SettingsFileError(`${path} is a chain of more than 40 symbolic links`);
 }
 function linkTargetOf(path) {
   try {
-    if (!(0, import_node_fs24.lstatSync)(path).isSymbolicLink()) return null;
+    if (!(0, import_node_fs23.lstatSync)(path).isSymbolicLink()) return null;
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -14093,21 +9208,21 @@ function backUp(path, replace, platform) {
   const backup = backupPathFor(path);
   if (!replace) {
     try {
-      (0, import_node_fs24.copyFileSync)(path, backup, import_node_fs24.constants.COPYFILE_EXCL);
+      (0, import_node_fs23.copyFileSync)(path, backup, import_node_fs23.constants.COPYFILE_EXCL);
     } catch (error) {
       if (error.code === "EEXIST") return null;
       throw error;
     }
-    if (platform !== "win32") (0, import_node_fs24.chmodSync)(backup, PRIVATE_FILE_MODE);
+    if (platform !== "win32") (0, import_node_fs23.chmodSync)(backup, PRIVATE_FILE_MODE);
     return backup;
   }
   const temp = `${backup}.${String(process.pid)}.tmp`;
   try {
-    (0, import_node_fs24.copyFileSync)(path, temp);
-    if (platform !== "win32") (0, import_node_fs24.chmodSync)(temp, PRIVATE_FILE_MODE);
+    (0, import_node_fs23.copyFileSync)(path, temp);
+    if (platform !== "win32") (0, import_node_fs23.chmodSync)(temp, PRIVATE_FILE_MODE);
     replaceFileSync(temp, backup);
   } catch (error) {
-    (0, import_node_fs24.rmSync)(temp, { force: true });
+    (0, import_node_fs23.rmSync)(temp, { force: true });
     throw error;
   }
   return backup;
@@ -14121,7 +9236,7 @@ function readOnlyError(target) {
 function writeEdit(path, edit, existed, userOnly, platform) {
   const target = writeTarget(path);
   if (!edit.changed) return { backup: null, modeBefore: userOnly && existed ? restrictToUserSync(target, platform) : null };
-  const before = existed ? (0, import_node_fs24.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
+  const before = existed ? (0, import_node_fs23.statSync)(target).mode & 511 : PRIVATE_FILE_MODE;
   if (platform === "win32" && existed && isReadOnly(before)) {
     throw readOnlyError(target);
   }
@@ -14137,7 +9252,7 @@ function writeEdit(path, edit, existed, userOnly, platform) {
     throw error;
   }
   if (platform === "win32") return { backup, modeBefore: null };
-  (0, import_node_fs24.chmodSync)(target, mode);
+  (0, import_node_fs23.chmodSync)(target, mode);
   return { backup, modeBefore: existed && mode !== before ? before : null };
 }
 function failWith2(path, error) {
@@ -14151,13 +9266,13 @@ function failWith2(path, error) {
   throw error;
 }
 function setupSettingsFile(path, values, platform = process.platform) {
-  let text2;
+  let text;
   let edit;
   let written;
   try {
-    text2 = readText3(path);
-    edit = applySetupToText(text2, values);
-    written = writeEdit(path, edit, text2 !== null, true, platform);
+    text = readText2(path);
+    edit = applySetupToText(text, values);
+    written = writeEdit(path, edit, text !== null, true, platform);
   } catch (error) {
     failWith2(path, error);
   }
@@ -14170,7 +9285,7 @@ function setupSettingsFile(path, values, platform = process.platform) {
   return {
     ...edit,
     path,
-    existed: text2 !== null,
+    existed: text !== null,
     backupWritten: written.backup,
     linkTarget: linkTargetOf(path),
     modeBefore: written.modeBefore,
@@ -14179,9 +9294,9 @@ function setupSettingsFile(path, values, platform = process.platform) {
 }
 function checkSetupSettingsFile(path, values, platform = process.platform) {
   try {
-    const text2 = readText3(path);
-    const edit = applySetupToText(text2, values);
-    if (platform === "win32" && text2 !== null && isReadOnly((0, import_node_fs24.statSync)(writeTarget(path)).mode)) {
+    const text = readText2(path);
+    const edit = applySetupToText(text, values);
+    if (platform === "win32" && text !== null && isReadOnly((0, import_node_fs23.statSync)(writeTarget(path)).mode)) {
       throw readOnlyError(writeTarget(path));
     }
     return edit.hadKurmis;
@@ -14190,15 +9305,15 @@ function checkSetupSettingsFile(path, values, platform = process.platform) {
   }
 }
 function undoSettingsFile(path, values, platform = process.platform) {
-  let text2;
+  let text;
   let edit;
   let written;
   try {
-    text2 = readText3(path);
-    if (text2 === null) {
+    text = readText2(path);
+    if (text === null) {
       return { ...emptyEdit(""), path, existed: false, backupWritten: null, linkTarget: null, modeBefore: null, backupModeBefore: null };
     }
-    edit = undoSetupInText(text2, { ...values, backupText: readText3(backupPathFor(path)) });
+    edit = undoSetupInText(text, { ...values, backupText: readText2(backupPathFor(path)) });
     written = writeEdit(path, edit, true, false, platform);
   } catch (error) {
     failWith2(path, error);
@@ -14215,15 +9330,15 @@ function globalRoutingState(env) {
   return isPaused() ? "paused" : "off";
 }
 function isPaused() {
-  return (0, import_node_fs25.existsSync)(pausedFilePath());
+  return (0, import_node_fs24.existsSync)(pausedFilePath());
 }
 function markPaused(now = /* @__PURE__ */ new Date()) {
   writeJsonFileSync(pausedFilePath(), { pausedAt: now.toISOString() }, { mode: PRIVATE_FILE_MODE });
 }
 function clearPaused() {
   const path = pausedFilePath();
-  if (!(0, import_node_fs25.existsSync)(path)) return false;
-  (0, import_node_fs25.rmSync)(path, { force: true });
+  if (!(0, import_node_fs24.existsSync)(path)) return false;
+  (0, import_node_fs24.rmSync)(path, { force: true });
   return true;
 }
 function recordedSettingsFiles() {
@@ -14232,7 +9347,7 @@ function recordedSettingsFiles() {
   try {
     read = readJsonFileSync(path);
   } catch (error) {
-    return { files: [], problem: `${path} could not be read (${errorCode4(error)})` };
+    return { files: [], problem: `${path} could not be read (${errorCode2(error)})` };
   }
   if (read.status === "missing") return { files: [], problem: null };
   if (read.status === "corrupt") return { files: [], problem: `${path} is not valid JSON` };
@@ -14246,21 +9361,21 @@ function settingsFilesWith(current, platform = process.platform) {
   const recorded = recordedSettingsFiles();
   const files = [current];
   for (const file of recorded.files) {
-    if (!files.some((known) => samePath2(known, file, platform))) files.push(file);
+    if (!files.some((known) => samePath(known, file, platform))) files.push(file);
   }
   return { files, problem: recorded.problem };
 }
 function recordSettingsFile(path, platform = process.platform) {
-  const record2 = setupSettingsRecordPath();
-  const file = (0, import_node_path26.resolve)(path);
-  return withFileLockSync(`${record2}.lock`, () => {
+  const record = setupSettingsRecordPath();
+  const file = (0, import_node_path23.resolve)(path);
+  return withFileLockSync(`${record}.lock`, () => {
     const current = recordedSettingsFiles();
-    if (current.files.some((known) => samePath2(known, file, platform))) return { damaged: null };
-    writeJsonFileSync(record2, { version: 1, files: [...current.files, file] }, { mode: PRIVATE_FILE_MODE });
+    if (current.files.some((known) => samePath(known, file, platform))) return { damaged: null };
+    writeJsonFileSync(record, { version: 1, files: [...current.files, file] }, { mode: PRIVATE_FILE_MODE });
     return { damaged: current.problem };
   });
 }
-function samePath2(a, b, platform) {
+function samePath(a, b, platform) {
   return platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 function settingsPathFor(env) {
@@ -14279,18 +9394,18 @@ function configuredPort2() {
 }
 function readOrNull(path) {
   try {
-    return (0, import_node_fs25.readFileSync)(path, "utf8");
+    return (0, import_node_fs24.readFileSync)(path, "utf8");
   } catch {
     return null;
   }
 }
-function errorCode4(error) {
+function errorCode2(error) {
   return error?.code ?? String(error);
 }
 
 // src/cli/commands/setup.ts
 var NPM_UNINSTALL = "npm uninstall -g kurmis";
-var USAGE3 = `Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]
+var USAGE2 = `Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]
 
 Turns global routing on: every Claude Code on this machine goes through kurmis, including a
 plain "claude" and the IDE extensions, not only "kurmis claude". Setup starts the daemon, makes
@@ -14303,9 +9418,8 @@ Options:
                           extensions talk to Anthropic directly. Everything else stays, and
                           "kurmis setup" turns it back on.
   --uninstall-and-logout  Remove everything kurmis set up, and sign out and remove every login
-                          you added. The logins plain claude and plain codex use stay signed
-                          in. It lists what it removes and asks first. Then run
-                          "npm uninstall -g kurmis".
+                          you added. The login plain claude uses stays signed in. It lists
+                          what it removes and asks first. Then run "npm uninstall -g kurmis".
   --yes                   Do not ask (needed when there is no terminal to ask at).
   -h, --help              Show this help.`;
 function changeLine(change, undo) {
@@ -14350,7 +9464,7 @@ function reportFile(result, undo, context) {
 function modeText(mode) {
   return `0${(mode & 511).toString(8).padStart(3, "0")}`;
 }
-function errorText4(error) {
+function errorText2(error) {
   return error instanceof Error ? error.message : String(error);
 }
 function isFileError(error) {
@@ -14362,7 +9476,7 @@ async function autostartStep(remove, deps, context) {
     const options = { env: context.env, platform: deps.platform };
     result = remove ? await deps.unregisterAutostart(options) : await deps.registerAutostart(options);
   } catch (error) {
-    result = { changed: false, where: null, warning: errorText4(error) };
+    result = { changed: false, where: null, warning: errorText2(error) };
   }
   const supported = deps.platform === "darwin" || deps.platform === "win32";
   const warnsOnly = result.warningOnly === true || result.loadsAtNextLogin === true || result.noEntryPossible === true || !supported;
@@ -14403,7 +9517,7 @@ async function daemonStep(port, path, hadKurmis, deps, context) {
       writeLine(context.stderr, unchanged);
       return null;
     }
-    writeLine(context.stderr, `The daemon could not be started: ${errorText4(error)}`);
+    writeLine(context.stderr, `The daemon could not be started: ${errorText2(error)}`);
     writeLine(context.stderr, `${unchanged} "kurmis daemon start" starts it and says what is wrong.`);
     return null;
   }
@@ -14417,15 +9531,15 @@ async function runningDaemonPid(deps, context) {
 }
 function defaultFolderRefusal(env, platform) {
   const value = env["CLAUDE_CONFIG_DIR"];
-  const home = (0, import_node_os14.homedir)();
+  const home = (0, import_node_os13.homedir)();
   if (value === void 0 || !configDirHasOwnCredentials(env, platform)) return null;
-  const folder = (0, import_node_path27.join)(home, ".claude");
-  const defaultFile = (0, import_node_path27.join)(folder, "settings.json");
+  const folder = (0, import_node_path24.join)(home, ".claude");
+  const defaultFile = (0, import_node_path24.join)(folder, "settings.json");
   if (namesDefaultClaudeFolder(value, platform, home)) {
     return `CLAUDE_CONFIG_DIR is set to ${value}, which is the default Claude Code folder ${folder}. A claude started with CLAUDE_CONFIG_DIR set keeps its credentials apart from one started without it, even when the variable names that folder, and both read ${defaultFile}, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again.`;
   }
   if (sharesDefaultSettingsFile(value, platform, home)) {
-    return `CLAUDE_CONFIG_DIR is set to ${value}, and ${(0, import_node_path27.join)(value, "settings.json")} is a link to the default Claude Code settings file ${defaultFile}. A claude started with CLAUDE_CONFIG_DIR set signs in with the credentials in ${value}, a plain claude with those in ${folder}, and both read that one file, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again, or give that folder a settings.json of its own.`;
+    return `CLAUDE_CONFIG_DIR is set to ${value}, and ${(0, import_node_path24.join)(value, "settings.json")} is a link to the default Claude Code settings file ${defaultFile}. A claude started with CLAUDE_CONFIG_DIR set signs in with the credentials in ${value}, a plain claude with those in ${folder}, and both read that one file, so kurmis cannot write settings there that are right for both. Unset CLAUDE_CONFIG_DIR and run "kurmis setup" again, or give that folder a settings.json of its own.`;
   }
   return null;
 }
@@ -14477,7 +9591,7 @@ async function runSetup(deps, context) {
     }
   } catch (error) {
     if (!isFileError(error) && !(error instanceof LockTimeoutError)) throw error;
-    writeLine(context.stderr, `kurmis setup: ${path} was not changed, because the list of the settings files setup changed, ${setupSettingsRecordPath()}, could not be written: ${errorText4(error)}`);
+    writeLine(context.stderr, `kurmis setup: ${path} was not changed, because the list of the settings files setup changed, ${setupSettingsRecordPath()}, could not be written: ${errorText2(error)}`);
     return EXIT_FAILURE;
   }
   const key = await daemonStep(port, path, hadKurmis, deps, context);
@@ -14561,45 +9675,43 @@ async function runPause(deps, context) {
 }
 function loginsKurmisAdded(config) {
   const added = extraLogins(config).map((login) => ({
-    login: { id: login.id, provider: login.provider, usedByPlainCli: false },
+    login: { id: login.id, usedByPlainClaude: false },
     name: login.alias
   }));
   const others = [];
-  for (const provider of LOGIN_PROVIDERS) {
-    let names;
-    try {
-      names = (0, import_node_fs26.readdirSync)(providerFolder(provider));
-    } catch {
+  let names;
+  try {
+    names = (0, import_node_fs25.readdirSync)(extraLoginsFolder());
+  } catch {
+    names = [];
+  }
+  for (const name of names) {
+    if (added.some(({ login }) => login.id === name)) continue;
+    if (!isLoginId(name) || findLogin(config, name)?.usedByPlainClaude === true) {
+      others.push((0, import_node_path24.join)("claude", name));
       continue;
     }
-    for (const name of names) {
-      if (added.some(({ login }) => login.id === name && login.provider === provider)) continue;
-      if (!isLoginId(name) || findLogin(config, name)?.usedByPlainCli === true) {
-        others.push((0, import_node_path27.join)(provider, name));
-        continue;
-      }
-      added.push({ login: { id: name, provider, usedByPlainCli: false }, name });
-    }
+    added.push({ login: { id: name, usedByPlainClaude: false }, name });
   }
   return { added, others };
 }
 function autostartEntry(platform) {
-  if (platform === "darwin") return (0, import_node_fs26.existsSync)(autostartPlistPath()) ? autostartPlistPath() : null;
+  if (platform === "darwin") return (0, import_node_fs25.existsSync)(autostartPlistPath()) ? autostartPlistPath() : null;
   if (platform === "win32") return `${RUN_ENTRY_DESCRIPTION}, if it is set`;
   return null;
 }
 function settingsHaveKurmis(path, port) {
-  let text2;
+  let text;
   let backupText;
   try {
     try {
-      text2 = (0, import_node_fs26.readFileSync)(path, "utf8");
+      text = (0, import_node_fs25.readFileSync)(path, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") return false;
       throw error;
     }
     try {
-      backupText = (0, import_node_fs26.readFileSync)(backupPathFor(path), "utf8");
+      backupText = (0, import_node_fs25.readFileSync)(backupPathFor(path), "utf8");
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       backupText = null;
@@ -14609,26 +9721,26 @@ function settingsHaveKurmis(path, port) {
     throw new SettingsFileError(`${path} cannot be read: ${error.message}`);
   }
   try {
-    return undoSetupInText(text2, { port, backupText }).changed;
+    return undoSetupInText(text, { port, backupText }).changed;
   } catch (error) {
     if (error instanceof SettingsFileError) throw new SettingsFileError(`${path} cannot be changed: ${error.message}`);
     throw error;
   }
 }
-function listLine(context, text2) {
-  writeLine(context.stdout, `  - ${text2}`);
+function listLine(context, text) {
+  writeLine(context.stdout, `  - ${text}`);
 }
 function deleteBackups(files, context) {
   let failed2 = false;
   for (const file of files) {
     const backup = backupPathFor(file);
     try {
-      if ((0, import_node_fs26.existsSync)(backup)) {
-        (0, import_node_fs26.rmSync)(backup, { force: true });
+      if ((0, import_node_fs25.existsSync)(backup)) {
+        (0, import_node_fs25.rmSync)(backup, { force: true });
         writeLine(context.stdout, `Deleted ${backup}.`);
       }
     } catch (error) {
-      writeLine(context.stderr, `Could not delete ${backup}: ${errorText4(error)}`);
+      writeLine(context.stderr, `Could not delete ${backup}: ${errorText2(error)}`);
       failed2 = true;
     }
   }
@@ -14650,7 +9762,7 @@ async function runUninstall(yes, deps, context) {
   }
   recordWarning(problem, context);
   const { added: logins, others } = loginsKurmisAdded(config);
-  const backups = files.filter((file) => (0, import_node_fs26.existsSync)(backupPathFor(file)));
+  const backups = files.filter((file) => (0, import_node_fs25.existsSync)(backupPathFor(file)));
   const autostart = autostartEntry(deps.platform);
   const pid = await runningDaemonPid(deps, context);
   const dataFolder = kurmisHome();
@@ -14662,11 +9774,11 @@ async function runUninstall(yes, deps, context) {
     listLine(context, `the logins added to kurmis, each signed out first: ${logins.map(({ name }) => name).join(", ")}`);
   }
   if (others.length > 0) {
-    listLine(context, `entries in the data folder's claude and codex folders that are not the folder of a login kurmis added, which are deleted without a logout: ${others.join(", ")}`);
+    listLine(context, `entries in the data folder's claude folder that are not the folder of a login kurmis added, which are deleted without a logout: ${others.join(", ")}`);
   }
   if (pid !== null) listLine(context, `the running daemon (pid ${String(pid)}), which it stops`);
-  if ((0, import_node_fs26.existsSync)(dataFolder)) listLine(context, `the kurmis data folder ${dataFolder}`);
-  writeLine(context.stdout, 'The logins plain claude and plain codex use are not signed out, so a plain "claude" and "codex" keep working.');
+  if ((0, import_node_fs25.existsSync)(dataFolder)) listLine(context, `the kurmis data folder ${dataFolder}`);
+  writeLine(context.stdout, 'The login plain claude uses is not signed out, so a plain "claude" keeps working.');
   if (!yes) {
     if (!deps.stdinIsTerminal()) {
       writeLine(context.stderr, "kurmis setup: --uninstall-and-logout asks before it removes anything, and there is no terminal to ask at. Run it again with --yes to remove all of the above. Nothing was removed.");
@@ -14718,7 +9830,7 @@ async function runUninstall(yes, deps, context) {
     try {
       removal = removeDataFolder(deps.platform);
     } catch (error) {
-      writeLine(context.stderr, `Could not delete the kurmis data folder ${dataFolder}: ${errorText4(error)}`);
+      writeLine(context.stderr, `Could not delete the kurmis data folder ${dataFolder}: ${errorText2(error)}`);
       failed2 = true;
     }
     if (removal !== null && removal.removed) writeLine(context.stdout, `Deleted the kurmis data folder ${dataFolder}.`);
@@ -14737,7 +9849,7 @@ async function runUninstall(yes, deps, context) {
   return EXIT_OK;
 }
 async function askAtTerminal(question) {
-  const lines = (0, import_promises6.createInterface)({ input: process.stdin, output: process.stdout });
+  const lines = (0, import_promises3.createInterface)({ input: process.stdin, output: process.stdout });
   const controller = new AbortController();
   lines.on("SIGINT", () => controller.abort());
   lines.on("close", () => controller.abort());
@@ -14765,7 +9877,7 @@ function createSetupCommand(deps = {}) {
   return {
     name: "setup",
     summary: "Turn global routing on, pause it, or remove everything kurmis set up",
-    usage: USAGE3,
+    usage: USAGE2,
     async run(args, context) {
       const parsed = parseCommandArgs("setup", args, {
         pause: { type: "boolean" },
@@ -14792,10 +9904,10 @@ function createSetupCommand(deps = {}) {
 var setupCommand = createSetupCommand();
 
 // src/cli/commands/status.ts
-var import_node_os15 = require("node:os");
+var import_node_os14 = require("node:os");
 
 // src/cli/status-format.ts
-var STATUS_JSON_FORMAT = 6;
+var STATUS_JSON_FORMAT = 7;
 function daemonReport(answer2, globalRouting, version) {
   return {
     daemon: daemonOf(answer2),
@@ -14829,8 +9941,7 @@ function statusJson(report, now, options) {
     logins: report.logins.map((login) => ({
       id: login.id,
       alias: login.alias,
-      provider: login.provider,
-      usedByPlainCli: login.usedByPlainCli,
+      usedByPlainClaude: login.usedByPlainClaude,
       email: login.email ?? null,
       signedIn: fromDaemon ? login.signedIn : null,
       credentials: fromDaemon ? null : report.credentials.get(login.id) ?? "unknown",
@@ -14840,27 +9951,26 @@ function statusJson(report, now, options) {
       weeklyLimit: login.weeklyLimit,
       useFirst: login.useFirst,
       usage: login.usage === null ? null : usageJson(login, login.usage, now),
-      blocked: fromDaemon ? blockJson(report, login, now, options) : null,
-      sessions: login.provider === "claude" ? login.sessions : null
+      blocked: fromDaemon ? blockJson(login, now, options) : null,
+      sessions: login.sessions
     })),
-    codexStart: fromDaemon ? codexStart(report, now) : null,
     warnings: [...sameAccountWarnings(report), ...report.globalRouting === "on" && daemon === null ? [NO_DAEMON_WARNING] : []]
   };
 }
 var NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, so a plain claude and the Claude Code editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.';
 function sameAccountWarnings(answer2) {
   const warnings = [];
-  const ordered2 = [...answer2.logins.filter((login) => login.usedByPlainCli), ...answer2.logins.filter((login) => !login.usedByPlainCli)];
+  const ordered2 = [...answer2.logins.filter((login) => login.usedByPlainClaude), ...answer2.logins.filter((login) => !login.usedByPlainClaude)];
   const firsts = [];
   for (const login of ordered2) {
     if (login.email === null || login.email.trim() === "") continue;
-    const kept = firsts.find((first) => first.provider === login.provider && isSameClaudeAccount(first, login));
+    const kept = firsts.find((first) => isSameClaudeAccount(first, login));
     if (kept === void 0) {
       firsts.push(login);
       continue;
     }
-    const keptName = kept.usedByPlainCli ? `${kept.alias}, ${plainCliLoginText(kept.provider)},` : kept.alias;
-    warnings.push(`${login.alias} and ${keptName} are the same ${PROVIDER_NAMES2[login.provider]} account (${kept.email}), so they use one subscription. "kurmis logout ${loginArgument(answer2, login)}" removes ${login.alias}.`);
+    const keptName = kept.usedByPlainClaude ? `${kept.alias}, ${plainClaudeLoginText()},` : kept.alias;
+    warnings.push(`${login.alias} and ${keptName} are the same account (${kept.email}), so they use one subscription. "kurmis logout ${login.alias}" removes ${login.alias}.`);
   }
   return warnings;
 }
@@ -14868,7 +9978,7 @@ function formatStatus(report, now, options) {
   const json = statusJson(report, now, options);
   json.logins.forEach((login, index) => {
     const source = report.logins[index];
-    const block = source === void 0 ? null : routeBlockOf(report, source, now);
+    const block = source?.block ?? null;
     if (login.blocked !== null && block !== null) login.blocked.text = blockText(block, now, options, true);
   });
   const lines = [...daemonLines(json, report, now), "", ...GLOBAL_ROUTING_TEXT[json.globalRouting].flatMap((line) => wrap(line, "", ""))];
@@ -14878,13 +9988,10 @@ function formatStatus(report, now, options) {
   for (const login of json.logins) {
     lines.push("", ...loginLines(login, now, labelWidth));
   }
-  if (json.codexStart !== null) {
-    lines.push("", ...wrap(`kurmis codex would start on ${json.codexStart.alias}.` + (json.codexStart.note === null ? "" : ` ${json.codexStart.note}`), "", ""));
-  }
   return `${lines.join("\n")}
 `;
 }
-var DAEMON_STARTERS = ['"kurmis claude" or "kurmis codex" without --login', '"kurmis setup"', '"kurmis daemon start"'];
+var DAEMON_STARTERS = ['"kurmis claude"', '"kurmis setup"', '"kurmis daemon start"'];
 function daemonLines(json, report, now) {
   const daemon = report.daemon;
   if (daemon === null) {
@@ -14911,19 +10018,18 @@ var GLOBAL_ROUTING_TEXT = {
     'Run "kurmis setup --pause" to pause it.'
   ],
   paused: [
-    'Global routing is paused: only "kurmis claude" and "kurmis codex" go through kurmis. Plain "claude" does not.',
+    'Global routing is paused: only "kurmis claude" goes through kurmis. Plain "claude" does not.',
     'Run "kurmis setup" to turn it on again.'
   ],
   off: [
-    'Global routing is off: only "kurmis claude" and "kurmis codex" go through kurmis. Plain "claude" does not.',
+    'Global routing is off: only "kurmis claude" goes through kurmis. Plain "claude" does not.',
     'Run "kurmis setup" to turn on global routing.'
   ]
 };
 var WIDTH = 80;
 var MAX_LABEL_WIDTH = 24;
 function loginTitle(login) {
-  const product = PROVIDER_NAMES2[login.provider];
-  return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`;
+  return login.alias === login.id ? login.alias : `${login.alias} (id ${login.id})`;
 }
 function credentialsText(check) {
   if (check === "unknown") return "credentials on this machine: unknown";
@@ -14932,14 +10038,14 @@ function credentialsText(check) {
 function loginLines(login, now, labelWidth) {
   const title = loginTitle(login);
   const lines = login.email === null ? [title] : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`] : [title, `  ${login.email}`];
-  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`);
+  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`);
   const facts = [
     login.credentials !== null ? credentialsText(login.credentials) : login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
     login.routing ? "routing on" : "routing off",
     `limits ${String(login.fiveHourLimit)}% 5 hour, ${String(login.weeklyLimit)}% weekly`
   ];
   if (login.useFirst) facts.push("use first");
-  if (login.sessions !== null) facts.push(login.sessions === 1 ? "1 session" : `${String(login.sessions)} sessions`);
+  facts.push(login.sessions === 1 ? "1 session" : `${String(login.sessions)} sessions`);
   if (login.usage?.plan) facts.push(`plan ${login.usage.plan}`);
   if (login.probing) facts.push("reading usage now");
   lines.push(...wrapList(facts, "  "));
@@ -14988,11 +10094,8 @@ function usageJson(login, usage, now) {
     })
   };
 }
-function routeBlockOf(answer2, login, now) {
-  return login.provider === "codex" ? codexRouteBlock(answer2, login.id, now) : login.block;
-}
-function blockJson(answer2, login, now, options) {
-  const block = routeBlockOf(answer2, login, now);
+function blockJson(login, now, options) {
+  const block = login.block;
   if (block === null) return null;
   let until = null;
   if (block.kind === "cooldown" && block.until !== null) until = isoTime(block.until);
@@ -15001,16 +10104,16 @@ function blockJson(answer2, login, now, options) {
 }
 function blockText(block, now, options, localTime) {
   if (block.kind === "cooldown" && block.until !== null) {
-    const text3 = localTime ? `cooling down until ${localTimeText(block.until, now, options.timeZone)}` : routeBlockText(block, options.keychain);
+    const text2 = localTime ? `cooling down until ${localTimeText(block.until, now, options.timeZone)}` : routeBlockText(block, options.keychain);
     const left2 = resetsInText(block.until, now);
-    return left2 === null ? text3 : `${text3} (${left2.replace("resets ", "")})`;
+    return left2 === null ? text2 : `${text2} (${left2.replace("resets ", "")})`;
   }
-  const text2 = routeBlockText(block, options.keychain);
-  if (block.kind !== "over-limit") return text2;
+  const text = routeBlockText(block, options.keychain);
+  if (block.kind !== "over-limit") return text;
   const left = resetsInText(block.resetsAt, now);
-  return left === null ? text2 : `${text2}; it ${left}`;
+  return left === null ? text : `${text}; it ${left}`;
 }
-function localTimeText(at2, now, timeZone) {
+function localTimeText(at, now, timeZone) {
   const format = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
@@ -15021,41 +10124,35 @@ function localTimeText(at2, now, timeZone) {
     hourCycle: "h23"
   });
   const parts = (time) => Object.fromEntries(format.formatToParts(time).map((part) => [part.type, part.value]));
-  const then = parts(at2);
+  const then = parts(at);
   const today = parts(now);
   const clock = `${then.hour ?? ""}:${then.minute ?? ""}`;
   const date = `${then.year ?? ""}-${then.month ?? ""}-${then.day ?? ""}`;
   return date === `${today.year ?? ""}-${today.month ?? ""}-${today.day ?? ""}` ? clock : `${date} ${clock}`;
 }
-function codexStart(answer2, now) {
-  if (!answer2.logins.some((login) => login.provider === "codex")) return null;
-  const choice = chooseCodexLogin(answer2, now);
-  const alias = answer2.logins.find((login) => login.id === choice.login)?.alias ?? choice.login;
-  return { login: choice.login, alias, note: choice.note };
-}
-function isoTime(at2) {
-  return Number.isFinite(at2) ? new Date(at2).toISOString() : String(at2);
+function isoTime(at) {
+  return Number.isFinite(at) ? new Date(at).toISOString() : String(at);
 }
 function wrapList(items, indent) {
   const lines = [];
   let line = "";
   for (const [index, item] of items.entries()) {
-    const text2 = index < items.length - 1 ? `${item},` : item;
-    if (line !== "" && indent.length + line.length + 1 + text2.length > WIDTH) {
+    const text = index < items.length - 1 ? `${item},` : item;
+    if (line !== "" && indent.length + line.length + 1 + text.length > WIDTH) {
       lines.push(indent + line);
-      line = text2;
+      line = text;
     } else {
-      line = line === "" ? text2 : `${line} ${text2}`;
+      line = line === "" ? text : `${line} ${text}`;
     }
   }
   lines.push(indent + line);
   return lines;
 }
-function wrap(text2, first, rest) {
+function wrap(text, first, rest) {
   const lines = [];
   let line = first;
   let empty = true;
-  for (const word of text2.match(/"[^"]*"\S*|\S+/g) ?? []) {
+  for (const word of text.match(/"[^"]*"\S*|\S+/g) ?? []) {
     if (!empty && line.length + 1 + word.length > WIDTH) {
       lines.push(line);
       line = rest + word;
@@ -15070,25 +10167,25 @@ function wrap(text2, first, rest) {
 
 // src/cli/commands/status.ts
 var STATUS_PROBE_WAIT_MS = 15e3;
-var USAGE4 = `Usage: kurmis status [--json]
+var USAGE3 = `Usage: kurmis status [--json]
 
 Shows every login with its settings and usage, whether the daemon runs, and whether global
 routing is on. It does not start the daemon, and it exits 0 either way. For example:
 
   kurmis daemon 0.1.0, pid 4242, port 28411, running for 2h 5m
 
-  Global routing is off: only "kurmis claude" and "kurmis codex" go through
-  kurmis. Plain "claude" does not.
+  Global routing is off: only "kurmis claude" goes through kurmis. Plain "claude"
+  does not.
   Run "kurmis setup" to turn on global routing.
 
-  own-example (Claude, id k3v9q2m7xa)           <- alias, provider and id
+  own-example (id k3v9q2m7xa)                   <- alias and id
     the login plain claude uses
     signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
     5 hour       42%  resets in 2h 10m      limit 100%
     7 day        63%  resets in 3d 4h       limit 100%
     usage read 3m ago
 
-  work-example (Claude, id p8x2n4c6ve)  work@example.com
+  work-example (id p8x2n4c6ve)  work@example.com
     signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session
     5 hour       92%  resets in 45m         limit 90%
     7 day         0%  reset since read      limit 100%
@@ -15104,9 +10201,9 @@ that the token is there without reading it. The README describes every line.
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and
                "source" says whether the logins come from the daemon or from the files. Each
-               login has "alias", "id", "provider", "usedByPlainCli" (whether plain claude
-               or plain codex uses it), "signedIn" (from the daemon) and "credentials"
-               (from the files: true, false or "unknown").
+               login has "alias", "id", "usedByPlainClaude" (whether plain claude uses
+               it), "signedIn" (from the daemon) and "credentials" (from the files: true,
+               false or "unknown").
                "warnings" holds the warnings.
   -h, --help   Show this help.`;
 function createStatusCommand(overrides = {}) {
@@ -15115,8 +10212,7 @@ function createStatusCommand(overrides = {}) {
     now: Date.now,
     platform: process.platform,
     probeWaitMs: STATUS_PROBE_WAIT_MS,
-    home: import_node_os15.homedir,
-    findProgram: realFindProgram,
+    home: import_node_os14.homedir,
     runProgram,
     globalRouting: globalRoutingState,
     version: kurmisVersion,
@@ -15125,7 +10221,7 @@ function createStatusCommand(overrides = {}) {
   return {
     name: "status",
     summary: "Show the logins, their usage, and whether the daemon runs",
-    usage: USAGE4,
+    usage: USAGE3,
     run: (args, context) => runStatus(args, context, deps)
   };
 }
@@ -15149,7 +10245,7 @@ async function runStatus(args, context, deps) {
   try {
     connection = await deps.daemon.findDaemon({ env: context.env });
   } catch (error) {
-    writeLine(context.stderr, `kurmis status: could not look for the kurmis daemon: ${messageOf5(error)}`);
+    writeLine(context.stderr, `kurmis status: could not look for the kurmis daemon: ${messageOf4(error)}`);
     connection = null;
   }
   let report;
@@ -15162,7 +10258,7 @@ async function runStatus(args, context, deps) {
     try {
       status2 = await deps.daemon.readStatus(connection);
     } catch (error) {
-      writeLine(context.stderr, `kurmis status: the kurmis daemon (pid ${String(connection.pid)}) did not answer the status request: ${messageOf5(error)}`);
+      writeLine(context.stderr, `kurmis status: the kurmis daemon (pid ${String(connection.pid)}) did not answer the status request: ${messageOf4(error)}`);
       writeLine(context.stderr, `Showing the logins from config.json instead. The daemon's log is daemon.log in the kurmis data folder; "kurmis daemon restart" replaces the daemon.`);
       status2 = null;
     }
@@ -15191,7 +10287,7 @@ async function runStatus(args, context, deps) {
 async function firstProbe(connection, status2, context, deps) {
   const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, void 0, signal), deps.probeWaitMs);
   if (probed.kind === "done") return probed.value;
-  writeLine(context.stderr, probed.kind === "timeout" ? `kurmis status: the first usage probe did not finish within ${String(deps.probeWaitMs / 1e3)} s; showing what the daemon has.` : `kurmis status: the usage probe failed (${messageOf5(probed.error)}); showing what the daemon has.`);
+  writeLine(context.stderr, probed.kind === "timeout" ? `kurmis status: the first usage probe did not finish within ${String(deps.probeWaitMs / 1e3)} s; showing what the daemon has.` : `kurmis status: the usage probe failed (${messageOf4(probed.error)}); showing what the daemon has.`);
   return status2;
 }
 async function reportFromFiles(config, daemon, globalRouting, context, deps) {
@@ -15204,14 +10300,13 @@ async function reportFromFiles(config, daemon, globalRouting, context, deps) {
   const home = deps.home();
   const logins = config.logins.map((login) => {
     const cooldown = state.cooldowns.get(login.id);
-    const claude = login.provider === "claude" ? readClaudeIdentity(login, home) : null;
+    const identity = readClaudeIdentity(login, home);
     let sessions = 0;
     for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++;
     return {
       id: login.id,
-      provider: login.provider,
       alias: login.alias,
-      usedByPlainCli: login.usedByPlainCli,
+      usedByPlainClaude: login.usedByPlainClaude,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
       weeklyLimit: login.weeklyLimit,
@@ -15221,9 +10316,8 @@ async function reportFromFiles(config, daemon, globalRouting, context, deps) {
       cooldownUntil: cooldown === void 0 ? null : Number.isFinite(cooldown) ? cooldown : "unknown",
       block: null,
       sessions,
-      // A Codex login's email is known only to a running daemon, from its last usage probe.
-      email: claude?.email ?? null,
-      organizationUuid: claude?.organizationUuid ?? null,
+      email: identity?.email ?? null,
+      organizationUuid: identity?.organizationUuid ?? null,
       probing: false
     };
   });
@@ -15237,14 +10331,13 @@ async function reportFromFiles(config, daemon, globalRouting, context, deps) {
     version: deps.version
   };
 }
-function messageOf5(error) {
+function messageOf4(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
 // src/cli/commands/index.ts
 var COMMANDS = [
   claudeCommand,
-  codexCommand,
   statusCommand,
   setCommand,
   loginCommand,
@@ -15260,7 +10353,7 @@ function findCommand(name) {
 function mainHelp() {
   const width = Math.max(...COMMANDS.map((command) => command.name.length));
   const lines = COMMANDS.map((command) => `  ${command.name.padEnd(width)}  ${command.summary}`);
-  return `kurmis ${kurmisVersion}: use several Claude Code and Codex logins on one machine.
+  return `kurmis ${kurmisVersion}: use several Claude Code logins on one machine.
 
 Usage: kurmis <command> [options]
 

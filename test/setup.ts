@@ -1,5 +1,5 @@
 // Every test file runs with HOME and KURMIS_HOME pointing at a fresh temporary folder, so no
-// test can read or write the real ~/.claude, ~/.codex or ~/.kurmis by accident.
+// test can read or write the real ~/.claude or ~/.kurmis by accident.
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -17,7 +17,6 @@ if (homedir() !== home) {
   throw new Error(`os.homedir() is ${homedir()}, not the temporary home ${home}, so the tests would reach the real ` +
     'home folder. Run them in processes of their own (pool: \'forks\' in vitest.config.ts).')
 }
-delete process.env.CODEX_HOME
 delete process.env.CLAUDE_CONFIG_DIR
 delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR
 delete process.env.ANTHROPIC_BASE_URL
@@ -33,11 +32,10 @@ delete process.env.SSH_CONNECTION
 delete process.env.SSH_CLIENT
 delete process.env.SSH_TTY
 
-// Kurmis code a test runs (the daemon's usage probes, the wrapper) finds claude and codex through
-// these. They name a program that only fails, so no test can start the real claude or codex from
-// PATH. A test that uses a fake names it; a test of the PATH search removes them from its env.
+// Kurmis code a test runs (the daemon's usage probe, the wrapper) finds claude through this. It
+// names a program that only fails, so no test can start the real claude from PATH. A test that
+// uses a fake names it; a test of the PATH search removes it from its env.
 process.env.KURMIS_CLAUDE_BIN = join(dirname(fileURLToPath(import.meta.url)), 'no-real-program.mjs')
-process.env.KURMIS_CODEX_BIN = process.env.KURMIS_CLAUDE_BIN
 
 // Anything that reads the macOS Keychain in a test reads this stand-in, with no items, unless
 // the test points it elsewhere. The real `/usr/bin/security` is never run by a test.
@@ -71,7 +69,7 @@ process.env.FAKE_TASKKILL_DIR = join(home, 'fake-taskkill')
 process.env.KURMIS_WSCRIPT_PROGRAM = join(fakeWindows, 'wscript.mjs')
 
 // No test may start a real launchctl, security, PowerShell, reg, taskkill, wscript, cscript,
-// wmic, schtasks, cmd, claude or codex, even through an environment it built itself: kurmis
+// wmic, schtasks, cmd or claude, even through an environment it built itself: kurmis
 // refuses them while this is set (`GUARDED_PROGRAMS` in src/platform/system-program-guard.ts),
 // and passes it on to every program it starts.
 process.env.KURMIS_REFUSE_SYSTEM_PROGRAMS = '1'

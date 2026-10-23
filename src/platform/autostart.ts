@@ -62,8 +62,7 @@ export interface AutostartResult {
   /**
    * No entry can be written on this machine as it is (Windows without a usable Windows Script
    * Host), so running setup again does not help until that changes. `warning` says why. Setup
-   * counts this as done: the daemon runs, and after a restart the next `kurmis claude` or
-   * `kurmis codex` starts it.
+   * counts this as done: the daemon runs, and after a restart the next `kurmis claude` starts it.
    */
   noEntryPossible?: boolean
   /**
@@ -73,7 +72,7 @@ export interface AutostartResult {
   warningOnly?: boolean
 }
 
-const UNSUPPORTED = 'Starting the daemon at login is not supported on this platform; the next "kurmis claude" or "kurmis codex" starts it.'
+const UNSUPPORTED = 'Starting the daemon at login is not supported on this platform; the next "kurmis claude" starts it.'
 
 const NO_ENTRY = 'kurmis is not running from its bundle, so there is no program to start at login; ' +
   'run kurmis setup from the installed kurmis.'

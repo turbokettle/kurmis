@@ -1,6 +1,6 @@
-// Deleting a folder and everything in it without ever following a link out of it. A Codex
-// login's home holds symbolic links (junctions on Windows) into `~/.codex`; deleting the login
-// must remove those links and leave what they point at alone.
+// Deleting a folder and everything in it without ever following a link out of it. Kurmis uses
+// it to delete a login's folder and the data folder. Kurmis puts no links there, but a person or
+// another tool may have, and deleting must remove such links and leave what they point at alone.
 //
 // Node's `fs.rmSync(path, { recursive: true })` also removes a symbolic link without following
 // it, but kurmis does not rely on that for junctions: older Node versions followed junctions

@@ -74,21 +74,6 @@ describe('usageAsOf', () => {
     expect(after.modelScoped[0]?.utilization).toBe(0)
   })
 
-  it('empties the windows a Codex plan names itself', () => {
-    const after = usageAsOf(
-      accountUsage({
-        provider: 'codex',
-        windows: [
-          { key: 'codex:primary', label: '5h', utilization: 88, resetsAt: PAST },
-          { key: 'codex:secondary', label: '7d', utilization: 40, resetsAt: LATER }
-        ]
-      }),
-      NOW
-    )
-    expect(after.windows?.[0]?.utilization).toBe(0)
-    expect(after.windows?.[1]?.utilization).toBe(40)
-  })
-
   it('clears a refusal once the window it named has reset', () => {
     const after = usageAsOf(
       accountUsage({

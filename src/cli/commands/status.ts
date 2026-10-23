@@ -6,18 +6,17 @@
 // machine (`checkCredentials`).
 //
 // Status reads `config.json` with `loadConfig`, as the other commands do, so when the file has no
-// entry for the login plain claude or plain codex uses (or there is no file), it adds one with a
-// new id and saves the file. It writes no other file.
+// entry for the login plain claude uses (or there is no file), it adds one with a new id and
+// saves the file. It writes no other file.
 import { homedir } from 'node:os'
 import { CONTROL_API_VERSION, type StatusAnswer } from '../../core/control-api.ts'
 import { ConfigError, loadConfig, type KurmisConfig } from '../../data/config.ts'
 import { readClaudeIdentity } from '../../data/identity.ts'
 import { loadState } from '../../data/state.ts'
-import type { findProgram } from '../../platform/programs.ts'
 import { runProgram } from '../../platform/run.ts'
 import { kurmisVersion } from '../../version.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, writeLine, type CliContext, type Command } from '../command.ts'
-import { realDaemonClient, realFindProgram, settleWithin, type DaemonClient } from '../command-deps.ts'
+import { realDaemonClient, settleWithin, type DaemonClient } from '../command-deps.ts'
 import type { DaemonConnection } from '../daemon-client.ts'
 import { globalRoutingState, type GlobalRoutingState } from '../global-routing.ts'
 import { checkCredentials } from '../local-credentials.ts'
@@ -34,13 +33,9 @@ export interface StatusDeps {
   now: () => number
   platform: NodeJS.Platform
   probeWaitMs: number
-  /** The user's home folder, where `~/.claude`, `~/.claude.json` and `~/.codex` are. */
+  /** The user's home folder, where `~/.claude` and `~/.claude.json` are. */
   home: () => string
-  /**
-   * Find and run `codex login status` for a Codex login that keeps its sign-in in the keyring,
-   * and `security` (macOS) or PowerShell (Windows) for a Claude login without `.credentials.json`.
-   */
-  findProgram: typeof findProgram
+  /** Runs `security` (macOS) or PowerShell (Windows) for a login without `.credentials.json`. */
   runProgram: typeof runProgram
   globalRouting: (env: NodeJS.ProcessEnv) => GlobalRoutingState
   /** This kurmis' version, which tells whether the running daemon is older. */
@@ -54,18 +49,18 @@ routing is on. It does not start the daemon, and it exits 0 either way. For exam
 
   kurmis daemon 0.1.0, pid 4242, port 28411, running for 2h 5m
 
-  Global routing is off: only "kurmis claude" and "kurmis codex" go through
-  kurmis. Plain "claude" does not.
+  Global routing is off: only "kurmis claude" goes through kurmis. Plain "claude"
+  does not.
   Run "kurmis setup" to turn on global routing.
 
-  own-example (Claude, id k3v9q2m7xa)           <- alias, provider and id
+  own-example (id k3v9q2m7xa)                   <- alias and id
     the login plain claude uses
     signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
     5 hour       42%  resets in 2h 10m      limit 100%
     7 day        63%  resets in 3d 4h       limit 100%
     usage read 3m ago
 
-  work-example (Claude, id p8x2n4c6ve)  work@example.com
+  work-example (id p8x2n4c6ve)  work@example.com
     signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session
     5 hour       92%  resets in 45m         limit 90%
     7 day         0%  reset since read      limit 100%
@@ -81,9 +76,9 @@ that the token is there without reading it. The README describes every line.
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and
                "source" says whether the logins come from the daemon or from the files. Each
-               login has "alias", "id", "provider", "usedByPlainCli" (whether plain claude
-               or plain codex uses it), "signedIn" (from the daemon) and "credentials"
-               (from the files: true, false or "unknown").
+               login has "alias", "id", "usedByPlainClaude" (whether plain claude uses
+               it), "signedIn" (from the daemon) and "credentials" (from the files: true,
+               false or "unknown").
                "warnings" holds the warnings.
   -h, --help   Show this help.`
 
@@ -94,7 +89,6 @@ export function createStatusCommand(overrides: Partial<StatusDeps> = {}): Comman
     platform: process.platform,
     probeWaitMs: STATUS_PROBE_WAIT_MS,
     home: homedir,
-    findProgram: realFindProgram,
     runProgram,
     globalRouting: globalRoutingState,
     version: kurmisVersion,
@@ -119,8 +113,8 @@ export function nothingProbedYet(status: StatusAnswer): boolean {
 async function runStatus(args: string[], context: CliContext, deps: StatusDeps): Promise<number> {
   const parsed = parseCommandArgs('status', args, { json: { type: 'boolean' } }, context)
   if (typeof parsed === 'number') return parsed
-  // Read before the daemon is looked for, so that the logins of plain claude and plain codex have
-  // their ids in the file whichever way the status is shown. A config that cannot be read is
+  // Read before the daemon is looked for, so that the login plain claude uses has its id in the
+  // file whichever way the status is shown. A config that cannot be read is
   // reported only when the logins are shown from the files.
   let config: KurmisConfig | ConfigError
   try {
@@ -202,14 +196,13 @@ async function reportFromFiles(config: KurmisConfig | ConfigError, daemon: Statu
   const home = deps.home()
   const logins: ReportLogin[] = config.logins.map((login) => {
     const cooldown = state.cooldowns.get(login.id)
-    const claude = login.provider === 'claude' ? readClaudeIdentity(login, home) : null
+    const identity = readClaudeIdentity(login, home)
     let sessions = 0
     for (const placement of state.sessions.values()) if (placement.login === login.id) sessions++
     return {
       id: login.id,
-      provider: login.provider,
       alias: login.alias,
-      usedByPlainCli: login.usedByPlainCli,
+      usedByPlainClaude: login.usedByPlainClaude,
       routing: login.routing,
       fiveHourLimit: login.fiveHourLimit,
       weeklyLimit: login.weeklyLimit,
@@ -219,9 +212,8 @@ async function reportFromFiles(config: KurmisConfig | ConfigError, daemon: Statu
       cooldownUntil: cooldown === undefined ? null : Number.isFinite(cooldown) ? cooldown : 'unknown',
       block: null,
       sessions,
-      // A Codex login's email is known only to a running daemon, from its last usage probe.
-      email: claude?.email ?? null,
-      organizationUuid: claude?.organizationUuid ?? null,
+      email: identity?.email ?? null,
+      organizationUuid: identity?.organizationUuid ?? null,
       probing: false
     }
   })

@@ -1,5 +1,5 @@
-// The environment a Claude or Codex CLI is started with when kurmis runs it on one login for
-// itself: `claude auth login|status|logout`, `codex login|logout`, and the daemon's usage probes.
+// The environment a Claude CLI is started with when kurmis runs it on one login for itself:
+// `claude auth login|status|logout` and the daemon's usage probes.
 // A routed Claude session gets `routedClaudeEnv` in `src/core/routed-env.ts` instead.
 //
 // Each function answers changes to make to an inherited environment: a string sets the
@@ -12,8 +12,7 @@ import { lstatSync, readlinkSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { LoginRef } from './login-id.ts'
-import { isKurmisCodexHome } from '../core/codex-choice.ts'
-import { loginFolder, ownClaudeProbeFolder, providerFolder } from './paths.ts'
+import { loginFolder, ownClaudeProbeFolder } from './paths.ts'
 
 export type EnvPatch = Record<string, string | undefined>
 
@@ -55,7 +54,7 @@ export const FORCE_CREDENTIAL_MANAGER_VARIABLE = 'CLAUDE_CODE_FORCE_WINDOWS_CRED
  */
 export function claudeLoginEnv(login: LoginRef, forceCredentialManager = false): EnvPatch {
   const force: EnvPatch = forceCredentialManager ? { [FORCE_CREDENTIAL_MANAGER_VARIABLE]: '1' } : {}
-  if (login.usedByPlainCli) {
+  if (login.usedByPlainClaude) {
     return { CLAUDE_CONFIG_DIR: undefined, CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
   }
   return { CLAUDE_CONFIG_DIR: loginFolder(login), CLAUDE_SECURESTORAGE_CONFIG_DIR: undefined, ...NOT_INHERITED, ...force }
@@ -73,30 +72,10 @@ export function claudeLoginEnv(login: LoginRef, forceCredentialManager = false):
  * name a hashed Keychain item no login ever wrote (`keychain-service.ts`).
  */
 export function claudeProbeEnv(login: LoginRef): EnvPatch {
-  if (login.usedByPlainCli) {
+  if (login.usedByPlainClaude) {
     return { CLAUDE_CONFIG_DIR: ownClaudeProbeFolder(), CLAUDE_SECURESTORAGE_CONFIG_DIR: '', ...NOT_INHERITED }
   }
   return claudeLoginEnv(login)
-}
-
-/**
- * The environment of `codex login`, `codex logout` and the `codex app-server` usage probe on a
- * login: `CODEX_HOME` set to the login's folder for an extra login. The login plain codex uses keeps the
- * inherited `CODEX_HOME`, unless that is an extra login's home inside kurmis' own folder: a
- * kurmis started from a shell inside a `kurmis codex` session on an extra login inherits it, and
- * would otherwise act on that login. Wrapped Codex sessions on an extra login use the folder
- * `prepareCodexHome` prepares, which is the same one.
- */
-export function codexLoginEnv(login: LoginRef, inherited: Readonly<Record<string, string | undefined>> = {},
-  platform: NodeJS.Platform = process.platform): EnvPatch {
-  if (!login.usedByPlainCli) return { CODEX_HOME: loginFolder(login), ...NOT_INHERITED }
-  const windows = platform === 'win32'
-  const home = windows
-    ? Object.entries(inherited).find(([name]) => name.toUpperCase() === 'CODEX_HOME')?.[1]
-    : inherited['CODEX_HOME']
-  return isKurmisCodexHome(home, providerFolder('codex'), windows)
-    ? { CODEX_HOME: undefined, ...NOT_INHERITED }
-    : { ...NOT_INHERITED }
 }
 
 /**

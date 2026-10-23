@@ -1,27 +1,24 @@
 # Test fakes
 
-Stand-ins for `claude`, `codex` and Anthropic's API, so tests never reach the network, the
-real `~/.claude`, `~/.codex` or the Keychain. Import the helpers from `test/fakes/index.ts`.
+Stand-ins for `claude` and Anthropic's API, so tests never reach the network, the real
+`~/.claude` or the Keychain. Import the helpers from `test/fakes/index.ts`.
 
 - `anthropic.ts`: an in-process HTTP server on `127.0.0.1` standing in for the Messages API.
 - `claude/fake-claude.js` and `claude.ts`: the fake `claude` and its helpers.
-- `codex/fake-codex.js` and `codex.ts`: the fake `codex` and its helpers.
 - `launcher.ts`: writes a launcher so a fake can be found on `PATH` by the real program's name.
 
-The two CLI fakes are plain ESM JavaScript because tests start them as child processes. Node 22,
+The fake claude is plain ESM JavaScript because tests start it as a child process. Node 22,
 kurmis' minimum, cannot run a `.ts` file without a flag, and a launcher or a daemon that starts
-`claude` should not need to know about one. They import every Node global they use other than
+`claude` should not need to know about one. It imports every Node global it uses other than
 `process`, `console`, `Buffer` and `URL`, so eslint's `no-undef` passes with the shared config.
-tsc does not check them.
+tsc does not check it.
 
 ## Starting a fake
 
-Run a fake as `[process.execPath, FAKE_CLAUDE_SCRIPT, ...args]` (or `FAKE_CODEX_SCRIPT`), or put
-it on `PATH`:
+Run the fake as `[process.execPath, FAKE_CLAUDE_SCRIPT, ...args]`, or put it on `PATH`:
 
 ```ts
 const claude = installFakeClaude(binDir) // { path, script, command }
-const codex = installFakeCodex(binDir)
 spawn('claude', ['--version'], { env: { ...env, PATH: `${binDir}${delimiter}${env.PATH}` } })
 ```
 
@@ -31,11 +28,11 @@ runs the tests. On Windows it is `<binDir>\claude.cmd`, which only a test that g
 
 Kurmis does not start the launcher either. While the guard `test/setup.ts` turns on is set
 (`src/platform/system-program-guard.ts`), kurmis refuses every program whose file name is
-`claude` or `codex`, the launcher included, and the test fails. So a test that has kurmis start
-a fake names the fake's script in `KURMIS_CLAUDE_BIN` or `KURMIS_CODEX_BIN` (a `.js` file, which
-kurmis runs through Node, on every OS). The launcher is for tests that start it themselves, and
-for tests of how kurmis finds a program on PATH that do not start it. A real `claude.exe` cannot
-be faked without building a Node single-executable application, which these fakes do not do.
+`claude`, the launcher included, and the test fails. So a test that has kurmis start the fake
+names the fake's script in `KURMIS_CLAUDE_BIN` (a `.js` file, which kurmis runs through Node, on
+every OS). The launcher is for tests that start it themselves, and for tests of how kurmis finds
+a program on PATH that do not start it. A real `claude.exe` cannot be faked without building a
+Node single-executable application, which these fakes do not do.
 
 ## Fake Anthropic API
 
@@ -234,107 +231,3 @@ is replaced with its length.
 
 `runFakeClaude(args, { env, replaceEnv, input, cwd })` runs the fake once and returns
 `{code, signal, stdout, stderr}`.
-
-## Fake codex
-
-`test/fakes/codex/fake-codex.js` is a stand-in for the `codex` command. Tests start it as
-`[process.execPath, FAKE_CODEX_SCRIPT, ...args]`, or put it on `PATH` as `codex` with
-`installFakeCodex(binDir)`; kurmis itself starts it only through `KURMIS_CODEX_BIN` (above). The wire format and the refusal messages were copied from the real
-codex 0.163.0.
-
-It does one of four things, depending on its arguments:
-
-- `codex --version` (or `-V`) prints `codex-cli 0.163.0` and exits 0. `FAKE_CODEX_VERSION`
-  changes the version.
-- `codex login status` writes `Logged in using ChatGPT` (or `Logged in using an API key`) to
-  stderr and exits 0 when it is signed in, and writes `Not logged in` and exits 1 when not, as
-  the real one does.
-- `codex app-server` (any further arguments are ignored) answers requests on stdin and stdout,
-  as described below.
-- Any other command line, for example `codex resume --last`, prints one line that starts with
-  `fake-codex:` and exits with the code in `FAKE_CODEX_EXIT_CODE` (default 0). Use it to check
-  what the wrapper started codex with, through `FAKE_CODEX_RECORD`.
-
-`-c key=value` and `--config key=value` may come before the subcommand and are skipped.
-
-### Which login it is
-
-The fake uses `CODEX_HOME`, or `~/.codex` when it is not set. It reads nothing outside that
-folder, except the stand-in keyring below.
-
-- `writeCodexAuth(codexHome, { email, planType, accountId, userId })` writes `auth.json` in the
-  real file's shape. The email and plan are claims inside `tokens.id_token`, a JWT with no
-  signature, which is where the real CLI reads them. Every value is made up. The defaults are
-  `codex-user@example.com`, `plus`, `fake-account-0001` and `fake-user-0001`.
-- `writeCodexApiKeyAuth(codexHome)` writes an API-key login.
-- With no `auth.json` the fake is signed out.
-- When the home's `config.toml` has a top-level `cli_auth_credentials_store = "keyring"`, the
-  sign-in is read from a stand-in for the system keyring instead: the folder that
-  `FAKE_CODEX_KEYRING_DIR` names, which holds one file per Codex home, named after a hash of the
-  home's path, as the real CLI names its keyring entry. With `"auto"` that file is read when it
-  exists and `auth.json` otherwise. `writeCodexKeyringAuth(keyringDir, codexHome, login)` writes
-  the file. Without `FAKE_CODEX_KEYRING_DIR` the keyring is empty.
-
-### What the app-server answers
-
-Each message is one line of JSON. There is no `jsonrpc` field. An answer is
-`{"id":…,"result":…}`, an error is `{"error":{"code":…,"message":…},"id":…}`, and a
-notification is `{"method":…,"params":…,"emittedAtMs":…}`.
-
-- `initialize` answers `userAgent`, `codexHome`, `platformFamily` and `platformOs`, then sends a
-  `remoteControl/status/changed` notification. A second `initialize` is refused with
-  `-32600 Already initialized`.
-- Any request before `initialize` is refused with `-32600 Not initialized`.
-- `account/read` needs a `params` object, even an empty one. Signed in, it answers
-  `{"account":{"type":"chatgpt","email":…,"planType":…},"requiresOpenaiAuth":true,"workspaceRouting":null}`.
-  Signed out, `account` is `null`. An API-key login answers `{"type":"apiKey"}`.
-- `account/rateLimits/read` answers `rateLimits` (the `codex` bucket), `rateLimitsByLimitId`,
-  `rateLimitResetCredits`, `accountId` (from `auth.json`), `ordinaryUsageAllowed` and
-  `rateLimitUpsell: null`. `resetsAt` is in unix seconds. Signed out, or on an API-key login, it
-  is refused with `-32600 codex account authentication required to read rate limits`.
-- Any other method is refused with
-  ``-32600 Invalid request: unknown variant `<method>`, expected one of …``.
-- When stdin ends, the process exits with code 0 at once, without answering requests that are
-  still waiting.
-
-### Scripting the fake codex
-
-The fake reads `$CODEX_HOME/fake-codex-scenario.json` first. Only when that file is missing does
-it read the file that `FAKE_CODEX_SCENARIO` names. One environment can therefore drive several
-logins: give each login's home its own file, and use `FAKE_CODEX_SCENARIO` for the rest. The file
-is read when the process starts and again for every request, so a test can change it while the
-process runs. A file that is not a JSON object makes the fake exit 2 with a message on stderr.
-
-Write one with `writeCodexScenario(codexHome, scenario)` or
-`writeSharedCodexScenario(path, scenario)`. Every key is optional:
-
-| Key | What it does |
-|---|---|
-| `startupFailure: { exitCode?, stderr? }` | `codex app-server` writes `stderr` as one line and exits with `exitCode` (default 1) before reading anything. |
-| `delayMs` | Waits this many milliseconds before answering each request after `initialize`. |
-| `rateLimitsDelayMs` | Waits this many more milliseconds before answering `account/rateLimits/read`. |
-| `rateLimitsHang: true` | Never answers `account/rateLimits/read`. |
-| `rateLimitsError` | `true` refuses `account/rateLimits/read` with `-32603 failed to fetch codex rate limits: fake-codex scenario error`. `{ code, message }` uses your own code and message. |
-| `primary`, `secondary` | The `codex` bucket's windows: `{ usedPercent, windowDurationMins, resetsAt }`, or `null` for no window. `resetsInSeconds` sets `resetsAt` to that many seconds after the answer. A missing field takes the default: 0 %, 300 minutes for `primary` and 10080 for `secondary`, and a reset one full window from now. |
-| `credits` | `{ hasCredits, unlimited, balance }` or `null`. Default `{ hasCredits: false, unlimited: false, balance: "0" }`. |
-| `planType` | The plan in the rate-limit answer. Default: the plan in `auth.json`. |
-| `accountId` | Default: `tokens.account_id` in `auth.json`. |
-| `rateLimitReachedType` | Default `null`. The real server has been seen to send `null` even at 100 % used. |
-| `ordinaryUsageAllowed` | Default `true`. |
-| `buckets` | More metered limits by limit id, for example `{ "codex_spark": { "limitName": "Spark", "primary": {…}, "secondary": {…} } }`. They are added to `rateLimitsByLimitId`, which always holds `codex` too. `null` makes `rateLimitsByLimitId` null. |
-| `resetCredits` | `rateLimitResetCredits` as given, or a number for that many available credits with made-up ids. Default `{ availableCount: 0, credits: [] }`. |
-
-### What the fake codex records
-
-When `FAKE_CODEX_RECORD` names a file, the fake appends one JSON line to it per event, and writes
-nothing else to disk. Every line has the `pid`. `readCodexRecord(path)` returns the lines in
-order.
-
-- `{"event":"start","mode":"version"|"app-server"|"login-status"|"other","argv":[…],"codexHome":…,"authFile":true|false,"envNames":[…]}`:
-  `codexHome` is `CODEX_HOME` as the process got it, or `null` when it was not set. `authFile`
-  says whether `auth.json` was there. `envNames` lists only the names of the variables that start
-  with `CODEX_`, `OPENAI_`, `KURMIS_`, `ANTHROPIC_` or `CLAUDE_`, never their values.
-- `{"event":"request","method":…,"id":…}` for each request, and
-  `{"event":"notification","method":…}` for each notification such as `initialized`. Parameters
-  are not recorded.
-- `{"event":"exit","reason":"stdinEnded"|"startupFailure","code":…}` when the app-server stops.

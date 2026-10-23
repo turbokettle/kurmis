@@ -1,16 +1,15 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { realPrepareCodexHome, type ChildRunner } from '../../../src/cli/command-deps.ts'
+import type { ChildRunner } from '../../../src/cli/command-deps.ts'
 import { createLoginCommand, freshLoginId, loginTarget, type LoginDeps } from '../../../src/cli/commands/login.ts'
 import type { ChildEnd, ChildSpec } from '../../../src/cli/wrapper.ts'
 import { changeConfig, extraLogins, findLogin, followEmail, loadConfig, type KurmisConfig, type LoginSettings } from '../../../src/data/config.ts'
-import type { LoginRef } from '../../../src/data/login-id.ts'
-import { codexMergedRecordPath, configPath, kurmisHome, loginFolder, loginLockPath, ownClaudeProbeFolder, providerFolder } from '../../../src/data/paths.ts'
+import { configPath, extraLoginsFolder, kurmisHome, loginFolder, loginLockPath, ownClaudeProbeFolder } from '../../../src/data/paths.ts'
 import { findProgram, ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { runProgram, type RunResult } from '../../../src/platform/run.ts'
-import { FAKE_CLAUDE_SCRIPT, FAKE_CODEX_SCRIPT, writeClaudeIdentity, writeCodexAuth, writeCodexKeyringAuth } from '../../fakes/index.ts'
-import { claudeRef, codexRef, OWN_CLAUDE, OWN_CLAUDE_REF, OWN_CODEX, testConfig, writeTestConfig } from '../../logins.ts'
+import { FAKE_CLAUDE_SCRIPT, writeClaudeCredentials, writeClaudeIdentity } from '../../fakes/index.ts'
+import { claudeRef, OWN_CLAUDE, testConfig, writeTestConfig } from '../../logins.ts'
 import { collect, fakeDaemonClient, loginStatus, statusAnswer } from '../helpers.ts'
 
 const home = process.env.HOME!
@@ -21,7 +20,7 @@ interface FakeRunner extends ChildRunner {
 }
 
 /**
- * A child runner that stands in for the provider's CLI: `act` runs with the spec instead of a
+ * A child runner that stands in for `claude auth login`: `act` runs with the spec instead of a
  * program (e.g. writes the login's files) and answers how the "child" ended.
  */
 function fakeRunner(act: (spec: ChildSpec) => ChildEnd): FakeRunner {
@@ -48,14 +47,6 @@ function claudeSignsIn(email = 'second@example.com', organizationUuid?: string |
     const dir = spec.env.CLAUDE_CONFIG_DIR
     writeClaudeIdentity(dir === undefined ? join(home, '.claude.json') : join(dir, '.claude.json'),
       organizationUuid === undefined ? { email } : { email, organizationUuid })
-    return { kind: 'exit', code: 0 }
-  }
-}
-
-/** What a successful `codex login` leaves: `auth.json` in `CODEX_HOME`. */
-function codexSignsIn(email = 'codex-user@example.com'): (spec: ChildSpec) => ChildEnd {
-  return (spec) => {
-    writeCodexAuth(spec.env.CODEX_HOME ?? join(home, '.codex'), { email })
     return { kind: 'exit', code: 0 }
   }
 }
@@ -91,37 +82,25 @@ function fakeRun(result: Partial<RunResult> = {}): { runs: Run[]; runProgram: Lo
   }
 }
 
-/** A `readCodexEmail` that reads the email the fake's `auth.json` holds, as `codex app-server` would answer it. */
-const codexEmailFromAuth: LoginDeps['readCodexEmail'] = async (login, env) => {
-  const codexHome = login.usedByPlainCli ? env.CODEX_HOME ?? join(home, '.codex') : loginFolder(login)
-  try {
-    const auth = JSON.parse(readFileSync(join(codexHome, 'auth.json'), 'utf8')) as { tokens: { id_token: string } }
-    const claims = JSON.parse(Buffer.from(auth.tokens.id_token.split('.')[1]!, 'base64url').toString('utf8')) as { email?: string }
-    return claims.email ?? null
-  } catch {
-    return null
-  }
-}
-
 function command(runner: ChildRunner, patch: Partial<LoginDeps> = {}) {
   const daemon = fakeDaemonClient()
   return {
     daemon,
-    login: createLoginCommand({ daemon, runner, findProgram: fakeProgram, home: () => home, readCodexEmail: codexEmailFromAuth, ...patch })
+    login: createLoginCommand({ daemon, runner, findProgram: fakeProgram, home: () => home, ...patch })
   }
 }
 
-/** The one extra login of `provider` a run added. */
-function added(provider: 'claude' | 'codex', config: KurmisConfig = loadConfig()): LoginSettings {
-  const logins = extraLogins(config, provider)
+/** The one extra login a run added. */
+function added(config: KurmisConfig = loadConfig()): LoginSettings {
+  const logins = extraLogins(config)
   expect(logins).toHaveLength(1)
   return logins[0]!
 }
 
-/** The folders in `claude/` or `codex/` of the data folder. */
-function folders(provider: 'claude' | 'codex'): string[] {
+/** The folders in `claude/` of the data folder. */
+function folders(): string[] {
   try {
-    return readdirSync(providerFolder(provider))
+    return readdirSync(extraLoginsFolder())
   } catch {
     return []
   }
@@ -138,54 +117,56 @@ const routedEnv = {
 beforeEach(() => {
   rmSync(kurmisHome(), { recursive: true, force: true, maxRetries: 10 })
   rmSync(join(home, '.claude.json'), { force: true })
-  rmSync(join(home, '.codex'), { recursive: true, force: true, maxRetries: 10 })
   writeTestConfig()
 })
 
 describe('choosing the login', () => {
-  it('reads the provider form and a login by alias or id', () => {
-    const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }, { id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
-    expect(loginTarget('claude', config)).toEqual({ kind: 'new', provider: 'claude' })
-    expect(loginTarget('codex', config)).toEqual({ kind: 'new', provider: 'codex' })
+  it('asks for a new login without an argument, and reads an existing login by alias or id', () => {
+    const config = testConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
+    expect(loginTarget(undefined, config)).toEqual({ kind: 'new' })
     expect(loginTarget('workclaude', config)).toMatchObject({ kind: 'existing', login: { id: 'workclaude' } })
-    expect(loginTarget('codex:work-example', config)).toMatchObject({ kind: 'existing', login: { id: 'workcodex1' } })
-    expect(loginTarget(OWN_CLAUDE, config)).toMatchObject({ kind: 'existing', login: { id: OWN_CLAUDE, usedByPlainCli: true } })
-    expect(loginTarget('work-example', config)).toEqual({ error: expect.stringContaining('give claude:work-example or codex:work-example') as unknown })
-    expect(loginTarget('none-example', config)).toEqual({ error: expect.stringContaining('there is no login called "none-example"') as unknown })
+    expect(loginTarget('Work-Example', config)).toMatchObject({ kind: 'existing', login: { id: 'workclaude' } })
+    expect(loginTarget(OWN_CLAUDE, config)).toMatchObject({ kind: 'existing', login: { id: OWN_CLAUDE, usedByPlainClaude: true } })
+    expect(loginTarget('none-example', config)).toEqual({ error: 'there is no login called "none-example". "kurmis login" without a ' +
+      'login adds a new one, and "kurmis status" shows the logins there are' })
   })
 
-  it('reads the provider in any case', () => {
-    const config = testConfig()
-    expect(loginTarget('Claude', config)).toEqual({ kind: 'new', provider: 'claude' })
-    expect(loginTarget(' CODEX ', config)).toEqual({ kind: 'new', provider: 'codex' })
-  })
-
-  it('says what is missing when a provider prefix names no login', () => {
-    const config = testConfig()
-    expect(loginTarget('claude:', config)).toEqual({ error: '"claude:" names no login. Put the alias or id of a Claude login ' +
-      'after "claude:", for example claude:work-example, or run "kurmis login claude" to add a new Claude login' })
-    expect(loginTarget('Codex:', config)).toEqual({ error: expect.stringContaining('"kurmis login codex" to add a new Codex login') as unknown })
+  it('reads claude as the name of a login, not as a word that adds one', () => {
+    expect(loginTarget('claude', testConfig())).toEqual({ error: expect.stringContaining('there is no login called "claude"') as unknown })
+    const config = testConfig({ extras: [{ id: 'workclaude', alias: 'claude' }] })
+    expect(loginTarget('claude', config)).toMatchObject({ kind: 'existing', login: { id: 'workclaude' } })
   })
 
   it('makes a new id of 10 letters and digits that no folder has', () => {
-    const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    const config = testConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     for (let index = 0; index < 20; index++) {
       const id = freshLoginId(config)
       expect(id).toMatch(/^[a-z0-9]{10}$/)
-      expect([OWN_CLAUDE, OWN_CODEX, 'workclaude', 'work-example']).not.toContain(id)
-      expect(existsSync(loginFolder(claudeRef(id))) || existsSync(loginFolder(codexRef(id)))).toBe(false)
+      expect([OWN_CLAUDE, 'workclaude', 'work-example']).not.toContain(id)
+      expect(existsSync(loginFolder(claudeRef(id)))).toBe(false)
     }
+  })
+
+  it('does not take an id that a folder in claude/ already has', () => {
+    const config = testConfig()
+    const taken: string[] = []
+    for (let index = 0; index < 5; index++) {
+      const id = freshLoginId(config)
+      mkdirSync(loginFolder(claudeRef(id)), { recursive: true })
+      taken.push(id)
+    }
+    for (let index = 0; index < 20; index++) expect(taken).not.toContain(freshLoginId(config))
   })
 })
 
-describe('kurmis login claude', () => {
+describe('kurmis login without a login', () => {
   it('signs a new login in under a new id, names it after the email and reloads the daemon', async () => {
     const runner = fakeRunner(claudeSignsIn('second.user@example.com'))
     const { daemon, login } = command(runner)
     const out = collect(routedEnv)
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
 
-    const entry = added('claude')
+    const entry = added()
     expect(entry.id).toMatch(/^[a-z0-9]{10}$/)
     expect(entry).toMatchObject({ alias: 'second-user-example', aliasSetByUser: false, routing: true, fiveHourLimit: 100, weeklyLimit: 100 })
     const folder = loginFolder(entry)
@@ -201,9 +182,9 @@ describe('kurmis login claude', () => {
     }
     if (process.platform !== 'win32') expect(statSync(folder).mode & 0o777).toBe(0o700)
 
-    expect(out.stdout()).toContain(`Signing in a new Claude login (id ${entry.id}) with "claude auth login".`)
+    expect(out.stdout()).toContain(`Signing in a new login (id ${entry.id}) with "claude auth login".`)
     expect(out.stdout()).toContain('Signed in as second.user@example.com.')
-    expect(out.stdout()).toContain(`Added second-user-example (id ${entry.id}), a Claude login with Auto routing on and both limits at 100%. ` +
+    expect(out.stdout()).toContain(`Added second-user-example (id ${entry.id}), a login with Auto routing on and both limits at 100%. ` +
       '"kurmis set second-user-example" changes that.')
     expect(out.stdout()).toContain('The running daemon has read the change.')
     // No email is kept in any file kurmis writes.
@@ -222,9 +203,9 @@ describe('kurmis login claude', () => {
     let email = 0
     const runner = fakeRunner((spec) => claudeSignsIn(`user${String(++email)}@example.com`)(spec))
     const { login } = command(runner, { inCredentialManager })
-    expect(await login.run(['claude'], collect(routedEnv).context)).toBe(0)
-    expect(await login.run(['claude'], collect(routedEnv).context)).toBe(0)
-    expect(asked).toEqual(extraLogins(loadConfig(), 'claude').map((entry) => loginFolder(entry)))
+    expect(await login.run([], collect(routedEnv).context)).toBe(0)
+    expect(await login.run([], collect(routedEnv).context)).toBe(0)
+    expect(asked).toEqual(extraLogins(loadConfig()).map((entry) => loginFolder(entry)))
     expect(runner.specs[0]!.env.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBe('1')
     expect(runner.specs[1]!.env.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBeUndefined()
   })
@@ -232,52 +213,42 @@ describe('kurmis login claude', () => {
   it('takes --alias, which an email does not replace later', async () => {
     const { login } = command(fakeRunner(claudeSignsIn('work@example.com')))
     const out = collect()
-    expect(await login.run(['claude', '--alias', 'job'], out.context)).toBe(0)
-    const entry = added('claude')
+    expect(await login.run(['--alias', 'job'], out.context)).toBe(0)
+    const entry = added()
     expect(entry).toMatchObject({ alias: 'job', aliasSetByUser: true })
     expect(out.stdout()).toContain(`Added job (id ${entry.id})`)
     changeConfig((config) => followEmail(config, entry.id, 'other@example.com'))
     expect(findLogin(loadConfig(), entry.id)?.alias).toBe('job')
   })
 
-  it('gives two logins of one email domain their own aliases, and the same alias in Claude and Codex', async () => {
-    const { login } = command(fakeRunner((spec) =>
-      spec.args.includes('auth') ? claudeSignsIn('me@example.com')(spec) : codexSignsIn('me@example.com')(spec)))
-    expect(await login.run(['claude'], collect().context)).toBe(0)
-    expect(await login.run(['codex'], collect().context)).toBe(0)
-    expect(added('claude').alias).toBe('me-example')
-    expect(added('codex').alias).toBe('me-example')
-  })
-
   it.each([
-    [['claude', '--alias', 'Work'], '"Work" is not an alias; an alias is 1 to 32 lowercase letters'],
-    [['claude', '--alias', 'claude'], '"claude" is not an alias'],
-    [['claude', '--alias', 'taken-example'], 'another Claude login is already called "taken-example"'],
-    [['claude', '--alias', OWN_CODEX], `"${OWN_CODEX}" is the id of another login`],
-    [['workclaude', '--alias', 'taken-example'], 'another Claude login is already called "taken-example"']
+    [['--alias', 'Work'], '"Work" is not an alias; an alias is 1 to 32 lowercase letters'],
+    [['--alias', '_work'], '"_work" is not an alias'],
+    [['--alias', 'taken-example'], 'another login is already called "taken-example"'],
+    [['--alias', OWN_CLAUDE], `"${OWN_CLAUDE}" is the id of another login`],
+    [['workclaude', '--alias', 'taken-example'], 'another login is already called "taken-example"']
   ])('refuses the alias in %j before anything signs in', async (args, message) => {
-    writeTestConfig({ extras: [{ id: 'takenclaud', provider: 'claude', alias: 'taken-example' }, { id: 'workclaude', provider: 'claude' }] })
+    writeTestConfig({ extras: [{ id: 'takenclaud', alias: 'taken-example' }, { id: 'workclaude' }] })
     const runner = fakeRunner(claudeSignsIn())
     const { login } = command(runner)
     const out = collect()
     expect(await login.run(args, out.context)).toBe(2)
     expect(out.stderr()).toContain(message)
     expect(runner.specs).toEqual([])
-    expect(folders('claude')).toEqual([])
+    expect(folders()).toEqual([])
   })
 
-  it('takes an alias a login of the other provider has', async () => {
-    writeTestConfig({ extras: [{ id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
+  it.each(['claude'])('takes %s as an alias', async (alias) => {
     const { login } = command(fakeRunner(claudeSignsIn()))
-    expect(await login.run(['claude', '--alias', 'work-example'], collect().context)).toBe(0)
-    expect(added('claude').alias).toBe('work-example')
+    expect(await login.run(['--alias', alias], collect().context)).toBe(0)
+    expect(added()).toMatchObject({ alias, aliasSetByUser: true })
   })
 
   it('does not start the daemon, and says nothing about it when it is not running', async () => {
     const daemon = fakeDaemonClient({ running: false })
     const login = createLoginCommand({ daemon, runner: fakeRunner(claudeSignsIn()), findProgram: fakeProgram, home: () => home })
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
     expect(daemon.calls).toEqual(['findDaemon'])
     expect(out.stdout()).not.toContain('daemon')
   })
@@ -285,8 +256,8 @@ describe('kurmis login claude', () => {
   it('removes the folder it made and adds nothing when the CLI fails', async () => {
     const { login, daemon } = command(fakeRunner(exitWith(1)))
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(1)
-    expect(folders('claude')).toEqual([])
+    expect(await login.run([], out.context)).toBe(1)
+    expect(folders()).toEqual([])
     expect(extraLogins(loadConfig())).toEqual([])
     expect(out.stderr()).toContain('"claude auth login" failed (exit code 1). No login was added.')
     expect(daemon.calls).toEqual([])
@@ -296,9 +267,9 @@ describe('kurmis login claude', () => {
     const runner = fakeRunner(() => ({ kind: 'signal', signal: 'SIGTERM' }))
     const { login } = command(runner)
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(130)
+    expect(await login.run([], out.context)).toBe(130)
     expect(runner.finished).toEqual([{ kind: 'signal', signal: 'SIGTERM' }])
-    expect(folders('claude')).toEqual([])
+    expect(folders()).toEqual([])
     expect(extraLogins(loadConfig())).toEqual([])
   })
 
@@ -306,22 +277,35 @@ describe('kurmis login claude', () => {
     const runner = fakeRunner(() => ({ kind: 'not-started', code: 'ENOENT', message: 'claude could not be started' }))
     const { login } = command(runner)
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(1)
+    expect(await login.run([], out.context)).toBe(1)
     expect(out.stderr()).toContain('claude could not be started')
-    expect(folders('claude')).toEqual([])
+    expect(folders()).toEqual([])
+  })
+
+  it('adds a login whose sign-in left a token but no email, and keeps the id as its alias', async () => {
+    const { login } = command(fakeRunner((spec) => {
+      writeClaudeCredentials(spec.env.CLAUDE_CONFIG_DIR!)
+      return { kind: 'exit', code: 0 }
+    }))
+    const out = collect()
+    expect(await login.run([], out.context)).toBe(0)
+    const entry = added()
+    expect(entry.alias).toBe(entry.id)
+    expect(out.stdout()).toContain('Signed in.\n')
+    expect(out.stdout()).toContain(`Added ${entry.id} (id ${entry.id}), a login with Auto routing on`)
   })
 
   it('adds nothing when the CLI exits 0 without signing in', async () => {
     const { login } = command(fakeRunner(exitWith(0)))
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(1)
+    expect(await login.run([], out.context)).toBe(1)
     expect(out.stderr()).toMatch(/[a-z0-9]{10} has no credentials\. No login was added\./)
-    expect(folders('claude')).toEqual([])
+    expect(folders()).toEqual([])
     expect(extraLogins(loadConfig())).toEqual([])
   })
 
   it('keeps the folder of an existing login whose new sign-in fails', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     mkdirSync(loginFolder(claudeRef('workclaude')), { recursive: true })
     const { login } = command(fakeRunner(exitWith(1)))
     expect(await login.run(['work-example'], collect().context)).toBe(1)
@@ -330,7 +314,7 @@ describe('kurmis login claude', () => {
   })
 
   it('signs an existing login in again, and its automatic alias follows the new email', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude' }] })
     changeConfig((config) => followEmail(config, 'workclaude', 'old@example.com'))
     const runner = fakeRunner(claudeSignsIn('new@example.com'))
     const { login } = command(runner)
@@ -345,14 +329,14 @@ describe('kurmis login claude', () => {
   })
 
   it('signs an existing login in again with --alias, which it keeps', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude' }] })
     const { login } = command(fakeRunner(claudeSignsIn('again@example.com')))
     expect(await login.run(['workclaude', '--alias', 'job'], collect().context)).toBe(0)
     expect(findLogin(loadConfig(), 'workclaude')).toMatchObject({ alias: 'job', aliasSetByUser: true })
   })
 
   it('asks the daemon to probe a login signed in again, and says when it still finds it signed out', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     const daemon = fakeDaemonClient({ probed: statusAnswer([loginStatus(claudeRef('workclaude'), { signedIn: false })]) })
     const { login } = command(fakeRunner(claudeSignsIn('again@example.com')), { daemon })
     const out = collect()
@@ -362,14 +346,14 @@ describe('kurmis login claude', () => {
   })
 
   it('stops waiting for the daemon\'s probe after a while, and ends the probe request', async () => {
-    writeTestConfig({ extras: [{ id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     const daemon = fakeDaemonClient()
     let probeSignal: AbortSignal | undefined
     daemon.requestProbe = (_connection, _logins, signal) => {
       probeSignal = signal
       return new Promise(() => undefined)
     }
-    const { login } = command(fakeRunner(codexSignsIn()), { daemon, probeWaitMs: 20 })
+    const { login } = command(fakeRunner(claudeSignsIn()), { daemon, probeWaitMs: 20 })
     const out = collect()
     expect(await login.run(['work-example'], out.context)).toBe(0)
     expect(out.stdout()).toContain("The daemon's check of work-example did not finish within 0.02 s")
@@ -377,7 +361,7 @@ describe('kurmis login claude', () => {
   })
 
   it('stops at once, starting nothing, while another run holds the login', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     holdLock('workclaude')
     const runner = fakeRunner(claudeSignsIn())
     const { login } = command(runner)
@@ -390,7 +374,7 @@ describe('kurmis login claude', () => {
   })
 
   it('takes over the lock of a run that was killed', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     holdLock('workclaude', DEAD_PID)
     const { login } = command(fakeRunner(claudeSignsIn()))
     expect(await login.run(['work-example'], collect().context)).toBe(0)
@@ -410,20 +394,37 @@ describe('kurmis login claude', () => {
     expect(out.stdout()).toContain(`${OWN_CLAUDE} is now called own-example.`)
     // The probe folder's profile named the account from before.
     expect(existsSync(join(ownClaudeProbeFolder(), '.claude.json'))).toBe(false)
-    expect(folders('claude')).toEqual([])
-    expect(loadConfig().logins.map((entry) => [entry.id, entry.alias])).toEqual([[OWN_CLAUDE, 'own-example'], [OWN_CODEX, OWN_CODEX]])
+    expect(folders()).toEqual([])
+    expect(loadConfig().logins.map((entry) => [entry.id, entry.alias])).toEqual([[OWN_CLAUDE, 'own-example']])
   })
 
   it('gives a usage error for a wrong command line without starting anything', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }, { id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     const runner = fakeRunner(claudeSignsIn())
     const { login } = command(runner)
-    for (const args of [['work-example'], ['none-example'], [], ['claude', 'codex'], ['claude', '--label', 'x'], ['claude', '--name', 'x']]) {
+    for (const args of [['none-example'], ['work-example', 'none-example'], ['--label', 'x'], ['--name', 'x'], ['work-example', '--name', 'x']]) {
       const out = collect()
       expect(await login.run(args, out.context)).toBe(2)
       expect(out.stderr()).toContain('kurmis login:')
     }
     expect(runner.specs).toEqual([])
+  })
+
+  it('reads "kurmis login claude" as the login called claude, which adds nothing when there is none', async () => {
+    const runner = fakeRunner(claudeSignsIn())
+    const { login } = command(runner)
+    const out = collect()
+    expect(await login.run(['claude'], out.context)).toBe(2)
+    expect(out.stderr()).toContain('kurmis login: there is no login called "claude". "kurmis login" without a login adds a new one')
+    expect(runner.specs).toEqual([])
+    expect(folders()).toEqual([])
+
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'claude' }] })
+    const again = collect()
+    expect(await login.run(['claude'], again.context)).toBe(0)
+    expect(runner.specs[0]!.env.CLAUDE_CONFIG_DIR).toBe(loginFolder(claudeRef('workclaude')))
+    expect(again.stdout()).toContain('Signing in claude with "claude auth login".')
+    expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workclaude'])
   })
 
   it('reports a missing claude program and creates nothing', async () => {
@@ -434,71 +435,71 @@ describe('kurmis login claude', () => {
       }
     })
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(1)
+    expect(await login.run([], out.context)).toBe(1)
     expect(out.stderr()).toContain('claude was not found on PATH.')
-    expect(existsSync(providerFolder('claude'))).toBe(false)
+    expect(existsSync(extraLoginsFolder())).toBe(false)
   })
 })
 
 describe('kurmis login of an account that is already a kurmis login', () => {
-  it('signs the new Claude folder out again, deletes it and names the login that account is', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+  it('signs the new folder out again, deletes it and names the login that account is', async () => {
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
     const signOut = fakeRun()
     const { login, daemon } = command(fakeRunner(claudeSignsIn('Work@Example.com')), { runProgram: signOut.runProgram, platform: 'darwin' })
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
 
     expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workclaude'])
-    expect(folders('claude')).toEqual(['workclaude'])
+    expect(folders()).toEqual(['workclaude'])
     expect(signOut.runs).toHaveLength(1)
     const [run] = signOut.runs
     expect(run!.program).toBe('/fake/bin/claude')
     expect(run!.args).toEqual(['--fake', 'auth', 'logout'])
-    expect(run!.env?.CLAUDE_CONFIG_DIR).toMatch(new RegExp(`${providerFolder('claude').replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}.[a-z0-9]{10}$`))
+    expect(run!.env?.CLAUDE_CONFIG_DIR).toMatch(new RegExp(`${extraLoginsFolder().replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}.[a-z0-9]{10}$`))
     expect(run!.env?.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBeUndefined()
-    expect(out.stdout()).toContain('Work@Example.com is already a kurmis Claude login: work-example (id workclaude). ' +
+    expect(out.stdout()).toContain('Work@Example.com is already a kurmis login: work-example (id workclaude). ' +
       'No login was added, and the new sign-in was signed out again.')
     expect(out.stdout()).toContain('"kurmis login work-example" signs work-example in again.')
     expect(daemon.calls).toEqual([])
   })
 
   it('says that --alias was not used', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
     const { login } = command(fakeRunner(claudeSignsIn('work@example.com')), { runProgram: fakeRun().runProgram })
     const out = collect()
-    expect(await login.run(['claude', '--alias', 'job'], out.context)).toBe(0)
+    expect(await login.run(['--alias', 'job'], out.context)).toBe(0)
     expect(out.stderr()).toBe('kurmis login: --alias job was not used, because no login was added. ' +
       '"kurmis set work-example --alias job" gives work-example that alias.\n')
     expect(findLogin(loadConfig(), 'workclaude')?.alias).toBe('work-example')
   })
 
-  it('adds a Claude account once when another run added it after the first check', async () => {
+  it('adds an account once when another run added it after the first check', async () => {
     writeTestConfig()
     const signOut = fakeRun()
     // The second look at the home folder is the check before the config is changed. Another
-    // `kurmis login claude` of the same account saves its login just then.
+    // `kurmis login` of the same account saves its login just then.
     let calls = 0
     const homeWithRace = (): string => {
       calls++
       if (calls === 2) {
-        writeTestConfig({ extras: [{ id: 'raceclaude', provider: 'claude', alias: 'same-example' }] })
+        writeTestConfig({ extras: [{ id: 'raceclaude', alias: 'same-example' }] })
         writeClaudeIdentity(join(loginFolder(claudeRef('raceclaude')), '.claude.json'), { email: 'same@example.com' })
       }
       return home
     }
     const { login } = command(fakeRunner(claudeSignsIn('same@example.com')), { runProgram: signOut.runProgram, home: homeWithRace })
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
     expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['raceclaude'])
-    expect(folders('claude')).toEqual(['raceclaude'])
+    expect(folders()).toEqual(['raceclaude'])
     expect(signOut.runs).toHaveLength(1)
-    expect(out.stdout()).toContain('same@example.com is already a kurmis Claude login: same-example (id raceclaude).')
+    expect(out.stdout()).toContain('same@example.com is already a kurmis login: same-example (id raceclaude).')
   })
 
   it('warns, and signs nothing out, when an existing login is signed in to the account of another login', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }, { id: 'homeclaude', provider: 'claude', alias: 'home-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }, { id: 'homeclaude', alias: 'home-example' }] })
     writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
     const signOut = fakeRun()
     const { login } = command(fakeRunner(claudeSignsIn('work@example.com')), { runProgram: signOut.runProgram })
@@ -509,106 +510,55 @@ describe('kurmis login of an account that is already a kurmis login', () => {
       '"kurmis login home-example" signs home-example in to another account.\n')
     expect(signOut.runs).toEqual([])
     expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workclaude', 'homeclaude'])
-    expect(folders('claude').sort()).toEqual(['homeclaude', 'workclaude'])
-  })
-
-  it('warns when the login plain codex uses is signed in to the account of an extra Codex login', async () => {
-    writeTestConfig({ extras: [{ id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
-    writeCodexAuth(loginFolder(codexRef('workcodex1')), { email: 'work@example.com' })
-    const { login } = command(fakeRunner(codexSignsIn('work@example.com')),
-      { runProgram: fakeRun().runProgram, daemon: fakeDaemonClient({ running: false }) })
-    const out = collect()
-    expect(await login.run([OWN_CODEX], out.context)).toBe(0)
-    expect(out.stderr()).toContain('kurmis login: warning: work@example.com is also the account of work-example (id workcodex1).')
+    expect(folders().sort()).toEqual(['homeclaude', 'workclaude'])
   })
 
   it('finds the login plain claude uses, and signs out with CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1 on Windows', async () => {
     writeClaudeIdentity(join(home, '.claude.json'), { email: 'own@example.com' })
-    writeTestConfig({ ownClaude: { alias: 'own-example' }, extras: [{ id: 'othercodex', provider: 'codex', alias: 'own-example' }] })
+    writeTestConfig({ ownClaude: { alias: 'own-example' } })
     const signOut = fakeRun({ code: 1 })
     const { login } = command(fakeRunner(claudeSignsIn('own@example.com')), { runProgram: signOut.runProgram, platform: 'win32' })
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
     expect(signOut.runs[0]!.env?.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN).toBe('1')
     expect(out.stderr()).toContain('"claude auth logout" did not finish (exit code 1); the new sign-in is deleted anyway.')
     expect(out.stderr()).toContain('may be left; Credential Manager can delete them.')
-    expect(out.stdout()).toContain(`own@example.com is already a kurmis Claude login: own-example, the login plain claude uses (id ${OWN_CLAUDE}).`)
-    // A Codex login has the same alias, so the command names the provider.
-    expect(out.stdout()).toContain('"kurmis login claude:own-example" signs own-example in again.')
-    expect(folders('claude')).toEqual([])
-  })
-
-  it('signs the new Codex home out again and deletes it with its merged record', async () => {
-    writeTestConfig({ extras: [{ id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
-    writeCodexAuth(loginFolder(codexRef('workcodex1')), { email: 'work@example.com' })
-    const signOut = fakeRun()
-    const asked: string[] = []
-    const readCodexEmail: LoginDeps['readCodexEmail'] = async (ref, env) => {
-      asked.push(ref.id)
-      return await codexEmailFromAuth(ref, env)
-    }
-    const { login } = command(fakeRunner(codexSignsIn('work@example.com')),
-      { runProgram: signOut.runProgram, readCodexEmail, daemon: fakeDaemonClient({ running: false }) })
-    const out = collect()
-    expect(await login.run(['codex'], out.context)).toBe(0)
-    expect(signOut.runs.map((run) => run.args)).toEqual([['--fake', 'logout']])
-    const newId = signOut.runs[0]!.env?.CODEX_HOME?.slice(providerFolder('codex').length + 1)
-    expect(newId).toMatch(/^[a-z0-9]{10}$/)
-    expect(folders('codex')).toEqual(['workcodex1'])
-    expect(existsSync(codexMergedRecordPath(codexRef(newId!)))).toBe(false)
-    expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workcodex1'])
-    expect(out.stdout()).toContain('work@example.com is already a kurmis Codex login: work-example (id workcodex1).')
-    // The new login's email, then the others', the login plain claude uses included.
-    expect(asked.sort()).toEqual([newId, OWN_CODEX, 'workcodex1'].sort())
-  })
-
-  it('takes Codex emails a running daemon knows from its status instead of asking Codex', async () => {
-    writeTestConfig({ extras: [{ id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
-    const asked: string[] = []
-    const readCodexEmail: LoginDeps['readCodexEmail'] = async (ref, env) => {
-      asked.push(ref.id)
-      return await codexEmailFromAuth(ref, env)
-    }
-    const daemon = fakeDaemonClient({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(codexRef('workcodex1'), { email: 'work@example.com' })]) })
-    const { login } = command(fakeRunner(codexSignsIn('work@example.com')), { runProgram: fakeRun().runProgram, readCodexEmail, daemon })
-    const out = collect()
-    expect(await login.run(['codex'], out.context)).toBe(0)
-    expect(out.stdout()).toContain('work@example.com is already a kurmis Codex login: work-example (id workcodex1).')
-    expect(asked).not.toContain('workcodex1')
-    expect(daemon.calls).toEqual(['findDaemon', 'readStatus'])
+    expect(out.stdout()).toContain(`own@example.com is already a kurmis login: own-example, the login plain claude uses (id ${OWN_CLAUDE}).`)
+    expect(out.stdout()).toContain('"kurmis login own-example" signs own-example in again.')
+    expect(folders()).toEqual([])
   })
 
   it('adds a second login for the same email in another organization, with the alias ending in -2', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'),
       { email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
     const signOut = fakeRun()
     const { login } = command(fakeRunner(claudeSignsIn('work@example.com', '00000000-0000-4000-8000-00000000c002')),
       { runProgram: signOut.runProgram })
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
     expect(signOut.runs).toEqual([])
-    const second = extraLogins(loadConfig(), 'claude').find((entry) => entry.id !== 'workclaude')
+    const second = extraLogins(loadConfig()).find((entry) => entry.id !== 'workclaude')
     expect(second?.alias).toBe('work-example-2')
     expect(out.stdout()).toContain('work-example has the same email in another organization. That is another subscription, ' +
       'so the two are separate logins.')
   })
 
   it('takes the same email as the same account when one side has no organization recorded', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
     writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com', organizationUuid: null })
     const signOut = fakeRun()
     const { login } = command(fakeRunner(claudeSignsIn('work@example.com', '00000000-0000-4000-8000-00000000c002')),
       { runProgram: signOut.runProgram })
     const out = collect()
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
     expect(signOut.runs).toHaveLength(1)
     expect(extraLogins(loadConfig()).map((entry) => entry.id)).toEqual(['workclaude'])
-    expect(out.stdout()).toContain('work@example.com is already a kurmis Claude login: work-example (id workclaude).')
+    expect(out.stdout()).toContain('work@example.com is already a kurmis login: work-example (id workclaude).')
   })
 
   it('does not warn when an existing login is signed in to the email of another login in another organization', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }, { id: 'homeclaude', provider: 'claude', alias: 'home-example' }] })
+    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }, { id: 'homeclaude', alias: 'home-example' }] })
     writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'),
       { email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
     const { login } = command(fakeRunner(claudeSignsIn('work@example.com', '00000000-0000-4000-8000-00000000c002')),
@@ -616,124 +566,6 @@ describe('kurmis login of an account that is already a kurmis login', () => {
     const out = collect()
     expect(await login.run(['home-example'], out.context)).toBe(0)
     expect(out.stderr()).toBe('')
-  })
-
-  it('adds the login when no other login of its provider has the email', async () => {
-    writeTestConfig({ extras: [{ id: 'workcodex1', provider: 'codex', alias: 'work-example' }] })
-    // The same email on the other provider is another subscription.
-    writeCodexAuth(loginFolder(codexRef('workcodex1')), { email: 'work@example.com' })
-    const signOut = fakeRun()
-    const { login } = command(fakeRunner(claudeSignsIn('work@example.com')), { runProgram: signOut.runProgram })
-    expect(await login.run(['claude'], collect().context)).toBe(0)
-    expect(added('claude').alias).toBe('work-example')
-    expect(signOut.runs).toEqual([])
-  })
-})
-
-describe('kurmis login codex', () => {
-  it('runs codex login with the new folder as CODEX_HOME and adds the login once auth.json is there', async () => {
-    const runner = fakeRunner(codexSignsIn('side@example.com'))
-    const { login } = command(runner)
-    const out = collect({ PATH: '/usr/bin', CODEX_HOME: '/elsewhere' })
-    expect(await login.run(['codex'], out.context)).toBe(0)
-    const entry = added('codex')
-    expect(runner.specs[0]!.args).toEqual(['--fake', 'login'])
-    expect(runner.specs[0]!.env.CODEX_HOME).toBe(loginFolder(entry))
-    expect(entry.alias).toBe('side-example')
-    expect(out.stdout()).toContain('Signed in as side@example.com.')
-  })
-
-  it('keeps the id as the alias while Codex names no email', async () => {
-    const { login } = command(fakeRunner(codexSignsIn()), { readCodexEmail: async () => null })
-    const out = collect()
-    expect(await login.run(['codex'], out.context)).toBe(0)
-    const entry = added('codex')
-    expect(entry.alias).toBe(entry.id)
-    expect(out.stdout()).toContain('Signed in.')
-  })
-
-  it('prepares the new home from the default one before codex login runs in it', async () => {
-    const defaultHome = join(home, '.codex')
-    mkdirSync(defaultHome, { recursive: true })
-    writeFileSync(join(defaultHome, 'config.toml'), 'model = "gpt-test"\n')
-    let configSeen: string | null = null
-    const runner = fakeRunner((spec) => {
-      configSeen = readFileSync(join(spec.env.CODEX_HOME!, 'config.toml'), 'utf8')
-      return codexSignsIn()(spec)
-    })
-    const prepared: LoginRef[] = []
-    const { login } = command(runner, {
-      prepareCodexHome: async (ref, options) => {
-        prepared.push(ref)
-        return await realPrepareCodexHome(ref, options)
-      }
-    })
-    expect(await login.run(['codex'], collect({ PATH: '/usr/bin' }).context)).toBe(0)
-    expect(prepared.map((ref) => ref.id)).toEqual([added('codex').id])
-    expect(configSeen).toContain('model = "gpt-test"')
-  })
-
-  it('removes a new home and adds nothing when it cannot be prepared', async () => {
-    const runner = fakeRunner(exitWith(0))
-    const { login } = command(runner, { prepareCodexHome: async () => { throw new Error('disk full') } })
-    const out = collect({ PATH: '/usr/bin' })
-    expect(await login.run(['codex'], out.context)).toBe(1)
-    expect(out.stderr()).toMatch(/could not prepare the Codex home of [a-z0-9]{10}: disk full\. No login was added\./)
-    expect(runner.specs).toEqual([])
-    expect(folders('codex')).toEqual([])
-    expect(extraLogins(loadConfig())).toEqual([])
-  })
-
-  it('adds nothing when codex login leaves no auth.json', async () => {
-    const { login } = command(fakeRunner(exitWith(0)))
-    expect(await login.run(['codex'], collect().context)).toBe(1)
-    expect(folders('codex')).toEqual([])
-    expect(extraLogins(loadConfig())).toEqual([])
-  })
-
-  it('removes the merged record of a new home when codex login fails', async () => {
-    const defaultHome = join(home, '.codex')
-    mkdirSync(defaultHome, { recursive: true })
-    writeFileSync(join(defaultHome, 'config.toml'), 'model = "gpt-test"\n')
-    const runner = fakeRunner(exitWith(1))
-    const { login } = command(runner)
-    expect(await login.run(['codex'], collect().context)).toBe(1)
-    expect(folders('codex')).toEqual([])
-    expect(existsSync(join(kurmisHome(), 'codex-merged')) ? readdirSync(join(kurmisHome(), 'codex-merged')) : []).toEqual([])
-  })
-
-  it('adds a login whose config.toml keeps the sign-in in the keyring once codex login status says it is signed in', async () => {
-    const defaultHome = join(home, '.codex')
-    mkdirSync(defaultHome, { recursive: true })
-    writeFileSync(join(defaultHome, 'config.toml'), 'cli_auth_credentials_store = "keyring"\n')
-    const keyring = join(home, 'keyring')
-    const env = { PATH: '/usr/bin', HOME: home, KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT, FAKE_CODEX_KEYRING_DIR: keyring }
-    // codex login keeps the sign-in in the keyring and writes no auth.json.
-    const signsIn = fakeRunner((spec) => {
-      writeCodexKeyringAuth(keyring, spec.env.CODEX_HOME!)
-      return { kind: 'exit', code: 0 }
-    })
-    const { login } = command(signsIn, { findProgram, readCodexEmail: async () => null })
-    const out = collect(env)
-    expect(await login.run(['codex'], out.context)).toBe(0)
-    const entry = added('codex')
-    expect(existsSync(join(loginFolder(entry), 'auth.json'))).toBe(false)
-
-    // Without the keyring item it is not signed in, and nothing is added.
-    const { login: second } = command(fakeRunner(exitWith(0)), { findProgram })
-    const failed = collect(env)
-    expect(await second.run(['codex'], failed.context)).toBe(1)
-    expect(failed.stderr()).toMatch(/[a-z0-9]{10} has no credentials/)
-    expect(folders('codex')).toEqual([entry.id])
-  })
-
-  it('signs the login plain codex uses in with CODEX_HOME as inherited', async () => {
-    const codexHome = join(home, 'codex-own')
-    const runner = fakeRunner(codexSignsIn())
-    const { login } = command(runner)
-    expect(await login.run([OWN_CODEX], collect({ CODEX_HOME: codexHome }).context)).toBe(0)
-    expect(runner.specs[0]!.env.CODEX_HOME).toBe(codexHome)
-    rmSync(codexHome, { recursive: true, force: true, maxRetries: 10 })
   })
 })
 
@@ -752,27 +584,27 @@ describe('kurmis login with the fake claude', () => {
   it('signs in through the real program lookup', async () => {
     const login = createLoginCommand({ daemon: fakeDaemonClient({ running: false }), runner: pipedRunner, findProgram, home: () => home })
     const out = collect(env())
-    expect(await login.run(['claude'], out.context)).toBe(0)
+    expect(await login.run([], out.context)).toBe(0)
     expect(out.stdout()).toContain('Signed in as fake@example.com.')
-    const entry = added('claude')
+    const entry = added()
     expect(entry.alias).toBe('fake-example')
     expect(existsSync(join(loginFolder(entry), '.credentials.json'))).toBe(true)
   })
 
   it('signs a duplicate out with the fake and removes its folder', async () => {
     const login = createLoginCommand({ daemon: fakeDaemonClient({ running: false }), runner: pipedRunner, findProgram, runProgram, home: () => home })
-    expect(await login.run(['claude'], collect(env()).context)).toBe(0)
+    expect(await login.run([], collect(env()).context)).toBe(0)
     const out = collect(env())
-    expect(await login.run(['claude'], out.context)).toBe(0)
-    expect(out.stdout()).toContain('fake@example.com is already a kurmis Claude login: fake-example')
-    expect(folders('claude')).toEqual([added('claude').id])
+    expect(await login.run([], out.context)).toBe(0)
+    expect(out.stdout()).toContain('fake@example.com is already a kurmis login: fake-example')
+    expect(folders()).toEqual([added().id])
   })
 
   it('removes the folder when the fake fails', async () => {
     const login = createLoginCommand({ daemon: fakeDaemonClient({ running: false }), runner: pipedRunner, findProgram, home: () => home })
     const out = collect(env({ FAKE_CLAUDE_LOGIN: 'fail' }))
-    expect(await login.run(['claude'], out.context)).toBe(1)
-    expect(folders('claude')).toEqual([])
+    expect(await login.run([], out.context)).toBe(1)
+    expect(folders()).toEqual([])
     expect(extraLogins(loadConfig())).toEqual([])
   })
 })

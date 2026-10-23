@@ -4,8 +4,8 @@
 // The CLI is started on one login's credentials: the pinned one with `--login`, otherwise the
 // one `autoStartLogin` picks from the daemon's status (normally plain claude's login). While the
 // daemon has neither a token nor a probe answer for plain claude's login, as right after it
-// starts, the wrapper first waits up to `START_PROBE_WAIT_MS` for the probes of the Claude logins
-// the daemon knows nothing about (`withFirstProbe`), so the first start after a daemon start
+// starts, the wrapper first waits up to `START_PROBE_WAIT_MS` for the probes of the logins the
+// daemon knows nothing about (`withFirstProbe`), so the first start after a daemon start
 // picks the same login as the later ones. When
 // config.json cannot be read, a CLI without `--login` starts on plain claude's login, with the id
 // the daemon's status gives it, and a warning. The proxy signs each request with the login it
@@ -26,7 +26,7 @@ import {
   withoutRoutedVariables
 } from '../../core/routed-env.ts'
 import { canUseDaemon } from '../../daemon/lifecycle.ts'
-import { ConfigError, loadConfig, plainCliLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
+import { ConfigError, loadConfig, plainClaudeLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
 import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data/login-env.ts'
 import type { LoginId } from '../../data/login-id.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
@@ -49,7 +49,7 @@ import {
   type SettingsStore,
   type UserSettingsArg
 } from '../settings-arg.ts'
-import { loginArgument, plainCliLoginText } from '../login-names.ts'
+import { plainClaudeLoginText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
 import { parseWrapperArgs } from '../wrapper-args.ts'
 
@@ -74,9 +74,9 @@ export interface ClaudeDeps {
 }
 
 /**
- * How long `kurmis claude` on Auto waits for the daemon to probe the Claude logins it knows
- * nothing about yet, when one of them is plain claude's login. A Claude probe starts one
- * short-lived `claude`, and the probes run side by side.
+ * How long `kurmis claude` on Auto waits for the daemon to probe the logins it knows nothing
+ * about yet, when one of them is plain claude's login. A probe starts one short-lived `claude`,
+ * and the probes run side by side.
  */
 export const START_PROBE_WAIT_MS = 15_000
 
@@ -87,10 +87,9 @@ which signs each one with a login that has room, and the command exits with clau
 The daemon is started first when it is not running.
 
 Options:
-  --login <login>   Send every request of the session with one Claude login, even when it
-                    is out of usage. <login> is the login's alias or its id, as
-                    "kurmis status" shows them, for example --login work-example. Only Claude
-                    logins are looked at, so a Codex login with the same alias does not count.
+  --login <login>   Send every request of the session with one login, even when it is out
+                    of usage. <login> is the login's alias or its id, as "kurmis status"
+                    shows them, for example --login work-example.
                     Without --login, each request goes to a login that has room (Auto).
   -h, --help        Show this help.
   --                Pass everything after it to claude unchanged. claude's own arguments
@@ -138,11 +137,11 @@ export const claudeCommand: Command = createClaudeCommand()
 interface StartedOn {
   id: string | null
   alias: string
-  usedByPlainCli: boolean
+  usedByPlainClaude: boolean
 }
 
 async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps): Promise<number> {
-  const parsed = parseWrapperArgs(args, 'claude')
+  const parsed = parseWrapperArgs(args)
   if ('error' in parsed) return usageError('claude', parsed.error, context)
   if (parsed.help) {
     writeLine(context.stdout, USAGE)
@@ -173,14 +172,14 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     if (!(error instanceof ConfigError)) throw error
     // A pinned login cannot be looked up without the config.
     if (parsed.login !== null) return fail(error.message)
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainCliLoginText('claude')}.`)
+    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainClaudeLoginText()}.`)
     config = null
   }
   let pinned: StartedOn | null = null
   if (parsed.login !== null && config !== null) {
-    const resolved = resolveLogin(config, parsed.login, 'claude')
+    const resolved = resolveLogin(config, parsed.login)
     if ('error' in resolved) {
-      return fail(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login claude" adds one.`)
+      return fail(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login" adds one.`)
     }
     pinned = resolved.login
   }
@@ -207,35 +206,33 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
     } catch (error) {
       return fail(daemonUnreachable(error))
     }
-    const ownRow = status.logins.find((login) => login.provider === 'claude' && login.usedByPlainCli)
+    const ownRow = status.logins.find((login) => login.usedByPlainClaude)
     if (config === null) {
       // The daemon's id for the login plain claude uses. Without one, no started-on header is
       // sent, which the daemon reads as that login too.
-      startedOn = ownRow ?? { id: null, alias: plainCliLoginText('claude'), usedByPlainCli: true }
+      startedOn = ownRow ?? { id: null, alias: plainClaudeLoginText(), usedByPlainClaude: true }
     } else {
       status = await withFirstProbe(connection, status, context, deps)
       const startId = autoStartLogin(startableLogins(status))
-      startedOn = status.logins.find((login) => login.id === startId) ?? plainCliLogin(config, 'claude')
-      if (!startedOn.usedByPlainCli) {
-        const own = ownRow ?? plainCliLogin(config, 'claude')
-        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${plainCliLoginText('claude')}, is not signed in, so claude starts on ` +
+      startedOn = status.logins.find((login) => login.id === startId) ?? plainClaudeLogin(config)
+      if (!startedOn.usedByPlainClaude) {
+        const own = ownRow ?? plainClaudeLogin(config)
+        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${plainClaudeLoginText()}, is not signed in, so claude starts on ` +
           `${startedOn.alias}'s credentials; requests are still routed on Auto.`)
       }
     }
   }
 
   let secureStorageDir: string | null = null
-  if (!startedOn.usedByPlainCli && startedOn.id !== null) {
-    secureStorageDir = loginFolder({ id: startedOn.id as LoginId, provider: 'claude', usedByPlainCli: false })
+  if (!startedOn.usedByPlainClaude && startedOn.id !== null) {
+    secureStorageDir = loginFolder({ id: startedOn.id as LoginId, usedByPlainClaude: false })
     if (!deps.folderExists(secureStorageDir)) {
-      const argument = config === null ? startedOn.alias
-        : loginArgument(config, { id: startedOn.id, provider: 'claude', alias: startedOn.alias })
       return fail(`the folder of ${startedOn.alias} is missing (${secureStorageDir}). Sign it in again with ` +
-        `"kurmis login ${argument}".`)
+        `"kurmis login ${startedOn.alias}".`)
     }
   }
 
-  if (startedOn.usedByPlainCli && configDirHasOwnCredentials(context.env, deps.platform)) {
+  if (startedOn.usedByPlainClaude && configDirHasOwnCredentials(context.env, deps.platform)) {
     writeLine(context.stderr, `kurmis claude: ${configDirNote(context.env['CLAUDE_CONFIG_DIR'] ?? '', deps)}`)
   }
 
@@ -277,40 +274,38 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
 /**
  * `status`, or, when the daemon knows nothing yet about whether plain claude's login is signed in
  * (no token read and no probe answer, as right after the daemon starts), the status after the
- * daemon has probed every Claude login it knows nothing about. The wait is at most
+ * daemon has probed every login it knows nothing about. The wait is at most
  * `probeWaitMs`; when it is over or the probe request fails, `status` is used as it is, with a
  * note.
  */
 async function withFirstProbe(connection: DaemonConnection, status: StatusAnswer, context: CliContext,
   deps: ClaudeDeps): Promise<StatusAnswer> {
-  const unknown = status.logins.filter((login) => login.provider === 'claude' && login.signedIn === null)
-  if (!unknown.some((login) => login.usedByPlainCli)) return status
+  const unknown = status.logins.filter((login) => login.signedIn === null)
+  if (!unknown.some((login) => login.usedByPlainClaude)) return status
   const ids = unknown.map((login) => login.id)
   const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, ids, signal), deps.probeWaitMs)
   if (probed.kind === 'done') return probed.value
   writeLine(context.stderr, probed.kind === 'timeout'
     ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1000)} s, so it is not ` +
-      `known yet whether ${plainCliLoginText('claude')} is signed in; claude starts on it.`
+      `known yet whether ${plainClaudeLoginText()} is signed in; claude starts on it.`
     : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ` +
-      `${plainCliLoginText('claude')} is signed in; claude starts on it.`)
+      `${plainClaudeLoginText()} is signed in; claude starts on it.`)
   return status
 }
 
 /**
- * The Claude logins of a status as `autoStartLogin` reads them. A login the daemon has not looked
+ * The logins of a status as `autoStartLogin` reads them. A login the daemon has not looked
  * at yet (`signedIn: null`) counts as signed in only for plain claude's login, which is
  * normally signed in; an extra login that is known to be signed in is better to start on than
  * one that is not known.
  */
 export function startableLogins(status: StatusAnswer): StartableLogin[] {
-  return status.logins
-    .filter((login) => login.provider === 'claude')
-    .map((login) => ({
-      id: login.id,
-      usedByPlainCli: login.usedByPlainCli,
-      loggedIn: login.signedIn ?? login.usedByPlainCli,
-      autoRoute: login.routing
-    }))
+  return status.logins.map((login) => ({
+    id: login.id,
+    usedByPlainClaude: login.usedByPlainClaude,
+    loggedIn: login.signedIn ?? login.usedByPlainClaude,
+    autoRoute: login.routing
+  }))
 }
 
 /**

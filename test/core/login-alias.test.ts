@@ -44,7 +44,7 @@ describe('the automatic alias', () => {
     expect(automaticAlias('@.com', 'workclaude', null, NONE)).toBe('workclaude')
   })
 
-  it('gets -2, -3, ... when another login of the provider has the alias', () => {
+  it('gets -2, -3, ... when another login has the alias', () => {
     expect(automaticAlias('cc1@example.org', 'secondone', null, { aliases: ['cc1-example'], ids: [] })).toBe('cc1-example-2')
     expect(automaticAlias('cc1@example.org', 'thirdone1', null, { aliases: ['cc1-example', 'cc1-example-2'], ids: [] }))
       .toBe('cc1-example-3')
@@ -107,20 +107,19 @@ describe('the automatic alias', () => {
     expect(automaticAlias('abc@.com', 'workclaude', null, { aliases: [], ids: ['abc'] })).toBe('abc-2')
   })
 
-  it('is never "claude" or "codex"', () => {
+  it('may be "claude", like any other word', () => {
     expect(aliasFromEmail('@claude.com')).toBe('claude')
-    expect(automaticAlias('@claude.com', 'workclaude', null, NONE)).toBe('claude-2')
-    expect(automaticAlias('codex@.dev', 'workcodex1', null, NONE)).toBe('codex-2')
-    expect(automaticAlias('@claude.com', 'workclaude', 'claude', NONE)).toBe('claude-2')
+    expect(automaticAlias('@claude.com', 'workclaude', null, NONE)).toBe('claude')
+    expect(automaticAlias('@claude.com', 'workclaude', 'claude', NONE)).toBe('claude')
   })
 })
 
 describe('an alias the person sets', () => {
-  it.each(['work', 'a', 'a'.repeat(32), 'work_2', 'side-codex', '0', 'claude2', 'my-codex'])('%j may be an alias', (text) => {
+  it.each(['work', 'a', 'a'.repeat(32), 'work_2', 'side-work', '0', 'claude2', 'my-work', 'claude'])('%j may be an alias', (text) => {
     expect(isAliasText(text)).toBe(true)
   })
 
-  it.each(['', 'a'.repeat(33), 'Work', 'claude', 'codex', 'claude:work', 'a b', 'a.b', 'á', 'a/b', '-x', '_x'])('%j may not', (text) => {
+  it.each(['', 'a'.repeat(33), 'Work', 'claude:work', 'a b', 'a.b', 'á', 'a/b', '-x', '_x'])('%j may not', (text) => {
     expect(isAliasText(text)).toBe(false)
   })
 })

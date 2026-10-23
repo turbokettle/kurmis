@@ -2,18 +2,17 @@
 // processes, against the fakes. Each test makes a `World`: a temporary folder with its own HOME
 // (= USERPROFILE), KURMIS_HOME, fake Keychain, fake launchctl and fake registry folders, a free
 // port in `config.json`, and its own fake Anthropic API. The world's `config.json` holds the
-// logins of plain claude and plain codex with the fixed ids `OWN_CLAUDE` and `OWN_CODEX` of `test/logins.ts`,
-// unless the test asks for a file without logins (`WorldOptions.ownLogins`).
+// login of plain claude with the fixed id `OWN_CLAUDE` of `test/logins.ts`, unless the test asks
+// for a file without logins (`WorldOptions.ownLogins`).
 //
 // What a child process gets is built here from nothing, not from `process.env`: only PATH (a
 // folder with `node` in it, then the system folders), TMPDIR, TZ, the folders above, and the
 // stand-in programs `test/setup.ts` names (`KURMIS_SECURITY_PROGRAM`, `KURMIS_LAUNCHCTL_PROGRAM`,
 // `KURMIS_REG_PROGRAM`, `KURMIS_POWERSHELL_PROGRAM`, `KURMIS_TASKKILL_PROGRAM`,
 // `KURMIS_WSCRIPT_PROGRAM`), and the file the guard records refusals in
-// (`KURMIS_REFUSED_PROGRAMS_LOG`). `KURMIS_CLAUDE_BIN` and `KURMIS_CODEX_BIN` name the fake
-// claude and codex, so neither kurmis nor the daemon it starts ever looks for the real ones on PATH. No
-// `SSH_*`, `ANTHROPIC_*`, `CLAUDE_*` or `CODEX_HOME` variable reaches a child unless a test
-// passes one.
+// (`KURMIS_REFUSED_PROGRAMS_LOG`). `KURMIS_CLAUDE_BIN` names the fake claude, so neither kurmis
+// nor the daemon it starts ever looks for the real one on PATH. No `SSH_*`, `ANTHROPIC_*` or
+// `CLAUDE_*` variable reaches a child unless a test passes one.
 //
 // When the test ends, the world's kurmis commands that still run are killed, and every daemon
 // they started is stopped (`kurmis daemon stop`). After that, a daemon that still runs is killed
@@ -31,29 +30,23 @@ import { freePort, waitUntil } from '../daemon/helpers.ts'
 import { OwnDaemons } from '../daemon/own-daemons.ts'
 import {
   FAKE_CLAUDE_SCRIPT,
-  FAKE_CODEX_SCRIPT,
   fakeToken,
   readClaudeCredentials,
-  readCodexRecord,
   readFakeClaudeRecord,
   startFakeAnthropic,
   writeClaudeCredentials,
-  writeCodexAuth,
   type ClaudeCredentials,
   type FakeAnthropic,
-  type FakeClaudeRecord,
-  type FakeCodexLogin,
-  type FakeCodexRecord
+  type FakeClaudeRecord
 } from '../fakes/index.ts'
-import { OWN_CLAUDE, OWN_CODEX, testConfig, type TestConfigOptions } from '../logins.ts'
+import { OWN_CLAUDE, testConfig, type TestConfigOptions } from '../logins.ts'
 
-export { OWN_CLAUDE, OWN_CODEX, waitUntil }
+export { OWN_CLAUDE, waitUntil }
 
 /** A login as `config.json` holds it. */
 export interface ConfigLogin {
   id: string
-  provider: 'claude' | 'codex'
-  usedByPlainCli: boolean
+  usedByPlainClaude: boolean
   alias: string
   aliasSetByUser: boolean
   routing: boolean
@@ -62,13 +55,13 @@ export interface ConfigLogin {
   useFirst: boolean
 }
 
-/** A login that `addClaudeLogin` or `addCodexLogin` added. */
+/** A login that `addClaudeLogin` added. */
 export interface AddedLogin {
   id: string
   alias: string
-  /** The login's folder in the data folder: `claude/<id>` or `codex/<id>`. */
+  /** The login's folder in the data folder: `claude/<id>`. */
   folder: string
-  /** The access token the fake claude wrote; empty for a Codex login. */
+  /** The access token the fake claude wrote. */
   token: string
   stdout: string
 }
@@ -105,13 +98,13 @@ export interface WorldOptions {
   /** The version the bundle reports. Default: the version in package.json. */
   version?: string
   /**
-   * The logins `config.json` starts with: those of plain claude and plain codex at `OWN_CLAUDE` and `OWN_CODEX`
-   * and these extras and settings (`testConfig`). The port is always the world's.
+   * The logins `config.json` starts with: the login of plain claude at `OWN_CLAUDE`, and these
+   * extras and settings (`testConfig`). The port is always the world's.
    */
   config?: TestConfigOptions
   /**
    * False: `config.json` holds only its version and the port, so the first kurmis command gives
-   * the logins of plain claude and plain codex new random ids. Default true.
+   * the login of plain claude a new random id. Default true.
    */
   ownLogins?: boolean
 }
@@ -129,9 +122,8 @@ export interface World {
   bundle: string
   /** The environment every child gets, before `RunOptions.env`. */
   env: Record<string, string>
-  /** `FAKE_CLAUDE_RECORD` and `FAKE_CODEX_RECORD`. */
+  /** `FAKE_CLAUDE_RECORD`. */
   claudeRecordFile: string
-  codexRecordFile: string
   fakeKeychainDir: string
   fakeLaunchctlDir: string
   fakeRegDir: string
@@ -143,30 +135,18 @@ export interface World {
    */
   signInDefaultClaude(options?: Partial<ClaudeCredentials>): ClaudeCredentials
   /**
-   * Adds an extra Claude login through `kurmis login claude`, the fake claude signing in to
-   * `email`, and fails the test when it does not add one.
+   * Adds an extra login through `kurmis login`, the fake claude signing in to `email`, and fails
+   * the test when it does not add one.
    */
   addClaudeLogin(email: string, options?: { alias?: string }): Promise<AddedLogin>
-  /**
-   * Adds an extra Codex login through `kurmis login codex`. The fake codex's `login` writes no
-   * sign-in, so this runs it through `codexSignInScript`, which writes an `auth.json` for
-   * `login` into the new login's home first.
-   */
-  addCodexLogin(login: FakeCodexLogin & { email: string }, options?: { alias?: string }): Promise<AddedLogin>
-  /**
-   * A script for `KURMIS_CODEX_BIN` that runs the fake codex, and on `codex login` first copies
-   * the file `TEST_CODEX_SIGN_IN` names to `$CODEX_HOME/auth.json`.
-   */
-  codexSignInScript: string
-  /** The folder of an extra login in the data folder: `claude/<id>` or `codex/<id>`. */
-  loginFolder(provider: 'claude' | 'codex', id: string): string
+  /** The folder of an extra login in the data folder: `claude/<id>`. */
+  loginFolder(id: string): string
   readConfig(): { version: number; port: number; logins: ConfigLogin[] } & Record<string, unknown>
   /** The login of config.json with this id; fails the test when there is none. */
   configLogin(id: string): ConfigLogin
   /** `daemon.json`, or null when there is none. */
   daemonInfo(): DaemonInfo | null
   claudeRecord(): FakeClaudeRecord[]
-  codexRecord(): FakeCodexRecord[]
   /** `kurmis status --json`, parsed; fails the test when it does not exit 0. */
   status(): Promise<StatusJson>
   /** Stops every daemon of this world and removes its folder. Called after each test. */
@@ -176,14 +156,13 @@ export interface World {
 /** The parts of `kurmis status --json` the tests read. */
 export interface StatusJson {
   format: number
-  daemon: null | { version: string; pid: number; port: number; startedAt: string; older: boolean }
+  daemon: null | { version: string; pid: number; port: number; startedAt: string; older: boolean; newer: boolean }
   source: 'daemon' | 'files'
   globalRouting: 'on' | 'paused' | 'off'
   logins: Array<{
     id: string
     alias: string
-    provider: string
-    usedByPlainCli: boolean
+    usedByPlainClaude: boolean
     email: string | null
     signedIn: boolean | null
     credentials: boolean | null
@@ -200,9 +179,8 @@ export interface StatusJson {
       windows: Array<{ key: string; label: string; durationMinutes: number | null; utilization: number; resetsAt: string | null; plan: boolean; limitPercent: number | null }>
     }
     blocked: null | { kind: string; text: string; until: string | null }
-    sessions: number | null
+    sessions: number
   }>
-  codexStart: null | { login: string; alias: string; note: string | null }
   warnings: string[]
 }
 
@@ -250,27 +228,11 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     ? { version: CONFIG_VERSION, port }
     : testConfig({ ...options.config, port })
   writeFileSync(join(data, 'config.json'), JSON.stringify(config))
-  const codexSignInScript = join(root, 'codex-with-sign-in.mjs')
-  writeFileSync(codexSignInScript, [
-    "import { spawnSync } from 'node:child_process'",
-    "import { copyFileSync } from 'node:fs'",
-    "import { join } from 'node:path'",
-    "import process from 'node:process'",
-    'const args = process.argv.slice(2)',
-    'const signIn = process.env.TEST_CODEX_SIGN_IN',
-    "if (signIn && process.env.CODEX_HOME && args[0] === 'login' && args[1] !== 'status') {",
-    "  copyFileSync(signIn, join(process.env.CODEX_HOME, 'auth.json'))",
-    '}',
-    `const run = spawnSync(process.execPath, [${JSON.stringify(FAKE_CODEX_SCRIPT)}, ...args], { stdio: 'inherit' })`,
-    'process.exit(run.status ?? 1)',
-    ''
-  ].join('\n'))
   const [api, bundle] = await Promise.all([
     startFakeAnthropic(),
     buildTestBundle({ version: options.version ?? PACKAGE_VERSION, entry: 'real' })
   ])
   const claudeRecordFile = join(root, 'fake-claude.jsonl')
-  const codexRecordFile = join(root, 'fake-codex.jsonl')
   const env: Record<string, string> = {
     PATH: childPath(root),
     HOME: home,
@@ -280,7 +242,6 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     // The fake claude prints a reset in the local zone; a fixed one makes it predictable.
     TZ: 'UTC',
     KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT,
-    KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT,
     KURMIS_UPSTREAM_URL: api.url,
     KURMIS_SECURITY_PROGRAM: standIn('KURMIS_SECURITY_PROGRAM'),
     FAKE_SECURITY_DIR: fakeKeychainDir,
@@ -295,7 +256,6 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     KURMIS_WSCRIPT_PROGRAM: standIn('KURMIS_WSCRIPT_PROGRAM'),
     KURMIS_REFUSED_PROGRAMS_LOG: process.env.KURMIS_REFUSED_PROGRAMS_LOG ?? '',
     FAKE_CLAUDE_RECORD: claudeRecordFile,
-    FAKE_CODEX_RECORD: codexRecordFile,
     KURMIS_REFUSE_SYSTEM_PROGRAMS: '1'
   }
   if (process.platform === 'win32' && process.env.SystemRoot !== undefined) env.SystemRoot = process.env.SystemRoot
@@ -350,21 +310,21 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     })
   }
 
-  const loginFolderOf = (provider: 'claude' | 'codex', id: string): string => join(data, provider, id)
+  const loginFolderOf = (id: string): string => join(data, 'claude', id)
   const readConfig = (): ReturnType<World['readConfig']> =>
     JSON.parse(readFileSync(join(data, 'config.json'), 'utf8')) as ReturnType<World['readConfig']>
 
-  /** Runs `kurmis login <provider>` and answers the login it added, which is the one config.json did not have before. */
-  const addLogin = async (provider: 'claude' | 'codex', alias: string | undefined, runEnv: Record<string, string>): Promise<AddedLogin> => {
+  /** Runs `kurmis login` and answers the login it added, which is the one config.json did not have before. */
+  const addClaudeLogin = async (email: string, loginOptions: { alias?: string } = {}): Promise<AddedLogin> => {
     const before = new Set(readConfig().logins.map((login) => login.id))
-    const args = ['login', provider, ...(alias === undefined ? [] : ['--alias', alias])]
-    const result = await run(args, { env: runEnv })
+    const args = ['login', ...(loginOptions.alias === undefined ? [] : ['--alias', loginOptions.alias])]
+    const result = await run(args, { env: { FAKE_CLAUDE_EMAIL: email } })
     const added = readConfig().logins.filter((login) => !before.has(login.id))
     if (result.code !== 0 || added.length !== 1) throw new Error(`kurmis ${args.join(' ')} added no login: ${JSON.stringify(result)}`)
     const login = added[0]!
-    const folder = loginFolderOf(provider, login.id)
-    const token = provider === 'claude' ? readClaudeCredentials(folder)?.accessToken : ''
-    if (token === undefined) throw new Error(`the new Claude login ${login.id} has no token after kurmis login`)
+    const folder = loginFolderOf(login.id)
+    const token = readClaudeCredentials(folder)?.accessToken
+    if (token === undefined) throw new Error(`the new login ${login.id} has no token after kurmis login`)
     return { id: login.id, alias: login.alias, folder, token, stdout: result.stdout }
   }
 
@@ -379,7 +339,6 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     bundle,
     env,
     claudeRecordFile,
-    codexRecordFile,
     fakeKeychainDir,
     fakeLaunchctlDir,
     fakeRegDir,
@@ -387,13 +346,7 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     signInDefaultClaude(credentials = {}) {
       return writeClaudeCredentials(join(home, '.claude'), { accessToken: fakeToken('default'), ...credentials })
     },
-    addClaudeLogin: (email, loginOptions = {}) => addLogin('claude', loginOptions.alias, { FAKE_CLAUDE_EMAIL: email }),
-    async addCodexLogin(login, loginOptions = {}) {
-      const signIn = mkdtempSync(join(root, 'codex-sign-in-'))
-      const file = writeCodexAuth(signIn, login)
-      return await addLogin('codex', loginOptions.alias, { KURMIS_CODEX_BIN: codexSignInScript, TEST_CODEX_SIGN_IN: file })
-    },
-    codexSignInScript,
+    addClaudeLogin,
     loginFolder: loginFolderOf,
     readConfig,
     configLogin(id) {
@@ -403,7 +356,6 @@ export async function createWorld(options: WorldOptions = {}): Promise<World> {
     },
     daemonInfo: readDaemonInfo,
     claudeRecord: () => readFakeClaudeRecord(claudeRecordFile),
-    codexRecord: () => readCodexRecord(codexRecordFile),
     async status() {
       const result = await run(['status', '--json'])
       if (result.code !== 0) throw new Error(`kurmis status --json failed: ${JSON.stringify(result)}`)

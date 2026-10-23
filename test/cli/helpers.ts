@@ -7,7 +7,7 @@ import type { DaemonConnection } from '../../src/cli/daemon-client.ts'
 import { DaemonError, DaemonNotUsableError } from '../../src/cli/daemon-client.ts'
 import { daemonReport, type StatusReport } from '../../src/cli/status-format.ts'
 import type { LoginRef } from '../../src/data/login-id.ts'
-import { OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
+import { OWN_CLAUDE_REF } from '../logins.ts'
 
 export interface Collected {
   context: CliContext
@@ -39,9 +39,8 @@ export const FAKE_CONNECTION: DaemonConnection = { port: 40123, key: 'a'.repeat(
 export function loginStatus(login: LoginRef & { alias?: string }, patch: Partial<LoginStatus> = {}): LoginStatus {
   return {
     id: login.id,
-    provider: login.provider,
     alias: login.alias ?? login.id,
-    usedByPlainCli: login.usedByPlainCli,
+    usedByPlainClaude: login.usedByPlainClaude,
     routing: true,
     fiveHourLimit: 100,
     weeklyLimit: 100,
@@ -105,7 +104,7 @@ export interface FakeDaemonOptions {
 /** A daemon client that answers from memory and records what it was asked. */
 export function fakeDaemonClient(options: FakeDaemonOptions = {}): FakeDaemonClient {
   const calls: string[] = []
-  const status = options.status ?? statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(OWN_CODEX_REF)])
+  const status = options.status ?? statusAnswer([loginStatus(OWN_CLAUDE_REF)])
   return {
     calls,
     async findDaemon() {

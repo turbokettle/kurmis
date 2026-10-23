@@ -108,7 +108,7 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
     program = findProgram('claude', { env: options.env })
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
-      return probeFailure(null, 'missing', programMissingText('claude'))
+      return probeFailure(null, 'missing', programMissingText())
     }
     return probeFailure(null, 'other', 'The claude program could not be looked up.')
   }
@@ -117,7 +117,7 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
   const cwd = probeWorkFolder()
   try {
     makePrivateDirSync(cwd)
-    if (login.usedByPlainCli) makePrivateDirSync(ownClaudeProbeFolder())
+    if (login.usedByPlainClaude) makePrivateDirSync(ownClaudeProbeFolder())
   } catch {
     return probeFailure(null, 'other', 'The usage probe could not create its folder in the kurmis data folder.')
   }
@@ -157,12 +157,12 @@ async function converse(
   }
 
   const init = await ask('kurmis_1', { subtype: 'initialize' })
-  if (init.kind === 'ended') return failureForExit('claude', init.exit, timeoutMs, null)
+  if (init.kind === 'ended') return failureForExit(init.exit, timeoutMs, null)
   if (!init.value.ok) return probeFailure(null, 'upstream_error', 'claude answered the start of the usage probe with an error.')
   const planAtStart = initializePlan(init.value.response)
 
   const usage = await ask('kurmis_2', { subtype: 'get_usage', skip_behaviors: true })
-  if (usage.kind === 'ended') return failureForExit('claude', usage.exit, timeoutMs, planAtStart)
+  if (usage.kind === 'ended') return failureForExit(usage.exit, timeoutMs, planAtStart)
   if (!usage.value.ok) return probeFailure(planAtStart, 'upstream_error', 'Claude answered the usage request with an error.')
 
   const answer = usage.value.response

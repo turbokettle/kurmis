@@ -3,7 +3,7 @@
 // lists, and keeps the per-request bookkeeping:
 //
 // 1. The key (`routeKeyMatches`), then the `x-kurmis-login` / `x-kurmis-started-on` headers,
-//    which carry login ids; `x-kurmis-login` must name a Claude login in the config. The body is
+//    which carry login ids; `x-kurmis-login` must name a login in the config. The body is
 //    read whole, because a request may be sent more than once (a replay); a body over
 //    `MAX_REQUEST_BODY_BYTES` is answered 413 (`refuseTooLarge`).
 // 2. A login is chosen (`pick`): stale usage readings are probed first (`staleUsageLogins`, at
@@ -142,7 +142,7 @@ export function createProxy(options: ProxyOptions): Proxy {
   }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const info = readRouteRequest((name) => headerValue(req, name), table.ownLogin('claude').id)
+    const info = readRouteRequest((name) => headerValue(req, name), table.plainClaudeLogin().id)
     if (!routeKeyMatches(info.key, options.key)) {
       log.write('proxy_rejected', { reason: 'bad_secret', method: methodOf(req.method) })
       req.resume()
@@ -179,19 +179,19 @@ export function createProxy(options: ProxyOptions): Proxy {
 
   /**
    * Why the request's kurmis headers are refused, or null. A header that is not a login id is
-   * refused, and so is an `x-kurmis-login` that names no Claude login in the config (a Codex
-   * login, or an id the config does not have). `x-kurmis-started-on` is only checked to be an id:
-   * a login it names that is not a Claude login here never matches a login the proxy signs for.
+   * refused, and so is an `x-kurmis-login` that names an id the config does not have.
+   * `x-kurmis-started-on` is only checked to be an id: an id that is not in the config here never
+   * matches a login the proxy signs for.
    */
   function headerProblem(info: RouteRequest): string | null {
     if (info.login === 'invalid') return 'The x-kurmis-login header is not a login id.'
     if (info.startedOn === 'invalid') return 'The x-kurmis-started-on header is neither a login id nor "none".'
     if (info.login === null) return null
     table.checkConfig()
-    return table.find(info.login)?.provider === 'claude' ? null : 'The x-kurmis-login header does not name a Claude login.'
+    return table.find(info.login) === undefined ? 'The x-kurmis-login header does not name a login.' : null
   }
 
-  /** The account uuid of a Claude login's profile, for `metadata.user_id`, or null when none is known. */
+  /** The account uuid of a login's profile, for `metadata.user_id`, or null when none is known. */
   function accountUuidOf(id: string): string | null {
     const login = table.find(id)
     return login === undefined ? null : identity.read(login)?.accountUuid ?? null
@@ -214,7 +214,7 @@ export function createProxy(options: ProxyOptions): Proxy {
     }
     table.checkConfig()
     /** Plain claude's login, which an Auto session starts from (`effectivePin`). */
-    const ownClaude = table.ownLogin('claude').id
+    const ownClaude = table.plainClaudeLogin().id
     const sessionKey = info.sessionId !== null && isSessionId(info.sessionId) ? info.sessionId : NO_SESSION_KEY
     /**
      * The login the session was sent back to after a 400 (`replayDecision`'s `pin-back`) and is
@@ -287,7 +287,7 @@ export function createProxy(options: ProxyOptions): Proxy {
 
     const pick = async (): Promise<RouteAccount | null> => {
       for (;;) {
-        await abortable(tokens.prime(table.claudeLogins().map((login) => login.id)), signal)
+        await abortable(tokens.prime(table.logins().map((login) => login.id)), signal)
         const rows = rowsNow()
         // A login probed for a stale reading in the last minute, by this request or another
         // one, is not probed again: a probe that keeps failing would otherwise run every time.

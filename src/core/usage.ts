@@ -26,7 +26,6 @@ import {
 export function emptyAccountUsage(accountId: string, now: number): AccountUsage {
   return {
     accountId,
-    provider: 'claude',
     fetchedAt: now,
     source: 'probe',
     subscriptionType: null,

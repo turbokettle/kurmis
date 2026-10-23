@@ -88,7 +88,7 @@ describe('the kurmis daemon, end to end', () => {
     const status = await world.kurmis(['daemon', 'status'])
     expect(status.code).toBe(0)
     expect(status.stdout).toMatch(new RegExp(`^The kurmis daemon ${escaped(PACKAGE_VERSION)} runs on 127\\.0\\.0\\.1:${port}, ` +
-      `pid ${String(pid)}, since \\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z, with 2 logins\\.\\n$`))
+      `pid ${String(pid)}, since \\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z, with 1 login\\.\\n$`))
 
     const answer = gate()
     world.api.script(reply.ok({ text: 'Answered while the daemon stops', hold: answer.promise }))
@@ -150,7 +150,7 @@ describe('the kurmis daemon, end to end', () => {
     expect(status.code).toBe(0)
     expect(status.stdout).toContain(`The kurmis daemon ${OLDER_VERSION} runs on`)
     expect(status.stdout).toContain(`this kurmis is ${PACKAGE_VERSION} with control API version ${String(CONTROL_API_VERSION)}. The daemon is ` +
-      'older, so the next "kurmis claude", "kurmis codex", "kurmis setup" or "kurmis daemon start" replaces it.')
+      'older, so the next "kurmis claude", "kurmis setup" or "kurmis daemon start" replaces it.')
     // `daemon status` only looks.
     expect(daemonOf(world).pid).toBe(old.pid)
 
@@ -247,7 +247,7 @@ describe('the kurmis daemon, end to end', () => {
     expect((await world.kurmis(['set', 'work-example', '--use-first', 'on'])).code).toBe(0)
     expect(await ask(SESSION_A)).toBe('served by work')
     expect((await world.kurmis(['set', 'work-example', '--use-first', 'off'])).code).toBe(0)
-    await waitUntil(async () => (await world.status()).logins.every((login) => login.provider !== 'claude' || login.usage !== null),
+    await waitUntil(async () => (await world.status()).logins.every((login) => login.usage !== null),
       GENEROUS_MS, 'both Claude logins to be probed')
     expect((await world.kurmis(['daemon', 'restart'])).code).toBe(0)
 

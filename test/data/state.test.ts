@@ -20,7 +20,6 @@ const WORK = toLoginId('workclaude')
 function usage(accountId: string, patch: Partial<AccountUsage> = {}): AccountUsage {
   return {
     accountId,
-    provider: 'claude',
     fetchedAt: NOW - 1000,
     source: 'probe',
     subscriptionType: 'max',
@@ -91,7 +90,7 @@ describe('parseState', () => {
           'workclaude': usage('workclaude'),
           'otherlogin': usage('workclaude'),
           '../x': usage('../x'),
-          'sidecodex1': { ...usage('sidecodex1'), fiveHour: { utilization: 'high' } },
+          'sidelogin1': { ...usage('sidelogin1'), fiveHour: { utilization: 'high' } },
           'latelogin': { ...usage('latelogin'), fetchedAt: 'yesterday' }
         },
         cooldowns: { 'workclaude': NOW + 5, 'badlogin': 'soon', 'not-an-id': NOW + 5, 'claude:old': NOW + 5 },

@@ -1,5 +1,5 @@
-// How `kurmis claude …` and `kurmis codex …` split their arguments into kurmis' own options
-// and the arguments passed on to the CLI.
+// How `kurmis claude …` splits its arguments into kurmis' own options and the arguments passed
+// on to the CLI.
 //
 // Kurmis' options come first. Everything after `--` goes to the CLI unchanged, and anything else
 // before `--` is an error, so there is a single rule to remember.
@@ -11,27 +11,23 @@
 //   kurmis claude -p "hi"                           -> error: claude's arguments go after --
 //
 // The text given to `--login` is returned as it was typed. The command looks it up in
-// config.json (`resolveLogin`), among its own provider's logins only.
+// config.json (`resolveLogin`).
 import { isHelpFlag } from './command.ts'
 
 export interface WrapperArgs {
   /** `--help` or `-h` came before `--`. */
   help: boolean
-  /**
-   * What `--login` was given: an alias, an id, or either with `claude:` or `codex:` in front.
-   * Null for Auto (Claude) or the ranked pick (Codex).
-   */
+  /** What `--login` was given: an alias or an id. Null for Auto. */
   login: string | null
   /** The arguments for the CLI, unchanged. */
   passThrough: string[]
 }
 
 /**
- * Parses the arguments of `kurmis claude` or `kurmis codex`. Returns the parsed arguments, or
- * an error message for a missing, empty or repeated `--login` or an argument before `--` that
- * kurmis does not know.
+ * Parses the arguments of `kurmis claude`. Returns the parsed arguments, or an error message for
+ * a missing, empty or repeated `--login` or an argument before `--` that kurmis does not know.
  */
-export function parseWrapperArgs(args: readonly string[], cli: 'claude' | 'codex'): WrapperArgs | { error: string } {
+export function parseWrapperArgs(args: readonly string[]): WrapperArgs | { error: string } {
   const result: WrapperArgs = { help: false, login: null, passThrough: [] }
   let index = 0
   while (index < args.length) {
@@ -53,7 +49,7 @@ export function parseWrapperArgs(args: readonly string[], cli: 'claude' | 'codex
       value = arg.slice('--login='.length)
       index++
     } else {
-      return { error: `kurmis does not know ${arg}. Put ${cli}'s arguments after --, for example "kurmis ${cli} -- ${arg}"` }
+      return { error: `kurmis does not know ${arg}. Put claude's arguments after --, for example "kurmis claude -- ${arg}"` }
     }
     if (value === undefined || value === '') return { error: '--login needs the alias or id of a login, for example --login work-example' }
     if (result.login !== null) return { error: '--login was given twice' }

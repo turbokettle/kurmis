@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { CONTROL_API_VERSION, type StatusAnswer } from '../../src/core/control-api.ts'
-import { saveConfig, defaultConfig } from '../../src/data/config.ts'
+import { CONFIG_VERSION, saveConfig, defaultConfig } from '../../src/data/config.ts'
 import { readOrCreateKey, writeDaemonFile } from '../../src/data/daemon-file.ts'
 import { daemonFilePath, keyPath, kurmisHome } from '../../src/data/paths.ts'
 import { processExists, STOP_FINISH_MAX_MS } from '../../src/daemon/lifecycle.ts'
@@ -321,7 +321,7 @@ describe('startDaemon', () => {
   })
 
   it('reports a config.json it cannot read as a DaemonError', async () => {
-    writeFileSync(`${kurmisHome()}/config.json`, '{ "version": 2, "port": 80 }')
+    writeFileSync(`${kurmisHome()}/config.json`, `{ "version": ${String(CONFIG_VERSION)}, "port": 80 }`)
     await expect(startDaemon({ env: {} })).rejects.toThrow(DaemonError)
   })
 })

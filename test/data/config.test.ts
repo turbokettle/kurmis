@@ -12,10 +12,10 @@ import {
   extraLogins,
   findLogin,
   followEmail,
-  isUsedByPlainCli,
+  isUsedByPlainClaude,
   loadConfig,
   loginIds,
-  plainCliLogin,
+  plainClaudeLogin,
   newLoginIdFor,
   parseConfig,
   readConfig,
@@ -27,9 +27,9 @@ import {
   type LoginSettings
 } from '../../src/data/config.ts'
 import { readJsonFileSync } from '../../src/data/json-file.ts'
-import { isLoginId, type LoginId } from '../../src/data/login-id.ts'
+import { isLoginId } from '../../src/data/login-id.ts'
 import { configLockPath, configPath } from '../../src/data/paths.ts'
-import { loginOf, OWN_CLAUDE, OWN_CODEX, testConfig, writeTestConfig } from '../logins.ts'
+import { loginOf, OWN_CLAUDE, testConfig, writeTestConfig } from '../logins.ts'
 
 function writeRaw(value: unknown): void {
   saveRawText(JSON.stringify(value))
@@ -39,27 +39,27 @@ function saveRawText(text: string): void {
 }
 
 /** A stored login with only the fields a file must have. */
-function stored(id: string, provider: 'claude' | 'codex', more: Record<string, unknown> = {}): Record<string, unknown> {
-  return { id, provider, ...more }
+function stored(id: string, more: Record<string, unknown> = {}): Record<string, unknown> {
+  return { id, ...more }
 }
 
-/** The logins of plain claude and plain codex as a version 2 file stores them. */
-const OWN_ROWS = [stored(OWN_CLAUDE, 'claude', { usedByPlainCli: true }), stored(OWN_CODEX, 'codex', { usedByPlainCli: true })]
+/** The login of plain claude as a version 3 file stores it. */
+const OWN_ROW = stored(OWN_CLAUDE, { usedByPlainClaude: true })
 
 function idsOf(config: KurmisConfig): string[] {
   return config.logins.map((login) => login.id)
 }
 
 /** Unwraps a `resolveLogin` answer that must have found a login. */
-function resolved(config: KurmisConfig, text: string, provider?: 'claude' | 'codex'): LoginSettings {
-  const answer = resolveLogin(config, text, provider)
+function resolved(config: KurmisConfig, text: string): LoginSettings {
+  const answer = resolveLogin(config, text)
   if ('error' in answer) throw new Error(`expected a login for ${text}, got: ${answer.error}`)
   return answer.login
 }
 
 /** Unwraps a `resolveLogin` answer that must be an error. */
-function refused(config: KurmisConfig, text: string, provider?: 'claude' | 'codex'): string {
-  const answer = resolveLogin(config, text, provider)
+function refused(config: KurmisConfig, text: string): string {
+  const answer = resolveLogin(config, text)
   if ('login' in answer) throw new Error(`expected an error for ${text}, got the login ${answer.login.id}`)
   return answer.error
 }
@@ -71,10 +71,10 @@ beforeEach(() => {
 })
 
 describe('loading', () => {
-  it('reads without writing with readConfig: no file, and a file without the logins of plain claude and plain codex', () => {
+  it('reads without writing with readConfig: no file, and a file without the login of plain claude', () => {
     expect(readConfig()).toEqual({ version: CONFIG_VERSION, port: DEFAULT_PORT, logins: [] })
     expect(existsSync(configPath())).toBe(false)
-    const text = JSON.stringify({ version: 2, port: 30001, logins: [{ id: 'workclaude', provider: 'claude', alias: 'work-example' }] })
+    const text = JSON.stringify({ version: 3, port: 30001, logins: [{ id: 'workclaude', alias: 'work-example' }] })
     saveRawText(text)
     expect(readConfig().logins.map((login) => login.id)).toEqual(['workclaude'])
     expect(readFileSync(configPath(), 'utf8')).toBe(text)
@@ -83,19 +83,16 @@ describe('loading', () => {
     expect(() => readConfig()).toThrow(ConfigError)
   })
 
-  it("creates the logins of plain claude and plain codex with new ids when there is no file, and saves them", () => {
+  it("creates the login of plain claude with a new id when there is no file, and saves it", () => {
     const config = loadConfig()
     expect(config.version).toBe(CONFIG_VERSION)
     expect(config.port).toBe(DEFAULT_PORT)
-    expect(config.logins.map((login) => [login.provider, login.usedByPlainCli])).toEqual([['claude', true], ['codex', true]])
-    const [claude, codex] = config.logins
+    expect(config.logins.map((login) => login.usedByPlainClaude)).toEqual([true])
+    const [claude] = config.logins
     expect(claude!.id).toMatch(/^[a-z0-9]{10}$/)
-    expect(codex!.id).toMatch(/^[a-z0-9]{10}$/)
-    expect(claude!.id).not.toBe(codex!.id)
     expect(claude).toEqual({
       id: claude!.id,
-      provider: 'claude',
-      usedByPlainCli: true,
+      usedByPlainClaude: true,
       alias: claude!.id,
       aliasSetByUser: false,
       routing: true,
@@ -109,169 +106,169 @@ describe('loading', () => {
     expect(loadConfig()).toEqual(config)
   })
 
-  it("adds the login of plain claude or plain codex that a file leaves out, keeping the other's id", () => {
-    writeRaw({ version: 2, logins: [OWN_ROWS[1], stored('workclaude', 'claude')] })
+  it("adds the login of plain claude that a file leaves out, keeping the extra logins' ids", () => {
+    writeRaw({ version: 3, logins: [stored('workclaude')] })
     const config = loadConfig()
-    expect(config.logins.map((login) => [login.provider, login.usedByPlainCli])).toEqual([['claude', true], ['codex', true], ['claude', false]])
-    expect(plainCliLogin(config, 'codex').id).toBe(OWN_CODEX)
-    const added = plainCliLogin(config, 'claude').id
+    expect(config.logins.map((login) => login.usedByPlainClaude)).toEqual([true, false])
+    expect(idsOf(config)[1]).toBe('workclaude')
+    const added = plainClaudeLogin(config).id
     expect(isLoginId(added)).toBe(true)
-    expect([OWN_CODEX, 'workclaude']).not.toContain(added)
-    expect(plainCliLogin(loadConfig(), 'claude').id).toBe(added)
+    expect(added).not.toBe('workclaude')
+    expect(plainClaudeLogin(loadConfig()).id).toBe(added)
   })
 
-  it("leaves a file that has both of the logins of plain claude and plain codex as it is", () => {
-    const text = JSON.stringify({ version: 2, logins: [...OWN_ROWS] })
+  it("leaves a file that has the login of plain claude as it is", () => {
+    const text = JSON.stringify({ version: 3, logins: [OWN_ROW] })
     saveRawText(text)
     loadConfig()
     expect(readFileSync(configPath(), 'utf8')).toBe(text)
   })
 
-  it("puts the login plain claude uses first, then the own Codex login, then the extras in file order", () => {
+  it("puts the login plain claude uses first, then the extras in file order", () => {
     writeRaw({
-      version: 2,
+      version: 3,
       logins: [
-        stored('sidecodex1', 'codex'),
-        OWN_ROWS[1],
-        stored('workclaude', 'claude', { alias: 'work', aliasSetByUser: true }),
-        OWN_ROWS[0],
-        stored('lastclaude', 'claude')
+        stored('sideclaude1'),
+        stored('workclaude', { alias: 'work', aliasSetByUser: true }),
+        OWN_ROW,
+        stored('lastclaude')
       ]
     })
     const config = loadConfig()
-    expect(idsOf(config)).toEqual([OWN_CLAUDE, OWN_CODEX, 'sidecodex1', 'workclaude', 'lastclaude'])
+    expect(idsOf(config)).toEqual([OWN_CLAUDE, 'sideclaude1', 'workclaude', 'lastclaude'])
     expect(findLogin(config, 'workclaude')).toMatchObject({ alias: 'work', aliasSetByUser: true, routing: true, fiveHourLimit: 100 })
-    expect(findLogin(config, 'lastclaude')).toMatchObject({ alias: 'lastclaude', aliasSetByUser: false, usedByPlainCli: false })
+    expect(findLogin(config, 'lastclaude')).toMatchObject({ alias: 'lastclaude', aliasSetByUser: false, usedByPlainClaude: false })
   })
 
   it('round-trips through save', () => {
-    let config = addLogin(testConfig(), { id: 'workclaude' as LoginId, provider: 'claude' }, { alias: 'work', useFirst: true })
-    config = updateLogin(config, OWN_CODEX, { weeklyLimit: 80 })
+    let config = addLogin(testConfig(), 'workclaude', { alias: 'work', useFirst: true })
+    config = updateLogin(config, OWN_CLAUDE, { weeklyLimit: 80 })
     config = { ...config, port: 30001 }
     saveConfig(config)
     expect(loadConfig()).toEqual(config)
-    expect(readJsonFileSync(configPath())).toMatchObject({ status: 'ok', value: { version: 2, port: 30001 } })
+    expect(readJsonFileSync(configPath())).toMatchObject({ status: 'ok', value: { version: 3, port: 30001 } })
   })
 
   it('refuses a file from an older kurmis and says what to do', () => {
-    writeRaw({ version: 1, logins: [{ id: 'claude:work', label: 'Work' }] })
+    writeRaw({ version: 2, logins: [{ id: 'workclaude', provider: 'claude', usedByPlainCli: true }] })
     expect(() => loadConfig()).toThrow(ConfigError)
-    expect(() => loadConfig()).toThrow(/written by an older kurmis \(config version 1\).*reads only version 2/)
-    expect(() => loadConfig()).toThrow(/Delete the file.*kurmis login claude/)
+    expect(() => loadConfig()).toThrow(/written by an older kurmis \(config version 2\).*reads only version 3/)
+    expect(() => loadConfig()).toThrow(/Delete the file, then add the extra logins again with "kurmis login"/)
+    writeRaw({ version: 1, logins: [{ id: 'claude:work', label: 'Work' }] })
+    expect(() => loadConfig()).toThrow(/written by an older kurmis \(config version 1\).*reads only version 3/)
   })
 
   it('refuses a file from a newer kurmis with a clear message', () => {
-    writeRaw({ version: 3, logins: [] })
-    expect(() => loadConfig()).toThrow(/written by a newer kurmis \(config version 3\).*Update kurmis/)
+    writeRaw({ version: 4, logins: [] })
+    expect(() => loadConfig()).toThrow(/written by a newer kurmis \(config version 4\).*Update kurmis/)
   })
 
   it('does not rewrite a file it refuses', () => {
-    const text = JSON.stringify({ version: 1, logins: [] })
+    const text = JSON.stringify({ version: 2, logins: [] })
     saveRawText(text)
     expect(() => loadConfig()).toThrow(ConfigError)
     expect(readFileSync(configPath(), 'utf8')).toBe(text)
   })
 
   it('names the file and the field of a wrong value', () => {
-    writeRaw({ version: 2, logins: [stored('alogin', 'claude'), stored('blogin', 'claude', { weeklyLimit: 150 })] })
+    writeRaw({ version: 3, logins: [stored('alogin'), stored('blogin', { weeklyLimit: 150 })] })
     expect(() => loadConfig()).toThrow(ConfigError)
     expect(() => loadConfig()).toThrow(`${configPath()}: logins[1].weeklyLimit must be a whole number from 1 to 100, not 150`)
   })
 
   it.each([
-    [{ version: 2, port: 80 }, 'port must be a whole number from 1024 to 65535'],
-    [{ version: 2, logins: {} }, 'logins must be a list'],
-    [{ version: 2, logins: [{ id: '../x', provider: 'claude' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
-    [{ version: 2, logins: [{ id: 'claude:work', provider: 'claude' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
-    [{ version: 2, logins: [{ id: 'none', provider: 'claude' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
-    [{ version: 2, logins: [{ id: 'alogin' }] }, 'logins[0].provider must be a string'],
-    [{ version: 2, logins: [{ id: 'alogin', provider: 'gemini' }] }, 'logins[0].provider must be "claude" or "codex"'],
-    [{ version: 2, logins: [{ id: 'alogin', provider: 'claude', usedByPlainCli: 'yes' }] }, 'logins[0].usedByPlainCli must be true or false'],
-    [{ version: 2, logins: [{ id: 'alogin', provider: 'claude', routing: 'yes' }] }, 'logins[0].routing must be true or false, not a string'],
-    [{ version: 2, logins: [{ id: 'alogin', provider: 'claude', aliasSetByUser: 1 }] }, 'logins[0].aliasSetByUser must be true or false'],
-    [{ version: 2, logins: [stored('alogin', 'claude'), stored('alogin', 'codex')] }, 'logins[1].id repeats "alogin"'],
+    [{ version: 3, port: 80 }, 'port must be a whole number from 1024 to 65535'],
+    [{ version: 3, logins: {} }, 'logins must be a list'],
+    [{ version: 3, logins: [{ id: '../x' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
+    [{ version: 3, logins: [{ id: 'claude:work' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
+    [{ version: 3, logins: [{ id: 'none' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
+    [{ version: 3, logins: [{}] }, 'logins[0].id must be a string'],
+    [{ version: 3, logins: [{ id: 'alogin', usedByPlainClaude: 'yes' }] }, 'logins[0].usedByPlainClaude must be true or false'],
+    [{ version: 3, logins: [{ id: 'alogin', routing: 'yes' }] }, 'logins[0].routing must be true or false, not a string'],
+    [{ version: 3, logins: [{ id: 'alogin', aliasSetByUser: 1 }] }, 'logins[0].aliasSetByUser must be true or false'],
+    [{ version: 3, logins: [stored('alogin'), stored('alogin')] }, 'logins[1].id repeats "alogin"'],
     [
-      { version: 2, logins: [stored('alogin', 'claude', { usedByPlainCli: true }), stored('blogin', 'claude', { usedByPlainCli: true })] },
-      'logins[1].usedByPlainCli is true for a second claude login'
+      { version: 3, logins: [stored('alogin', { usedByPlainClaude: true }), stored('blogin', { usedByPlainClaude: true })] },
+      'logins[1].usedByPlainClaude is true for a second login; only one login can be the one plain claude uses'
     ],
     [
-      { version: 2, logins: [stored('alogin', 'codex', { alias: 'same' }), stored('blogin', 'codex', { alias: 'same' })] },
-      'logins[1].alias repeats "same" of another codex login'
+      { version: 3, logins: [stored('alogin', { alias: 'same' }), stored('blogin', { alias: 'same' })] },
+      'logins[1].alias repeats "same" of another login'
     ],
     [
-      { version: 2, logins: [stored('alogin', 'claude'), stored('blogin', 'codex', { alias: 'alogin' })] },
+      { version: 3, logins: [stored('alogin', { alias: 'first' }), stored('blogin', { alias: 'alogin' })] },
       'logins[1].alias "alogin" and the id "blogin" must not be the id or alias of another login'
     ],
     [
-      { version: 2, logins: [stored('alogin', 'claude', { alias: 'blogin' }), stored('blogin', 'codex')] },
-      'logins[1].alias "blogin" and the id "blogin" must not be the id or alias of another login'
+      { version: 3, logins: [stored('alogin', { alias: 'blogin' }), stored('blogin', { alias: 'second' })] },
+      'logins[1].alias "second" and the id "blogin" must not be the id or alias of another login'
     ],
-    [{ version: 2, logins: [stored('alogin', 'claude', { alias: '' })] }, 'logins[0].alias must be 1 to 32 lowercase letters'],
-    [{ version: 2, logins: [stored('alogin', 'claude', { alias: 'Work' })] }, 'logins[0].alias must be 1 to 32 lowercase letters'],
-    [{ version: 2, logins: [stored('alogin', 'claude', { alias: 'claude' })] }, 'logins[0].alias must be 1 to 32 lowercase letters'],
-    [{ version: 2, logins: [stored('alogin', 'claude', { alias: 'a'.repeat(33) })] }, 'logins[0].alias must be 1 to 32 lowercase letters'],
-    [{ version: 2, logins: [stored('alogin', 'claude', { alias: 3 })] }, 'logins[0].alias must be a string'],
+    [
+      { version: 3, logins: [stored('alogin', { alias: 'blogin' }), stored('blogin')] },
+      'logins[1].alias repeats "blogin" of another login'
+    ],
+    [{ version: 3, logins: [stored('alogin', { alias: '' })] }, 'logins[0].alias must be 1 to 32 lowercase letters'],
+    [{ version: 3, logins: [stored('alogin', { alias: 'Work' })] }, 'logins[0].alias must be 1 to 32 lowercase letters'],
+    [{ version: 3, logins: [stored('alogin', { alias: 'a'.repeat(33) })] }, 'logins[0].alias must be 1 to 32 lowercase letters'],
+    [{ version: 3, logins: [stored('alogin', { alias: 3 })] }, 'logins[0].alias must be a string'],
     [{ logins: [] }, 'has no "version" field'],
     [{ version: 0 }, 'version must be a whole number of 1 or more'],
-    [{ version: '2' }, 'version must be a whole number of 1 or more'],
+    [{ version: '3' }, 'version must be a whole number of 1 or more'],
     [[], 'must be an object, not a list']
   ])('refuses %j', (value, message) => {
     expect(() => parseConfig(value, 'config.json')).toThrow(message)
   })
 
-  it('takes the same alias for a Claude login and a Codex login', () => {
+  it('takes "claude" as an id and an alias like any other word', () => {
     const config = parseConfig({
-      version: 2,
-      logins: [stored('alogin', 'claude', { alias: 'same' }), stored('blogin', 'codex', { alias: 'same' })]
+      version: 3,
+      logins: [stored('claude', { alias: 'claude' }), stored('worklogin', { alias: 'claude-2' })]
     }, 'config.json')
-    expect(config.logins.map((login) => login.alias)).toEqual(['same', 'same'])
+    expect(config.logins.map((login) => [login.id, login.alias])).toEqual([['claude', 'claude'], ['worklogin', 'claude-2']])
   })
 
   it('reports a file that is not JSON', () => {
-    saveRawText('{ "version": 2,')
+    saveRawText('{ "version": 3,')
     expect(() => loadConfig()).toThrow(/config\.json is not valid JSON/)
   })
 
   it('ignores unknown fields', () => {
-    writeRaw({ version: 2, later: true, logins: [...OWN_ROWS, stored('alogin', 'claude', { later: 1, label: 'Old', email: 'x@example.com' })] })
+    writeRaw({ version: 3, later: true, logins: [OWN_ROW, stored('alogin', { later: 1, label: 'Old', email: 'x@example.com', provider: 'claude' })] })
     expect(findLogin(loadConfig(), 'alogin')).toBeDefined()
   })
 })
 
-describe("the logins of plain claude and plain codex", () => {
-  it('are found by provider, and are not extra logins', () => {
-    const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude' }, { id: 'sidecodex1', provider: 'codex' }] })
-    expect(plainCliLogin(config, 'claude').id).toBe(OWN_CLAUDE)
-    expect(plainCliLogin(config, 'codex').id).toBe(OWN_CODEX)
-    expect(isUsedByPlainCli(loginOf(config, OWN_CLAUDE))).toBe(true)
-    expect(isUsedByPlainCli(loginOf(config, 'workclaude'))).toBe(false)
-    expect(extraLogins(config).map((login) => login.id)).toEqual(['workclaude', 'sidecodex1'])
-    expect(extraLogins(config, 'claude').map((login) => login.id)).toEqual(['workclaude'])
-    expect(extraLogins(config, 'codex').map((login) => login.id)).toEqual(['sidecodex1'])
-    expect(loginIds(config)).toEqual([OWN_CLAUDE, OWN_CODEX, 'workclaude', 'sidecodex1'])
+describe("the login of plain claude", () => {
+  it('is found by its setting, and is not an extra login', () => {
+    const config = testConfig({ extras: [{ id: 'workclaude' }, { id: 'sideclaude1' }] })
+    expect(plainClaudeLogin(config).id).toBe(OWN_CLAUDE)
+    expect(isUsedByPlainClaude(loginOf(config, OWN_CLAUDE))).toBe(true)
+    expect(isUsedByPlainClaude(loginOf(config, 'workclaude'))).toBe(false)
+    expect(extraLogins(config).map((login) => login.id)).toEqual(['workclaude', 'sideclaude1'])
+    expect(loginIds(config)).toEqual([OWN_CLAUDE, 'workclaude', 'sideclaude1'])
   })
 
   it('a config without one is an error when it is asked for', () => {
     const config: KurmisConfig = { ...testConfig(), logins: [] }
-    expect(() => plainCliLogin(config, 'claude')).toThrow(ConfigError)
+    expect(() => plainClaudeLogin(config)).toThrow(ConfigError)
   })
 
-  it('defaultConfig makes both with ids that differ each time', () => {
+  it('defaultConfig makes it with an id that differs each time', () => {
     const one = defaultConfig()
     const two = defaultConfig()
-    expect(one.logins.map((login) => login.usedByPlainCli)).toEqual([true, true])
+    expect(one.logins.map((login) => login.usedByPlainClaude)).toEqual([true])
     expect(idsOf(one)).not.toEqual(idsOf(two))
   })
 })
 
 describe('a new id for a login', () => {
   it('is none of the ids or aliases of the logins there are', () => {
-    const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work' }] })
+    const config = testConfig({ extras: [{ id: 'workclaude', alias: 'work' }] })
     for (let round = 0; round < 50; round++) {
       const id = newLoginIdFor(config)
       expect(isLoginId(id)).toBe(true)
       expect([...loginIds(config), ...config.logins.map((login) => login.alias)]).not.toContain(id)
-      expect(() => addLogin(config, { id, provider: 'codex' })).not.toThrow()
+      expect(() => addLogin(config, id)).not.toThrow()
     }
   })
 })
@@ -280,73 +277,49 @@ describe('resolving what a person typed', () => {
   const config = testConfig({
     ownClaude: { alias: 'me' },
     extras: [
-      { id: 'workclaude', provider: 'claude', alias: 'work' },
-      { id: 'workcodex1', provider: 'codex', alias: 'work' },
-      { id: 'sidecodex1', provider: 'codex', alias: 'side' }
+      { id: 'workclaude', alias: 'work' },
+      { id: 'sideclaude1', alias: 'side' }
     ]
   })
 
   it('finds a login by its id or its alias', () => {
     expect(resolved(config, 'workclaude').id).toBe('workclaude')
-    expect(resolved(config, 'side').id).toBe('sidecodex1')
+    expect(resolved(config, 'work').id).toBe('workclaude')
+    expect(resolved(config, 'side').id).toBe('sideclaude1')
     expect(resolved(config, 'me').id).toBe(OWN_CLAUDE)
-    expect(resolved(config, OWN_CODEX).id).toBe(OWN_CODEX)
-    expect(resolved(config, ' Side ').id).toBe('sidecodex1')
-    expect(resolved(config, 'Claude:WORK').id).toBe('workclaude')
-  })
-
-  it('finds a login by its provider and its alias or id', () => {
-    expect(resolved(config, 'claude:work').id).toBe('workclaude')
-    expect(resolved(config, 'codex:work').id).toBe('workcodex1')
-    expect(resolved(config, 'codex:sidecodex1').id).toBe('sidecodex1')
-  })
-
-  it('asks for the prefix when a Claude login and a Codex login share the alias', () => {
-    expect(refused(config, 'work')).toBe('a Claude login and a Codex login are both called "work"; give claude:work or codex:work')
-  })
-
-  it("looks only at one provider's logins when given the provider", () => {
-    expect(resolved(config, 'work', 'claude').id).toBe('workclaude')
-    expect(resolved(config, 'work', 'codex').id).toBe('workcodex1')
-    expect(resolved(config, 'claude:work', 'claude').id).toBe('workclaude')
-  })
-
-  it("says when the login is the other provider's", () => {
-    expect(refused(config, 'side', 'claude')).toBe('"side" is a Codex login; this takes a Claude login')
-    expect(refused(config, 'workclaude', 'codex')).toBe('"workclaude" is a Claude login; this takes a Codex login')
-    expect(refused(config, 'codex:work', 'claude')).toBe('"codex:work" is a Codex login; this takes a Claude login')
+    expect(resolved(config, OWN_CLAUDE).id).toBe(OWN_CLAUDE)
+    expect(resolved(config, ' Side ').id).toBe('sideclaude1')
+    expect(resolved(config, 'WORK').id).toBe('workclaude')
   })
 
   it('says when there is no such login', () => {
     expect(refused(config, 'nobody')).toBe('there is no login called "nobody"')
-    expect(refused(config, 'nobody', 'codex')).toBe('there is no Codex login called "nobody"')
-    expect(refused(config, 'claude:side')).toBe('there is no Claude login called "side"')
-    expect(refused(config, 'gemini:work')).toMatch(/names no login/)
-    expect(refused(config, 'claude:')).toBe('there is no Claude login called ""')
+    expect(refused(config, 'claude:work')).toBe('there is no login called "claude:work"')
+    expect(refused(config, '')).toBe('there is no login called ""')
   })
 })
 
 describe('aliasProblem', () => {
   const config = testConfig({
     extras: [
-      { id: 'workclaude', provider: 'claude', alias: 'work' },
-      { id: 'sidecodex1', provider: 'codex', alias: 'side' }
+      { id: 'workclaude', alias: 'work' },
+      { id: 'sideclaude1', alias: 'side' }
     ]
   })
   const own = loginOf(config, OWN_CLAUDE)
 
   it('takes a free alias, its own alias and its own id', () => {
     expect(aliasProblem(config, own, 'mine')).toBeNull()
-    expect(aliasProblem(config, own, 'side')).toBeNull()
+    expect(aliasProblem(config, own, 'claude')).toBeNull()
     expect(aliasProblem(config, own, OWN_CLAUDE)).toBeNull()
     expect(aliasProblem(config, loginOf(config, 'workclaude'), 'work')).toBeNull()
   })
 
-  it('refuses an alias of another login of the provider, the id of any other login, and a bad alias', () => {
-    expect(aliasProblem(config, own, 'work')).toBe('another Claude login is already called "work"')
-    expect(aliasProblem(config, own, 'sidecodex1')).toBe('"sidecodex1" is the id of another login')
-    expect(aliasProblem(config, own, OWN_CODEX)).toBe(`"${OWN_CODEX}" is the id of another login`)
-    for (const bad of ['claude', 'codex', 'Work', 'a b', '', 'a'.repeat(33), 'claude:work']) {
+  it('refuses the alias or the id of any other login, and a bad alias', () => {
+    expect(aliasProblem(config, own, 'work')).toBe('another login is already called "work"')
+    expect(aliasProblem(config, own, 'side')).toBe('another login is already called "side"')
+    expect(aliasProblem(config, own, 'sideclaude1')).toBe('"sideclaude1" is the id of another login')
+    for (const bad of ['Work', 'a b', '', 'a'.repeat(33), 'claude:work']) {
       expect(aliasProblem(config, own, bad)).toMatch(/is not an alias; an alias is 1 to 32/)
     }
   })
@@ -354,52 +327,50 @@ describe('aliasProblem', () => {
 
 describe('changing logins', () => {
   it('adds a login with the defaults and its id as its alias', () => {
-    const config = addLogin(testConfig(), { id: 'sidecodex1' as LoginId, provider: 'codex' })
-    expect(findLogin(config, 'sidecodex1')).toEqual({
-      id: 'sidecodex1',
-      provider: 'codex',
-      usedByPlainCli: false,
-      alias: 'sidecodex1',
+    const config = addLogin(testConfig(), 'sideclaude1')
+    expect(findLogin(config, 'sideclaude1')).toEqual({
+      id: 'sideclaude1',
+      usedByPlainClaude: false,
+      alias: 'sideclaude1',
       aliasSetByUser: false,
       routing: true,
       fiveHourLimit: 100,
       weeklyLimit: 100,
       useFirst: false
     })
-    expect(idsOf(config)).toEqual([OWN_CLAUDE, OWN_CODEX, 'sidecodex1'])
+    expect(idsOf(config)).toEqual([OWN_CLAUDE, 'sideclaude1'])
   })
 
   it('adds a login with an alias the person chose', () => {
-    const config = addLogin(testConfig(), { id: 'workclaude' as LoginId, provider: 'claude' }, { alias: 'work', routing: false })
+    const config = addLogin(testConfig(), 'workclaude', { alias: 'work', routing: false })
     expect(findLogin(config, 'workclaude')).toMatchObject({ alias: 'work', aliasSetByUser: true, routing: false })
   })
 
   it('refuses a taken or invalid id, a taken alias and a bad setting', () => {
-    const config = addLogin(testConfig(), { id: 'workclaude' as LoginId, provider: 'claude' }, { alias: 'work' })
-    expect(() => addLogin(config, { id: 'workclaude' as LoginId, provider: 'codex' })).toThrow('There is already a login workclaude.')
-    expect(() => addLogin(config, { id: OWN_CLAUDE, provider: 'claude' })).toThrow(ConfigError)
-    expect(() => addLogin(config, { id: '../evil' as LoginId, provider: 'claude' })).toThrow(ConfigError)
-    expect(() => addLogin(config, { id: 'claude:x' as LoginId, provider: 'claude' })).toThrow(ConfigError)
-    expect(() => addLogin(config, { id: 'otherlogin' as LoginId, provider: 'claude' }, { alias: 'work' }))
-      .toThrow('Another Claude login is already called "work".')
-    expect(() => addLogin(config, { id: 'otherlogin' as LoginId, provider: 'codex' }, { alias: 'workclaude' }))
+    const config = addLogin(testConfig(), 'workclaude', { alias: 'work' })
+    expect(() => addLogin(config, 'workclaude')).toThrow('There is already a login workclaude.')
+    expect(() => addLogin(config, OWN_CLAUDE)).toThrow(ConfigError)
+    expect(() => addLogin(config, '../evil')).toThrow(ConfigError)
+    expect(() => addLogin(config, 'claude:x')).toThrow(ConfigError)
+    expect(() => addLogin(config, 'otherlogin', { alias: 'work' }))
+      .toThrow('Another login is already called "work".')
+    expect(() => addLogin(config, 'otherlogin', { alias: 'workclaude' }))
       .toThrow('"workclaude" is the id of another login.')
-    expect(() => addLogin(config, { id: 'otherlogin' as LoginId, provider: 'claude' }, { alias: 'codex' })).toThrow(/alias must be 1 to 32/)
-    expect(() => addLogin(config, { id: 'xlogin' as LoginId, provider: 'claude' }, { fiveHourLimit: 0 }))
+    expect(() => addLogin(config, 'otherlogin', { alias: 'Side' })).toThrow(/alias must be 1 to 32/)
+    expect(() => addLogin(config, 'xlogin', { fiveHourLimit: 0 }))
       .toThrow(/fiveHourLimit must be a whole number from 1 to 100/)
-    expect(addLogin(config, { id: 'workcodex1' as LoginId, provider: 'codex' }, { alias: 'work' }).logins).toHaveLength(4)
+    expect(addLogin(config, 'sideclaude1', { alias: 'side' }).logins).toHaveLength(3)
   })
 
   it("refuses an id that is another login's alias, which the file could not be read back with", () => {
-    const config = addLogin(testConfig(), { id: 'sidecodex1' as LoginId, provider: 'codex' }, { alias: 'abc123' })
-    expect(() => addLogin(config, { id: 'abc123' as LoginId, provider: 'claude' })).toThrow(ConfigError)
+    const config = addLogin(testConfig(), 'sideclaude1', { alias: 'abc123' })
+    expect(() => addLogin(config, 'abc123')).toThrow(ConfigError)
   })
 
-  it("removes an extra login but never that of plain claude or plain codex", () => {
-    const config = addLogin(testConfig({ ownCodex: { alias: 'mycodex' } }), { id: 'workclaude' as LoginId, provider: 'claude' })
+  it("removes an extra login but never that of plain claude", () => {
+    const config = addLogin(testConfig({ ownClaude: { alias: 'mine' } }), 'workclaude')
     expect(findLogin(removeLogin(config, 'workclaude'), 'workclaude')).toBeUndefined()
-    expect(() => removeLogin(config, OWN_CLAUDE)).toThrow(`${OWN_CLAUDE} is the login plain claude uses and cannot be removed.`)
-    expect(() => removeLogin(config, OWN_CODEX)).toThrow("mycodex is the login plain codex uses and cannot be removed.")
+    expect(() => removeLogin(config, OWN_CLAUDE)).toThrow('mine is the login plain claude uses and cannot be removed.')
     expect(() => removeLogin(config, 'nobody')).toThrow('There is no login nobody.')
   })
 
@@ -411,28 +382,27 @@ describe('changing logins', () => {
   })
 
   it("sets an alias as the person's choice, and checks it", () => {
-    const config = testConfig({ extras: [{ id: 'workclaude', provider: 'claude', alias: 'work' }] })
+    const config = testConfig({ extras: [{ id: 'workclaude', alias: 'work' }] })
     const changed = updateLogin(config, OWN_CLAUDE, { alias: 'mine' })
     expect(findLogin(changed, OWN_CLAUDE)).toMatchObject({ alias: 'mine', aliasSetByUser: true })
-    expect(() => updateLogin(config, OWN_CLAUDE, { alias: 'work' })).toThrow('Another Claude login is already called "work".')
-    expect(() => updateLogin(config, OWN_CLAUDE, { alias: OWN_CODEX })).toThrow(`"${OWN_CODEX}" is the id of another login.`)
+    expect(() => updateLogin(config, OWN_CLAUDE, { alias: 'work' })).toThrow('Another login is already called "work".')
+    expect(() => updateLogin(config, OWN_CLAUDE, { alias: 'workclaude' })).toThrow('"workclaude" is the id of another login.')
     expect(() => updateLogin(config, OWN_CLAUDE, { alias: 'Bad Alias' })).toThrow(ConfigError)
-    expect(() => updateLogin(config, OWN_CLAUDE, { alias: 'claude' })).toThrow(ConfigError)
-    expect(findLogin(updateLogin(config, OWN_CODEX, { alias: 'work' }), OWN_CODEX)?.alias).toBe('work')
+    expect(findLogin(updateLogin(config, OWN_CLAUDE, { alias: 'claude' }), OWN_CLAUDE)?.alias).toBe('claude')
   })
 
   it('changeConfig loads, applies and saves', () => {
-    changeConfig((config) => addLogin(config, { id: 'workclaude' as LoginId, provider: 'claude' }))
+    changeConfig((config) => addLogin(config, 'workclaude'))
     changeConfig((config) => updateLogin(config, 'workclaude', { useFirst: true }))
     const config = loadConfig()
     expect(findLogin(config, 'workclaude')?.useFirst).toBe(true)
-    expect(config.logins.filter((login) => login.usedByPlainCli)).toHaveLength(2)
+    expect(config.logins.filter((login) => login.usedByPlainClaude)).toHaveLength(1)
   })
 
   it('changeConfig holds the config lock while it changes the file and releases it after', () => {
     changeConfig((config) => {
       expect(existsSync(configLockPath())).toBe(true)
-      return addLogin(config, { id: 'workclaude' as LoginId, provider: 'claude' })
+      return addLogin(config, 'workclaude')
     })
     expect(existsSync(configLockPath())).toBe(false)
     expect(() => changeConfig(() => {
@@ -451,7 +421,7 @@ describe('changing logins', () => {
     try {
       let caught: unknown
       try {
-        changeConfig((config) => addLogin(config, { id: 'workclaude' as LoginId, provider: 'claude' }), configPath(), { timeoutMs: 200 })
+        changeConfig((config) => addLogin(config, 'workclaude'), configPath(), { timeoutMs: 200 })
       } catch (error) {
         caught = error
       }
@@ -466,7 +436,7 @@ describe('changing logins', () => {
 })
 
 describe('following the email', () => {
-  const base = testConfig({ extras: [{ id: 'workclaude', provider: 'claude' }, { id: 'workcodex1', provider: 'codex' }] })
+  const base = testConfig({ extras: [{ id: 'workclaude' }, { id: 'sideclaude1' }] })
 
   it('gives the login the alias of its email', () => {
     const config = followEmail(base, 'workclaude', 'jo.doe@example.com')
@@ -485,13 +455,12 @@ describe('following the email', () => {
     expect(followEmail(config, 'workclaude', null)).toBe(config)
   })
 
-  it('numbers the alias when another login of the provider has the same email', () => {
+  it('numbers the alias when another login has the same email', () => {
     const one = followEmail(base, OWN_CLAUDE, 'cc1@example.org')
     const two = followEmail(one, 'workclaude', 'cc1@example.org')
     expect(loginOf(two, OWN_CLAUDE).alias).toBe('cc1-example')
     expect(loginOf(two, 'workclaude').alias).toBe('cc1-example-2')
-    // The same account in Codex gets the same alias, since aliases are unique per provider.
-    expect(loginOf(followEmail(two, 'workcodex1', 'cc1@example.org'), 'workcodex1').alias).toBe('cc1-example')
+    expect(loginOf(followEmail(two, 'sideclaude1', 'cc1@example.org'), 'sideclaude1').alias).toBe('cc1-example-3')
   })
 
   it('is stable when it is asked again', () => {
@@ -533,7 +502,7 @@ describe('configStamp', () => {
     const first = configStamp()
     saveConfig(config)
     expect(configStamp()).toBe(first)
-    changeConfig((current) => addLogin(current, { id: 'workclaude' as LoginId, provider: 'claude' }))
+    changeConfig((current) => addLogin(current, 'workclaude'))
     expect(configStamp()).not.toBe(first)
   })
 })

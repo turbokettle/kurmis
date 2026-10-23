@@ -1,4 +1,4 @@
-// Starting an interactive child for `kurmis claude`, `kurmis codex` and `kurmis login`: the
+// Starting an interactive child for `kurmis claude` and `kurmis login`: the
 // child gets the terminal, and the wrapper waits for it and ends the way it ended.
 //
 // Signals while the child runs:
@@ -21,8 +21,8 @@
 //   Forwarding would be wrong there: `child.kill()` on Windows ends the child at once with
 //   TerminateProcess, so it could not save anything. Node never reports SIGTERM on Windows.
 //
-// Starting itself again. A `claude` or `codex` on PATH can be a script of the person's that runs
-// `kurmis claude` (or `kurmis codex`), so kurmis would start that script, which starts kurmis,
+// Starting itself again. A `claude` on PATH can be a script of the person's that runs
+// `kurmis claude`, so kurmis would start that script, which starts kurmis,
 // without end. The wrapper puts its pid in `KURMIS_WRAPPER_PIDS` in the child's environment and
 // refuses to start a child (`wrapperLoop`) when its own parent is one of those pids, which is
 // what a script that `exec`s kurmis gives, or when the list is already `MAX_WRAPPER_DEPTH` long,
@@ -97,7 +97,7 @@ export function wrapperLoop(env: Readonly<Record<string, string | undefined>>, p
   if (!pids.includes(parentPid) && pids.length < MAX_WRAPPER_DEPTH) return null
   return 'kurmis was started by the program it started, so that program runs kurmis again instead of being the real one ' +
     `(${pids.includes(parentPid) ? 'its parent is a kurmis wrapper' : `${String(pids.length)} kurmis wrappers run inside each other`}). ` +
-    'Take that program off PATH, or set KURMIS_CLAUDE_BIN or KURMIS_CODEX_BIN to the real program'
+    'Take that program off PATH, or set KURMIS_CLAUDE_BIN to the real program'
 }
 
 /** `env` with `pid` added to `KURMIS_WRAPPER_PIDS`. */

@@ -12,7 +12,7 @@ import { OWN_CLAUDE, testConfig } from '../logins.ts'
 
 const WORK = 'workclaude'
 /** The config the token sources look logins up in. */
-const config = testConfig({ extras: [{ id: WORK, provider: 'claude' }] })
+const config = testConfig({ extras: [{ id: WORK }] })
 const login = (id: string): ReturnType<typeof findLogin> => findLogin(config, id)
 
 const record = (token: string): string =>

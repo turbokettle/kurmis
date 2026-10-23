@@ -173,7 +173,7 @@ export function runFakeClaude(args: string[], options: { env?: Record<string, st
   return runScript(FAKE_CLAUDE_SCRIPT, args, options)
 }
 
-/** Shared by the claude and codex helpers. */
+/** Runs `script` once with `node` and collects its output, as `runFakeClaude` describes. */
 export function runScript(script: string, args: string[], options: { env?: Record<string, string | undefined>; replaceEnv?: boolean; input?: string; cwd?: string } = {}): Promise<RunResult> {
   const env: Record<string, string> = {}
   for (const [name, value] of Object.entries(options.replaceEnv === true ? (options.env ?? {}) : { ...process.env, ...options.env })) {

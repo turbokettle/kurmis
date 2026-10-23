@@ -8,10 +8,10 @@
 // `Thumbs.db`, `desktop.ini`) do not keep the folder: they are deleted when nothing else is left,
 // and are never named.
 //
-// Each entry goes through `removeTreeSync`, which removes a symbolic link or a junction (a Codex
-// home links into `~/.codex`) without following it. On Windows it is given the data folder's real
-// path as the folder it must stay inside, so an entry that is a mount point or another reparse
-// point leading out of the folder is removed as a link, the entries at the top included.
+// Each entry goes through `removeTreeSync`, which removes a symbolic link or a junction without
+// following it. On Windows it is given the data folder's real path as the folder it must stay
+// inside, so an entry that is a mount point or another reparse point leading out of the folder is
+// removed as a link, the entries at the top included.
 //
 // When the data folder is itself a link, the entries are deleted inside the folder it points
 // to, that folder is removed once it is empty, and then the link is removed.
@@ -22,7 +22,7 @@ import { removeTreeSync } from '../platform/remove-tree.ts'
 import { retryWhileLockedSync } from '../platform/files.ts'
 
 /** The folders kurmis creates in the data folder. */
-const FOLDERS: readonly string[] = ['claude', 'codex', 'codex-merged', 'locks', 'probe', 'settings']
+const FOLDERS: readonly string[] = ['claude', 'locks', 'probe', 'settings']
 
 /**
  * The files kurmis writes in the data folder. A name that starts with one of these and a dot is

@@ -8,6 +8,7 @@ import { createServer, type Server } from 'node:http'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { CONTROL_API_VERSION } from '../../src/core/control-api.ts'
+import { CONFIG_VERSION } from '../../src/data/config.ts'
 import { readDaemonFile, readOrCreateKey } from '../../src/data/daemon-file.ts'
 import { controlRequest, processExists } from '../../src/daemon/lifecycle.ts'
 import { buildTestBundle } from '../daemon/bundle.ts'
@@ -270,7 +271,7 @@ describe('kurmis daemon', () => {
     expect((await kurmis(bundles.newer, home, ['daemon', 'start'])).code).toBe(0)
     const pid = daemonInfo(home)?.pid ?? 0
     const moved = await freePort()
-    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: 2, port: moved }))
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ version: CONFIG_VERSION, port: moved }))
     const start = await kurmis(bundles.older, home, ['daemon', 'start'])
     expect(start.code).toBe(1)
     expect(start.stderr).toContain(`The kurmis daemon 0.5.0 runs on port ${String(port)}, but ${join(home, 'config.json')} names port ` +

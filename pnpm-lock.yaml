@@ -178,9 +178,6 @@ importers:
       eslint:
         specifier: ^10.13.0
         version: 10.13.0
-      toml-eslint-parser:
-        specifier: 0.10.0
-        version: 0.10.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
@@ -1030,10 +1027,6 @@ packages:
   tinyrainbow@3.2.0:
     resolution: {integrity: sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==}
     engines: {node: '>=14.0.0'}
-
-  toml-eslint-parser@0.10.0:
-    resolution: {integrity: sha512-khrZo4buq4qVmsGzS5yQjKe/WsFvV8fGfOjDQN0q4iy9FjRfPWRgTFrU8u1R2iu/SfWLhY9WnCi4Jhdrcbtg+g==}
-    engines: {node: ^12.22.0 || ^14.17.0 || >=16.0.0}
 
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
@@ -1893,10 +1886,6 @@ snapshots:
       picomatch: 4.0.7
 
   tinyrainbow@3.2.0: {}
-
-  toml-eslint-parser@0.10.0:
-    dependencies:
-      eslint-visitor-keys: 3.4.3
 
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:

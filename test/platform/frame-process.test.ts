@@ -123,7 +123,7 @@ test('a program that does not exist is a failed start, not a thrown error', asyn
 })
 
 test('a batch file is refused on every platform', async () => {
-  for (const name of ['claude.cmd', 'CODEX.BAT']) {
+  for (const name of ['claude.cmd', 'CLAUDE.BAT']) {
     const proc = startFrameProcess(name, [], { env: process.env, timeoutMs: 1_000, onFrame: () => undefined })
     expect(proc.pid).toBeUndefined()
     expect((await proc.exited).end).toBe('refused')

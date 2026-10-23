@@ -62,7 +62,6 @@ test('a signed-in login answers its windows, and the CLI has exited when the pro
   expect(result.signedIn).toBe(true)
   expect(result.usage).toMatchObject({
     accountId: id,
-    provider: 'claude',
     fetchedAt: 1_000,
     source: 'probe',
     subscriptionType: 'max',

@@ -19,9 +19,9 @@ export interface Command {
   /** The full help text, printed by `kurmis <name> --help` and `kurmis help <name>`. */
   usage: string
   /**
-   * True for `claude` and `codex`, which pass their arguments on to another program. For those
-   * the command itself handles `--help`, since only `--help` before the first passed-on
-   * argument is kurmis'. For every other command, `--help` or `-h` anywhere prints `usage`.
+   * True for `claude`, which passes its arguments on to another program. That command handles
+   * `--help` itself, since only `--help` before the first passed-on argument is kurmis'. For
+   * every other command, `--help` or `-h` anywhere prints `usage`.
    */
   passesArguments?: boolean
   /** Runs the command. The arguments are the ones after the command name. Returns the exit code. */

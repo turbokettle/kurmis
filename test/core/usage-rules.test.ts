@@ -1,10 +1,6 @@
 // The shared rules over a usage snapshot: which windows are shown, which are the plan's own,
 // whether the login is out, and when it comes back.
-// The Codex fixture is a `prolite` plan: a general `codex` bucket with one weekly window, and a
-// Spark bucket metered on its own.
 import { describe, expect, test } from 'vitest'
-import type * as v2 from '../../src/core/codex-protocol.ts'
-import { usageFromCodexRateLimits } from '../../src/core/codex-usage.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import {
   allUsageWindows,
@@ -12,154 +8,19 @@ import {
   isSevenDayWindow,
   planUsageWindows,
   resetsAtFromUsage,
-  shownUsageWindows,
   usageExhausted
 } from '../../src/core/usage-rules.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
 
 const NOW = Date.parse('2026-09-05T12:00:00.000Z')
-const RESET_SECONDS = Date.parse('2026-09-06T12:00:00.000Z') / 1000
-
-function bucket(overrides: Partial<v2.RateLimitSnapshot> = {}): v2.RateLimitSnapshot {
-  return {
-    limitId: 'codex',
-    limitName: null,
-    primary: { usedPercent: 24, windowDurationMins: 10080, resetsAt: RESET_SECONDS },
-    secondary: null,
-    credits: { balance: '0' },
-    spendControlReached: false,
-    planType: 'prolite',
-    rateLimitReachedType: null,
-    ...overrides
-  }
-}
-
-const SPARK = bucket({
-  limitId: 'codex_bengalfox',
-  limitName: 'GPT-5.3-Codex-Spark',
-  primary: { usedPercent: 0, windowDurationMins: 300, resetsAt: RESET_SECONDS },
-  secondary: { usedPercent: 45, windowDurationMins: 10080, resetsAt: RESET_SECONDS },
-  credits: null,
-  spendControlReached: null
-})
-
-/** The whole prolite answer, general bucket and Spark together. */
-function codexUsage(general: v2.RateLimitSnapshot = bucket()): AccountUsage {
-  return usageFromCodexRateLimits(
-    'abccodex',
-    { rateLimits: general, rateLimitsByLimitId: { codex: general, codex_bengalfox: SPARK } },
-    NOW
-  )
-}
 
 function claudeUsage(overrides: Partial<AccountUsage> = {}): AccountUsage {
   return { ...emptyAccountUsage('ownclaude1', NOW), rateLimitsAvailable: true, ...overrides }
 }
 
-describe('the windows worth showing', () => {
-  test('drops the Spark bucket of a Codex plan and keeps the rest', () => {
-    const usage = codexUsage()
-
-    expect(shownUsageWindows('codex', usage.windows ?? []).map((window) => window.label))
-      .toEqual(['Codex 7d'])
-    // The snapshot itself still carries every window.
-    expect(usage.windows?.map((window) => window.label)).toEqual([
-      'GPT-5.3-Codex-Spark 5h',
-      'Codex 7d',
-      'GPT-5.3-Codex-Spark 7d'
-    ])
-  })
-
-  test('shows a limit the server starts metering for some new model', () => {
-    const windows = [
-      { key: 'codex:primary' },
-      { key: 'codex_something_new:primary' },
-      { key: 'codex_bengalfox:primary' },
-      { key: 'codex:secondary' }
-    ]
-
-    expect(shownUsageWindows('codex', windows).map((window) => window.key))
-      .toEqual(['codex:primary', 'codex_something_new:primary', 'codex:secondary'])
-  })
-
-  test('drops Spark even when no bucket is the general one', () => {
-    const windows = [{ key: 'codex_bengalfox:primary' }, { key: 'other:primary' }]
-
-    expect(shownUsageWindows('codex', windows).map((window) => window.key)).toEqual(['other:primary'])
-  })
-
-  test('leaves a Claude login alone', () => {
-    const windows = [{ key: '5 hour' }, { key: '7 day Opus' }]
-
-    expect(shownUsageWindows('claude', windows)).toEqual(windows)
-    expect(shownUsageWindows(undefined, windows)).toEqual(windows)
-  })
-})
-
 describe('whether the plan is used up', () => {
-  const spent = bucket({ primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: RESET_SECONDS } })
-  const withCredits = { balance: '5' }
-
-  test('is false while the plan still has room, whatever the balance is', () => {
-    expect(usageExhausted(codexUsage(bucket({ credits: withCredits })))).toBe(false)
-  })
-
-  test('is true once the general bucket is used up', () => {
-    expect(usageExhausted(codexUsage(bucket({ ...spent, credits: withCredits })))).toBe(true)
-    expect(usageExhausted(codexUsage(spent))).toBe(true)
-  })
-
-  test('ignores a per-model window that is full, because it is not what runs out', () => {
-    const full = { ...SPARK, primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: RESET_SECONDS } }
-    const general = bucket({ credits: withCredits })
-    const usage = usageFromCodexRateLimits(
-      'abccodex',
-      { rateLimits: general, rateLimitsByLimitId: { codex: general, codex_bengalfox: full } },
-      NOW
-    )
-
-    expect(usageExhausted(usage)).toBe(false)
-  })
-
-  test('ignores a full per-model window that is shown, because it is still not the plan', () => {
-    const model = {
-      ...SPARK,
-      limitId: 'codex_something_new',
-      limitName: 'Some new model',
-      primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: RESET_SECONDS }
-    }
-    const general = bucket({ credits: withCredits })
-    const usage = usageFromCodexRateLimits(
-      'abccodex',
-      { rateLimits: general, rateLimitsByLimitId: { codex: general, codex_something_new: model } },
-      NOW
-    )
-
-    expect(shownUsageWindows('codex', usage.windows ?? []).length).toBe(3)
-    expect(usageExhausted(usage)).toBe(false)
-  })
-
-  test('reads a plan whose general limit goes under another id off the windows it shows', () => {
-    const model = bucket({
-      limitId: 'codex_other',
-      limitName: 'Other',
-      credits: withCredits,
-      primary: spent.primary
-    })
-    const usage = usageFromCodexRateLimits(
-      'abccodex',
-      { rateLimits: model, rateLimitsByLimitId: { codex_other: model } },
-      NOW
-    )
-
-    expect(usageExhausted(usage)).toBe(true)
-  })
-
   test('takes a refused login as used up whatever the windows say', () => {
-    const usage = codexUsage(bucket({ credits: withCredits, rateLimitReachedType: 'rate_limit_reached' }))
-
-    expect(usage.status).toBe('rejected')
-    expect(usageExhausted(usage)).toBe(true)
+    expect(usageExhausted(claudeUsage({ status: 'rejected', fiveHour: { utilization: 3, resetsAt: null } }))).toBe(true)
   })
 
   test('reads a Claude login from its five-hour and seven-day windows', () => {
@@ -220,11 +81,6 @@ describe('every window a snapshot carries', () => {
     })
 
     expect(allUsageWindows(usage).map((window) => window.key)).toEqual(['seven_day_opus', 'Opus', 'Sonnet'])
-  })
-
-  test('a Codex plan is the windows the server named, less the hidden one', () => {
-    expect(allUsageWindows(codexUsage()).map((window) => window.key))
-      .toEqual(['codex:primary'])
   })
 
   test('a login nothing has been measured for has none', () => {
@@ -320,6 +176,5 @@ describe('the weekly windows', () => {
     }))
     expect(windows.map((window) => [window.key, isSevenDayWindow(window)]))
       .toEqual([['five_hour', false], ['seven_day', true]])
-    expect(allUsageWindows(codexUsage()).map((window) => isSevenDayWindow(window))).toEqual([true])
   })
 })

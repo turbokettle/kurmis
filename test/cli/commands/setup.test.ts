@@ -7,13 +7,13 @@ import { DaemonError } from '../../../src/cli/daemon-client.ts'
 import { globalRoutingState } from '../../../src/cli/global-routing.ts'
 import { backupPathFor } from '../../../src/cli/global-settings.ts'
 import { keychainService } from '../../../src/core/keychain-service.ts'
-import { addLogin, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
+import { addLogin, CONFIG_VERSION, findLogin, loadConfig, saveConfig } from '../../../src/data/config.ts'
 import type { LoginRef } from '../../../src/data/login-id.ts'
 import { readKey } from '../../../src/data/daemon-file.ts'
 import { loginFolder, pausedFilePath, setupSettingsRecordPath } from '../../../src/data/paths.ts'
 import { ProgramNotFoundError } from '../../../src/platform/programs.ts'
 import { registerAutostart, unregisterAutostart, type AutostartOptions, type AutostartResult } from '../../../src/platform/autostart.ts'
-import { claudeRef, codexRef, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
+import { claudeRef, OWN_CLAUDE_REF, writeTestConfig } from '../../logins.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, type FakeDaemonOptions } from '../helpers.ts'
 import { canCreateSymlinks, linkFolder } from '../../host.ts'
 
@@ -76,7 +76,7 @@ beforeEach(() => {
   rmSync(join(home, '.claude'), { recursive: true, force: true, maxRetries: 10 })
   rmSync(kurmisHome, { recursive: true, force: true, maxRetries: 10 })
   mkdirSync(kurmisHome, { recursive: true })
-  writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 2, port: PORT }))
+  writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: CONFIG_VERSION, port: PORT }))
 })
 
 afterEach(() => {
@@ -252,7 +252,7 @@ describe('kurmis setup', () => {
   })
 
   it('writes nothing when the daemon runs on another port than config.json names', async () => {
-    writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: 2, port: 30003 }))
+    writeFileSync(join(kurmisHome, 'config.json'), JSON.stringify({ version: CONFIG_VERSION, port: 30003 }))
     const { command } = setup()
     const result = await run(command, [])
     expect(result.code).toBe(1)
@@ -269,7 +269,7 @@ describe('kurmis setup', () => {
   })
 
   it('counts a machine where no logon entry can be written as done, with a warning', async () => {
-    const warning = 'The logon entry was not written: C:\\Windows\\System32\\wscript.exe does not exist. The next "kurmis claude" or "kurmis codex" starts the daemon anyway.'
+    const warning = 'The logon entry was not written: C:\\Windows\\System32\\wscript.exe does not exist. The next "kurmis claude" starts the daemon anyway.'
     const { command } = setup({}, fakeAutostart({ noEntryPossible: true, warning }), 'win32')
     const result = await run(command, [])
     expect(result.code).toBe(0)
@@ -292,7 +292,7 @@ describe('kurmis setup', () => {
   })
 
   it('counts a platform without autostart as done, with a warning', async () => {
-    const unsupported = 'Starting the daemon at login is not supported on this platform; the next "kurmis claude" or "kurmis codex" starts it.'
+    const unsupported = 'Starting the daemon at login is not supported on this platform; the next "kurmis claude" starts it.'
     const { command } = setup({}, fakeAutostart({ warning: unsupported }), 'linux')
     const result = await run(command, [])
     expect(result.code).toBe(0)
@@ -424,7 +424,7 @@ describe('kurmis setup', () => {
   it('names its three modes in its help', () => {
     const { usage } = setup().command
     expect(usage).toContain('Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]')
-    expect(usage).toContain('The logins plain claude and plain codex use stay signed\n                          in.')
+    expect(usage).toContain('The login plain claude uses stays signed in.')
     expect(usage).toContain('npm uninstall -g kurmis')
   })
 })
@@ -637,7 +637,7 @@ describe('kurmis setup --uninstall-and-logout', () => {
         return { command: `/fake/bin/${tool}`, args: [], source: 'env' }
       },
       async runProgram(program, args, run) {
-        const folder = run.env?.['CLAUDE_CONFIG_DIR'] ?? run.env?.['CODEX_HOME'] ?? ''
+        const folder = run.env?.['CLAUDE_CONFIG_DIR'] ?? ''
         world.signOuts.push(`${program} ${args.join(' ')} ${folder}`)
         const failing = options.failSignOutOf !== undefined && folder === loginFolder(options.failSignOutOf)
         return { stdout: '', stderr: '', code: failing ? 1 : 0, timedOut: false, outputTooLarge: false, error: null }
@@ -663,10 +663,10 @@ describe('kurmis setup --uninstall-and-logout', () => {
   }
 
   const WORK = claudeRef('workclaude')
-  const SPARE = codexRef('sparecodex')
+  const SPARE = claudeRef('spareclaude')
 
   function addLoginWithFolder(login: LoginRef, alias: string): string {
-    saveConfig(addLogin(loadConfig(), login, { alias }))
+    saveConfig(addLogin(loadConfig(), login.id, { alias }))
     const folder = loginFolder(login)
     mkdirSync(folder, { recursive: true })
     return folder
@@ -683,7 +683,7 @@ describe('kurmis setup --uninstall-and-logout', () => {
     addLoginWithFolder(SPARE, 'spare-example')
   }
 
-  it('lists what it removes, asks, and removes it all, leaving the logins of plain claude and plain codex alone', async () => {
+  it('lists what it removes, asks, and removes it all, leaving the login of plain claude alone', async () => {
     const original = '{\n  "model": "opus"\n}\n'
     await installed(original)
     const world = uninstaller({ terminal: true, answer: 'yes' })
@@ -696,16 +696,16 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(result.stdout).toContain('  - the logins added to kurmis, each signed out first: work-example, spare-example')
     expect(result.stdout).toContain(`  - the running daemon (pid ${String(FAKE_CONNECTION.pid)}), which it stops`)
     expect(result.stdout).toContain(`  - the kurmis data folder ${kurmisHome}`)
-    expect(result.stdout).toContain('The logins plain claude and plain codex use are not signed out')
+    expect(result.stdout).toContain('The login plain claude uses is not signed out, so a plain "claude" keeps working.')
 
     expect(readFileSync(settingsPath, 'utf8')).toBe(original)
     expect(existsSync(backupPathFor(settingsPath))).toBe(false)
     expect(world.autostart.calls).toEqual(['unregister:darwin'])
     expect(world.stops).toBe(1)
-    // One logout CLI per added login, on its own folder; none on the logins of plain claude and plain codex.
+    // One logout per added login, on its own folder; none on the login of plain claude.
     expect(world.signOuts).toEqual([
       `/fake/bin/claude auth logout ${loginFolder(WORK)}`,
-      `/fake/bin/codex logout ${loginFolder(SPARE)}`
+      `/fake/bin/claude auth logout ${loginFolder(SPARE)}`
     ])
     expect(existsSync(kurmisHome)).toBe(false)
     expect(globalRoutingState({})).toBe('off')
@@ -729,7 +729,7 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(result.stdout).toContain('Deleted the folder that leftover01 left behind.')
     expect(world.signOuts).toEqual([
       `/fake/bin/claude auth logout ${loginFolder(WORK)}`,
-      `/fake/bin/codex logout ${loginFolder(SPARE)}`,
+      `/fake/bin/claude auth logout ${loginFolder(SPARE)}`,
       `/fake/bin/claude auth logout ${loginFolder(leftover)}`
     ])
     expect(existsSync(kurmisHome)).toBe(false)
@@ -807,25 +807,25 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(result.stderr).toContain('claude was not found on PATH.')
     expect(result.stderr).toContain('If that cannot work, for example because claude is not installed, "kurmis logout workclaude" ' +
       'removes work-example and its folder without signing it out, which leaves the item named above.')
-    expect(result.stderr).toContain('If that cannot work, for example because codex is not installed, "kurmis logout sparecodex" ' +
-      'removes spare-example and its folder without signing it out.')
+    expect(result.stderr).toContain('If that cannot work, for example because claude is not installed, "kurmis logout spareclaude" ' +
+      'removes spare-example and its folder without signing it out, which leaves the item named above.')
     expect(result.stdout).not.toContain('npm uninstall')
     expect(existsSync(kurmisHome)).toBe(true)
 
     // The way out, with the CLIs still missing.
-    const missing = (tool: 'claude' | 'codex') => {
+    const missing = (tool: 'claude') => {
       throw new ProgramNotFoundError(tool, `${tool} was not found on PATH.`)
     }
     const logout = createLogoutCommand({ daemon: fakeDaemonClient({ running: false }), findProgram: missing, platform: 'darwin' })
     expect(await logout.run(['workclaude'], collect().context)).toBe(0)
-    expect(await logout.run(['sparecodex'], collect().context)).toBe(0)
+    expect(await logout.run(['spareclaude'], collect().context)).toBe(0)
     const second = await run(uninstaller({ cliMissing: true, running: false }).command, ['--uninstall-and-logout', '--yes'])
     expect(second.code).toBe(0)
     expect(existsSync(kurmisHome)).toBe(false)
     expect(second.stdout).toContain('npm uninstall -g kurmis')
   })
 
-  it('counts a failed logout of a Claude login in config.json without a folder as a failure', async () => {
+  it('counts a failed logout of a login in config.json without a folder as a failure', async () => {
     await installed()
     rmSync(loginFolder(WORK), { recursive: true, force: true })
     const world = uninstaller({ failSignOutOf: WORK })
@@ -950,10 +950,10 @@ describe('kurmis setup --uninstall-and-logout', () => {
 
   it('leaves files in the data folder that kurmis did not write, and what links in it point to', async () => {
     await installed()
-    const codexHome = join(home, '.codex')
-    mkdirSync(join(codexHome, 'skills'), { recursive: true })
-    writeFileSync(join(codexHome, 'skills', 'one.md'), 'kept')
-    linkFolder(join(codexHome, 'skills'), join(loginFolder(SPARE), 'skills'))
+    const outside = join(home, 'outside')
+    mkdirSync(join(outside, 'skills'), { recursive: true })
+    writeFileSync(join(outside, 'skills', 'one.md'), 'kept')
+    linkFolder(join(outside, 'skills'), join(loginFolder(SPARE), 'skills'))
     writeFileSync(join(kurmisHome, 'notes.txt'), 'mine')
     try {
       const world = uninstaller()
@@ -961,9 +961,9 @@ describe('kurmis setup --uninstall-and-logout', () => {
       expect(result.code).toBe(0)
       expect(result.stdout).toContain('The folder is left, because it also holds files kurmis did not write: notes.txt.')
       expect(readdirSync(kurmisHome)).toEqual(['notes.txt'])
-      expect(readFileSync(join(codexHome, 'skills', 'one.md'), 'utf8')).toBe('kept')
+      expect(readFileSync(join(outside, 'skills', 'one.md'), 'utf8')).toBe('kept')
     } finally {
-      rmSync(codexHome, { recursive: true, force: true, maxRetries: 10 })
+      rmSync(outside, { recursive: true, force: true, maxRetries: 10 })
     }
   })
 })

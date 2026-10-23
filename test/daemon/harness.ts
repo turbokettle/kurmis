@@ -1,5 +1,5 @@
 // A daemon app behind a `node:http` server on a free port, against the fake Anthropic API and
-// the fake claude and codex, with its own HOME and KURMIS_HOME. For the in-process tests of the
+// the fake claude, with its own HOME and KURMIS_HOME. For the in-process tests of the
 // whole request handling (`app.test.ts`).
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, request, type IncomingHttpHeaders, type Server } from 'node:http'
@@ -10,7 +10,7 @@ import type { StopRequest } from '../../src/core/control-api.ts'
 import { createDaemonApp, type DaemonApp, type DaemonTuning } from '../../src/daemon/app.ts'
 import type { KurmisConfig, LoginSettingsPatch } from '../../src/data/config.ts'
 import type { LogEvent, LogFields } from '../../src/data/log.ts'
-import { FAKE_CLAUDE_SCRIPT, FAKE_CODEX_SCRIPT, startFakeAnthropic, type FakeAnthropic } from '../fakes/index.ts'
+import { FAKE_CLAUDE_SCRIPT, startFakeAnthropic, type FakeAnthropic } from '../fakes/index.ts'
 import { writeTestConfig } from '../logins.ts'
 
 export const KEY = 'a'.repeat(64)
@@ -36,14 +36,10 @@ export interface Harness {
 }
 
 export interface HarnessOptions {
-  /** Extra Claude logins by id, with their settings, added after the logins of plain claude and plain codex. */
+  /** Extra logins by id, with their settings, added after the login of plain claude. */
   claude?: Record<string, LoginSettingsPatch>
-  /** Extra Codex logins by id, with their settings, added after the extra Claude logins. */
-  codex?: Record<string, LoginSettingsPatch>
   /** Settings of the login plain claude uses (`OWN_CLAUDE`). */
   ownClaude?: LoginSettingsPatch
-  /** Settings of the login plain codex uses (`OWN_CODEX`). */
-  ownCodex?: LoginSettingsPatch
   tuning?: DaemonTuning
   env?: Record<string, string>
 }
@@ -58,17 +54,12 @@ export function freshHome(): string {
 }
 
 /**
- * Writes a `config.json` with the logins of plain claude and plain codex at `OWN_CLAUDE` and `OWN_CODEX` and the
- * given extra logins (`writeTestConfig`).
+ * Writes a `config.json` with the login of plain claude at `OWN_CLAUDE` and the given extra
+ * logins (`writeTestConfig`).
  */
-export function writeLogins(options: Pick<HarnessOptions, 'claude' | 'codex' | 'ownClaude' | 'ownCodex'>): KurmisConfig {
-  const extras = [
-    ...Object.entries(options.claude ?? {}).map(([id, patch]) => ({ id, provider: 'claude' as const, ...patch })),
-    ...Object.entries(options.codex ?? {}).map(([id, patch]) => ({ id, provider: 'codex' as const, ...patch }))
-  ]
-  return writeTestConfig({ extras,
-    ...(options.ownClaude === undefined ? {} : { ownClaude: options.ownClaude }),
-    ...(options.ownCodex === undefined ? {} : { ownCodex: options.ownCodex }) })
+export function writeLogins(options: Pick<HarnessOptions, 'claude' | 'ownClaude'>): KurmisConfig {
+  const extras = Object.entries(options.claude ?? {}).map(([id, patch]) => ({ id, ...patch }))
+  return writeTestConfig({ extras, ...(options.ownClaude === undefined ? {} : { ownClaude: options.ownClaude }) })
 }
 
 export async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
@@ -79,7 +70,6 @@ export async function startHarness(options: HarnessOptions = {}): Promise<Harnes
     ...process.env,
     KURMIS_UPSTREAM_URL: api.url,
     KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT,
-    KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT,
     ...options.env
   }
   const log: LoggedLine[] = []

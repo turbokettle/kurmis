@@ -160,7 +160,8 @@ describe('routing kurmis claude -p', () => {
     // Its usage-limit 429 reaches the CLI as it is, and the login plain claude uses is never tried.
     const back = wholeMinute(HOUR_MS)
     world.api.scriptFor(work.token, reply.quota({ claim: 'five_hour', resetsAt: back }))
-    const second = await world.kurmis(['claude', '--login', 'claude:work-example', '--', '-p', 'again', '--session-id', session])
+    // This time the login is named by its id, which pins the session to the same login.
+    const second = await world.kurmis(['claude', '--login', work.id, '--', '-p', 'again', '--session-id', session])
     expect(second.code).toBe(1)
     expect(second.stdout).toContain(`You've hit your session limit · resets ${resetText(back)}`)
     expect(bearers(world)).toEqual([work.token, work.token])

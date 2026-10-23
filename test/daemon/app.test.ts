@@ -10,8 +10,8 @@ import { addLogin, loadConfig, saveConfig } from '../../src/data/config.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import { toLoginId } from '../../src/data/login-id.ts'
 import { loginFolder, statePath } from '../../src/data/paths.ts'
-import { fakeToken, readFakeClaudeRecord, reply, writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth } from '../fakes/index.ts'
-import { claudeRef, codexRef, OWN_CLAUDE, OWN_CODEX } from '../logins.ts'
+import { fakeToken, readFakeClaudeRecord, reply, writeClaudeCredentials, writeClaudeIdentity } from '../fakes/index.ts'
+import { claudeRef, OWN_CLAUDE } from '../logins.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
 
 const S1 = '11111111-1111-4111-8111-111111111111'
@@ -19,7 +19,6 @@ const S2 = '22222222-2222-4222-8222-222222222222'
 const DEFAULT = fakeToken('default')
 const WORK = fakeToken('work')
 const WORK_ID = 'workclaude'
-const WORK_CODEX = 'workcodex1'
 
 let harness: Harness | null = null
 
@@ -64,14 +63,14 @@ describe('what the daemon answers itself', () => {
     expect(harness.api.apiRequests()).toHaveLength(0)
   })
 
-  test('a login header that names a Codex login or no login at all is refused with a 400', async () => {
-    harness = await startHarness({ codex: { [WORK_CODEX]: {} } })
+  test('a login header that names no login in the config is refused with a 400', async () => {
+    harness = await startHarness()
     writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
-    for (const id of [OWN_CODEX, WORK_CODEX, 'nobody']) {
+    for (const id of ['nobody', 'unknown01', 'claude']) {
       const pinned = await messages(harness, S1, { 'x-kurmis-login': id })
       expect(pinned.status).toBe(400)
       expect(JSON.parse(pinned.text)).toEqual({ type: 'error',
-        error: { type: 'invalid_request_error', message: 'The x-kurmis-login header does not name a Claude login.' } })
+        error: { type: 'invalid_request_error', message: 'The x-kurmis-login header does not name a login.' } })
     }
     const notAnId = await messages(harness, S1, { 'x-kurmis-login': 'claude:work' })
     expect(notAnId.status).toBe(400)
@@ -80,7 +79,7 @@ describe('what the daemon answers itself', () => {
     expect(harness.api.apiRequests()).toHaveLength(0)
     expect(harness.log.filter((line) => line.event === 'proxy_rejected').map((line) => line.fields.reason))
       .toEqual(['invalid', 'invalid', 'invalid', 'invalid', 'invalid'])
-    // The login plain claude uses, named by its id, is a Claude login like any other.
+    // The login plain claude uses, named by its id, can be pinned like any other.
     expect((await messages(harness, S1, { 'x-kurmis-login': OWN_CLAUDE })).status).toBe(200)
     expect(bearers(harness)).toEqual([DEFAULT])
   })
@@ -354,7 +353,7 @@ describe('tokens and probes', () => {
     expect(block?.kind).toBe('token-expiring')
   })
 
-  test('a probe request probes the Claude logins and answers the status with their usage', async () => {
+  test('a probe request probes the logins and answers the status with their usage', async () => {
     const h = await twoLogins()
     const answer = await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: [WORK_ID] } })
     expect(answer.status).toBe(200)
@@ -362,17 +361,6 @@ describe('tokens and probes', () => {
     expect(work?.signedIn).toBe(true)
     expect(work?.usage?.source).toBe('probe')
     expect(work?.usage?.fiveHour?.utilization).toBe(42)
-  })
-
-  test('a probe request reaches Codex logins through the app-server', async () => {
-    harness = await startHarness({ codex: { [WORK_CODEX]: {} } })
-    writeCodexAuth(loginFolder(codexRef(WORK_CODEX)))
-    const answer = await call(harness, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY }, body: { logins: [WORK_CODEX] } })
-    expect(answer.status).toBe(200)
-    const work = (JSON.parse(answer.text) as StatusAnswer).logins.find((login) => login.id === WORK_CODEX)
-    expect(work?.signedIn).toBe(true)
-    expect(work?.usage?.provider).toBe('codex')
-    expect(work?.usage?.windows?.length).toBeGreaterThan(0)
   })
 })
 
@@ -387,26 +375,24 @@ describe('the control API', () => {
     expect(harness.stopRequested()).toBe(0)
   })
 
-  test("status lists every login with its settings, those of plain claude and plain codex first", async () => {
+  test("status lists every login with its settings, the login of plain claude first", async () => {
     const h = await twoLogins()
     writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'),
       { email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001' })
     const answer = await status(h)
     expect(answer).toMatchObject({ ok: true, apiVersion: CONTROL_API_VERSION, pid: process.pid })
-    expect(answer.logins.map((login) => login.id)).toEqual([OWN_CLAUDE, OWN_CODEX, WORK_ID])
+    expect(answer.logins.map((login) => login.id)).toEqual([OWN_CLAUDE, WORK_ID])
     const work = answer.logins.find((login) => login.id === WORK_ID)!
-    expect(work).toEqual({ id: WORK_ID, provider: 'claude', alias: WORK_ID, usedByPlainCli: false, routing: true, fiveHourLimit: 100,
+    expect(work).toEqual({ id: WORK_ID, alias: WORK_ID, usedByPlainClaude: false, routing: true, fiveHourLimit: 100,
       weeklyLimit: 100, useFirst: false, signedIn: true, usage: null, cooldownUntil: null, block: null, sessions: 0,
       email: 'work@example.com', organizationUuid: '00000000-0000-4000-8000-00000000c001', probing: false })
-    expect(answer.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ provider: 'claude', usedByPlainCli: true, email: null,
+    expect(answer.logins.find((login) => login.id === OWN_CLAUDE)).toMatchObject({ usedByPlainClaude: true, email: null,
       organizationUuid: null })
-    expect(answer.logins.find((login) => login.id === OWN_CODEX)).toMatchObject({ provider: 'codex', usedByPlainCli: true, email: null,
-      block: null })
     expect(h.log.every((line) => !JSON.stringify(line).includes('example.com'))).toBe(true)
   })
 
-  test('a probe gives each login the automatic alias of its email, and status shows the email of both providers', async () => {
-    harness = await startHarness({ claude: { [WORK_ID]: {}, picked: { alias: 'picked' } }, codex: { [WORK_CODEX]: {} } })
+  test('a probe gives each login the automatic alias of its email, and status shows the email', async () => {
+    harness = await startHarness({ claude: { [WORK_ID]: {}, picked: { alias: 'picked' } } })
     const h = harness
     writeClaudeCredentials(join(h.home, '.claude'), { accessToken: DEFAULT })
     writeClaudeCredentials(loginFolder(claudeRef(WORK_ID)), { accessToken: WORK })
@@ -415,29 +401,27 @@ describe('the control API', () => {
     writeClaudeIdentity(join(h.home, '.claude.json'), { email: 'own.person@example.com' })
     writeClaudeIdentity(join(loginFolder(claudeRef(WORK_ID)), '.claude.json'), { email: 'work.person@example.com' })
     writeClaudeIdentity(join(loginFolder(claudeRef('picked')), '.claude.json'), { email: 'picked.person@example.com' })
-    writeCodexAuth(loginFolder(codexRef(WORK_CODEX)), { email: 'codex.person@example.org' })
     const probed = await call(h, CONTROL_PATHS.probe, { headers: { 'x-kurmis-key': KEY },
-      body: { logins: [OWN_CLAUDE, WORK_ID, 'picked', WORK_CODEX] } })
+      body: { logins: [OWN_CLAUDE, WORK_ID, 'picked'] } })
     expect(probed.status).toBe(200)
     const logins = (JSON.parse(probed.text) as StatusAnswer).logins
     const of = (id: string): StatusAnswer['logins'][number] | undefined => logins.find((login) => login.id === id)
     expect(of(OWN_CLAUDE)).toMatchObject({ alias: 'own-person-example', email: 'own.person@example.com' })
     expect(of(WORK_ID)).toMatchObject({ alias: 'work-person-example', email: 'work.person@example.com' })
     expect(of('picked')).toMatchObject({ alias: 'picked', email: 'picked.person@example.com' })
-    expect(of(WORK_CODEX)).toMatchObject({ alias: 'codex-person-example', email: 'codex.person@example.org' })
-    expect(loadConfig().logins.find((login) => login.id === WORK_CODEX)).toMatchObject({ alias: 'codex-person-example', aliasSetByUser: false })
+    expect(loadConfig().logins.find((login) => login.id === WORK_ID)).toMatchObject({ alias: 'work-person-example', aliasSetByUser: false })
 
     await h.app.close()
-    // The Codex email is in the daemon's memory only, and no alias or email reaches the log.
+    // No email reaches state.json, and no alias or email reaches the log.
     expect(readFileSync(statePath(), 'utf8')).not.toContain('@')
     const log = JSON.stringify(h.log)
     expect(log).not.toMatch(/example|person|@/)
-    expect(log).toContain(WORK_CODEX)
+    expect(log).toContain(WORK_ID)
   })
 
   test('reload reads config.json again, and a request notices a change by itself', async () => {
     const h = await twoLogins()
-    saveConfig(addLogin(loadConfig(), { id: toLoginId('extraclaude'), provider: 'claude' }, { alias: 'extra' }))
+    saveConfig(addLogin(loadConfig(), toLoginId('extraclaude'), { alias: 'extra' }))
     expect((await call(h, CONTROL_PATHS.reload, { method: 'POST', headers: { 'x-kurmis-key': KEY } })).status).toBe(200)
     expect((await status(h)).logins.map((login) => login.id)).toContain('extraclaude')
     writeFileSync(join(process.env.KURMIS_HOME ?? '', 'config.json'), '{ not json')
@@ -455,7 +439,7 @@ describe('the control API', () => {
       return Promise.resolve({ ok: true as const, signedIn: false, usage: emptyAccountUsage(login.id, Date.now()) })
     }
     const h = await twoLogins({ tuning: { probeClaude } })
-    saveConfig(addLogin(loadConfig(), { id: toLoginId('extraclaude'), provider: 'claude' }, { alias: 'extra' }))
+    saveConfig(addLogin(loadConfig(), toLoginId('extraclaude'), { alias: 'extra' }))
     expect((await status(h)).logins.map((login) => login.id)).toContain('extraclaude')
     await expect.poll(() => probed).toEqual(['extraclaude'])
     expect(h.log.filter((line) => line.event === 'usage_probe_started').map((line) => line.fields.login)).toEqual(['extraclaude'])

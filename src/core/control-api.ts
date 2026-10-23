@@ -7,12 +7,11 @@
 // may be added; a field is not removed or given another meaning without raising
 // `CONTROL_API_VERSION`.
 import type { RouteBlock } from './account-router.ts'
-import type { AccountProvider } from './accounts.ts'
 import type { AccountUsage } from './claude-usage.ts'
 import { CONTROL_PREFIX } from './proxy-rules.ts'
 
 /** Raised when an answer changes in a way an older CLI would misread. */
-export const CONTROL_API_VERSION = 3
+export const CONTROL_API_VERSION = 4
 
 export const CONTROL_PATHS = {
   /** `GET`: `StatusAnswer`. */
@@ -66,11 +65,10 @@ export interface ProbeRequest {
 /** One login as the daemon sees it. */
 export interface LoginStatus {
   id: string
-  provider: AccountProvider
   /** The name the person sees and types for the login (`alias` in `config.json`). */
   alias: string
-  /** The login plain claude or plain codex uses, which follows what that CLI is signed in to. */
-  usedByPlainCli: boolean
+  /** The login plain claude uses, which follows what that CLI is signed in to. */
+  usedByPlainClaude: boolean
   /** Opted in to routing. */
   routing: boolean
   fiveHourLimit: number
@@ -85,19 +83,18 @@ export interface LoginStatus {
    * the string `unknown` when the refusal named no reset. Null when there is no cooldown.
    */
   cooldownUntil: number | 'unknown' | null
-  /** Why Auto would pass this login over now, or null when it could serve. Claude only. */
+  /** Why Auto would pass this login over now, or null when it could serve. */
   block: RouteBlock | null
-  /** Sessions whose last request this login served. Claude only. */
+  /** Sessions whose last request this login served. */
   sessions: number
   /**
-   * The login's email, or null when none is known: for Claude from the profile its own CLI runs
-   * cached (`ClaudeIdentityReader`), for Codex from the last usage probe's `account/read`, kept in
-   * the daemon's memory only. For the person's own terminal; never logged or stored.
+   * The login's email, or null when none is known, from the profile its own CLI runs cached
+   * (`ClaudeIdentityReader`). For the person's own terminal; never logged or stored.
    */
   email: string | null
   /**
-   * A Claude login's organization uuid from the same profile as its email, or null when none is
-   * recorded; always null for a Codex login. With the email it tells whether two logins are the
+   * The login's organization uuid from the same profile as its email, or null when none is
+   * recorded. With the email it tells whether two logins are the
    * same account (`isSameClaudeAccount` in `src/data/identity.ts`).
    */
   organizationUuid: string | null
@@ -114,6 +111,6 @@ export interface StatusAnswer {
   port: number
   /** Milliseconds since epoch. */
   startedAt: number
-  /** Every login in `config.json`, the logins of plain claude and plain codex first. */
+  /** Every login in `config.json`, the login of plain claude first. */
   logins: LoginStatus[]
 }

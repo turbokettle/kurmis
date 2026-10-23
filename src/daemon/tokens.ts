@@ -1,4 +1,4 @@
-// The daemon's token source: where the proxy reads each Claude login's access token.
+// The daemon's token source: where the proxy reads each login's access token.
 //
 // Where the Claude CLI keeps a login's credentials record:
 //
@@ -15,7 +15,7 @@
 //   there, the probe would not see the record, and would report the login signed out.
 // - Linux: in `.credentials.json` only.
 //
-// The two kinds of login, told apart by `usedByPlainCli` in the login's settings:
+// The two kinds of login, told apart by `usedByPlainClaude` in the login's settings:
 //
 // - an extra login: its folder in the kurmis data folder (`loginFolder`) is both the string its
 //   Keychain item name is made from and the folder that holds its file;
@@ -23,7 +23,7 @@
 //   `CLAUDE_SECURESTORAGE_CONFIG_DIR`), and `<home>/.claude/.credentials.json`.
 //
 // The source is asked by login id. It looks each id up in the config once (`login` in the
-// options) and keeps what it found, since a login's provider and kind never change.
+// options) and keeps what it found, since whether a login is plain claude's never changes.
 //
 // `read` never waits. Keychain and Credential Manager answers are fetched by `prime` and kept
 // for a minute (`KEYCHAIN_CACHE_MS`; `credential-manager.ts` says when it keeps them longer);
@@ -48,8 +48,8 @@ import { KeychainCredentialsReader, keychainHoldsSecret, type KeychainFailureKin
 
 export interface TokenSourceOptions {
   /**
-   * The login with this id in the config, or undefined when there is none. Only a Claude login
-   * has a token; any other id is answered null and never reaches the Keychain.
+   * The login with this id in the config, or undefined when there is none. Only a login in the
+   * config has a token; any other id is answered null and never reaches the Keychain.
    */
   login: (id: string) => LoginRef | undefined
   /** `KURMIS_SECURITY_PROGRAM` (a test hook) names the `security` program; else `SECURITY_PROGRAM`. */
@@ -101,44 +101,43 @@ export function securityProgramOf(env: NodeJS.ProcessEnv, processEnv: NodeJS.Pro
 }
 
 /**
- * The string a Claude login's Keychain item name is made from: the login's folder for an extra
- * login, null for plain claude's login, whose item has the plain name. Throws for a login
- * that is not a Claude login.
+ * The string a login's Keychain item name is made from: the login's folder for an extra login,
+ * null for plain claude's login, whose item has the plain name.
  */
 export function claudeSecureStorageDir(login: LoginRef): string | null {
-  return checkedClaude(login).usedByPlainCli ? null : loginFolder(login)
+  return login.usedByPlainClaude ? null : loginFolder(login)
 }
 
 /**
- * The folder holding a Claude login's `.credentials.json`: the login's folder for an extra login,
- * `<home>/.claude` for plain claude's login. Throws for a login that is not a Claude login.
+ * The folder holding a login's `.credentials.json`: the login's folder for an extra login,
+ * `<home>/.claude` for plain claude's login.
  */
 export function claudeCredentialsDir(login: LoginRef, home: string): string {
-  return checkedClaude(login).usedByPlainCli ? join(home, '.claude') : loginFolder(login)
+  return login.usedByPlainClaude ? join(home, '.claude') : loginFolder(login)
 }
 
 /**
- * The daemon's `TokenSource`. An id that is not the id of a Claude login in the config has no
- * token: `read` answers null for it and `prime` skips it, so no such id can reach the Keychain.
+ * The daemon's `TokenSource`. An id that is not the id of a login in the config has no token:
+ * `read` answers null for it and `prime` skips it, so no such id can reach the Keychain.
  */
 export function createTokenSource(options: TokenSourceOptions): TokenSource {
   const home = options.home ?? homedir
-  /** The Claude logins looked up so far, by id. A login's provider and kind never change. */
+  /** The logins looked up so far, by id. Whether a login is plain claude's never changes. */
   const known = new Map<string, LoginRef>()
-  const claudeLogin = (id: string): LoginRef | null => {
+  const loginOf = (id: string): LoginRef | null => {
     const seen = known.get(id)
     if (seen !== undefined) return seen
     const found = isLoginId(id) ? options.login(id) : undefined
-    if (found?.provider !== 'claude' || found.id !== id) return null
-    const login: LoginRef = { id: found.id, provider: 'claude', usedByPlainCli: found.usedByPlainCli }
+    if (found === undefined || found.id !== id) return null
+    const login: LoginRef = { id: found.id, usedByPlainClaude: found.usedByPlainClaude }
     known.set(id, login)
     return login
   }
-  const isClaude = (id: string): id is LoginId => claudeLogin(id) !== null
+  const isKnownLogin = (id: string): id is LoginId => loginOf(id) !== null
   /** The login of an id the readers were handed, which `read` and `prime` have checked. */
   const checked = (id: string): LoginRef => {
-    const login = claudeLogin(id)
-    if (login === null) throw new Error(`${id} is not the id of a Claude login.`)
+    const login = loginOf(id)
+    if (login === null) throw new Error(`${id} is not the id of a login in the config.`)
     return login
   }
   const file = new CredentialsFileReader({ credentialsDir: (id) => claudeCredentialsDir(checked(id), home()) })
@@ -149,7 +148,7 @@ export function createTokenSource(options: TokenSourceOptions): TokenSource {
         read: options.credentialRead ?? powerShellCredentialRead(options.env),
         now: options.now,
         onFailure: (failure) => {
-          const login = claudeLogin(failure.id)
+          const login = loginOf(failure.id)
           if (login !== null) options.log?.write('token_read_failed', { login: login.id, reason: credentialManagerReasonOf(failure.kind) })
         }
       })
@@ -161,7 +160,7 @@ export function createTokenSource(options: TokenSourceOptions): TokenSource {
         readTimeoutMs: options.keychainReadTimeoutMs,
         now: options.now,
         onFailure: (failure) => {
-          const login = claudeLogin(failure.id)
+          const login = loginOf(failure.id)
           if (login !== null) options.log?.write('token_read_failed', { login: login.id, reason: logReasonOf(failure.kind) })
         }
       })
@@ -170,28 +169,28 @@ export function createTokenSource(options: TokenSourceOptions): TokenSource {
   return {
     keychain: keychain !== null,
     read(id: string): ClaudeCredentials | null {
-      if (!isClaude(id)) return null
+      if (!isKnownLogin(id)) return null
       return credentialManager?.read(id) ?? keychain?.read(id) ?? file.read(id)
     },
     async prime(ids: readonly string[]): Promise<void> {
-      const claude = ids.filter(isClaude)
-      await Promise.all([keychain?.prime(claude), credentialManager?.prime(claude)])
+      const inConfig = ids.filter(isKnownLogin)
+      await Promise.all([keychain?.prime(inConfig), credentialManager?.prime(inConfig)])
     },
     invalidate(id: string): void {
-      if (!isClaude(id)) return
+      if (!isKnownLogin(id)) return
       keychain?.invalidate(id)
       credentialManager?.invalidate(id)
       file.invalidate(id)
     },
     markStale(id: string): void {
-      if (!isClaude(id)) return
+      if (!isKnownLogin(id)) return
       // A Keychain read takes a moment, so the Keychain answer is simply read again.
       keychain?.invalidate(id)
       credentialManager?.markStale(id)
       file.invalidate(id)
     },
     inCredentialManager(id: string): boolean {
-      return isClaude(id) && credentialManager !== null && credentialManager.holds(id)
+      return isKnownLogin(id) && credentialManager !== null && credentialManager.holds(id)
     },
     clear(): void {
       keychain?.clear()
@@ -219,7 +218,3 @@ function credentialManagerReasonOf(kind: CredentialManagerFailureKind): LogReaso
   return kind === 'not_credentials' ? 'invalid' : 'other'
 }
 
-function checkedClaude(login: LoginRef): LoginRef {
-  if (login.provider !== 'claude') throw new Error(`${login.id} is not a Claude login.`)
-  return login
-}

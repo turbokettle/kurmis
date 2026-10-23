@@ -5,11 +5,12 @@
 // the wrapper) refuses:
 // - a program whose file name, or the file name its links lead to, is one of `GUARDED_PROGRAMS`:
 //   the macOS and Windows programs that change the machine or read secrets, `cmd`, and the real
-//   Claude and Codex CLIs;
-// - a program inside the Claude Code or Codex npm packages or the folder Claude Code's native
-//   installer keeps its versions in (`REAL_CLI_PATHS`);
-// - Node running a script that is one of those, such as `node .../@openai/codex/bin/codex.js`,
-//   which is how a `codex` on PATH that links to a `.js` file is started (`programs.ts`).
+//   Claude Code CLI;
+// - a program inside the Claude Code npm packages or the folder Claude Code's native installer
+//   keeps its versions in (`REAL_CLI_PATHS`);
+// - Node running a script that is one of those, such as
+//   `node .../@anthropic-ai/claude-code/cli.js`, which is how a `claude` on PATH that links to a
+//   `.js` file, or an npm shim that runs one, is started (`programs.ts`).
 // Stand-ins are `.js` or `.mjs` files with other names, run through Node, so they still start.
 //
 // The guard is read from this process's environment and from the environment a program is
@@ -17,7 +18,7 @@
 // together with `TEST_HOME_VARIABLES` when that environment lacks them. So a kurmis process that
 // a test starts with an environment of its own (a daemon, a login item's command) keeps the
 // guard, uses the test's temporary home rather than the real one, and finds the fake or failing
-// `claude` and `codex` that `test/setup.ts` names. A person never sets it.
+// `claude` that `test/setup.ts` names. A person never sets it.
 //
 // Refusing is the last line of defence: the stand-ins of `system-programs.ts` are meant to be
 // reached first. So each refusal is also written, as the program's path on a line of its own,
@@ -44,8 +45,7 @@ export const GUARDED_PROGRAMS: ReadonlySet<string> = new Set([
   'wmic',
   'schtasks',
   'cmd',
-  'claude',
-  'codex'
+  'claude'
 ])
 
 /** Whether the guard is on, in this process's environment or in `env`. */
@@ -54,24 +54,22 @@ export function guardOn(env?: NodeJS.ProcessEnv): boolean {
 }
 
 /**
- * Paths, with `/` as the separator and in lower case, that hold the real Claude Code or Codex:
- * their npm packages (also the per-platform ones such as `@openai/codex-darwin-arm64`) and the
- * folder of Claude Code's native installer (`~/.local/share/claude/versions/<version>`).
+ * Paths, with `/` as the separator and in lower case, that hold the real Claude Code: its npm
+ * packages (also the per-platform ones such as `@anthropic-ai/claude-code-darwin-arm64`) and the
+ * folder of its native installer (`~/.local/share/claude/versions/<version>`).
  */
 export const REAL_CLI_PATHS: readonly RegExp[] = [
   /\/@anthropic-ai\/claude-code[^/]*\//,
-  /\/@openai\/codex[^/]*\//,
   /\/\.local\/share\/claude\/versions\//
 ]
 
 /**
  * Variables a program started while the guard is on gets from this process's environment when
- * its own environment lacks them: the test's temporary home (`test/setup.ts`), the programs
- * kurmis runs as `claude` and `codex`, and the API address that stands in for Anthropic's, so
+ * its own environment lacks them: the test's temporary home (`test/setup.ts`), the program
+ * kurmis runs as `claude`, and the API address that stands in for Anthropic's, so
  * a daemon a test starts with an environment of its own never reaches the network.
  */
-export const TEST_HOME_VARIABLES: readonly string[] = ['HOME', 'USERPROFILE', 'KURMIS_HOME', 'KURMIS_CLAUDE_BIN', 'KURMIS_CODEX_BIN',
-  'KURMIS_UPSTREAM_URL']
+export const TEST_HOME_VARIABLES: readonly string[] = ['HOME', 'USERPROFILE', 'KURMIS_HOME', 'KURMIS_CLAUDE_BIN', 'KURMIS_UPSTREAM_URL']
 
 /**
  * Why `command` with `args` may not be started, or null when it may. `args` matter when

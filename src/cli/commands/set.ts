@@ -4,7 +4,7 @@
 import { aliasProblem, changeConfig, ConfigError, findLogin, loadConfig, resolveLogin, updateLogin, type KurmisConfig, type LoginSettings, type LoginSettingsPatch } from '../../data/config.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, reloadIfRunning, reloadText, type DaemonClient } from '../command-deps.ts'
-import { plainCliLoginText, PROVIDER_NAMES } from '../login-names.ts'
+import { plainClaudeLoginText } from '../login-names.ts'
 
 export interface SetDeps {
   daemon: DaemonClient
@@ -61,8 +61,8 @@ function aliasSource(login: LoginSettings): string {
 
 /** A login's settings, one per line, under the option names `set` takes. */
 export function formatLoginSettings(login: LoginSettings): string {
-  const lines = [`${login.alias} (${PROVIDER_NAMES[login.provider]}, id ${login.id})`]
-  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`)
+  const lines = [`${login.alias} (id ${login.id})`]
+  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`)
   lines.push(
     `  alias       ${login.alias} (${aliasSource(login)})`,
     `  auto        ${login.routing ? 'on' : 'off'}`,
@@ -88,8 +88,7 @@ export function createSetCommand(deps: Partial<SetDeps> = {}): Command {
 
 Changes a login's settings and prints them. A running daemon uses them at once.
 
-<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
-have the same alias, put claude: or codex: in front, for example claude:work-example.
+<login> is an alias or id that "kurmis status" shows.
 
 Options:
   --auto on|off         Whether Auto routing may use the login. "--login <login>" uses it
@@ -98,9 +97,9 @@ Options:
                         or above this percentage.
   --weekly <1-100>      The same for the weekly window.
   --use-first on|off    Take this login before every other one that has room.
-  --alias <alias>       Rename the login: 1 to 32 lowercase letters, digits, "-" or "_", and
-                        not "claude" or "codex". An alias you set no longer follows the
-                        account's email.
+  --alias <alias>       Rename the login: 1 to 32 lowercase letters, digits, "-" or "_",
+                        starting with a letter or digit. An alias you set no longer follows
+                        the account's email.
   -h, --help            Show this help.
 
 Example:

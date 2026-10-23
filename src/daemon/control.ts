@@ -2,10 +2,9 @@
 // `/_kurmis/` of the daemon's port. Every request needs the key; one without it gets 403 and
 // no body, the same as a proxied request.
 //
-// `status` shows each login's email, for `kurmis status` and `kurmis login` on the person's own
-// terminal: a Claude login's from its identity file, a Codex login's from its last usage probe,
-// which the daemon keeps in memory only. The control API answers only on 127.0.0.1 and only with
-// the key, which only the user can read. The email is never logged.
+// `status` shows each login's email, read from the login's identity file, for `kurmis status` and
+// `kurmis login` on the person's own terminal. The control API answers only on 127.0.0.1 and only
+// with the key, which only the user can read. The email is never logged.
 //
 // A request body larger than `MAX_CONTROL_BODY_BYTES` is answered 413 with an `ErrorAnswer`.
 // The answer is sent at once, and the rest of the body is still read and thrown away (for at
@@ -55,31 +54,30 @@ export function createControl(options: ControlOptions): Control {
 
   async function status(): Promise<StatusAnswer> {
     table.checkConfig()
-    await tokens.prime(table.claudeLogins().map((login) => login.id))
+    await tokens.prime(table.logins().map((login) => login.id))
     // As the proxy sees a request with no authorization header of its own: a login counts as
     // signable only with a token the daemon read.
-    const rows = table.routeRows(table.ownLogin('claude').id, false)
+    const rows = table.routeRows(table.plainClaudeLogin().id, false)
     const at = now()
     const logins: LoginStatus[] = table.logins().map((login) => {
       const row = rows.find((each) => each.id === login.id)
       const cooldown = table.cooldown(login.id, at)
-      const claude = login.provider === 'claude' ? identity.read(login) : null
+      const profile = identity.read(login)
       return {
         id: login.id,
-        provider: login.provider,
         alias: login.alias,
-        usedByPlainCli: login.usedByPlainCli,
+        usedByPlainClaude: login.usedByPlainClaude,
         routing: login.routing,
         fiveHourLimit: login.fiveHourLimit,
         weeklyLimit: login.weeklyLimit,
         useFirst: login.useFirst,
-        signedIn: login.provider === 'claude' ? table.claudeSignedIn(login.id) : table.probedSignedIn(login.id),
+        signedIn: table.claudeSignedIn(login.id),
         usage: table.usage(login.id),
         cooldownUntil: cooldown === null ? null : Number.isFinite(cooldown) ? cooldown : 'unknown',
         block: row === undefined ? null : routeBlock(row, at),
-        sessions: login.provider === 'claude' ? table.sessionCount(login.id) : 0,
-        email: login.provider === 'claude' ? claude?.email ?? null : table.codexEmail(login.id),
-        organizationUuid: claude?.organizationUuid ?? null,
+        sessions: table.sessionCount(login.id),
+        email: profile?.email ?? null,
+        organizationUuid: profile?.organizationUuid ?? null,
         probing: poller.isRunning(login.id)
       }
     })

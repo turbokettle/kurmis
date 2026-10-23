@@ -11,7 +11,6 @@ import { requestKind } from '../core/proxy-rules.ts'
 import { ClaudeIdentityReader } from '../data/identity.ts'
 import type { DaemonLog } from '../data/log.ts'
 import { probeClaudeUsage } from './claude-probe.ts'
-import { probeCodexUsage } from './codex-probe.ts'
 import { createControl } from './control.ts'
 import { LoginTable } from './logins.ts'
 import { createProxy } from './proxy.ts'
@@ -21,10 +20,10 @@ import { UsagePoller, type ProbeFunction } from './usage-poller.ts'
 
 export interface DaemonAppOptions {
   /**
-   * The daemon's environment: `KURMIS_CLAUDE_BIN`, `KURMIS_CODEX_BIN`, `KURMIS_UPSTREAM_URL`
-   * (a test hook: the Anthropic API's base URL, default `https://api.anthropic.com`) and
-   * `KURMIS_SECURITY_PROGRAM` (a test hook: the `security` program, default `/usr/bin/security`)
-   * are read from it, and the CLIs it starts inherit it.
+   * The daemon's environment: `KURMIS_CLAUDE_BIN`, `KURMIS_UPSTREAM_URL` (a test hook: the
+   * Anthropic API's base URL, default `https://api.anthropic.com`) and `KURMIS_SECURITY_PROGRAM`
+   * (a test hook: the `security` program, default `/usr/bin/security`) are read from it, and the
+   * CLIs it starts inherit it.
    */
   env: NodeJS.ProcessEnv
   log: DaemonLog
@@ -60,7 +59,6 @@ export interface DaemonTuning {
   /** The platform the token source reads for: the Keychain on `darwin`, the file elsewhere. */
   platform?: NodeJS.Platform
   probeClaude?: ProbeFunction
-  probeCodex?: ProbeFunction
   /** Whether `start` begins the usage poll. Default true. */
   poll?: boolean
 }
@@ -97,7 +95,6 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
   const poller = new UsagePoller({ table, tokens, identity, env, log, now,
     probeClaude: tuning.probeClaude ??
       ((login, probe) => probeClaudeUsage(login, { ...probe, env: probeEnvironment(tokens, login.id, probe.env) })),
-    probeCodex: tuning.probeCodex ?? probeCodexUsage,
     ...(tuning.pollIntervalMs === undefined ? {} : { intervalMs: tuning.pollIntervalMs }) })
   const upstream = createUpstream({ origin: upstreamOrigin(env),
     ...(tuning.upstreamIdleTimeoutMs === undefined ? {} : { idleTimeoutMs: tuning.upstreamIdleTimeoutMs }) })
@@ -118,7 +115,7 @@ export function createDaemonApp(options: DaemonAppOptions): DaemonApp {
       // From here on, a login that appears in a reloaded config.json is probed at once rather
       // than at the next poll. The logins of the first read are probed by the poll's start.
       table.onLoginsAdded((ids) => { void poller.probeMany(ids, 'config') })
-      await tokens.prime(table.claudeLogins().map((login) => login.id))
+      await tokens.prime(table.logins().map((login) => login.id))
       if (tuning.poll !== false) poller.start()
     },
     handle(req, res) {

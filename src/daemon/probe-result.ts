@@ -1,5 +1,5 @@
-// What a usage probe (`claude-probe.ts`, `codex-probe.ts`) is given and answers, and the parts
-// both probes share.
+// What a usage probe (`claude-probe.ts`) is given and answers, and the helpers it uses to turn
+// the end of its CLI into an answer.
 //
 // `error` in a failed answer is shown by `kurmis status` and stored in `state.json`, so it is
 // always one of the fixed sentences written in these files. Nothing the CLI printed, no token
@@ -25,12 +25,6 @@ export type ProbeResult =
       ok: true
       signedIn: boolean
       usage: AccountUsage
-      /**
-       * The email the login is signed in with, when the probe learned it: a Codex probe from
-       * `account/read`. The daemon keeps it in memory only, for the status answer and the
-       * login's automatic alias; it is never logged or stored.
-       */
-      email?: string | null
     }
   | { ok: false; signedIn: boolean | null; reason: LogReason; error: string }
 
@@ -38,8 +32,8 @@ export type ProbeFailure = Extract<ProbeResult, { ok: false }>
 
 /**
  * How long a probe waits, after it has its answer and has closed the CLI's input, for the CLI to
- * exit before killing it. Both CLIs exit within a fraction of a second once their input ends.
- * Waiting matters for Claude, whose CLI may just have renewed the token: the daemon reads the
+ * exit before killing it. The CLI exits within a fraction of a second once its input ends.
+ * Waiting matters because the CLI may just have renewed the token: the daemon reads the
  * credentials again after the probe and must find the new ones on disk.
  */
 export const PROBE_CLOSE_GRACE_MS = 5_000
@@ -49,11 +43,9 @@ export const PROBE_CLOSE_GRACE_MS = 5_000
  * was started with, which is the PATH of the shell or login item that started it, so a CLI
  * installed or put on PATH since is found only after a restart from a shell that has it.
  */
-export function programMissingText(tool: 'claude' | 'codex'): string {
-  const product = tool === 'claude' ? 'Claude Code' : 'Codex'
-  const variable = tool === 'claude' ? 'KURMIS_CLAUDE_BIN' : 'KURMIS_CODEX_BIN'
-  return `The ${tool} program was not found on the PATH the kurmis daemon was started with. Install ${product}, ` +
-    `or put ${tool} on PATH, and run "kurmis daemon restart" from a shell that finds it; or set ${variable} to the program.`
+export function programMissingText(): string {
+  return 'The claude program was not found on the PATH the kurmis daemon was started with. Install Claude Code, ' +
+    'or put claude on PATH, and run "kurmis daemon restart" from a shell that finds it; or set KURMIS_CLAUDE_BIN to the program.'
 }
 
 export function probeFailure(signedIn: boolean | null, reason: LogReason, error: string): ProbeFailure {
@@ -70,12 +62,8 @@ function seconds(ms: number): string {
   return String(Math.round(ms / 100) / 10)
 }
 
-/**
- * The answer for a CLI that ended before the probe had what it asked for. `program` is the
- * command's name as a person types it (`claude`, `codex`).
- */
+/** The answer for a claude CLI that ended before the probe had what it asked for. */
 export function failureForExit(
-  program: string,
   exit: FrameProcessExit,
   timeoutMs: number,
   signedIn: boolean | null
@@ -86,22 +74,22 @@ export function failureForExit(
     case 'timeout':
       return probeFailure(signedIn, 'timeout', `The usage probe timed out after ${seconds(timeoutMs)} s.`)
     case 'output_too_large':
-      return probeFailure(signedIn, 'invalid', `${program} printed more output than the usage probe accepts.`)
+      return probeFailure(signedIn, 'invalid', 'claude printed more output than the usage probe accepts.')
     case 'refused':
-      return probeFailure(signedIn, 'invalid', `${program} is a batch file, which kurmis never starts.`)
+      return probeFailure(signedIn, 'invalid', 'claude is a batch file, which kurmis never starts.')
     case 'start_failed':
       return probeFailure(signedIn, 'missing', exit.errorCode === null
-        ? `${program} could not be started.`
-        : `${program} could not be started (${safeCode(exit.errorCode)}).`)
+        ? 'claude could not be started.'
+        : `claude could not be started (${safeCode(exit.errorCode)}).`)
     case 'close_timeout':
     case 'killed':
     case 'exited':
       if (exit.code !== null) {
-        return probeFailure(signedIn, 'exited', `${program} exited with code ${String(exit.code)} before it answered.`)
+        return probeFailure(signedIn, 'exited', `claude exited with code ${String(exit.code)} before it answered.`)
       }
       return probeFailure(signedIn, 'exited', exit.signal === null
-        ? `${program} ended before it answered.`
-        : `${program} was ended by ${exit.signal} before it answered.`)
+        ? 'claude ended before it answered.'
+        : `claude was ended by ${exit.signal} before it answered.`)
   }
 }
 

@@ -1,12 +1,13 @@
-// Finding the real program behind `claude` and `codex`.
+// Finding the real Claude Code program behind `claude`.
 //
 // The order:
-// 1. `KURMIS_CLAUDE_BIN` / `KURMIS_CODEX_BIN` name the program explicitly. This is also how tests
-//    point kurmis at the fakes on every OS. A `.js` path runs through Node. In the tests, an
-//    environment without them gets the ones of this process (`namedProgram`).
-// 2. PATH. On macOS and Linux the first executable file named `claude` or `codex`. It is started
-//    as found (a symlink is fine), except that a symlink to a `.js` file runs that file through
-//    Node, so a launchd or systemd PATH without `node` on it still works.
+// 1. `KURMIS_CLAUDE_BIN` names the program explicitly. This is also how tests point kurmis at
+//    the fake on every OS. A `.js` path runs through Node. In the tests, an environment without
+//    it gets the one of this process (`namedProgram`).
+// 2. PATH. On macOS and Linux the first executable file named `claude`. It is started as found
+//    (a symlink is fine), except that a symlink to a `.js` file runs that file through Node, so a
+//    launchd or systemd PATH without `node` on it still works. Claude Code npm packages before
+//    the native program installed `claude` as such a link to `cli.js`.
 //    On Windows each folder is tried with each extension in PATHEXT, in order, as cmd.exe does.
 //    An `.exe` or `.com` is started directly. A `.cmd` or `.bat` is never started: it is read as
 //    a package manager's shim (`npm-shim.ts`) and its target is started instead. A shim kurmis
@@ -16,26 +17,21 @@
 //    it) is skipped: started as `claude`, it would not be Claude Code. A script on PATH that runs
 //    `kurmis claude` cannot be told apart this way; the wrapper refuses to start itself again
 //    instead (`wrapperLoop` in `src/cli/wrapper.ts`).
-// 3. For Claude Code, where its native installer puts it: `~/.local/bin/claude` on macOS and
-//    Linux, `%USERPROFILE%\.local\bin\claude.exe` on Windows. The installer does not always put
-//    that folder on PATH.
+// 3. Where Claude Code's native installer puts it: `~/.local/bin/claude` on macOS and Linux,
+//    `%USERPROFILE%\.local\bin\claude.exe` on Windows. The installer does not always put that
+//    folder on PATH.
 //
-// What the two npm packages install (checked against @anthropic-ai/claude-code 2.1.299 and
-// @openai/codex 0.163.0):
-// - `@anthropic-ai/claude-code` has `"bin": { "claude": "bin/claude.exe" }`. The package ships
-//   `bin/claude.exe` as a 500-byte shell script that prints "claude native binary not
-//   installed", and its postinstall step (`install.cjs`) replaces that file with the native
-//   program from the platform package (`@anthropic-ai/claude-code-win32-x64` and so on). The
-//   file has no `#!` line, so npm's shim starts it directly. When the postinstall step did not
-//   run (`--ignore-scripts`), the file is still the script, which Windows cannot start: kurmis
-//   checks that the file starts like a Windows program ("MZ") and otherwise runs the package's
-//   own fallback, `node cli-wrapper.cjs`, which finds the platform package's `claude.exe`.
-//   Versions before the native program had `"bin": { "claude": "cli.js" }`, a Node script that
-//   the shim runs through Node; that is handled too.
-// - `@openai/codex` has `"bin": { "codex": "bin/codex.js" }`, a Node script that starts the
-//   platform package's native `codex.exe` and sets `CODEX_MANAGED_BY_NPM` (or `_PNPM`, `_BUN`)
-//   for the program's update hints. Kurmis runs `node bin\codex.js` rather than the native
-//   program, so those stay right.
+// What the npm package installs (checked against @anthropic-ai/claude-code 2.1.299):
+// `"bin": { "claude": "bin/claude.exe" }`. The package ships `bin/claude.exe` as a 500-byte
+// shell script that prints "claude native binary not installed", and its postinstall step
+// (`install.cjs`) replaces that file with the native program from the platform package
+// (`@anthropic-ai/claude-code-win32-x64` and so on). The file has no `#!` line, so npm's shim
+// starts it directly. When the postinstall step did not run (`--ignore-scripts`), the file is
+// still the script, which Windows cannot start: kurmis checks that the file starts like a Windows
+// program ("MZ") and otherwise runs the package's own fallback, `node cli-wrapper.cjs`, which
+// finds the platform package's `claude.exe`. Versions before the native program had
+// `"bin": { "claude": "cli.js" }`, a Node script that the shim runs through Node; that is
+// handled too.
 //
 // The file checks go through `ProgramFiles`, so the Windows branch is tested with made-up
 // Windows paths on any OS.
@@ -46,9 +42,9 @@ import { cmdShimInvocation, decodeCmdShim, isAbsoluteWindowsPath, parseCmdShim }
 import { invocationFor } from './run.ts'
 import { guardOn, hasVariable } from './system-program-guard.ts'
 
-export type ToolName = 'claude' | 'codex'
+export type ToolName = 'claude'
 
-/** How to start a tool: `command` with `args` in front of the caller's own arguments. */
+/** How to start the program: `command` with `args` in front of the caller's own arguments. */
 export interface ResolvedProgram {
   command: string
   args: string[]
@@ -89,16 +85,8 @@ export interface FindProgramOptions {
   ownEntry?: string | null
 }
 
-/** The variables that name each tool's program explicitly. */
-export const PROGRAM_VARIABLES: Readonly<Record<ToolName, string>> = {
-  claude: 'KURMIS_CLAUDE_BIN',
-  codex: 'KURMIS_CODEX_BIN'
-}
-
-const TOOL_NAMES: Readonly<Record<ToolName, string>> = {
-  claude: 'Claude Code',
-  codex: 'Codex'
-}
+/** The variable that names the program explicitly. */
+export const PROGRAM_VARIABLE = 'KURMIS_CLAUDE_BIN'
 
 /** PATHEXT when the variable is not set, as cmd.exe assumes. */
 const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD'
@@ -113,11 +101,10 @@ export function findProgram(tool: ToolName, options: FindProgramOptions = {}): R
   const nodePath = options.nodePath ?? process.execPath
   const files = options.files ?? realFiles
 
-  const variable = PROGRAM_VARIABLES[tool]
-  const named = namedProgram(env, variable, platform)
+  const named = namedProgram(env, PROGRAM_VARIABLE, platform)
   if (named !== undefined) {
     const invocation = invocationFor(named, [], nodePath)
-    if ('refused' in invocation) throw new ProgramNotFoundError(tool, `${variable}: ${invocation.refused}`)
+    if ('refused' in invocation) throw new ProgramNotFoundError(tool, `${PROGRAM_VARIABLE}: ${invocation.refused}`)
     return { command: invocation.command, args: invocation.args, source: 'env' }
   }
   const ownEntry = options.ownEntry === undefined ? kurmisEntry({ env }) : options.ownEntry
@@ -159,7 +146,7 @@ function findOnPosix(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string, f
     return { command: candidate, args: [], source: 'path' }
   }
   const looked = [`the ${countFolders(folders.length)} on PATH`]
-  if (tool === 'claude' && env.HOME !== undefined && posix.isAbsolute(env.HOME)) {
+  if (env.HOME !== undefined && posix.isAbsolute(env.HOME)) {
     const native = posix.join(env.HOME, '.local', 'bin', 'claude')
     if (files.isExecutable(native) && (own === null || files.realPath(native) !== own)) {
       return { command: native, args: [], source: 'native-installer' }
@@ -180,7 +167,7 @@ function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string,
       const candidate = win32.join(folder, tool + extension)
       if (!files.isFile(candidate)) continue
       if (extension === '.exe' || extension === '.com') return { command: candidate, args: [], source: 'path' }
-      const resolved = resolveShim(tool, candidate, nodePath, files)
+      const resolved = resolveShim(candidate, nodePath, files)
       if ('refused' in resolved) skipped.push(`${candidate}: ${resolved.refused}`)
       else if (isOwn(resolved.args[0])) skipped.push(`${candidate}: ${OWN_BUNDLE}`)
       else return resolved
@@ -188,7 +175,7 @@ function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string,
   }
   const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => tool + extension).join(', ')})`]
   const home = windowsEnv(env, 'USERPROFILE')
-  if (tool === 'claude' && home !== undefined && isAbsoluteWindowsPath(home)) {
+  if (home !== undefined && isAbsoluteWindowsPath(home)) {
     const native = win32.join(home, '.local', 'bin', 'claude.exe')
     if (files.isFile(native)) return { command: native, args: [], source: 'native-installer' }
     looked.push(native)
@@ -197,7 +184,7 @@ function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string,
 }
 
 /** What a `.cmd`/`.bat` shim on PATH starts, or why kurmis will not start it. */
-function resolveShim(tool: ToolName, shimPath: string, nodePath: string, files: ProgramFiles): ResolvedProgram | { refused: string } {
+function resolveShim(shimPath: string, nodePath: string, files: ProgramFiles): ResolvedProgram | { refused: string } {
   const bytes = files.read(shimPath, MAX_SHIM_BYTES)
   if (bytes === null) return { refused: 'it could not be read' }
   const text = decodeCmdShim(bytes)
@@ -210,7 +197,7 @@ function resolveShim(tool: ToolName, shimPath: string, nodePath: string, files: 
   if (invocation.command === shim.target && !startsLikeWindowsProgram(files, shim.target)) {
     // Claude Code's npm package before its postinstall step ran (see the top of this file).
     const wrapper = win32.join(win32.dirname(win32.dirname(shim.target)), 'cli-wrapper.cjs')
-    if (tool === 'claude' && files.isFile(wrapper)) {
+    if (files.isFile(wrapper)) {
       return { command: nodePath, args: [wrapper, ...invocation.args], source: 'npm-shim' }
     }
     return {
@@ -226,9 +213,9 @@ function startsLikeWindowsProgram(files: ProgramFiles, path: string): boolean {
 }
 
 function notFound(tool: ToolName, looked: string[], skipped: string[]): ProgramNotFoundError {
-  const lines = [`${TOOL_NAMES[tool]} (${tool}) was not found. Looked in ${looked.join(' and at ')}.`]
+  const lines = [`Claude Code (${tool}) was not found. Looked in ${looked.join(' and at ')}.`]
   if (skipped.length > 0) lines.push(`Skipped:\n${skipped.map((line) => `  ${line}`).join('\n')}`)
-  lines.push(`Install ${TOOL_NAMES[tool]}, or set ${PROGRAM_VARIABLES[tool]} to the full path of the program.`)
+  lines.push(`Install Claude Code, or set ${PROGRAM_VARIABLE} to the full path of the program.`)
   return new ProgramNotFoundError(tool, lines.join('\n'))
 }
 

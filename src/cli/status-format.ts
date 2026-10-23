@@ -3,14 +3,12 @@
 // `kurmis status --json`. Pure: the caller passes the report and the time.
 //
 // The JSON is not the control API's `StatusAnswer` as it came. That answer carries each login's
-// usage in kurmis' internal snapshot shape, which differs between Claude and Codex and may change
-// with the daemon. The JSON here has its own `format` number, raised when a field is removed or
-// changes meaning, and gives every login's windows in one shape for both providers, already as
-// they stand at the time of the call (a window whose reset has passed reads 0%).
+// usage in kurmis' internal snapshot shape, which may change with the daemon. The JSON here has
+// its own `format` number, raised when a field is removed or changes meaning, and gives every
+// login's windows as they stand at the time of the call (a window whose reset has passed reads
+// 0%).
 import { limitForWindow, type RouteBlock } from '../core/account-router.ts'
-import type { AccountProvider } from '../core/accounts.ts'
 import type { AccountUsage, NamedUsageWindow } from '../core/claude-usage.ts'
-import { chooseCodexLogin, codexRouteBlock, type CodexChoice } from '../core/codex-choice.ts'
 import type { LoginStatus, StatusAnswer } from '../core/control-api.ts'
 import { resetsInText, spanText } from '../core/countdown.ts'
 import { routeBlockText } from '../core/proxy-rules.ts'
@@ -19,26 +17,28 @@ import { daemonAge } from '../daemon/lifecycle.ts'
 import { isSameClaudeAccount } from '../data/identity.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
 import type { CredentialCheck } from './local-credentials.ts'
-import { loginArgument, plainCliLoginText, PROVIDER_NAMES } from './login-names.ts'
+import { plainClaudeLoginText } from './login-names.ts'
 
 /**
  * Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added.
  * Format 4: a login's `id` and `alias` may be null. Format 5: a login's `machineOwn` is called
  * `usedByPlainCli`. Format 6: a login's `credentials` may be `"unknown"`, and counts only the
- * token, not a `.claude.json` that names an account.
+ * token, not a `.claude.json` that names an account. Format 7: a login has no `provider`, its
+ * `usedByPlainCli` is called `usedByPlainClaude`, its `sessions` is never null, and the
+ * top-level field that named the login another CLI would start on is gone.
  */
-export const STATUS_JSON_FORMAT = 6
+export const STATUS_JSON_FORMAT = 7
 
 export interface StatusJsonWindow {
-  /** The provider's key for the window: `five_hour`, `seven_day`, `codex:primary`, ... */
+  /** Anthropic's key for the window: `five_hour`, `seven_day`, ... */
   key: string
-  /** The window's name as `kurmis status` shows it: `5 hour`, `Codex 7d`, ... */
+  /** The window's name as `kurmis status` shows it: `5 hour`, `7 day Opus`, ... */
   label: string
-  /** How long the window is; null when the provider did not say. */
+  /** How long the window is; null when Anthropic did not say. */
   durationMinutes: number | null
   /** Percent used, 0-100 (it can exceed 100). 0 when the reset has passed since the reading. */
   utilization: number
-  /** ISO time of the next reset; null when the provider gave none. */
+  /** ISO time of the next reset; null when Anthropic gave none. */
   resetsAt: string | null
   /** Whether running out of this window stops every request; the routing limits apply only to these. */
   plan: boolean
@@ -51,7 +51,7 @@ export interface StatusJsonUsage {
   fetchedAt: string
   /** `probe`: a usage probe; `session`: the rate-limit headers of an answer the proxy forwarded. */
   source: 'probe' | 'session'
-  /** The plan name the provider reported, such as `max` or `plus`; null when it gave none. */
+  /** The plan name Anthropic reported, such as `max` or `pro`; null when it gave none. */
   plan: string | null
   /** Why the last probe failed; the windows are then from the snapshot before it. Null when it did not. */
   error: string | null
@@ -74,9 +74,8 @@ export interface StatusJsonLogin {
   id: string
   /** The name the person sees and types for the login. */
   alias: string
-  provider: AccountProvider
-  /** Whether this is the login a plain `claude` or a plain `codex` uses. */
-  usedByPlainCli: boolean
+  /** Whether this is the login a plain `claude` uses. */
+  usedByPlainClaude: boolean
   /** The login's email as its own CLI cached it; null when unknown. Shown, never stored. */
   email: string | null
   /** Whether the daemon found the login signed in; null when no daemon reported it or it has not looked yet. */
@@ -95,13 +94,10 @@ export interface StatusJsonLogin {
   useFirst: boolean
   /** Null when the login's usage has not been read yet. */
   usage: StatusJsonUsage | null
-  /**
-   * Why routing would pass the login over now, or null when it could use it. For a Claude login
-   * this is what the daemon's Auto would decide; for a Codex login, what `kurmis codex` would.
-   */
+  /** Why the daemon's Auto would pass the login over now, or null when it could use it. */
   blocked: StatusJsonBlock | null
-  /** Sessions whose last request this login served; null for Codex logins, which have no proxy. */
-  sessions: number | null
+  /** Sessions whose last request this login served. */
+  sessions: number
 }
 
 export interface StatusJson {
@@ -120,16 +116,11 @@ export interface StatusJson {
   source: StatusSource
   /** Whether a plain claude goes through kurmis (`kurmis setup`). */
   globalRouting: GlobalRoutingState
-  /** The logins in `config.json` order, the logins of plain claude and plain codex first. */
+  /** The logins in `config.json` order, the login plain claude uses first. */
   logins: StatusJsonLogin[]
   /**
-   * The login `kurmis codex` without `--login` would start on now (`login` is its id), and its
-   * note; null with no Codex login.
-   */
-  codexStart: { login: string; alias: string; note: string | null } | null
-  /**
-   * Sentences about something the person may want to change: two logins of one provider signed
-   * in to the same account, which makes both use one subscription, and global routing that is
+   * Sentences about something the person may want to change: two logins signed in to the same
+   * account, which makes both use one subscription, and global routing that is
    * on while no daemon runs.
    */
   warnings: string[]
@@ -200,8 +191,7 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
     logins: report.logins.map((login) => ({
       id: login.id,
       alias: login.alias,
-      provider: login.provider,
-      usedByPlainCli: login.usedByPlainCli,
+      usedByPlainClaude: login.usedByPlainClaude,
       email: login.email ?? null,
       signedIn: fromDaemon ? login.signedIn : null,
       credentials: fromDaemon ? null : report.credentials.get(login.id) ?? 'unknown',
@@ -211,10 +201,9 @@ export function statusJson(report: StatusReport, now: number, options: StatusFor
       weeklyLimit: login.weeklyLimit,
       useFirst: login.useFirst,
       usage: login.usage === null ? null : usageJson(login, login.usage, now),
-      blocked: fromDaemon ? blockJson(report, login, now, options) : null,
-      sessions: login.provider === 'claude' ? login.sessions : null
+      blocked: fromDaemon ? blockJson(login, now, options) : null,
+      sessions: login.sessions
     })),
-    codexStart: fromDaemon ? codexStart(report, now) : null,
     warnings: [...sameAccountWarnings(report), ...(report.globalRouting === 'on' && daemon === null ? [NO_DAEMON_WARNING] : [])]
   }
 }
@@ -223,27 +212,26 @@ const NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, 
   'editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.'
 
 /**
- * A warning for each login of one provider that is signed in to the same account as another,
- * so that both use one subscription. Two Claude logins are the same account when their emails
- * are the same and so are their organizations (`isSameClaudeAccount`); two Codex logins when
- * their emails are. The logins are compared in order, the login plain claude or plain codex
- * uses first: each is compared with the first login of every account found so far, and the
- * warning says how to remove the later one.
+ * A warning for each login that is signed in to the same account as another, so that both use
+ * one subscription. Two logins are the same account when their emails are the same and so are
+ * their organizations (`isSameClaudeAccount`). The logins are compared in order, the login plain
+ * claude uses first: each is compared with the first login of every account found so far, and
+ * the warning says how to remove the later one.
  */
 export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }): string[] {
   const warnings: string[] = []
-  const ordered = [...answer.logins.filter((login) => login.usedByPlainCli), ...answer.logins.filter((login) => !login.usedByPlainCli)]
+  const ordered = [...answer.logins.filter((login) => login.usedByPlainClaude), ...answer.logins.filter((login) => !login.usedByPlainClaude)]
   const firsts: ReportLogin[] = []
   for (const login of ordered) {
     if (login.email === null || login.email.trim() === '') continue
-    const kept = firsts.find((first) => first.provider === login.provider && isSameClaudeAccount(first, login))
+    const kept = firsts.find((first) => isSameClaudeAccount(first, login))
     if (kept === undefined) {
       firsts.push(login)
       continue
     }
-    const keptName = kept.usedByPlainCli ? `${kept.alias}, ${plainCliLoginText(kept.provider)},` : kept.alias
-    warnings.push(`${login.alias} and ${keptName} are the same ${PROVIDER_NAMES[login.provider]} account (${kept.email!}), ` +
-      `so they use one subscription. "kurmis logout ${loginArgument(answer, login)}" removes ${login.alias}.`)
+    const keptName = kept.usedByPlainClaude ? `${kept.alias}, ${plainClaudeLoginText()},` : kept.alias
+    warnings.push(`${login.alias} and ${keptName} are the same account (${kept.email!}), ` +
+      `so they use one subscription. "kurmis logout ${login.alias}" removes ${login.alias}.`)
   }
   return warnings
 }
@@ -254,7 +242,7 @@ export function formatStatus(report: StatusReport, now: number, options: StatusF
   // The text gives times in local time; the JSON keeps them as ISO strings.
   json.logins.forEach((login, index) => {
     const source = report.logins[index]
-    const block = source === undefined ? null : routeBlockOf(report, source, now)
+    const block = source?.block ?? null
     if (login.blocked !== null && block !== null) login.blocked.text = blockText(block, now, options, true)
   })
   const lines = [...daemonLines(json, report, now), '', ...GLOBAL_ROUTING_TEXT[json.globalRouting].flatMap((line) => wrap(line, '', ''))]
@@ -265,15 +253,11 @@ export function formatStatus(report: StatusReport, now: number, options: StatusF
   for (const login of json.logins) {
     lines.push('', ...loginLines(login, now, labelWidth))
   }
-  if (json.codexStart !== null) {
-    lines.push('', ...wrap(`kurmis codex would start on ${json.codexStart.alias}.` +
-      (json.codexStart.note === null ? '' : ` ${json.codexStart.note}`), '', ''))
-  }
   return `${lines.join('\n')}\n`
 }
 
 /** What starts the daemon, for the text that says it is not running or will be replaced. */
-const DAEMON_STARTERS = ['"kurmis claude" or "kurmis codex" without --login', '"kurmis setup"', '"kurmis daemon start"']
+const DAEMON_STARTERS = ['"kurmis claude"', '"kurmis setup"', '"kurmis daemon start"']
 
 /** The lines about the daemon at the top of the text. */
 function daemonLines(json: StatusJson, report: StatusReport, now: number): string[] {
@@ -304,9 +288,9 @@ function daemonLines(json: StatusJson, report: StatusReport, now: number): strin
 const GLOBAL_ROUTING_TEXT: Record<GlobalRoutingState, string[]> = {
   on: ['Global routing is on: plain "claude" and the Claude Code editor extensions go through kurmis.',
     'Run "kurmis setup --pause" to pause it.'],
-  paused: ['Global routing is paused: only "kurmis claude" and "kurmis codex" go through kurmis. Plain "claude" does not.',
+  paused: ['Global routing is paused: only "kurmis claude" goes through kurmis. Plain "claude" does not.',
     'Run "kurmis setup" to turn it on again.'],
-  off: ['Global routing is off: only "kurmis claude" and "kurmis codex" go through kurmis. Plain "claude" does not.',
+  off: ['Global routing is off: only "kurmis claude" goes through kurmis. Plain "claude" does not.',
     'Run "kurmis setup" to turn on global routing.']
 }
 
@@ -315,10 +299,9 @@ const WIDTH = 80
 /** Window names longer than this are cut, so the columns after them stay on the line. */
 const MAX_LABEL_WIDTH = 24
 
-/** The first line of a login: its alias, its product and its id, without the id while the alias is the id. */
+/** The first line of a login: its alias and its id, without the id while the alias is the id. */
 function loginTitle(login: StatusJsonLogin): string {
-  const product = PROVIDER_NAMES[login.provider]
-  return login.alias === login.id ? `${login.alias} (${product})` : `${login.alias} (${product}, id ${login.id})`
+  return login.alias === login.id ? login.alias : `${login.alias} (id ${login.id})`
 }
 
 function credentialsText(check: CredentialCheck): string {
@@ -331,7 +314,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   const lines = login.email === null ? [title]
     : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`]
       : [title, `  ${login.email}`]
-  if (login.usedByPlainCli) lines.push(`  ${plainCliLoginText(login.provider)}`)
+  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`)
   const facts = [
     login.credentials !== null
       ? credentialsText(login.credentials)
@@ -340,7 +323,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
     `limits ${String(login.fiveHourLimit)}% 5 hour, ${String(login.weeklyLimit)}% weekly`
   ]
   if (login.useFirst) facts.push('use first')
-  if (login.sessions !== null) facts.push(login.sessions === 1 ? '1 session' : `${String(login.sessions)} sessions`)
+  facts.push(login.sessions === 1 ? '1 session' : `${String(login.sessions)} sessions`)
   if (login.usage?.plan) facts.push(`plan ${login.usage.plan}`)
   if (login.probing) facts.push('reading usage now')
   lines.push(...wrapList(facts, '  '))
@@ -395,13 +378,8 @@ function usageJson(login: LoginStatus, usage: AccountUsage, now: number): Status
   }
 }
 
-/** Why routing would pass the login over now: the daemon's answer for Claude, the Codex choice's rule for Codex. */
-function routeBlockOf(answer: Pick<StatusAnswer, 'logins'>, login: LoginStatus, now: number): RouteBlock | null {
-  return login.provider === 'codex' ? codexRouteBlock(answer, login.id, now) : login.block
-}
-
-function blockJson(answer: Pick<StatusAnswer, 'logins'>, login: LoginStatus, now: number, options: StatusFormatOptions): StatusJsonBlock | null {
-  const block = routeBlockOf(answer, login, now)
+function blockJson(login: LoginStatus, now: number, options: StatusFormatOptions): StatusJsonBlock | null {
+  const block = login.block
   if (block === null) return null
   let until: string | null = null
   if (block.kind === 'cooldown' && block.until !== null) until = isoTime(block.until)
@@ -439,13 +417,6 @@ export function localTimeText(at: number, now: number, timeZone?: string): strin
   const clock = `${then.hour ?? ''}:${then.minute ?? ''}`
   const date = `${then.year ?? ''}-${then.month ?? ''}-${then.day ?? ''}`
   return date === `${today.year ?? ''}-${today.month ?? ''}-${today.day ?? ''}` ? clock : `${date} ${clock}`
-}
-
-function codexStart(answer: Pick<StatusAnswer, 'logins'>, now: number): StatusJson['codexStart'] {
-  if (!answer.logins.some((login) => login.provider === 'codex')) return null
-  const choice: CodexChoice = chooseCodexLogin(answer, now)
-  const alias = answer.logins.find((login) => login.id === choice.login)?.alias ?? choice.login
-  return { login: choice.login, alias, note: choice.note }
 }
 
 function isoTime(at: number): string {

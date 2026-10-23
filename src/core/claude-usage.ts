@@ -8,11 +8,6 @@
 // `anthropic-ratelimit-unified-*` headers on every answer the proxy forwards give the same
 // windows as fractions with unix-second reset times, plus the window the answer's status is
 // about. Both are converted to the shape below before they are merged.
-//
-// Codex has one source here: `account/rateLimits/read` on a `codex app-server` started on the
-// login. Its windows are not a fixed set, so they land in `windows` rather than in the named
-// fields.
-import type { AccountProvider } from './accounts.ts'
 
 /** One rate-limit window. `utilization` is a percentage, 0-100 (it can exceed 100). */
 export type UsageWindow = {
@@ -25,20 +20,15 @@ export type UsageWindow = {
 export type ModelUsageWindow = UsageWindow & { displayName: string }
 
 /**
- * A window whose set is decided by the server rather than by this app: it carries
- * its own name and a key that says which reported window it is, so a later sparse
- * update can replace exactly the windows it covers.
- *
- * `group` is the limit the window belongs to, because a plan can meter one model
- * apart from the rest, and `title` says in words what that limit is.
+ * A window as the readers of a snapshot see it (`allUsageWindows` in `usage-rules.ts`): one of
+ * the plan's fixed windows or a per-model window, with the key that names it, the name a
+ * display shows and its length.
  */
 export type NamedUsageWindow = UsageWindow & {
   key: string
   label: string
   /** The window's full name, for a display whose label is an abbreviation. */
   name?: string
-  group?: string
-  title?: string
   windowDurationMins?: number | null
 }
 
@@ -52,21 +42,7 @@ export type ExtraUsage = {
   currency: string | null
 }
 
-/**
- * Resets of the usage limits that the provider granted the account and that it has
- * not spent yet. Spending one resets the plan's limits at once. Codex reports them
- * as `rateLimitResetCredits` in its answer to `account/rateLimits/read`.
- */
-export type BankedResets = {
-  count: number
-  /**
-   * When each available one runs out, soonest first: an ISO time, or null for one
-   * that does not expire. The server may describe fewer than `count`, or none.
-   */
-  expiresAt: Array<string | null>
-}
-
-/** What the provider last said about whether the account may still spend. */
+/** What the server last said about whether the account may still spend. */
 export type UsageStatus = 'allowed' | 'allowed_warning' | 'rejected'
 
 /**
@@ -75,12 +51,12 @@ export type UsageStatus = 'allowed' | 'allowed_warning' | 'rejected'
  * five-hour window at 2%.
  */
 export interface LimitedWindow {
-  /** The key the provider named, such as `seven_day_overage_included`. */
+  /** The key the server named, such as `seven_day_overage_included`. */
   window: string
   /** How much of that window is used, as a percentage 0-100; null when it named none. */
   utilization: number | null
   /**
-   * The percentage the warning starts at, null when the provider named none. Kept
+   * The percentage the warning starts at, null when the server named none. Kept
    * because the event carries it, and because a later probe is measured against it.
    */
   threshold: number | null
@@ -89,12 +65,10 @@ export interface LimitedWindow {
 
 export type AccountUsage = {
   accountId: string
-  /** Which CLI the account signs into. */
-  provider: AccountProvider
   /** When this snapshot was taken (ms since epoch). */
   fetchedAt: number
   /**
-   * `probe` = a `get_usage` or `account/rateLimits/read` answer; `session` = the rate-limit
+   * `probe` = a `get_usage` answer; `session` = the rate-limit
    * headers of an answer the proxy forwarded.
    */
   source: 'probe' | 'session'
@@ -113,17 +87,8 @@ export type AccountUsage = {
   sevenDayOpus: UsageWindow | null
   sevenDaySonnet: UsageWindow | null
   modelScoped: ModelUsageWindow[]
-  /**
-   * Windows the provider named itself, ordered for display. Codex fills
-   * this and leaves the named windows above null; Claude leaves it absent.
-   */
-  windows?: NamedUsageWindow[]
-  /** Codex only: the pay-as-you-go credit balance, as the app-server wrote it. */
-  creditBalance?: string | null
-  /** Codex only: the banked limit resets; null when the last read did not say. */
-  bankedResets?: BankedResets | null
   extraUsage: ExtraUsage | null
-  /** What the provider last said; null until a session or a probe has reported one. */
+  /** What the server last said; null until a session or a probe has reported one. */
   status: UsageStatus | null
   /** The window `status` is about, null when nothing named one. */
   limited: LimitedWindow | null
@@ -133,7 +98,6 @@ export type AccountUsage = {
 
 /** Every login's usage, keyed by login id. A missing key means it was never fetched. */
 export type AccountUsageMap = Record<string, AccountUsage>
-
 
 /** How long Claude's own five-hour window is, in minutes. */
 const FIVE_HOUR_MINS = 5 * 60

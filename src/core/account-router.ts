@@ -150,8 +150,8 @@ export interface RouteAccount {
 export interface RouteSession {
   /**
    * The login the session's CLI was started on: its pinned login, or on Auto the login plain
-   * claude or plain codex uses. Ties in the ranking go to it, and an Auto session with no pool runs on
-   * it (`effectivePin`).
+   * claude uses. Ties in the ranking go to it, and an Auto session with no pool runs on it
+   * (`effectivePin`).
    */
   homeAccountId: string
   /** The login that served the previous request; change it only after an answer is accepted. */
@@ -278,7 +278,7 @@ function sevenDayResetTime(account: RouteAccount): number {
 /**
  * The login a session is held to, if any. A pinned session names its own. An Auto session with
  * no login opted in has no pool to choose from, so it runs on `session.homeAccountId`, the
- * login plain claude or plain codex uses, as if pinned there, rather than being told the pool is
+ * login plain claude uses, as if pinned there, rather than being told the pool is
  * out of usage. An Auto session whose pool exists but is exhausted keeps null and gets the pool's
  * usage-limit answer.
  */
@@ -292,7 +292,7 @@ export function effectivePin(session: RouteSession, accounts: readonly RouteAcco
 export interface StartableLogin {
   id: string
   /** The login plain claude uses. The list has exactly one such login. */
-  usedByPlainCli: boolean
+  usedByPlainClaude: boolean
   loggedIn: boolean
   autoRoute: boolean
 }
@@ -310,7 +310,7 @@ export interface StartableLogin {
  * because `effectivePin` holds such a session to it.
  */
 export function autoStartLogin(accounts: readonly StartableLogin[], preferred?: string | null): string {
-  const own = accounts.find((account) => account.usedByPlainCli)
+  const own = accounts.find((account) => account.usedByPlainClaude)
   if (own === undefined) throw new Error('autoStartLogin: the list has no login that plain claude uses')
   if (own.loggedIn) return own.id
   const pool = accounts.filter((account) => account.autoRoute)
@@ -499,8 +499,7 @@ export function accountsInScope(session: RouteSession, accounts: readonly RouteA
  * before it signs with it, and a token lasts only a few hours, so counting its expiry would
  * hide nearly every reset.
  *
- * `homeAccountId` is the login an empty pool falls back to: on Auto, the login plain claude or
- * plain codex uses.
+ * `homeAccountId` is the login an empty pool falls back to: on Auto, the login plain claude uses.
  */
 export function poolReadyAt(accounts: readonly RouteAccount[], now: number, pinnedAccountId: string | null | undefined,
   homeAccountId: string): number | null {

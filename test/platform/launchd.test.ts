@@ -109,7 +109,6 @@ describe('daemonJobEnvironment', () => {
       PATH: '/opt/homebrew/bin:/usr/bin',
       KURMIS_HOME: 'relative/home',
       KURMIS_CLAUDE_BIN: '/opt/claude',
-      KURMIS_CODEX_BIN: '/opt/codex',
       KURMIS_UPSTREAM_URL: 'http://127.0.0.1:1234',
       KURMIS_SECURITY_PROGRAM: '/tmp/security.mjs',
       KURMIS_ENTRY: '/tmp/kurmis.cjs',
@@ -120,7 +119,6 @@ describe('daemonJobEnvironment', () => {
       SSH_CONNECTION: '192.0.2.1 22 192.0.2.2 50000',
       SSH_AUTH_SOCK: '/tmp/agent',
       CLAUDE_CONFIG_DIR: '/tmp/claude',
-      CODEX_HOME: '/tmp/codex',
       KURMIS_SOMETHING_ELSE: 'x',
       TERM: 'xterm'
     }, {})
@@ -129,7 +127,6 @@ describe('daemonJobEnvironment', () => {
       PATH: '/opt/homebrew/bin:/usr/bin',
       KURMIS_HOME: resolve('relative/home'),
       KURMIS_CLAUDE_BIN: '/opt/claude',
-      KURMIS_CODEX_BIN: '/opt/codex',
       KURMIS_UPSTREAM_URL: 'http://127.0.0.1:1234',
       KURMIS_SECURITY_PROGRAM: '/tmp/security.mjs',
       KURMIS_ENTRY: '/tmp/kurmis.cjs',

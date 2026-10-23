@@ -1,24 +1,19 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  checkCredentials, codexKeepsSignInElsewhere, hasCredentials, type CredentialCheck, type CredentialCheckDeps
-} from '../../src/cli/local-credentials.ts'
+import { checkCredentials, hasCredentials, type CredentialCheck, type CredentialCheckDeps } from '../../src/cli/local-credentials.ts'
 import { keychainService } from '../../src/core/keychain-service.ts'
 import type { LoginRef } from '../../src/data/login-id.ts'
 import { kurmisHome, loginFolder } from '../../src/data/paths.ts'
-import { findProgram, ProgramNotFoundError } from '../../src/platform/programs.ts'
 import { runProgram } from '../../src/platform/run.ts'
 import type { CredentialRead, FilterAnswer } from '../../src/platform/windows-credentials.ts'
 import { FakeKeychain } from '../daemon/fake-security/fake-keychain.ts'
-import { FAKE_CODEX_SCRIPT, readCodexRecord, writeClaudeCredentials, writeClaudeIdentity, writeCodexAuth, writeCodexKeyringAuth } from '../fakes/index.ts'
-import { claudeRef, codexRef, OWN_CLAUDE_REF, OWN_CODEX_REF } from '../logins.ts'
+import { writeClaudeCredentials, writeClaudeIdentity } from '../fakes/index.ts'
+import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
 
 const A = claudeRef('logina')
 const B = claudeRef('loginb')
 const C = claudeRef('loginc')
-const SIDE = codexRef('sidecodex1')
-const FILE = codexRef('filecodex1')
 
 const home = join(process.env.HOME!, 'credentials-home')
 
@@ -36,7 +31,7 @@ describe('checkCredentials', () => {
     return { kind: 'items', items: new Map(names.filter((name) => name.toLowerCase().startsWith(prefix)).map((name) => [name, Buffer.alloc(0)])) }
   }))
   const deps = (platform: NodeJS.Platform, readCredentialNames?: CredentialRead): CredentialCheckDeps =>
-    ({ findProgram, runProgram, platform, ...(readCredentialNames === undefined ? {} : { readCredentialNames }) })
+    ({ runProgram, platform, ...(readCredentialNames === undefined ? {} : { readCredentialNames }) })
   const check = async (logins: LoginRef[], platform: NodeJS.Platform, read?: CredentialRead): Promise<Array<CredentialCheck | undefined>> => {
     const answers = await checkCredentials(logins, process.env, home, deps(platform, read))
     return logins.map((login) => answers.get(login.id))
@@ -55,7 +50,7 @@ describe('checkCredentials', () => {
     expect(await check([OWN_CLAUDE_REF, B], 'win32', credentialManager([]))).toEqual([false, false])
   })
 
-  it('finds a Claude login by a claudeAiOauth record in its .credentials.json, on every platform', async () => {
+  it('finds a login by a claudeAiOauth record in its .credentials.json, on every platform', async () => {
     writeClaudeCredentials(loginFolder(A))
     writeClaudeCredentials(join(home, '.claude'))
     mkdirSync(loginFolder(C), { recursive: true })
@@ -107,7 +102,7 @@ describe('checkCredentials', () => {
     }
   })
 
-  it('lists Windows Credential Manager once for every Claude login without the file', async () => {
+  it('lists Windows Credential Manager once for every login without the file', async () => {
     const filters: string[][] = []
     const names = credentialManager([`${keychainService(null)}/claude-code-user`, `${keychainService(loginFolder(A))}/claude-code-user#m`,
       `${keychainService(loginFolder(A))}/claude-code-user#0`])
@@ -136,89 +131,9 @@ describe('checkCredentials', () => {
     rmSync(powershell, { recursive: true, force: true })
   })
 
-  it('finds Codex logins by auth.json, in CODEX_HOME or ~/.codex for the login plain codex uses', async () => {
-    const one = async (login: LoginRef, env: NodeJS.ProcessEnv = process.env): Promise<CredentialCheck> => await hasCredentials(login, env, home, deps('darwin'))
-    expect(await one(SIDE)).toBe(false)
-    writeCodexAuth(loginFolder(SIDE))
-    expect(await one(SIDE)).toBe(true)
-
-    expect(await one(OWN_CODEX_REF)).toBe(false)
-    writeCodexAuth(join(home, '.codex'))
-    expect(await one(OWN_CODEX_REF)).toBe(true)
-    const elsewhere = join(home, 'codex-elsewhere')
-    expect(await one(OWN_CODEX_REF, { ...process.env, CODEX_HOME: elsewhere })).toBe(false)
-    writeCodexAuth(elsewhere)
-    expect(await one(OWN_CODEX_REF, { ...process.env, CODEX_HOME: elsewhere })).toBe(true)
-    // Codex logins never reach the Keychain.
-    expect(keychain().calls()).toEqual([])
-  })
-})
-
-describe('a Codex login that keeps its sign-in in the keyring', () => {
-  const deps = { findProgram, runProgram }
-  const keyring = (): string => join(home, 'keyring')
-  const record = (): string => join(home, 'codex-record.jsonl')
-  /** The environment that makes kurmis find the fake codex, with its stand-in keyring, and `home` as the home folder. */
-  const fakeEnv = (): NodeJS.ProcessEnv => ({
-    HOME: home,
-    USERPROFILE: home,
-    KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT,
-    FAKE_CODEX_KEYRING_DIR: keyring(),
-    FAKE_CODEX_RECORD: record()
-  })
-  const keepInKeyring = (codexHome: string, store = 'keyring'): void => {
-    mkdirSync(codexHome, { recursive: true })
-    writeFileSync(join(codexHome, 'config.toml'), `model = "a"\ncli_auth_credentials_store = "${store}"\n`)
-  }
-
-  it('reads cli_auth_credentials_store from config.toml', () => {
-    const codexHome = join(home, 'codex-home')
-    expect(codexKeepsSignInElsewhere(codexHome)).toBe(false)
-    mkdirSync(codexHome)
-    writeFileSync(join(codexHome, 'config.toml'), 'model = "a"\n')
-    expect(codexKeepsSignInElsewhere(codexHome)).toBe(false)
-    writeFileSync(join(codexHome, 'config.toml'), 'cli_auth_credentials_store = "file"\n')
-    expect(codexKeepsSignInElsewhere(codexHome)).toBe(false)
-    for (const store of ['keyring', 'auto']) {
-      keepInKeyring(codexHome, store)
-      expect(codexKeepsSignInElsewhere(codexHome)).toBe(true)
-    }
-    writeFileSync(join(codexHome, 'config.toml'), 'model = \n')
-    expect(codexKeepsSignInElsewhere(codexHome)).toBe(true)
-  })
-
-  it('asks codex login status in the login\'s home', async () => {
-    keepInKeyring(loginFolder(SIDE))
-    expect(await hasCredentials(SIDE, fakeEnv(), home, deps)).toBe(false)
-    writeCodexKeyringAuth(keyring(), loginFolder(SIDE))
-    expect(await hasCredentials(SIDE, fakeEnv(), home, deps)).toBe(true)
-    const runs = readCodexRecord(record()).filter((line) => line.event === 'start')
-    expect(runs.map((line) => [line.event === 'start' && line.mode, line.event === 'start' && line.codexHome]))
-      .toEqual([['login-status', loginFolder(SIDE)], ['login-status', loginFolder(SIDE)]])
-  })
-
-  it('asks for the login plain claude uses in the default home, and starts no codex for a login that keeps auth.json', async () => {
-    keepInKeyring(join(home, '.codex'))
-    writeCodexKeyringAuth(keyring(), join(home, '.codex'))
-    expect(await hasCredentials(OWN_CODEX_REF, fakeEnv(), home, deps)).toBe(true)
-    // An extra login's home inherited from a session on it is not the default home.
-    const inherited = { ...fakeEnv(), CODEX_HOME: loginFolder(SIDE) }
-    expect(await hasCredentials(OWN_CODEX_REF, inherited, home, deps)).toBe(true)
-
-    rmSync(record(), { force: true })
-    mkdirSync(loginFolder(FILE), { recursive: true })
-    expect(await hasCredentials(FILE, fakeEnv(), home, deps)).toBe(false)
-    writeCodexAuth(loginFolder(FILE))
-    expect(await hasCredentials(FILE, fakeEnv(), home, deps)).toBe(true)
-    expect(readCodexRecord(record())).toEqual([])
-  })
-
-  it('answers unknown when codex login status cannot run', async () => {
-    keepInKeyring(loginFolder(SIDE))
-    const missing = (): never => { throw new ProgramNotFoundError('codex', 'codex is not installed') }
-    expect(await hasCredentials(SIDE, fakeEnv(), home, { findProgram: missing, runProgram })).toBe('unknown')
-    const slow: typeof runProgram = () => Promise.resolve({ stdout: '', stderr: '', code: null, timedOut: true, outputTooLarge: false,
-      error: 'it did not finish within 10 seconds' })
-    expect(await hasCredentials(SIDE, fakeEnv(), home, { findProgram, runProgram: slow })).toBe('unknown')
+  it('answers one login through hasCredentials', async () => {
+    expect(await hasCredentials(A, process.env, home, deps('linux'))).toBe(false)
+    writeClaudeCredentials(loginFolder(A))
+    expect(await hasCredentials(A, process.env, home, deps('linux'))).toBe(true)
   })
 })

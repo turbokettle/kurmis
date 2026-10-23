@@ -30,10 +30,6 @@ const NODE_LOOKUP = ['node']
 
 describe('shims written by npm', () => {
   test.each([
-    ['npm-global-codex.cmd', `${NPM}\\codex.cmd`, {
-      target: `${NPM}\\node_modules\\@openai\\codex\\bin\\codex.js`,
-      interpreters: [`${NPM}\\node.exe`, ...NODE_LOOKUP]
-    }],
     ['npm-global-claude-cli-js.cmd', `${NPM}\\claude.cmd`, {
       target: `${NPM}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${NPM}\\node.exe`, ...NODE_LOOKUP]
@@ -42,16 +38,16 @@ describe('shims written by npm', () => {
       target: `${NPM}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
       interpreters: []
     }],
-    ['npm-local-bin-codex.cmd', `${PROJECT}\\node_modules\\.bin\\codex.cmd`, {
-      target: `${PROJECT}\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    ['npm-local-bin-claude-cli-js.cmd', `${PROJECT}\\node_modules\\.bin\\claude.cmd`, {
+      target: `${PROJECT}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${PROJECT}\\node_modules\\.bin\\node.exe`, ...NODE_LOOKUP]
     }],
     ['npm-local-bin-claude-exe.cmd', `${PROJECT}\\node_modules\\.bin\\claude.cmd`, {
       target: `${PROJECT}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
       interpreters: []
     }],
-    ['npm12-global-codex.cmd', `${NPM}\\codex.cmd`, {
-      target: `${NPM}\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    ['npm12-global-claude-cli-js.cmd', `${NPM}\\claude.cmd`, {
+      target: `${NPM}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${NPM}\\node.exe`, ...NODE_LOOKUP]
     }],
     ['npm12-global-claude-exe.cmd', `${NPM}\\claude.cmd`, {
@@ -72,14 +68,14 @@ describe('shims written by npm', () => {
   })
 
   test('older npm shims (cmd-shim 2 and 4)', () => {
-    const codex: CmdShim = {
-      target: `${NPM}\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    const cliJs: CmdShim = {
+      target: `${NPM}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${NPM}\\node.exe`, 'node'],
       interpreterArgs: [],
       targetArgs: []
     }
-    expect(parseCmdShim(fixture('handwritten-npm-cmd-shim-2-codex.cmd'), `${NPM}\\codex.cmd`)).toEqual(codex)
-    expect(parseCmdShim(fixture('handwritten-npm-cmd-shim-4-codex.cmd'), `${NPM}\\codex.cmd`)).toEqual(codex)
+    expect(parseCmdShim(fixture('handwritten-npm-cmd-shim-2-claude-cli-js.cmd'), `${NPM}\\claude.cmd`)).toEqual(cliJs)
+    expect(parseCmdShim(fixture('handwritten-npm-cmd-shim-4-claude-cli-js.cmd'), `${NPM}\\claude.cmd`)).toEqual(cliJs)
     expect(parseCmdShim(fixture('handwritten-npm-cmd-shim-2-claude-exe.cmd'), `${NPM}\\claude.cmd`)).toEqual({
       target: `${NPM}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`,
       interpreters: [],
@@ -91,8 +87,8 @@ describe('shims written by npm', () => {
 
 describe('shims written by pnpm', () => {
   test('a global install, with its NODE_PATH block', () => {
-    expect(parseCmdShim(fixture('pnpm-global-codex.cmd'), `${PNPM}\\codex.cmd`)).toEqual({
-      target: `${PNPM}\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    expect(parseCmdShim(fixture('pnpm-global-claude-cli-js.cmd'), `${PNPM}\\claude.cmd`)).toEqual({
+      target: `${PNPM}\\global\\5\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${PNPM}\\node.exe`, 'node'],
       interpreterArgs: [],
       targetArgs: []
@@ -106,8 +102,8 @@ describe('shims written by pnpm', () => {
   })
 
   test('a project install, into the .pnpm folder', () => {
-    expect(parseCmdShim(fixture('pnpm-local-bin-codex.cmd'), `${PROJECT}\\node_modules\\.bin\\codex.cmd`)).toEqual({
-      target: `${PROJECT}\\node_modules\\.pnpm\\@openai+codex@0.163.0\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    expect(parseCmdShim(fixture('pnpm-local-bin-claude-cli-js.cmd'), `${PROJECT}\\node_modules\\.bin\\claude.cmd`)).toEqual({
+      target: `${PROJECT}\\node_modules\\.pnpm\\@anthropic-ai+claude-code@1.0.0\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${PROJECT}\\node_modules\\.bin\\node.exe`, 'node'],
       interpreterArgs: [],
       targetArgs: []
@@ -115,8 +111,8 @@ describe('shims written by pnpm', () => {
   })
 
   test('a fixed Node, --preserve-symlinks and extra arguments after the target', () => {
-    expect(parseCmdShim(fixture('pnpm-node-exec-path.cmd'), `${PNPM}\\codex.cmd`)).toEqual({
-      target: `${PNPM}\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    expect(parseCmdShim(fixture('pnpm-node-exec-path.cmd'), `${PNPM}\\claude.cmd`)).toEqual({
+      target: `${PNPM}\\global\\5\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: ['C:\\Program Files\\nodejs\\node.exe'],
       interpreterArgs: ['--preserve-symlinks'],
       targetArgs: ['--from-shim']
@@ -128,8 +124,8 @@ describe('shims written by pnpm 11', () => {
   const GROUP = `${PNPM}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules`
 
   test('a global install', () => {
-    expect(parseCmdShim(fixture('pnpm11-global-codex.cmd'), `${PNPM}\\codex.cmd`)).toEqual({
-      target: `${GROUP}\\@openai\\codex\\bin\\codex.js`,
+    expect(parseCmdShim(fixture('pnpm11-global-claude-cli-js.cmd'), `${PNPM}\\claude.cmd`)).toEqual({
+      target: `${GROUP}\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${PNPM}\\node.exe`, 'node'],
       interpreterArgs: [],
       targetArgs: []
@@ -145,8 +141,8 @@ describe('shims written by pnpm 11', () => {
   test('a fixed Node in a folder with a non-ASCII name, with the chcp lines around it', () => {
     const home = 'C:\\Users\\ex\u00e4mple\\AppData\\Local\\pnpm'
     const text = decodeCmdShim(readFileSync(join(FIXTURES, 'pnpm11-node-exec-path-non-ascii.cmd'))) as string
-    expect(parseCmdShim(text, `${home}\\codex.cmd`)).toEqual({
-      target: `${home}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    expect(parseCmdShim(text, `${home}\\claude.cmd`)).toEqual({
+      target: `${home}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${home}\\nodejs\\24.11.0\\node.exe`],
       interpreterArgs: [],
       targetArgs: []
@@ -154,8 +150,8 @@ describe('shims written by pnpm 11', () => {
   })
 
   test('a fixed Node in a folder with a %, which pnpm writes as %%', () => {
-    expect(parseCmdShim(fixture('pnpm11-node-exec-path-percent.cmd'), `${PNPM}\\codex.cmd`)).toEqual({
-      target: `${GROUP}\\@openai\\codex\\bin\\codex.js`,
+    expect(parseCmdShim(fixture('pnpm11-node-exec-path-percent.cmd'), `${PNPM}\\claude.cmd`)).toEqual({
+      target: `${GROUP}\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: ['C:\\Users\\example\\tools\\100%\\node.exe'],
       interpreterArgs: [],
       targetArgs: []
@@ -176,8 +172,8 @@ describe('reading', () => {
 
   test('a % in the shim\'s own folder is kept as it is', () => {
     const folder = 'C:\\Users\\example\\100%\\npm'
-    expect(parseCmdShim(fixture('npm12-global-codex.cmd'), `${folder}\\codex.cmd`)).toEqual({
-      target: `${folder}\\node_modules\\@openai\\codex\\bin\\codex.js`,
+    expect(parseCmdShim(fixture('npm12-global-claude-cli-js.cmd'), `${folder}\\claude.cmd`)).toEqual({
+      target: `${folder}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`,
       interpreters: [`${folder}\\node.exe`, 'node'],
       interpreterArgs: [],
       targetArgs: []
@@ -254,8 +250,8 @@ describe('reading', () => {
 })
 
 describe('starting what a shim starts', () => {
-  const nodeShim = parseCmdShim(fixture('npm-global-codex.cmd'), `${NPM}\\codex.cmd`) as CmdShim
-  const target = `${NPM}\\node_modules\\@openai\\codex\\bin\\codex.js`
+  const nodeShim = parseCmdShim(fixture('npm-global-claude-cli-js.cmd'), `${NPM}\\claude.cmd`) as CmdShim
+  const target = `${NPM}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`
 
   test('a node.exe next to the shim is used when it exists', () => {
     expect(cmdShimInvocation(nodeShim, { nodePath: 'C:\\kurmis\\node.exe', isFile: (path) => path === `${NPM}\\node.exe` }))
@@ -268,8 +264,8 @@ describe('starting what a shim starts', () => {
   })
 
   test('a fixed Node is used only when it exists', () => {
-    const shim = parseCmdShim(fixture('pnpm-node-exec-path.cmd'), `${PNPM}\\codex.cmd`) as CmdShim
-    const pnpmTarget = `${PNPM}\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js`
+    const shim = parseCmdShim(fixture('pnpm-node-exec-path.cmd'), `${PNPM}\\claude.cmd`) as CmdShim
+    const pnpmTarget = `${PNPM}\\global\\5\\node_modules\\@anthropic-ai\\claude-code\\cli.js`
     expect(cmdShimInvocation(shim, { nodePath: 'C:\\kurmis\\node.exe', isFile: () => true })).toEqual({
       command: 'C:\\Program Files\\nodejs\\node.exe',
       args: ['--preserve-symlinks', pnpmTarget, '--from-shim']

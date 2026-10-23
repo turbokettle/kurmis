@@ -1,7 +1,7 @@
 # Testing kurmis by hand
 
 `pnpm test` covers what the fakes in `test/fakes/` can show. This list is the rest: what needs
-a real Claude Code or Codex, a real sign-in, the Keychain or Credential Manager, launchd, the
+a real Claude Code, a real sign-in, the Keychain or Credential Manager, launchd, the
 Windows registry, or a real terminal. Run it after larger changes, on macOS and on Windows.
 
 Each check says what to do and what should happen. When something else happens, note the
@@ -20,42 +20,37 @@ never holds tokens or request bodies, so it can be shared.
 - **`kurmis setup` changes every Claude Code on the machine.** Run it only on a machine where
   that is fine, or with `HOME` (Windows: `USERPROFILE` too) pointed at a scratch folder that
   holds a copy of `.claude/settings.json`.
-- **Codex with a scratch profile.** On Windows, Codex finds the home folder through Windows, not
-  through `USERPROFILE`, so pointing `HOME` and `USERPROFILE` at a scratch folder still leaves
-  Codex on the real `.codex`. Set `CODEX_HOME` to a scratch folder too when testing with a
-  scratch profile.
 - **Stopping things.** `kurmis daemon stop` stops the daemon. Only stop processes the test
   started.
 
 ## On every platform
 
 ### Logins
-The checks below call the extra Claude login `<t1>`: use the alias `kurmis status` shows for it.
+The checks below call an extra login `<t1>`: use the alias `kurmis status` shows for it.
 
-1. **The logins plain claude and plain codex use get their alias.** Start from an empty data
-   folder, with no daemon running. Run `kurmis status` first: it says the daemon is not running
-   and starts none (`kurmis daemon status` still says so after it), and the data folder holds
-   only `config.json` after it. Those two logins are there, each with an id and marked "the login
-   plain claude uses" or "the login plain codex uses". Each shows `credentials on this machine` when
-   plain `claude` or plain `codex` is signed in. Then run `kurmis daemon start` and `kurmis status`, which waits
-   for the daemon's first usage probe. After it, each of them should have the alias made from
-   its email (`me@example.com` gives `me-example`).
-2. **A new login gets its alias from the email.** `kurmis login claude` opens the browser. Sign
+1. **The login plain claude uses gets its alias.** Start from an empty data folder, with no
+   daemon running. Run `kurmis status` first: it says the daemon is not running and starts none
+   (`kurmis daemon status` still says so after it), and the data folder holds only `config.json`
+   after it. That login is there, with an id and marked "the login plain claude uses". It shows
+   `credentials on this machine` when plain `claude` is signed in. Then run `kurmis daemon start`
+   and `kurmis status`, which waits for the daemon's first usage probe. After it, the login should
+   have the alias made from its email (`me@example.com` gives `me-example`).
+2. **A new login gets its alias from the email.** `kurmis login` opens the browser. Sign
    in with a second subscription. Expect the email printed, then `Added <alias> (id <id>)`, with
    the alias made from the email. `kurmis status` should show its email, `signed in`, its plan
    and its usage within a minute.
-3. **The same account twice.** Run `kurmis login claude` again and sign in to the account of
+3. **The same account twice.** Run `kurmis login` again and sign in to the account of
    `<t1>`. Expect a message that the email is already `<t1>`, exit code 0, no new login in
    `kurmis status`, and no new folder in the data folder's `claude/`. Do the same with the account
    of the login plain claude uses: the message should name that login. On macOS,
    check that no new `Claude Code-credentials-<8 hex digits>` Keychain item is left. When the
    email of `<t1>` also has a seat in a Team or Enterprise organization, sign in to that one with
-   `kurmis login claude`: expect it to be added, with `<t1's alias>-2` as its alias and a line
+   `kurmis login`: expect it to be added, with `<t1's alias>-2` as its alias and a line
    that `<t1>` has the same email in another organization, and no warning in `kurmis status`.
 4. **An extra login of the account plain claude uses.** This needs a spare Claude account B
    besides the account A of the login plain claude uses. Sign plain `claude` in to B with
    `claude auth login`, and run `kurmis daemon restart` and `kurmis status` until the login
-   plain claude uses shows B's email. Add A with `kurmis login claude`. Sign plain `claude` in
+   plain claude uses shows B's email. Add A with `kurmis login`. Sign plain `claude` in
    to A again, and run `kurmis daemon restart` and `kurmis status` until the login plain claude
    uses shows A's email. Expect a warning at the top that the extra login and the login plain
    claude uses are the same account, and the alias of the login plain claude uses with `-2` at
@@ -63,16 +58,10 @@ The checks below call the extra Claude login `<t1>`: use the alias `kurmis statu
 5. Run `kurmis login <t1>` (signing it in again) in two terminals at once. The second should
    stop with a message that another `kurmis login` or `logout` of it is running, and the first
    should succeed.
-6. **One email for Claude and Codex.** `kurmis login codex` with a ChatGPT account whose email
-   is the same as the email of an extra Claude login, if there is one. Expect the Codex login to
-   get the same alias as the Claude login. `kurmis set <alias> --weekly 90` should refuse and ask
-   for `claude:<alias>` or `codex:<alias>`. `kurmis claude --login <alias>` and
-   `kurmis codex --login <alias>` should each start on their own provider's login without the
-   prefix.
-7. `kurmis set <t1> --alias test-t1 --weekly 90`, then `kurmis status`. Expect the alias `test-t1`
+6. `kurmis set <t1> --alias test-t1 --weekly 90`, then `kurmis status`. Expect the alias `test-t1`
    and the limit, and `daemon.log` showing `config_loaded`. Run `kurmis login test-t1`: the
    alias should stay `test-t1`.
-8. `daemon.log` should hold login ids only: search it for the aliases and the emails of the
+7. `daemon.log` should hold login ids only: search it for the aliases and the emails of the
    logins, which should not appear.
 
 ### Routing Claude
@@ -143,21 +132,10 @@ Run this last, since it removes the logins added above.
 3. Run it again and answer `y`. Expect `settings.json` as it was before setup, no
    `settings.json.kurmis-backup`, no autostart entry, no daemon, no data folder, and a last line
    that says to run `npm uninstall -g kurmis`.
-4. A plain `claude -p --model haiku "Reply ok"` and a plain `codex exec "Reply ok"` still answer
-   on the logins they used before.
-5. The extra logins' Keychain items (macOS) or Credential Manager records (Windows) are gone,
-   and every file in `~/.codex` is still there.
-6. `kurmis status` exits 0, shows the logins plain claude and plain codex use with new ids, and
-   creates a data folder that holds only `config.json`.
-
-### Codex
-1. `kurmis codex -- exec "Reply ok"` answers, on the login `kurmis status` named in its last line.
-2. On an extra Codex login, change the model with `/model` inside `kurmis codex --login <login>`,
-   exit, and start it again. The model choice should still be there.
-3. Add a line to `~/.codex/AGENTS.md` and start `kurmis codex --login <login>`. The login's copy
-   should have it.
-4. `kurmis logout <login>`. Its folder goes; every file in `~/.codex` stays (compare a file
-   count before and after).
+4. A plain `claude -p --model haiku "Reply ok"` still answers on the login it used before.
+5. The extra logins' Keychain items (macOS) or Credential Manager records (Windows) are gone.
+6. `kurmis status` exits 0, shows the login plain claude uses with a new id, and creates a data
+   folder that holds only `config.json`.
 
 ### Daemon
 1. `kurmis daemon stop`, then `kurmis status`. It exits 0, says the daemon is not running, and
@@ -205,8 +183,8 @@ Run this last, since it removes the logins added above.
   or Credential Manager (`cmdkey /list | findstr Claude`, or the Credential Manager control
   panel). Test both:
   - the default, with no extra variables;
-  - with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` set for the user, then `kurmis login claude`
-    with another account. kurmis should route the new login, `kurmis status` should show its
+  - with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` set for the user, then `kurmis login` with
+    another account. kurmis should route the new login, `kurmis status` should show its
     usage, and `kurmis logout <its alias>` should remove its Credential Manager records.
   - Repeat one read with PowerShell in Constrained Language Mode, if the machine can be set up
     that way.
@@ -215,8 +193,7 @@ Run this last, since it removes the logins added above.
 - **Daemon survives.** Start the daemon from a terminal, close the terminal window, and check
   `kurmis daemon status` in a new one. No console window should stay open for the daemon.
 - **Started from ssh.** Without setup, over OpenSSH, `kurmis daemon start`, then disconnect and
-  reconnect. The daemon should be gone, and the next `kurmis claude` or `kurmis codex` starts it
-  again.
+  reconnect. The daemon should be gone, and the next `kurmis claude` starts it again.
 - **Autostart.** After `kurmis setup`, sign out and in. The daemon starts with no window
   showing. Also check a user folder with non-ASCII letters in its path, and Windows Script Host
   turned off (`HKCU\Software\Microsoft\Windows Script Host\Settings`, value `Enabled` = 0):
@@ -229,9 +206,6 @@ Run this last, since it removes the logins added above.
   installed kurmis instead: setup gives no warning there, and the daemon should start.
 - **Read-only settings.** Make `%USERPROFILE%\.claude\settings.json` read-only and run
   `kurmis setup`. It should refuse with an `attrib -R` command to run.
-- **Junctions.** An extra Codex login's folders (`sessions`, `skills`, ...) are directory
-  junctions into `%USERPROFILE%\.codex` (`dir /AL` in the login's folder shows them).
-  `kurmis logout` of that login must leave `%USERPROFILE%\.codex` complete.
 - **Excluded ports.** `netsh int ipv4 show excludedportrange protocol=tcp` lists ranges Windows
   keeps for itself (Hyper-V, WSL, Docker). Set kurmis' `port` inside one and start the daemon.
   The error should name that command and the `port` setting.
@@ -241,5 +215,3 @@ Run this last, since it removes the logins added above.
 - **Program lookup.** A Node installed with fnm: `kurmis setup` should name the real Node path
   in the autostart entry, not one under `fnm_multishells`, and warn if it can only find a
   temporary one.
-- **Codex sandbox.** Codex's Windows sandbox may ask for setup again on each extra login. Note
-  whether it does.

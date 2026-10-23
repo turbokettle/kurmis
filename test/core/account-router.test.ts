@@ -9,7 +9,7 @@ import {
 } from '../../src/core/account-router.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
-import { OWN_CLAUDE, OWN_CODEX } from '../logins.ts'
+import { OWN_CLAUDE } from '../logins.ts'
 
 const NOW = 1_789_560_000_000
 const RESET = NOW + 60 * 60_000
@@ -694,7 +694,7 @@ describe('a five-login pool', () => {
 
 describe('the login an Auto CLI is started on', () => {
   const login = (id: string, loggedIn: boolean, autoRoute: boolean): StartableLogin =>
-    ({ id, usedByPlainCli: id === OWN_CLAUDE, loggedIn, autoRoute })
+    ({ id, usedByPlainClaude: id === OWN_CLAUDE, loggedIn, autoRoute })
 
   test('the login of the machine itself while it is signed in', () => {
     expect(autoStartLogin([login('poolclaude', true, true), login(OWN_CLAUDE, true, false)])).toBe(OWN_CLAUDE)
@@ -742,14 +742,5 @@ describe('the rules kurmis adds', () => {
     expect(tokenIsFresh(null, NOW)).toBe(true)
     expect(tokenIsFresh(NOW + TOKEN_MARGIN_MS + 1, NOW)).toBe(true)
     expect(tokenIsFresh(NOW + TOKEN_MARGIN_MS, NOW)).toBe(false)
-  })
-
-  test("a Codex choice with no login opted in falls back to the login plain codex uses, its home", () => {
-    const codex: RouteSession = { homeAccountId: OWN_CODEX, currentAccountId: null }
-    const rows = [account(OWN_CODEX, { autoRoute: false }), account('workcodex', { autoRoute: false })]
-    expect(effectivePin(codex, rows)).toBe(OWN_CODEX)
-    expect(chooseAccount(codex, rows, NOW, new Set())?.id).toBe(OWN_CODEX)
-    expect(poolReadyAt(rows, NOW, null, OWN_CODEX)).toBe(NOW)
-    expect(chooseAccount(codex, [rows[0]!, account('workcodex')], NOW, new Set())?.id).toBe('workcodex')
   })
 })

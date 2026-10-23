@@ -92,7 +92,7 @@ export interface RouteRequest {
   /**
    * The id of the login the request is pinned to, or null on Auto. A header that is not a login
    * id reads as `invalid`, which the proxy should refuse rather than route on Auto. Whether the id
-   * names a Claude login is for the proxy to check.
+   * is a login in the config is for the proxy to check.
    */
   login: string | null | 'invalid'
   /**

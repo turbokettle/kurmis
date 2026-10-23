@@ -110,7 +110,6 @@ export function plistXml(root: Readonly<Record<string, PlistValue>>): string {
 export const DAEMON_JOB_VARIABLES: readonly string[] = [
   'KURMIS_HOME',
   'KURMIS_CLAUDE_BIN',
-  'KURMIS_CODEX_BIN',
   'KURMIS_UPSTREAM_URL',
   'KURMIS_SECURITY_PROGRAM',
   'KURMIS_ENTRY',

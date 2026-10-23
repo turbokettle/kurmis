@@ -9,7 +9,7 @@ import { CONTROL_API_VERSION } from '../../../src/core/control-api.ts'
 import { ConfigError } from '../../../src/data/config.ts'
 import { loginFolder, logPath } from '../../../src/data/paths.ts'
 import { ProgramNotFoundError } from '../../../src/platform/programs.ts'
-import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF, OWN_CODEX_REF, testConfig } from '../../logins.ts'
+import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF, testConfig } from '../../logins.ts'
 import { collect, FAKE_CONNECTION, fakeDaemonClient, loginStatus, statusAnswer, type FakeDaemonOptions } from '../helpers.ts'
 
 const KEY = FAKE_CONNECTION.key
@@ -79,8 +79,7 @@ function harness(daemonOptions: FakeDaemonOptions = {}, overrides: Partial<Claud
       daemon,
       child,
       findProgram: () => ({ command: '/fake/claude', args: ['--from-find'], source: 'env' }),
-      // A Codex login with the same alias as a Claude one, which kurmis claude never looks at.
-      loadConfig: () => testConfig({ extras: [{ ...WORK }, { ...SPARE }, { id: 'workcodex1', provider: 'codex', alias: 'work-example' }] }),
+      loadConfig: () => testConfig({ extras: [{ ...WORK }, { ...SPARE }] }),
       platform: 'darwin',
       cwd: () => cwd,
       homeDir: () => home,
@@ -208,14 +207,12 @@ describe('kurmis claude on Auto', () => {
       status: statusAnswer([
         loginStatus(OWN_CLAUDE_REF, { signedIn: null }),
         loginStatus(SPARE, { signedIn: null }),
-        loginStatus(WORK),
-        loginStatus(OWN_CODEX_REF, { signedIn: null })
+        loginStatus(WORK)
       ]),
       probed: statusAnswer([
         loginStatus(OWN_CLAUDE_REF, { signedIn: false }),
         loginStatus(SPARE, { signedIn: false }),
-        loginStatus(WORK),
-        loginStatus(OWN_CODEX_REF, { signedIn: null })
+        loginStatus(WORK)
       ])
     })
     const out = collect()
@@ -266,8 +263,7 @@ describe('kurmis claude on Auto', () => {
       status: statusAnswer([
         loginStatus(OWN_CLAUDE_REF, { signedIn: false }),
         loginStatus(SPARE, { signedIn: null }),
-        loginStatus(WORK),
-        loginStatus(OWN_CODEX_REF)
+        loginStatus(WORK)
       ])
     })
     const out = collect()
@@ -280,14 +276,13 @@ describe('kurmis claude on Auto', () => {
     expect(out.stderr()).toContain(`kurmis claude: ${OWN_CLAUDE}, the login plain claude uses, is not signed in, so claude starts on work-example's credentials`)
   })
 
-  test('startableLogins reads only Claude logins, and an unknown sign-in only for the login plain claude uses', () => {
+  test('startableLogins reads an unknown sign-in as signed in only for the login plain claude uses', () => {
     expect(startableLogins(statusAnswer([
       loginStatus(OWN_CLAUDE_REF, { signedIn: null }),
-      loginStatus(WORK, { signedIn: null, routing: false }),
-      loginStatus(OWN_CODEX_REF)
+      loginStatus(WORK, { signedIn: null, routing: false })
     ]))).toEqual([
-      { id: OWN_CLAUDE, usedByPlainCli: true, loggedIn: true, autoRoute: true },
-      { id: 'workclaude', usedByPlainCli: false, loggedIn: false, autoRoute: false }
+      { id: OWN_CLAUDE, usedByPlainClaude: true, loggedIn: true, autoRoute: true },
+      { id: 'workclaude', usedByPlainClaude: false, loggedIn: false, autoRoute: false }
     ])
   })
 
@@ -359,8 +354,8 @@ describe('kurmis claude --login', () => {
     expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
   })
 
-  test('--login takes the alias, the id, or either after claude:', async () => {
-    for (const text of ['work-example', 'workclaude', 'claude:work-example', 'claude:workclaude']) {
+  test('--login takes the alias or the id, in any case', async () => {
+    for (const text of ['work-example', 'workclaude', 'Work-Example', 'WORKCLAUDE']) {
       const h = harness()
       expect(await createClaudeCommand(h.deps).run(['--login', text], collect().context)).toBe(3)
       expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain('x-kurmis-login: workclaude')
@@ -371,8 +366,18 @@ describe('kurmis claude --login', () => {
     const h = harness()
     const out = collect()
     expect(await createClaudeCommand(h.deps).run(['--login', 'nobody'], out.context)).toBe(1)
-    expect(out.stderr()).toBe('kurmis claude: there is no Claude login called "nobody". "kurmis status" shows the logins, and "kurmis login claude" adds one.\n')
+    expect(out.stderr()).toBe('kurmis claude: there is no login called "nobody". "kurmis status" shows the logins, and "kurmis login" adds one.\n')
     expect(h.daemon.calls).toEqual([])
+  })
+
+  test('--login takes no claude: in front of a login', async () => {
+    for (const text of ['claude:work-example']) {
+      const h = harness()
+      const out = collect()
+      expect(await createClaudeCommand(h.deps).run(['--login', text], out.context)).toBe(1)
+      expect(out.stderr()).toContain(`there is no login called "${text}"`)
+      expect(h.specs).toEqual([])
+    }
   })
 
   test('without --login, a config.json that cannot be read starts claude on the login plain claude uses, with a warning', async () => {
@@ -444,16 +449,12 @@ describe('kurmis claude --login', () => {
     const h = harness({}, { folderExists: () => false })
     const out = collect()
     expect(await createClaudeCommand(h.deps).run(['--login', 'work-example'], out.context)).toBe(1)
-    expect(out.stderr()).toContain('"kurmis login claude:work-example"')
+    expect(out.stderr()).toBe(`kurmis claude: the folder of work-example is missing (${WORK_FOLDER()}). Sign it in again with ` +
+      '"kurmis login work-example".\n')
     expect(h.specs).toEqual([])
   })
 
-  test('a Codex login is an error, and an empty --login a usage error', async () => {
-    for (const text of ['codex:work-example', 'workcodex1']) {
-      const out = collect()
-      expect(await createClaudeCommand(harness().deps).run(['--login', text], out.context)).toBe(1)
-      expect(out.stderr()).toContain('is a Codex login; this takes a Claude login')
-    }
+  test('an empty --login is a usage error', async () => {
     const empty = collect()
     expect(await createClaudeCommand(harness().deps).run(['--login='], empty.context)).toBe(2)
   })

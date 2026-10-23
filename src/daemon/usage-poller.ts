@@ -1,7 +1,7 @@
 // The daemon's usage probes: one at a time per login, every signed-in login every 15 minutes,
 // and on demand (the control API's `probe`, a proxy request whose reading is stale, a login that
-// appears when `config.json` is read again, and the renewal of an expiring token, which a Claude
-// probe does because its CLI renews the token).
+// appears when `config.json` is read again, and the renewal of an expiring token, which a probe
+// does because its CLI renews the token).
 //
 // A probe's answer goes into the login table: the usage snapshot, whether the login is signed
 // in, and the end of a cooldown that had no known end (`cooldownAfterProbe`). A successful
@@ -17,12 +17,10 @@
 // `STALE_PROBE_INTERVAL_MS` of the last one (`recentStaleProbes`), so a probe that keeps
 // failing does not run before every request.
 //
-// A successful probe that finds the login signed in also tells the daemon the login's email:
-// for Claude the profile the probe's CLI cached (`ClaudeIdentityReader`), for Codex the probe's
-// own answer. The login table then gives an automatic alias the form that email makes
-// (`noteEmail`). A probe that failed, or found the login signed out, or a Claude login whose
-// profile names no email, changes no alias.
-import { emptyCodexUsage } from '../core/codex-usage.ts'
+// A successful probe that finds the login signed in also tells the daemon the login's email,
+// from the profile the probe's CLI cached (`ClaudeIdentityReader`). The login table then gives an
+// automatic alias the form that email makes (`noteEmail`). A probe that failed, or found the
+// login signed out, or whose profile names no email, changes no alias.
 import { cooldownAfterProbe } from '../core/proxy-rules.ts'
 import { emptyAccountUsage } from '../core/usage.ts'
 import type { LoginSettings } from '../data/config.ts'
@@ -39,7 +37,7 @@ export const POLL_INTERVAL_MS = 15 * 60_000
 /** How long after a probe for a stale reading the proxy does not ask for another one of the same login. */
 export const STALE_PROBE_INTERVAL_MS = 60_000
 
-/** What one probe answered: `probeClaudeUsage` and `probeCodexUsage` return it. */
+/** What one probe answered: `probeClaudeUsage` returns it. */
 export type ProbeAnswer = ProbeResult
 
 export type ProbeFunction = (login: LoginRef, options: ProbeOptions) => Promise<ProbeResult>
@@ -50,13 +48,12 @@ export type ProbeCause = 'start' | 'poll' | 'request' | 'stale' | 'renewal' | 'c
 export interface UsagePollerOptions {
   table: LoginTable
   tokens: TokenSource
-  /** Where a Claude login's email is read after a probe. */
+  /** Where a login's email is read after a probe. */
   identity: Pick<ClaudeIdentityReader, 'read'>
   env: NodeJS.ProcessEnv
   log: DaemonLog
   now: () => number
   probeClaude: ProbeFunction
-  probeCodex: ProbeFunction
   intervalMs?: number
   /** Default `STALE_PROBE_INTERVAL_MS`. */
   staleProbeIntervalMs?: number
@@ -157,31 +154,27 @@ export class UsagePoller {
   }
 
   private signedInOrUnknown(login: LoginSettings): boolean {
-    if (login.provider === 'claude') return this.options.table.claudeSignedIn(login.id) !== false
-    return this.options.table.probedSignedIn(login.id) !== false
+    return this.options.table.claudeSignedIn(login.id) !== false
   }
 
   private async run(login: LoginSettings, cause: ProbeCause): Promise<void> {
     const { table, log, now } = this.options
     const id = login.id
     const startedAt = now()
-    log.write(cause === 'renewal' ? 'token_renewal_started' : 'usage_probe_started', { login: id, provider: login.provider })
-    const probe = login.provider === 'claude' ? this.options.probeClaude : this.options.probeCodex
-    const ref: LoginRef = { id, provider: login.provider, usedByPlainCli: login.usedByPlainCli }
+    log.write(cause === 'renewal' ? 'token_renewal_started' : 'usage_probe_started', { login: id })
+    const ref: LoginRef = { id, usedByPlainClaude: login.usedByPlainClaude }
     let answer: ProbeAnswer
     try {
-      answer = await probe(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) })
+      answer = await this.options.probeClaude(ref, { env: this.options.env, now, signal: this.controller.signal, previous: table.usage(id) })
     } catch {
       answer = { ok: false, signedIn: null, reason: 'other', error: 'The usage probe failed unexpectedly.' }
     }
     if (this.closed) return
-    // A Claude probe's CLI may have renewed the token, so the next read looks again. After a
+    // The probe's CLI may have renewed the token, so the next read looks again. After a
     // renewal the next request waits for that read; after any other probe it goes on with the
     // token it has while Credential Manager is read again.
-    if (login.provider === 'claude') {
-      if (cause === 'renewal') this.options.tokens.invalidate(id)
-      else this.options.tokens.markStale(id)
-    }
+    if (cause === 'renewal') this.options.tokens.invalidate(id)
+    else this.options.tokens.markStale(id)
     const ms = now() - startedAt
     if (answer.ok) {
       // The probe measured the login as it was when it started. What an answer said since then
@@ -200,7 +193,7 @@ export class UsagePoller {
       this.learnEmail(ref, answer)
     } else {
       const previous = table.usage(id)
-      const base = previous ?? (login.provider === 'claude' ? emptyAccountUsage(id, now()) : emptyCodexUsage(id, now()))
+      const base = previous ?? emptyAccountUsage(id, now())
       table.setUsage(id, { ...base, error: answer.error })
       if (answer.signedIn !== null) table.setSignedIn(id, answer.signedIn)
       log.write(cause === 'renewal' ? 'token_renewal_finished' : 'usage_probe_failed', { login: id, ms, ok: false, reason: answer.reason })
@@ -208,15 +201,12 @@ export class UsagePoller {
   }
 
   /**
-   * Keeps what a successful probe said about the login's email: a Codex login's email in the
-   * table's memory, and, when the probe found the login signed in and an email is known, the
-   * login's automatic alias made from it.
+   * After a successful probe that found the login signed in, gives the login the automatic alias
+   * made from the email its profile names, when it names one.
    */
   private learnEmail(login: LoginRef, answer: Extract<ProbeAnswer, { ok: true }>): void {
-    const { table, identity } = this.options
-    if (login.provider === 'codex') table.setCodexEmail(login.id, answer.signedIn ? answer.email ?? null : null)
     if (!answer.signedIn) return
-    const email = login.provider === 'codex' ? answer.email ?? null : identity.read(login)?.email ?? null
-    if (email !== null) table.noteEmail(login.id, email)
+    const email = this.options.identity.read(login)?.email ?? null
+    if (email !== null) this.options.table.noteEmail(login.id, email)
   }
 }

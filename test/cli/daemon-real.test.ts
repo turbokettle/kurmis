@@ -1,5 +1,5 @@
 // The real bundle, request handling included: `kurmis daemon start`, `status`, `stop` and the
-// version handover against a daemon that runs `createDaemonApp`, with the fake claude, codex and
+// version handover against a daemon that runs `createDaemonApp`, with the fake claude and the
 // Anthropic API. Skipped while `createDaemonApp` is not implemented.
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -14,7 +14,7 @@ import { buildTestBundle } from '../daemon/bundle.ts'
 import { OwnDaemons } from '../daemon/own-daemons.ts'
 import { call, messagesBody } from '../daemon/harness.ts'
 import { dataFolderWithPort, freePort, waitUntil } from '../daemon/helpers.ts'
-import { FAKE_CLAUDE_SCRIPT, FAKE_CODEX_SCRIPT, reply, startFakeAnthropic, type FakeAnthropic } from '../fakes/index.ts'
+import { FAKE_CLAUDE_SCRIPT, reply, startFakeAnthropic, type FakeAnthropic } from '../fakes/index.ts'
 
 function appImplemented(): boolean {
   try {
@@ -48,7 +48,6 @@ function kurmis(bundle: string, home: string, args: string[]): Promise<{ code: n
     ...process.env,
     KURMIS_HOME: home,
     KURMIS_CLAUDE_BIN: FAKE_CLAUDE_SCRIPT,
-    KURMIS_CODEX_BIN: FAKE_CODEX_SCRIPT,
     KURMIS_UPSTREAM_URL: api.url
   }
   delete env.NODE_OPTIONS
@@ -70,7 +69,8 @@ describe.skipIf(!appImplemented())('the real daemon', () => {
     const status = await kurmis(bundle, home, ['daemon', 'status', '--json'])
     const answer = JSON.parse(status.stdout) as { running: boolean; port: number; version: string; logins: number }
     expect(answer).toMatchObject({ running: true, port, version: '0.5.0' })
-    expect(answer.logins).toBeGreaterThanOrEqual(2)
+    // The login plain claude uses, which the daemon adds to the new config.json.
+    expect(answer.logins).toBe(1)
     const read = readDaemonFile(join(home, 'daemon.json'))
     const pid = read.status === 'ok' ? read.info.pid : 0
     const stopped = await kurmis(bundle, home, ['daemon', 'stop'])

@@ -26,7 +26,6 @@ export const OVERAGE_WARNING = {
 export function accountUsage(overrides: Partial<AccountUsage> = {}): AccountUsage {
   return {
     accountId: 'ownclaude1',
-    provider: 'claude',
     fetchedAt: 1_700_000_000_000,
     source: 'probe',
     subscriptionType: 'max',

@@ -10,7 +10,7 @@
 //   stays in a job object its parent is in. Windows' OpenSSH server puts each session in such a
 //   job and ends every process in it when the session closes, and some IDE terminals do the
 //   same when they close. A daemon started there ends with them, and the next `kurmis claude`
-//   or `kurmis codex` starts it again.
+//   starts it again.
 //
 // Which bundle runs the daemon: the one that is running now, or `KURMIS_ENTRY` (a test hook,
 // for tests that run kurmis from the source tree, where there is no bundle to start).

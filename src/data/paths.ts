@@ -2,7 +2,7 @@
 // changes KURMIS_HOME or HOME sees the change.
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { toLoginId, type LoginProvider, type LoginRef } from './login-id.ts'
+import { toLoginId, type LoginRef } from './login-id.ts'
 
 /**
  * The data folder: `KURMIS_HOME` when it is set and not empty, otherwise `.kurmis` in the
@@ -94,23 +94,22 @@ export function setupSettingsRecordPath(): string {
   return join(kurmisHome(), 'settings-files.json')
 }
 
-/** The folder that holds the extra logins of one provider: `claude/` or `codex/`. */
-export function providerFolder(provider: LoginProvider): string {
-  return join(kurmisHome(), provider)
+/** The folder that holds the folders of the extra logins: `claude/`. */
+export function extraLoginsFolder(): string {
+  return join(kurmisHome(), 'claude')
 }
 
 /**
- * The folder of an extra login: `claude/<id>/` (its `CLAUDE_SECURESTORAGE_CONFIG_DIR`) or
- * `codex/<id>/` (its `CODEX_HOME`). The id is checked again here, so a slash or `..` can never
- * produce a path. The logins of plain claude and plain codex have no folder here, since they use
- * `~/.claude` and `~/.codex`; asking for one is an error.
+ * The folder of an extra login: `claude/<id>/`, its `CLAUDE_SECURESTORAGE_CONFIG_DIR`. The id is
+ * checked again here, so a slash or `..` can never produce a path. The login of plain claude has
+ * no folder here, since it uses `~/.claude`; asking for it is an error.
  */
 export function loginFolder(login: LoginRef): string {
   const id = toLoginId(login.id)
-  if (login.usedByPlainCli) {
-    throw new Error(`${id} is the login plain ${login.provider} uses and has no folder in the kurmis data folder.`)
+  if (login.usedByPlainClaude) {
+    throw new Error(`${id} is the login plain claude uses and has no folder in the kurmis data folder.`)
   }
-  return join(providerFolder(login.provider), id)
+  return join(extraLoginsFolder(), id)
 }
 
 /**
@@ -120,16 +119,4 @@ export function loginFolder(login: LoginRef): string {
  */
 export function loginLockPath(id: string): string {
   return join(kurmisHome(), 'locks', `${toLoginId(id)}.lock`)
-}
-
-/**
- * What kurmis last merged and copied into the home of an extra Codex login from the default
- * Codex home: `codex-merged/<id>.json`. It is kept outside the login's home, so Codex never
- * reads it and deleting the home does not lose it by accident; `logout` removes it with the
- * login. `src/cli/codex-home-files.ts` reads and writes it.
- */
-export function codexMergedRecordPath(login: LoginRef): string {
-  const id = toLoginId(login.id)
-  if (login.usedByPlainCli || login.provider !== 'codex') throw new Error(`${id} is not an extra Codex login.`)
-  return join(kurmisHome(), 'codex-merged', `${id}.json`)
 }

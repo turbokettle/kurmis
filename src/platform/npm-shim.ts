@@ -8,7 +8,7 @@
 // the target's `#!` line, the quoted target path relative to the shim's own folder, and `%*`
 // (the caller's arguments):
 //
-//   "%dp0%\node.exe"  "%dp0%\node_modules\@openai\codex\bin\codex.js" %*
+//   "%dp0%\node.exe"  "%dp0%\node_modules\@anthropic-ai\claude-code\cli.js" %*
 //
 // The forms read here, each with a fixture in `test/platform/fixtures/`:
 //
@@ -36,8 +36,7 @@
 //
 // What is not taken over from a shim: the `NODE_PATH` that pnpm's shims set (Node finds a
 // package's dependencies from the package's real folder without it), and the `@SET NAME=value`
-// lines npm writes for a `#!/usr/bin/env -S NAME=value node` line. Neither Claude Code nor Codex
-// uses them.
+// lines npm writes for a `#!/usr/bin/env -S NAME=value node` line. Claude Code uses neither.
 //
 // Everything here is pure and works on Windows-shaped paths (`path.win32`) on every OS.
 import { win32 } from 'node:path'

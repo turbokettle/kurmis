@@ -7,7 +7,7 @@ import { COMMANDS, findCommand } from './commands/index.ts'
 export function mainHelp(): string {
   const width = Math.max(...COMMANDS.map((command) => command.name.length))
   const lines = COMMANDS.map((command) => `  ${command.name.padEnd(width)}  ${command.summary}`)
-  return `kurmis ${kurmisVersion}: use several Claude Code and Codex logins on one machine.
+  return `kurmis ${kurmisVersion}: use several Claude Code logins on one machine.
 
 Usage: kurmis <command> [options]
 

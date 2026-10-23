@@ -18,13 +18,14 @@ import {
 } from '../../src/daemon/tokens.ts'
 import { fakeToken, writeClaudeCredentials } from '../fakes/claude.ts'
 import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
-import { claudeRef, codexRef, OWN_CLAUDE, OWN_CLAUDE_REF, OWN_CODEX, OWN_CODEX_REF, testConfig } from '../logins.ts'
+import { claudeRef, OWN_CLAUDE, OWN_CLAUDE_REF, testConfig } from '../logins.ts'
 
 const DEFAULT = OWN_CLAUDE
 const WORK = 'workclaude'
-const WORK_CODEX = 'workcodex1'
+/** An id the config does not have. */
+const UNKNOWN = 'unknown01'
 /** The config the token source looks logins up in. */
-const config = testConfig({ extras: [{ id: WORK, provider: 'claude' }, { id: WORK_CODEX, provider: 'codex' }] })
+const config = testConfig({ extras: [{ id: WORK }] })
 const workFolder = (): string => loginFolder(claudeRef(WORK))
 const PLAIN = 'Claude Code-credentials'
 const record = (token: string, refresh = true): string =>
@@ -79,21 +80,24 @@ test("an extra login uses its folder for both the item name and the file; the lo
   expect(claudeSecureStorageDir(OWN_CLAUDE_REF)).toBeNull()
   expect(claudeCredentialsDir(claudeRef(WORK), home)).toBe(join(dir, 'kurmis', 'claude', WORK))
   expect(claudeCredentialsDir(OWN_CLAUDE_REF, home)).toBe(join(home, '.claude'))
-  for (const login of [OWN_CODEX_REF, codexRef(WORK_CODEX), claudeRef('../x')]) {
-    expect(() => claudeSecureStorageDir(login)).toThrow()
-    expect(() => claudeCredentialsDir(login, home)).toThrow()
-  }
+  expect(() => claudeSecureStorageDir(claudeRef('../x'))).toThrow()
+  expect(() => claudeCredentialsDir(claudeRef('../x'), home)).toThrow()
 })
 
 test('a login is told apart by its settings in the config, not by its id', async () => {
-  // The same id is first an extra Claude login, then, in another daemon, a Codex login.
+  // The same id is first an extra login, then, in another daemon, the login plain claude uses,
+  // and then, in a third, no login at all.
   writeClaudeCredentials(workFolder(), { accessToken: fakeToken('work-file') })
-  const claude = source({ platform: 'linux' })
-  await claude.prime([WORK])
-  expect(claude.read(WORK)?.accessToken).toBe(fakeToken('work-file'))
-  const codex = source({ platform: 'linux', login: (id) => (id === WORK ? codexRef(WORK) : undefined) })
-  await codex.prime([WORK])
-  expect(codex.read(WORK)).toBeNull()
+  writeClaudeCredentials(defaultDir(), { accessToken: fakeToken('default-file') })
+  const extra = source({ platform: 'linux' })
+  await extra.prime([WORK])
+  expect(extra.read(WORK)?.accessToken).toBe(fakeToken('work-file'))
+  const plain = source({ platform: 'linux', login: (id) => (id === WORK ? { ...claudeRef(WORK), usedByPlainClaude: true } : undefined) })
+  await plain.prime([WORK])
+  expect(plain.read(WORK)?.accessToken).toBe(fakeToken('default-file'))
+  const none = source({ platform: 'linux', login: () => undefined })
+  await none.prime([WORK])
+  expect(none.read(WORK)).toBeNull()
 })
 
 test('macOS reads the Keychain, so the source says so; Windows and Linux do not', () => {
@@ -210,11 +214,11 @@ test.each(['win32', 'linux'] as const)('%s: only the file is read, never the Key
   expect(entries).toEqual([])
 })
 
-test('ids that are not Claude logins have no token and never reach the Keychain', async () => {
+test('ids that are not logins in the config have no token and never reach the Keychain', async () => {
   const tokens = source()
-  await tokens.prime([OWN_CODEX, WORK_CODEX, 'nonsense', 'claude:../x'])
+  await tokens.prime([UNKNOWN, 'nonsense', 'claude:../x'])
   expect(keychain.calls()).toEqual([])
-  for (const id of [OWN_CODEX, WORK_CODEX, 'nonsense']) {
+  for (const id of [UNKNOWN, 'nonsense']) {
     expect(tokens.read(id)).toBeNull()
     expect(() => { tokens.invalidate(id) }).not.toThrow()
   }

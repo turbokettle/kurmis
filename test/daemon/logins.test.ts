@@ -8,11 +8,11 @@ import { MAX_SESSIONS, SESSION_MAX_AGE_MS } from '../../src/data/state.ts'
 import { LoginTable, NO_SESSION_KEY } from '../../src/daemon/logins.ts'
 import type { TokenSource } from '../../src/daemon/tokens.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
-import { loginOf, OWN_CLAUDE, OWN_CODEX } from '../logins.ts'
+import { loginOf, OWN_CLAUDE } from '../logins.ts'
 import { freshHome, writeLogins } from './harness.ts'
 
 const WORK = 'workclaude'
-const WORK_CODEX = 'workcodex1'
+const SIDE = 'sideclaude1'
 
 let home = ''
 const tokens = new Map<string, ClaudeCredentials>()
@@ -61,8 +61,8 @@ afterEach(async () => {
 })
 
 describe('the routing rows', () => {
-  test('are built from the settings, the tokens, the usage and the cooldowns of the Claude logins', () => {
-    writeLogins({ claude: { [WORK]: { fiveHourLimit: 80, useFirst: true } }, codex: { [WORK_CODEX]: {} } })
+  test('are built from the settings, the tokens, the usage and the cooldowns of the logins', () => {
+    writeLogins({ claude: { [WORK]: { fiveHourLimit: 80, useFirst: true } } })
     tokens.set(WORK, { accessToken: 't', expiresAt: 5_000_000, hasRefreshToken: true })
     const logins = table()
     logins.setCooldown(WORK, 2_000_000)
@@ -186,7 +186,7 @@ describe('the config', () => {
   test('that does not read keeps the config the daemon has, and reload says why', () => {
     writeLogins({ claude: { [WORK]: {} } })
     const logins = table()
-    writeFileSync(configPath(), '{"version": 2, "logins": [{"id": "Bad Id", "provider": "claude"}]}')
+    writeFileSync(configPath(), '{"version": 3, "logins": [{"id": "Bad Id"}]}')
     const result = logins.reloadConfig()
     expect(result.ok).toBe(false)
     expect(logins.find(WORK)).toBeDefined()
@@ -194,10 +194,9 @@ describe('the config', () => {
   })
 
   test('that could not be read because its lock was busy is read again at the next check, though the file did not change', () => {
-    // A file without the logins of plain claude and plain codex has to be written to get them,
-    // which needs the lock.
+    // A file without the login of plain claude has to be written to get it, which needs the lock.
     mkdirSync(kurmisHome(), { recursive: true })
-    writeFileSync(configPath(), '{"version": 2, "logins": []}')
+    writeFileSync(configPath(), '{"version": 3, "logins": []}')
     writeFileSync(configLockPath(), JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: 'held-by-a-test' }))
     let logins: LoginTable
     try {
@@ -210,7 +209,7 @@ describe('the config', () => {
     clock += 2_000
     logins.checkConfig()
     expect(events).toContain('config_loaded')
-    expect(loadConfig().logins.map((login) => login.id)).toEqual([logins.ownLogin('claude').id, logins.ownLogin('codex').id])
+    expect(loadConfig().logins.map((login) => login.id)).toEqual([logins.plainClaudeLogin().id])
   })
 
   test('tells listeners about a change', () => {
@@ -253,39 +252,38 @@ describe('the config', () => {
     const logins = table()
     const added: string[][] = []
     logins.onLoginsAdded((ids) => { added.push(ids) })
-    writeLogins({ claude: { [WORK]: {} }, codex: { [WORK_CODEX]: {} } })
+    writeLogins({ claude: { [WORK]: {}, [SIDE]: {} } })
     clock += 2_000
     logins.checkConfig()
-    expect(added).toEqual([[WORK, WORK_CODEX]])
+    expect(added).toEqual([[WORK, SIDE]])
     // Same contents, a removal, and a change of settings bring no login.
     logins.reloadConfig()
     writeLogins({ claude: { [WORK]: {} } })
     logins.reloadConfig()
     writeLogins({ claude: { [WORK]: { routing: false } } })
     logins.reloadConfig()
-    expect(added).toEqual([[WORK, WORK_CODEX]])
+    expect(added).toEqual([[WORK, SIDE]])
   })
 })
 
-describe("the logins of plain claude and plain codex", () => {
-  test('are found by provider, whatever their ids', () => {
-    writeLogins({ claude: { [WORK]: {} }, codex: { [WORK_CODEX]: {} } })
+describe("the login of plain claude", () => {
+  test('is found by its setting, whatever its id', () => {
+    writeLogins({ claude: { [WORK]: {} } })
     const logins = table()
-    expect(logins.ownLogin('claude')).toMatchObject({ id: OWN_CLAUDE, provider: 'claude', usedByPlainCli: true })
-    expect(logins.ownLogin('codex')).toMatchObject({ id: OWN_CODEX, provider: 'codex', usedByPlainCli: true })
-    expect(logins.find(WORK)?.usedByPlainCli).toBe(false)
+    expect(logins.plainClaudeLogin()).toMatchObject({ id: OWN_CLAUDE, usedByPlainClaude: true })
+    expect(logins.find(WORK)?.usedByPlainClaude).toBe(false)
   })
 
-  test('are added with new ids to a config that has none, and the file keeps them', () => {
+  test('is added with a new id to a config that has none, and the file keeps it', () => {
     mkdirSync(kurmisHome(), { recursive: true })
-    writeFileSync(configPath(), '{"version": 2, "logins": []}')
+    writeFileSync(configPath(), '{"version": 3, "logins": []}')
     const logins = table()
-    const own = logins.ownLogin('claude')
-    expect(own.usedByPlainCli).toBe(true)
-    expect(loadConfig().logins.map((login) => login.id)).toEqual([own.id, logins.ownLogin('codex').id])
+    const own = logins.plainClaudeLogin()
+    expect(own.usedByPlainClaude).toBe(true)
+    expect(loadConfig().logins.map((login) => login.id)).toEqual([own.id])
   })
 
-  test("leave the login plain claude uses out of a request whose CLI runs on credentials of its own", () => {
+  test("is left out of a request whose CLI runs on credentials of its own", () => {
     writeLogins({ claude: { [WORK]: {} } })
     tokens.set(OWN_CLAUDE, { accessToken: 'd', expiresAt: null, hasRefreshToken: true })
     tokens.set(WORK, { accessToken: 'w', expiresAt: null, hasRefreshToken: true })
@@ -303,14 +301,14 @@ describe('automatic aliases', () => {
   }
 
   test('follow the email a probe learned, in the file and in the table', () => {
-    writeLogins({ claude: { [WORK]: {} }, codex: { [WORK_CODEX]: {} } })
+    writeLogins({ claude: { [WORK]: {} } })
     const logins = table()
     expect(logins.find(WORK)?.alias).toBe(WORK)
     logins.noteEmail(WORK, 'work.person@example.com')
-    logins.noteEmail(OWN_CODEX, 'own.person@example.org')
+    logins.noteEmail(OWN_CLAUDE, 'own.person@example.org')
     expect(logins.find(WORK)).toMatchObject({ alias: 'work-person-example', aliasSetByUser: false })
     expect(loginOf(loadConfig(), WORK).alias).toBe('work-person-example')
-    expect(loginOf(loadConfig(), OWN_CODEX).alias).toBe('own-person-example')
+    expect(loginOf(loadConfig(), OWN_CLAUDE).alias).toBe('own-person-example')
     expect(events).toContain('config_loaded')
   })
 
@@ -318,7 +316,7 @@ describe('automatic aliases', () => {
     writeLogins({})
     const logins = table()
     logins.noteEmail(OWN_CLAUDE, 'first@example.com')
-    expect(logins.ownLogin('claude').alias).toBe('first-example')
+    expect(logins.plainClaudeLogin().alias).toBe('first-example')
     const written = readFileSync(configPath(), 'utf8')
     const release = holdConfigLock()
     try {
@@ -330,7 +328,7 @@ describe('automatic aliases', () => {
     }
     expect(readFileSync(configPath(), 'utf8')).toBe(written)
     logins.noteEmail(OWN_CLAUDE, 'second@example.org')
-    expect(logins.ownLogin('claude').alias).toBe('second-example')
+    expect(logins.plainClaudeLogin().alias).toBe('second-example')
     expect(loginOf(loadConfig(), OWN_CLAUDE).alias).toBe('second-example')
   })
 
@@ -385,15 +383,5 @@ describe('automatic aliases', () => {
     const text = lines.join('')
     expect(text).toContain(`login=${WORK}`)
     expect(text).not.toMatch(/example|person|@/)
-  })
-
-  test('a Codex email is kept in memory for Codex logins only', () => {
-    writeLogins({ codex: { [WORK_CODEX]: {} } })
-    const logins = table()
-    logins.setCodexEmail(WORK_CODEX, 'codex.person@example.com')
-    logins.setCodexEmail(OWN_CLAUDE, 'not.codex@example.com')
-    expect(logins.codexEmail(WORK_CODEX)).toBe('codex.person@example.com')
-    expect(logins.codexEmail(OWN_CLAUDE)).toBeNull()
-    expect(readFileSync(configPath(), 'utf8')).not.toContain('example')
   })
 })

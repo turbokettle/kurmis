@@ -1,5 +1,5 @@
-// Logins with fixed made-up ids for tests, so a test can name the logins of plain claude and plain codex without
-// reading them back from a config with random ids.
+// Logins with fixed made-up ids for tests, so a test can name the login of plain claude without
+// reading it back from a config with random ids.
 import {
   addLogin,
   CONFIG_VERSION,
@@ -11,34 +11,22 @@ import {
   type LoginSettings,
   type LoginSettingsPatch
 } from '../src/data/config.ts'
-import type { LoginId, LoginProvider, LoginRef } from '../src/data/login-id.ts'
+import type { LoginId, LoginRef } from '../src/data/login-id.ts'
 
 /** The id of the login plain claude uses in a test config. */
 export const OWN_CLAUDE = 'ownclaude1' as LoginId
 
-/** The id of the login plain codex uses in a test config. */
-export const OWN_CODEX = 'owncodex01' as LoginId
-
 /** The login plain claude uses as a `LoginRef`. */
-export const OWN_CLAUDE_REF: LoginRef = { id: OWN_CLAUDE, provider: 'claude', usedByPlainCli: true }
+export const OWN_CLAUDE_REF: LoginRef = { id: OWN_CLAUDE, usedByPlainClaude: true }
 
-/** The login plain codex uses as a `LoginRef`. */
-export const OWN_CODEX_REF: LoginRef = { id: OWN_CODEX, provider: 'codex', usedByPlainCli: true }
-
-/** An extra Claude login with this id, as a `LoginRef`. */
+/** An extra login with this id, as a `LoginRef`. */
 export function claudeRef(id: string): LoginRef {
-  return { id: id as LoginId, provider: 'claude', usedByPlainCli: false }
+  return { id: id as LoginId, usedByPlainClaude: false }
 }
 
-/** An extra Codex login with this id, as a `LoginRef`. */
-export function codexRef(id: string): LoginRef {
-  return { id: id as LoginId, provider: 'codex', usedByPlainCli: false }
-}
-
-/** An extra login for `testConfig`: its id and provider, and settings to change. */
+/** An extra login for `testConfig`: its id, and settings to change. */
 export interface ExtraLogin extends LoginSettingsPatch {
   id: string
-  provider: LoginProvider
 }
 
 export interface TestConfigOptions {
@@ -46,21 +34,18 @@ export interface TestConfigOptions {
   extras?: readonly ExtraLogin[]
   /** Settings of the login plain claude uses. */
   ownClaude?: LoginSettingsPatch
-  /** Settings of the login plain codex uses. */
-  ownCodex?: LoginSettingsPatch
   port?: number
 }
 
-/** A config with the logins of plain claude and plain codex at `OWN_CLAUDE` and `OWN_CODEX`, and the given extras. */
+/** A config with the login of plain claude at `OWN_CLAUDE`, and the given extras. */
 export function testConfig(options: TestConfigOptions = {}): KurmisConfig {
   let config: KurmisConfig = {
     version: CONFIG_VERSION,
     port: options.port ?? DEFAULT_PORT,
-    logins: [newLoginSettings(OWN_CLAUDE_REF), newLoginSettings(OWN_CODEX_REF)]
+    logins: [newLoginSettings(OWN_CLAUDE_REF)]
   }
   if (options.ownClaude !== undefined) config = updateLogin(config, OWN_CLAUDE, options.ownClaude)
-  if (options.ownCodex !== undefined) config = updateLogin(config, OWN_CODEX, options.ownCodex)
-  for (const { id, provider, ...patch } of options.extras ?? []) config = addLogin(config, { id: id as LoginId, provider }, patch)
+  for (const { id, ...patch } of options.extras ?? []) config = addLogin(config, id, patch)
   return config
 }
 

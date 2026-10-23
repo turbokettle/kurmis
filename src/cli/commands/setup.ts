@@ -22,8 +22,7 @@
 // exits with 1; running it again is safe, since every step does nothing when it is already done. An autostart entry that loads only at the next login (macOS with nobody at the
 // screen), a machine where no entry can be written (Windows without Windows Script Host), an
 // entry that starts a Node in a temporary folder and a platform without autostart are warnings:
-// the daemon runs, and after a restart the entry or the next `kurmis claude` or `kurmis codex`
-// starts it again.
+// the daemon runs, and after a restart the entry or the next `kurmis claude` starts it again.
 //
 // Setup refuses to run while `CLAUDE_CONFIG_DIR` names `~/.claude` itself on macOS and Windows,
 // or names another folder whose `settings.json` is a link to `~/.claude/settings.json`
@@ -36,8 +35,8 @@ import { ConfigError, extraLogins, findLogin, loadConfig, readConfig, type Kurmi
 import { readOrCreateKey } from '../../data/daemon-file.ts'
 import { LockTimeoutError } from '../../data/lock.ts'
 import { configDirHasOwnCredentials, namesDefaultClaudeFolder, sharesDefaultSettingsFile } from '../../data/login-env.ts'
-import { isLoginId, LOGIN_PROVIDERS, type LoginRef } from '../../data/login-id.ts'
-import { kurmisHome, pausedFilePath, providerFolder, setupSettingsRecordPath } from '../../data/paths.ts'
+import { isLoginId, type LoginRef } from '../../data/login-id.ts'
+import { extraLoginsFolder, kurmisHome, pausedFilePath, setupSettingsRecordPath } from '../../data/paths.ts'
 import { removeDataFolder, type DataFolderRemoval } from '../../data/remove-data-folder.ts'
 import {
   registerAutostart,
@@ -95,9 +94,8 @@ Options:
                           extensions talk to Anthropic directly. Everything else stays, and
                           "kurmis setup" turns it back on.
   --uninstall-and-logout  Remove everything kurmis set up, and sign out and remove every login
-                          you added. The logins plain claude and plain codex use stay signed
-                          in. It lists what it removes and asks first. Then run
-                          "npm uninstall -g kurmis".
+                          you added. The login plain claude uses stays signed in. It lists
+                          what it removes and asks first. Then run "npm uninstall -g kurmis".
   --yes                   Do not ask (needed when there is no terminal to ask at).
   -h, --help              Show this help.`
 
@@ -170,7 +168,7 @@ async function autostartStep(
   const warnsOnly = result.warningOnly === true || result.loadsAtNextLogin === true ||
     result.noEntryPossible === true || !supported
   if (!remove && result.warning !== undefined && warnsOnly) {
-    // The daemon runs now. After a restart the entry, or the next `kurmis claude` or `kurmis codex`, starts it.
+    // The daemon runs now. After a restart the entry, or the next `kurmis claude`, starts it.
     writeLine(context.stderr, `Warning: ${result.warning}`)
     return true
   }
@@ -458,33 +456,30 @@ interface AddedLogin {
 }
 
 /**
- * The logins kurmis added: the extra ones in config.json, and every folder under `claude/` and
- * `codex/` that is named by an id, which a removal or a sign-in that stopped half-way leaves.
- * The logins of plain claude and plain codex are never among them. `others` are the remaining
- * entries of `claude/` and `codex/`, as `claude/<name>`, which are deleted with the data folder
- * without a logout.
+ * The logins kurmis added: the extra ones in config.json, and every folder under `claude/` that
+ * is named by an id, which a removal or a sign-in that stopped half-way leaves. The login plain
+ * claude uses is never among them. `others` are the remaining entries of `claude/`, as
+ * `claude/<name>`, which are deleted with the data folder without a logout.
  */
 function loginsKurmisAdded(config: KurmisConfig): { added: AddedLogin[]; others: string[] } {
   const added = extraLogins(config).map((login): AddedLogin => ({
-    login: { id: login.id, provider: login.provider, usedByPlainCli: false },
+    login: { id: login.id, usedByPlainClaude: false },
     name: login.alias
   }))
   const others: string[] = []
-  for (const provider of LOGIN_PROVIDERS) {
-    let names: string[]
-    try {
-      names = readdirSync(providerFolder(provider))
-    } catch {
+  let names: string[]
+  try {
+    names = readdirSync(extraLoginsFolder())
+  } catch {
+    names = []
+  }
+  for (const name of names) {
+    if (added.some(({ login }) => login.id === name)) continue
+    if (!isLoginId(name) || findLogin(config, name)?.usedByPlainClaude === true) {
+      others.push(join('claude', name))
       continue
     }
-    for (const name of names) {
-      if (added.some(({ login }) => login.id === name && login.provider === provider)) continue
-      if (!isLoginId(name) || findLogin(config, name)?.usedByPlainCli === true) {
-        others.push(join(provider, name))
-        continue
-      }
-      added.push({ login: { id: name, provider, usedByPlainCli: false }, name })
-    }
+    added.push({ login: { id: name, usedByPlainClaude: false }, name })
   }
   return { added, others }
 }
@@ -580,12 +575,12 @@ async function runUninstall(yes: boolean, deps: SetupDeps, context: CliContext):
     listLine(context, `the logins added to kurmis, each signed out first: ${logins.map(({ name }) => name).join(', ')}`)
   }
   if (others.length > 0) {
-    listLine(context, `entries in the data folder's claude and codex folders that are not the folder of a login kurmis ` +
+    listLine(context, `entries in the data folder's claude folder that are not the folder of a login kurmis ` +
       `added, which are deleted without a logout: ${others.join(', ')}`)
   }
   if (pid !== null) listLine(context, `the running daemon (pid ${String(pid)}), which it stops`)
   if (existsSync(dataFolder)) listLine(context, `the kurmis data folder ${dataFolder}`)
-  writeLine(context.stdout, 'The logins plain claude and plain codex use are not signed out, so a plain "claude" and "codex" keep working.')
+  writeLine(context.stdout, 'The login plain claude uses is not signed out, so a plain "claude" keeps working.')
 
   if (!yes) {
     if (!deps.stdinIsTerminal()) {

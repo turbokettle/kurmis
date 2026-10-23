@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { COMMANDS } from '../../src/cli/commands/index.ts'
 import { runCli } from '../../src/cli/dispatch.ts'
 import { configPath } from '../../src/data/paths.ts'
-import { OWN_CLAUDE, OWN_CODEX, writeTestConfig } from '../logins.ts'
+import { OWN_CLAUDE, writeTestConfig } from '../logins.ts'
 
 async function run(...argv: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   let stdout = ''
@@ -11,13 +11,13 @@ async function run(...argv: string[]): Promise<{ code: number; stdout: string; s
   const code = await runCli(argv, {
     stdout: { write: (text: string) => (stdout += text) },
     stderr: { write: (text: string) => (stderr += text) },
-    // An empty KURMIS_CLAUDE_BIN and KURMIS_CODEX_BIN with no PATH: no claude or codex is found.
-    env: { KURMIS_CLAUDE_BIN: '', KURMIS_CODEX_BIN: '' }
+    // An empty KURMIS_CLAUDE_BIN with no PATH: no claude is found.
+    env: { KURMIS_CLAUDE_BIN: '' }
   })
   return { code, stdout, stderr }
 }
 
-const NAMES = ['claude', 'codex', 'status', 'set', 'login', 'logout', 'setup', 'daemon']
+const NAMES = ['claude', 'status', 'set', 'login', 'logout', 'setup', 'daemon']
 
 describe('dispatch', () => {
   it('has every command from the docs', () => {
@@ -46,6 +46,7 @@ describe('dispatch', () => {
     expect(option.code).toBe(2)
     expect(option.stderr).toContain('unknown option "--nope"')
   })
+
 
   it.each(NAMES)('shows the help of %s three ways', async (name) => {
     const usage = COMMANDS.find((command) => command.name === name)!.usage
@@ -86,28 +87,28 @@ describe('kurmis status without a daemon', () => {
     rmSync(configPath(), { force: true })
   })
 
-  it('gives the logins of plain claude and plain codex ids in a new config.json when there is none', async () => {
+  it('gives the login of plain claude an id in a new config.json when there is none', async () => {
     const result = await run('status')
     expect(result.code).toBe(0)
     expect(result.stdout).toMatch(/^The kurmis daemon is not running\./)
     expect(existsSync(configPath())).toBe(true)
-    const [claude, codex] = (JSON.parse(readFileSync(configPath(), 'utf8')) as { logins: { id: string }[] }).logins
-    expect(result.stdout).toContain(`${claude!.id} (Claude)\n  the login plain claude uses\n  no credentials on this machine, routing on`)
-    expect(result.stdout).toContain(`${codex!.id} (Codex)\n  the login plain codex uses\n`)
+    const logins = (JSON.parse(readFileSync(configPath(), 'utf8')) as { logins: { id: string }[] }).logins
+    expect(logins).toHaveLength(1)
+    expect(result.stdout).toContain(`\n${logins[0]!.id}\n  the login plain claude uses\n  no credentials on this machine, routing on`)
     expect(result.stdout).not.toContain('no id yet')
   })
 
   it('shows stored logins and settings, also as JSON', async () => {
     writeTestConfig({
-      extras: [{ id: 'workclaude', provider: 'claude', alias: 'work-example', useFirst: true }],
-      ownCodex: { routing: false, weeklyLimit: 75 }
+      extras: [{ id: 'workclaude', alias: 'work-example', useFirst: true }],
+      ownClaude: { routing: false, weeklyLimit: 75 }
     })
     const text = await run('status')
-    expect(text.stdout).toContain('work-example (Claude, id workclaude)\n  no credentials on this machine, routing on, limits 100% 5 hour, 100% weekly,\n  use first')
-    expect(text.stdout).toContain(`${OWN_CODEX} (Codex)\n  the login plain codex uses\n  no credentials on this machine, routing off, limits 100% 5 hour, 75% weekly`)
+    expect(text.stdout).toContain('work-example (id workclaude)\n  no credentials on this machine, routing on, limits 100% 5 hour, 100% weekly,\n  use first')
+    expect(text.stdout).toContain(`\n${OWN_CLAUDE}\n  the login plain claude uses\n  no credentials on this machine, routing off, limits 100% 5 hour, 75% weekly`)
     const json = JSON.parse((await run('status', '--json')).stdout) as { daemon: unknown; logins: Array<{ id: string; credentials: boolean }> }
     expect(json.daemon).toBeNull()
-    expect(json.logins.map((login) => [login.id, login.credentials])).toEqual([[OWN_CLAUDE, false], [OWN_CODEX, false], ['workclaude', false]])
+    expect(json.logins.map((login) => [login.id, login.credentials])).toEqual([[OWN_CLAUDE, false], ['workclaude', false]])
   })
 
   it('reports a broken config.json', async () => {

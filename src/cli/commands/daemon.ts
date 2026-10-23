@@ -152,14 +152,14 @@ const status: Handler = async (args, context) => {
       return EXIT_OK
     }
     writeLine(context.stdout, `The kurmis daemon ${answer.version} runs on ${address(answer.port)}, pid ${String(answer.pid)}, ` +
-      `since ${new Date(answer.startedAt).toISOString()}, with ${String(answer.logins.length)} logins.`)
+      `since ${new Date(answer.startedAt).toISOString()}, with ${String(answer.logins.length)} ${answer.logins.length === 1 ? 'login' : 'logins'}.`)
     const age = daemonAge(answer, kurmisVersion)
     const versions = `The daemon is ${versionText(answer.version, answer.apiVersion)}, this kurmis is ` +
       `${versionText(kurmisVersion, CONTROL_API_VERSION)}.`
     const sameApi = answer.apiVersion === CONTROL_API_VERSION
     if (age === 'older') {
-      writeLine(context.stdout, `${versions} The daemon is older, so the next "kurmis claude", "kurmis codex", "kurmis setup" ` +
-        'or "kurmis daemon start" replaces it.')
+      writeLine(context.stdout, `${versions} The daemon is older, so the next "kurmis claude", "kurmis setup" or ` +
+        '"kurmis daemon start" replaces it.')
     } else if (age === 'newer') {
       writeLine(context.stdout, sameApi
         ? `${versions} The daemon is newer; this kurmis can use it and does not replace it.`
@@ -209,9 +209,9 @@ export const daemonCommand: Command = {
   summary: 'Start, stop or show the background process',
   usage: `Usage: kurmis daemon <start|stop|restart|status|run>
 
-The daemon is the background process that routes Claude requests. "kurmis claude",
-"kurmis codex" without --login and "kurmis setup" start it when it is not running, so
-"kurmis daemon start" is seldom needed.
+The daemon is the background process that routes Claude requests. "kurmis claude" and
+"kurmis setup" start it when it is not running, so "kurmis daemon start" is seldom
+needed.
 
   start                   Start it in the background. An older daemon is replaced, a newer
                           one is kept.

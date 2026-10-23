@@ -1,6 +1,6 @@
 import type * as Crypto from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import { isLoginId, isLoginProvider, newLoginId, NEW_LOGIN_ID_LENGTH, toLoginId } from '../../src/data/login-id.ts'
+import { isLoginId, newLoginId, NEW_LOGIN_ID_LENGTH, toLoginId } from '../../src/data/login-id.ts'
 
 describe('newLoginId', () => {
   it('makes 10 lowercase letters and digits', () => {
@@ -37,7 +37,7 @@ describe('newLoginId', () => {
 })
 
 describe('checking ids', () => {
-  it.each(['a', 'ownclaude1', 'abc123', '0', 'a'.repeat(32), 'console', 'nonesuch', 'claudex'])('%j is an id', (text) => {
+  it.each(['a', 'ownclaude1', 'abc123', '0', 'a'.repeat(32), 'console', 'nonesuch', 'claudex', 'claude'])('%j is an id', (text) => {
     expect(isLoginId(text)).toBe(true)
     expect(toLoginId(text)).toBe(text)
   })
@@ -47,7 +47,7 @@ describe('checking ids', () => {
     expect(() => toLoginId(text)).toThrow(/not a login id/)
   })
 
-  it.each(['con', 'prn', 'aux', 'nul', 'com1', 'lpt9', 'none', 'invalid', 'claude', 'codex'])('%j is reserved', (text) => {
+  it.each(['con', 'prn', 'aux', 'nul', 'com1', 'lpt9', 'none', 'invalid'])('%j is reserved', (text) => {
     expect(isLoginId(text)).toBe(false)
     expect(() => toLoginId(text)).toThrow(/not a login id/)
   })
@@ -56,12 +56,5 @@ describe('checking ids', () => {
     expect(isLoginId(42)).toBe(false)
     expect(isLoginId(null)).toBe(false)
     expect(isLoginId(undefined)).toBe(false)
-  })
-
-  it('knows the providers', () => {
-    expect(isLoginProvider('claude')).toBe(true)
-    expect(isLoginProvider('codex')).toBe(true)
-    expect(isLoginProvider('Claude')).toBe(false)
-    expect(isLoginProvider(1)).toBe(false)
   })
 })

@@ -49,9 +49,10 @@ describe('a request to the proxy', () => {
     expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'claude:workclaude' }), OWN_CLAUDE).startedOn).toBe('invalid')
   })
 
-  test('passes any login id on, since only the proxy knows which logins are Claude logins', () => {
-    expect(readRouteRequest(getter({ [LOGIN_HEADER]: 'workcodex1' }), OWN_CLAUDE).login).toBe('workcodex1')
-    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'workcodex1' }), OWN_CLAUDE).startedOn).toBe('workcodex1')
+  test('passes any login id on, since only the proxy knows which logins the config has', () => {
+    expect(readRouteRequest(getter({ [LOGIN_HEADER]: 'unknown01' }), OWN_CLAUDE).login).toBe('unknown01')
+    expect(readRouteRequest(getter({ [STARTED_ON_HEADER]: 'unknown01' }), OWN_CLAUDE).startedOn).toBe('unknown01')
+    expect(readRouteRequest(getter({ [LOGIN_HEADER]: 'claude' }), OWN_CLAUDE).login).toBe('claude')
   })
 
   test('reads started-on none as no kurmis login', () => {
@@ -60,7 +61,7 @@ describe('a request to the proxy', () => {
     expect(withRouteHeaders('X-Team: blue', 'k', null, STARTED_ON_NONE)).toBe('X-Team: blue\nx-kurmis-key: k\nx-kurmis-started-on: none')
   })
 
-  test.each(['claude:workclaude', 'work-claude', 'Workclaude', 'con', 'invalid', 'claude', 'a'.repeat(33), 'a b'])('a login header of %j is invalid', (value) => {
+  test.each(['claude:workclaude', 'work-claude', 'Workclaude', 'con', 'invalid', 'a'.repeat(33), 'a b'])('a login header of %j is invalid', (value) => {
     expect(readRouteRequest(getter({ [LOGIN_HEADER]: value }), OWN_CLAUDE).login).toBe('invalid')
   })
 

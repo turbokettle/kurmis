@@ -157,7 +157,7 @@ describe('changeConfig from several processes at once', () => {
     }))
     expect(await Promise.all(runs)).toEqual(Array.from({ length: children }, () => 0))
     const ids = loadConfig(join(home, 'config.json')).logins.map((login) => login.id)
-    expect(ids).toHaveLength(2 + children * each)
+    expect(ids).toHaveLength(1 + children * each)
     for (let index = 0; index < children; index++) {
       for (let i = 0; i < each; i++) expect(ids).toContain(`w${String(index)}n${String(i)}`)
     }

@@ -7,7 +7,7 @@
 // while the rest is kept.
 import type { AccountUsage, UsageWindow } from '../core/claude-usage.ts'
 import { readJsonFileSync, writeJsonFile, writeJsonFileSync } from './json-file.ts'
-import { isLoginId, isLoginProvider, type LoginId } from './login-id.ts'
+import { isLoginId, type LoginId } from './login-id.ts'
 import { statePath } from './paths.ts'
 import { isPlainObject } from './validate.ts'
 
@@ -73,16 +73,11 @@ function isStringOrNull(value: unknown): boolean {
   return value === null || typeof value === 'string'
 }
 
-/**
- * Whether a stored snapshot has the fields routing and `status` read, with the right types.
- * The optional Codex fields are only checked to be objects or lists where present; the
- * daemon wrote them and only displays them.
- */
+/** Whether a stored snapshot has the fields routing and `status` read, with the right types. */
 export function isStoredUsage(value: unknown, login: LoginId): value is AccountUsage {
   if (!isPlainObject(value)) return false
   return (
     value.accountId === login &&
-    isLoginProvider(value.provider) &&
     isTime(value.fetchedAt) &&
     (value.source === 'probe' || value.source === 'session') &&
     isStringOrNull(value.subscriptionType) &&
@@ -94,7 +89,6 @@ export function isStoredUsage(value: unknown, login: LoginId): value is AccountU
     isWindowOrNull(value.sevenDaySonnet) &&
     Array.isArray(value.modelScoped) &&
     value.modelScoped.every((window) => isWindow(window) && typeof (window as { displayName?: unknown }).displayName === 'string') &&
-    (value.windows === undefined || (Array.isArray(value.windows) && value.windows.every(isWindow))) &&
     (value.extraUsage === null || isPlainObject(value.extraUsage)) &&
     (value.status === null || value.status === 'allowed' || value.status === 'allowed_warning' || value.status === 'rejected') &&
     (value.limited === null || isPlainObject(value.limited)) &&

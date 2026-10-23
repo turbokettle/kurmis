@@ -322,7 +322,7 @@ describe('a request body that is too large', () => {
     const log: string[] = []
     // Nothing but the key and the body is looked at before a body that is too large is refused.
     // The table only names the login plain claude uses: the body is refused before anything else is read.
-    const table = { ownLogin: () => ({ id: OWN_CLAUDE }) }
+    const table = { plainClaudeLogin: () => ({ id: OWN_CLAUDE }) }
     const proxy = createProxy({ key: KEY, table: table as never, tokens: {} as never, identity: {} as never, poller: {} as never,
       upstream: {} as never, log: { write: (event) => { log.push(event) } }, now: Date.now, maxBodyBytes: 1_000 })
     server = createServer((req, res) => { void proxy.handle(req, res) })

@@ -38,7 +38,7 @@ export interface ClaudeIdentity {
  * folder has none.
  */
 export function claudeIdentityFile(login: LoginRef, home: string = homedir()): string {
-  if (!login.usedByPlainCli) return join(loginFolder(login), CLAUDE_PROFILE_FILE)
+  if (!login.usedByPlainClaude) return join(loginFolder(login), CLAUDE_PROFILE_FILE)
   const probed = join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE)
   return existsSync(probed) ? probed : join(home, CLAUDE_PROFILE_FILE)
 }

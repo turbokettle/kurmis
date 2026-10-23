@@ -26,7 +26,7 @@ it('writes an executable shell script that runs the fake with this Node on POSIX
 })
 
 it('writes a .cmd file on Windows', () => {
-  const installed = installLauncher(bin, 'codex', 'C:\\fakes\\fake-codex.js', 'win32')
-  expect(installed.path).toBe(join(bin, 'codex.cmd'))
-  expect(readFileSync(installed.path, 'utf8')).toBe(`@echo off\r\n"${process.execPath}" "C:\\fakes\\fake-codex.js" %*\r\n`)
+  const installed = installLauncher(bin, 'claude', 'C:\\fakes\\fake-claude.js', 'win32')
+  expect(installed.path).toBe(join(bin, 'claude.cmd'))
+  expect(readFileSync(installed.path, 'utf8')).toBe(`@echo off\r\n"${process.execPath}" "C:\\fakes\\fake-claude.js" %*\r\n`)
 })

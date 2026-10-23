@@ -14,7 +14,7 @@
 import { appendFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { makePrivateDirSync, PRIVATE_FILE_MODE, retryWhileLockedSync } from '../platform/files.ts'
-import { isLoginId, isLoginProvider, type LoginId, type LoginProvider } from './login-id.ts'
+import { isLoginId, type LoginId } from './login-id.ts'
 import { logPath, previousLogPath } from './paths.ts'
 
 export const LOG_EVENTS = [
@@ -117,7 +117,6 @@ export interface LogFields {
   login?: LoginId
   /** The login a session moved from, beside `login` for the one it moved to. */
   fromLogin?: LoginId
-  provider?: LoginProvider
   reason?: LogReason
   code?: LogErrorCode
   method?: LogMethod
@@ -142,7 +141,6 @@ const oneOf = (words: readonly string[]): FieldCheck => (value) => typeof value 
 const FIELD_CHECKS: Record<keyof LogFields, FieldCheck> = {
   login: isLoginId,
   fromLogin: isLoginId,
-  provider: isLoginProvider,
   reason: oneOf(LOG_REASONS),
   code: oneOf(LOG_ERROR_CODES),
   method: oneOf(LOG_METHODS),

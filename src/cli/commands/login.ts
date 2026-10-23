@@ -1,33 +1,29 @@
-// `kurmis login`: signs a login in with the provider's own CLI and adds it to config.json.
+// `kurmis login`: signs a login in with `claude auth login` and adds it to config.json.
 //
-//   kurmis login claude|codex [--alias <alias>]   a new login
-//   kurmis login <login> [--alias <alias>]        an existing login, by alias or id, signed in again
+//   kurmis login [--alias <alias>]           a new login
+//   kurmis login <login> [--alias <alias>]   an existing login, by alias or id, signed in again
 //
 // A new login gets a random id (`freshLoginId`) before anything else, and its folder is
-// `claude/<id>/` or `codex/<id>/` from the start: on macOS the Keychain item's name depends on the
-// folder's path, so the folder is never renamed after the sign-in.
+// `claude/<id>/` from the start: on macOS the Keychain item's name depends on the folder's path,
+// so the folder is never renamed after the sign-in.
 //
-// Claude runs `claude auth login --claudeai` with the login's folder as `CLAUDE_CONFIG_DIR`
-// (`claudeLoginEnv`), Codex runs `codex login` with the folder as `CODEX_HOME` (`codexLoginEnv`).
-// The CLI gets the terminal, as in `kurmis claude`. A new login is added to config.json only after
-// its CLI has exited 0 and its credentials are there (`hasCredentials`: for a Codex login whose
-// `config.toml` keeps the sign-in in the system's keyring, `codex login status` says so);
-// otherwise the folder this command created is removed again. On Windows a Claude login whose
-// record is in Credential Manager signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new
-// token replaces it.
+// The command runs `claude auth login --claudeai` with the login's folder as `CLAUDE_CONFIG_DIR`
+// (`claudeLoginEnv`). The CLI gets the terminal, as in `kurmis claude`. A new login is added to
+// config.json only after the CLI has exited 0 and the login's credentials are there
+// (`hasCredentials`); otherwise the folder this command created is removed again. On Windows a
+// login whose record is in Credential Manager signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`,
+// so the new token replaces it.
 //
-// After the sign-in the command reads the account's email: for Claude from the `.claude.json`
-// the CLI wrote (`readClaudeIdentity`; `~/.claude.json` for plain claude's login), for Codex
-// from `codex app-server` (`readCodexEmail`). The email is shown on the terminal and written
-// nowhere. It gives the login's automatic alias (`followEmail`) unless `--alias` sets one. A
-// Claude account is its email and its organization (`isSameClaudeAccount`): a personal plan and
-// a Team or Enterprise seat of one email are two logins, and the second gets the alias with
-// `-2`. A Codex account is its email. When a new sign-in is an account that is already a kurmis
-// login of the same provider, the login plain claude or plain codex uses included, the new folder
-// is signed out again and deleted, and the command says which login that account already is.
-// For Claude this is checked again under the config lock, before the login is added. When an
-// existing login is signed in to an account that another login of its provider already has, the
-// command warns and signs nothing out.
+// After the sign-in the command reads the account's email from the `.claude.json` the CLI wrote
+// (`readClaudeIdentity`; `~/.claude.json` for plain claude's login). The email is shown on the
+// terminal and written nowhere. It gives the login's automatic alias (`followEmail`) unless
+// `--alias` sets one. An account is its email and its organization (`isSameClaudeAccount`): a
+// personal plan and a Team or Enterprise seat of one email are two logins, and the second gets
+// the alias with `-2`. When a new sign-in is an account that is already a kurmis login, the login
+// plain claude uses included, the new folder is signed out again and deleted, and the command
+// says which login that account already is. This is checked again under the config lock, before
+// the login is added. When an existing login is signed in to an account that another login
+// already has, the command warns and signs nothing out.
 //
 // The run holds the login's lock (`login-lock.ts`) from before it creates the folder until it is
 // done, so a `kurmis logout` of the same login stops at once instead of deleting the folder.
@@ -38,7 +34,6 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { readCodexEmail } from '../../daemon/codex-probe.ts'
 import {
   addLogin,
   aliasProblem,
@@ -56,19 +51,19 @@ import {
 import {
   CLAUDE_PROFILE_FILE, isSameClaudeAccount, isSameEmail, parseClaudeIdentity, readClaudeIdentity, type ClaudeAccountKey, type ClaudeIdentity
 } from '../../data/identity.ts'
-import { applyEnvPatch, claudeLoginEnv, codexLoginEnv } from '../../data/login-env.ts'
-import { isLoginProvider, LOGIN_PROVIDERS, type LoginId, type LoginProvider, type LoginRef } from '../../data/login-id.ts'
-import { codexMergedRecordPath, loginFolder, ownClaudeProbeFolder } from '../../data/paths.ts'
+import { applyEnvPatch, claudeLoginEnv } from '../../data/login-env.ts'
+import type { LoginId, LoginRef } from '../../data/login-id.ts'
+import { loginFolder, ownClaudeProbeFolder } from '../../data/paths.ts'
 import { makePrivateDirSync } from '../../platform/files.ts'
 import { holdsStoredRecord } from '../../platform/windows-credentials.ts'
 import { ProgramNotFoundError, type findProgram, type ResolvedProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { runProgram } from '../../platform/run.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
-import { realChildRunner, realDaemonClient, realFindProgram, realPrepareCodexHome, reloadText, settleWithin, type ChildRunner, type DaemonClient } from '../command-deps.ts'
+import { realChildRunner, realDaemonClient, realFindProgram, reloadText, settleWithin, type ChildRunner, type DaemonClient } from '../command-deps.ts'
 import type { FileLock } from '../../data/lock.ts'
 import { LoginBusyError, lockLogin } from '../login-lock.ts'
-import { loginArgument, plainCliLoginText, PROVIDER_NAMES } from '../login-names.ts'
+import { plainClaudeLoginText } from '../login-names.ts'
 import { leftBehindText, signOutLogin } from '../sign-out.ts'
 import { hasCredentials } from '../local-credentials.ts'
 
@@ -77,31 +72,22 @@ export interface LoginDeps {
   runner: ChildRunner
   findProgram: typeof findProgram
   /**
-   * Runs the credential check (`hasCredentials`: `codex login status` for a Codex login that
-   * keeps its sign-in in the keyring, `security` or PowerShell for a Claude login without
-   * `.credentials.json`), and `claude auth logout` or `codex logout` on a new sign-in of an account
-   * that is already a kurmis login.
+   * Runs the credential check (`hasCredentials`: `security` or PowerShell for a login without
+   * `.credentials.json`), and `claude auth logout` on a new sign-in of an account that is
+   * already a kurmis login.
    */
   runProgram: typeof runProgram
-  /** The user's home folder, where `~/.claude.json` and `~/.codex` are. */
+  /** The user's home folder, where `~/.claude.json` is. */
   home: () => string
-  /**
-   * Prepares an extra Codex login's home before `codex login` runs in it, so the sign-in reads
-   * the same merged `config.toml` (for example where to keep the credentials) as the sessions
-   * started on it later.
-   */
-  prepareCodexHome: typeof realPrepareCodexHome
   /** How long to wait for the daemon's probe after a sign-in. `LOGIN_PROBE_WAIT_MS` by default. */
   probeWaitMs: number
   /**
-   * Whether Windows Credential Manager holds a record of the Claude login whose folder this is
+   * Whether Windows Credential Manager holds a record of the login whose folder this is
    * (null for plain claude's login); such a login signs in with
    * `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`claudeLoginEnv`), so the new token replaces the
    * record. `holdsStoredRecord` by default.
    */
   inCredentialManager: (folder: string | null, env: NodeJS.ProcessEnv) => Promise<boolean>
-  /** The email a Codex login is signed in with, or null. `readCodexEmail` by default. */
-  readCodexEmail: (login: LoginRef, env: NodeJS.ProcessEnv) => Promise<string | null>
   /** Where the sign-out of a duplicate sign-in runs; it sets `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN` on Windows. */
   platform: NodeJS.Platform
 }
@@ -109,36 +95,30 @@ export interface LoginDeps {
 /** How long a login waits for the daemon's probe of the login it signed in. */
 export const LOGIN_PROBE_WAIT_MS = 15_000
 
-/** What the command line asks for: a new login of a provider, or an existing login. */
-export type LoginTarget = { kind: 'new'; provider: LoginProvider } | { kind: 'existing'; login: LoginSettings } | { error: string }
+/** What the command line asks for: a new login, or an existing one. */
+export type LoginTarget = { kind: 'new' } | { kind: 'existing'; login: LoginSettings } | { error: string }
 
 /**
- * Reads `kurmis login <claude|codex|login>` against the current config. The provider's name may
- * be in any case, as aliases and ids may (`resolveLogin`).
+ * Reads the argument of `kurmis login [<login>]` against the current config: none asks for a new
+ * login, and one names an existing login by its alias or id (`resolveLogin`).
  */
-export function loginTarget(argument: string, config: KurmisConfig): LoginTarget {
-  const typed = argument.trim().toLowerCase()
-  if (isLoginProvider(typed)) return { kind: 'new', provider: typed }
-  const prefix = typed.endsWith(':') ? typed.slice(0, -1).trim() : null
-  if (prefix !== null && isLoginProvider(prefix)) {
-    return { error: `"${argument}" names no login. Put the alias or id of a ${PROVIDER_NAMES[prefix]} login after ` +
-      `"${prefix}:", for example ${prefix}:work-example, or run "kurmis login ${prefix}" to add a new ${PROVIDER_NAMES[prefix]} login` }
-  }
+export function loginTarget(argument: string | undefined, config: KurmisConfig): LoginTarget {
+  if (argument === undefined) return { kind: 'new' }
   const resolved = resolveLogin(config, argument)
   if ('error' in resolved) {
-    return { error: `${resolved.error}. "kurmis login claude" or "kurmis login codex" adds a new login, and "kurmis status" shows the logins there are` }
+    return { error: `${resolved.error}. "kurmis login" without a login adds a new one, and "kurmis status" shows the logins there are` }
   }
   return { kind: 'existing', login: resolved.login }
 }
 
 /**
  * A new login's id: none of the config's ids and aliases (`newLoginIdFor`), and not the name of a
- * folder in `claude/` or `codex/`, which a login that is gone may have left.
+ * folder in `claude/`, which a login that is gone may have left.
  */
 export function freshLoginId(config: KurmisConfig): LoginId {
   for (;;) {
     const id = newLoginIdFor(config)
-    if (LOGIN_PROVIDERS.every((provider) => !existsSync(loginFolder({ id, provider, usedByPlainCli: false })))) return id
+    if (!existsSync(loginFolder({ id, usedByPlainClaude: false }))) return id
   }
 }
 
@@ -157,44 +137,22 @@ function fail(context: CliContext, message: string): number {
 }
 
 /**
- * The other login of `login`'s provider that is signed in to `account`, or null. A Claude account
- * is its email and its organization (`isSameClaudeAccount`), read from each login's
- * `.claude.json`. A Codex account is its email, from a running daemon's status where it knows
- * it, and from `codex app-server` for the rest, all at the same time.
+ * The other login signed in to `account`, by each login's `.claude.json`, or null. An account is
+ * its email and its organization (`isSameClaudeAccount`). It reads files only, so it can run
+ * while the config lock is held.
  */
-async function sameAccount(config: KurmisConfig, login: LoginRef, account: ClaudeAccountKey & { email: string },
-  env: NodeJS.ProcessEnv, deps: LoginDeps): Promise<LoginSettings | null> {
-  if (login.provider === 'claude') return sameClaudeAccount(config, login, account, deps.home())
-  const others = config.logins.filter((other) => other.provider === login.provider && other.id !== login.id)
-  const known = new Map<string, string>()
-  try {
-    const connection = await deps.daemon.findDaemon({ env })
-    if (connection !== null) {
-      for (const row of (await deps.daemon.readStatus(connection)).logins) if (row.email !== null) known.set(row.id, row.email)
-    }
-  } catch { /* Without the daemon every email is read from Codex. */ }
-  const emails = await Promise.all(others.map(async (other) => known.get(other.id) ?? await deps.readCodexEmail(other, env)))
-  // Codex's `account/read` names no workspace, so for Codex the email alone decides.
-  return others.find((_, index) => isSameEmail(emails[index] ?? null, account.email)) ?? null
-}
-
-/**
- * The other Claude login signed in to `account`, by each login's `.claude.json`, or null. It
- * reads files only, so it can run while the config lock is held.
- */
-function sameClaudeAccount(config: KurmisConfig, login: LoginRef, account: ClaudeAccountKey, home: string): LoginSettings | null {
-  return config.logins.find((other) => other.provider === 'claude' && other.id !== login.id &&
+function sameAccount(config: KurmisConfig, login: LoginRef, account: ClaudeAccountKey, home: string): LoginSettings | null {
+  return config.logins.find((other) => other.id !== login.id &&
     isSameClaudeAccount(readClaudeIdentity(other, home) ?? { email: null, organizationUuid: null }, account)) ?? null
 }
 
 /**
- * Another Claude login with the email of `account` but in another organization, or null: the
- * same person's other subscription, which is a login of its own.
+ * Another login with the email of `account` but in another organization, or null: the same
+ * person's other subscription, which is a login of its own.
  */
 function otherOrganization(config: KurmisConfig, login: LoginRef, account: ClaudeAccountKey, home: string): LoginSettings | null {
-  if (login.provider !== 'claude') return null
   return config.logins.find((other) => {
-    if (other.provider !== 'claude' || other.id === login.id) return false
+    if (other.id === login.id) return false
     const identity = readClaudeIdentity(other, home)
     return identity !== null && isSameEmail(identity.email, account.email) && !isSameClaudeAccount(identity, account)
   }) ?? null
@@ -205,7 +163,7 @@ function otherOrganization(config: KurmisConfig, login: LoginRef, account: Claud
  * sign-in's account: another `kurmis login` of the same account added it meanwhile.
  */
 class AddedMeanwhile extends Error {
-  constructor(readonly existing: LoginSettings, readonly config: KurmisConfig) {
+  constructor(readonly existing: LoginSettings) {
     super(`${existing.id} has the same account`)
     this.name = 'AddedMeanwhile'
   }
@@ -258,65 +216,50 @@ interface SignInRun {
 /** Signs the login in and adds or updates it. The caller releases the lock afterwards too. */
 async function signIn(run: SignInRun): Promise<number> {
   const { ref, isNew, name, lock, program, alias, context, deps } = run
-  const provider = ref.provider
 
-  const folder = ref.usedByPlainCli ? null : loginFolder(ref)
+  const folder = ref.usedByPlainClaude ? null : loginFolder(ref)
   let created = false
   if (folder !== null && !existsSync(folder)) {
     makePrivateDirSync(folder)
     created = true
   }
   const cleanUp = (): void => {
-    if (!created || folder === null) return
-    removeTreeSync(folder)
-    // Preparing the Codex home wrote what it merged in; nothing may be left of this id.
-    if (provider === 'codex') rmSync(codexMergedRecordPath(ref), { force: true })
+    if (created && folder !== null) removeTreeSync(folder)
   }
   const notAdded = isNew ? ' No login was added.' : ''
 
-  if (provider === 'codex' && !ref.usedByPlainCli) {
-    try {
-      const prepared = await deps.prepareCodexHome({ ...ref, alias: name }, { env: context.env })
-      for (const warning of prepared.warnings) writeLine(context.stderr, `kurmis login: ${warning}`)
-    } catch (error) {
-      cleanUp()
-      return fail(context, `could not prepare the Codex home of ${name}: ${error instanceof Error ? error.message : String(error)}.${notAdded}`)
-    }
-  }
-
-  const cliName = provider === 'claude' ? 'claude auth login' : 'codex login'
-  const what = isNew ? `a new ${PROVIDER_NAMES[provider]} login (id ${ref.id})` : name
+  const cliName = 'claude auth login'
+  const what = isNew ? `a new login (id ${ref.id})` : name
   writeLine(context.stdout, `Signing in ${what} with "${cliName}". Follow its steps.`)
-  const credentialManager = provider === 'claude' && await deps.inCredentialManager(folder, context.env)
-  const env = applyEnvPatch(context.env, provider === 'claude' ? claudeLoginEnv(ref, credentialManager) : codexLoginEnv(ref, context.env))
-  const cliArgs = provider === 'claude' ? ['auth', 'login', '--claudeai'] : ['login']
-  const end = await deps.runner.runInteractive({ command: program.command, args: [...program.args, ...cliArgs], env })
+  const credentialManager = await deps.inCredentialManager(folder, context.env)
+  const env = applyEnvPatch(context.env, claudeLoginEnv(ref, credentialManager))
+  const end = await deps.runner.runInteractive({ command: program.command, args: [...program.args, 'auth', 'login', '--claudeai'], env })
 
   if (end.kind !== 'exit') {
     cleanUp()
     // Before `finishLikeChild`, which raises the child's signal on this process.
     lock.release()
     if (isNew) writeLine(context.stderr, `kurmis login:${notAdded}`)
-    return deps.runner.finishLikeChild(end, { stderr: context.stderr, name: provider })
+    return deps.runner.finishLikeChild(end, { stderr: context.stderr, name: 'claude' })
   }
   if (end.code !== 0) {
     cleanUp()
     return fail(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`)
   }
 
-  if (provider === 'claude' && ref.usedByPlainCli) {
+  if (ref.usedByPlainClaude) {
     // The probe folder's profile names the account plain claude's login had before; without
     // it the daemon reads ~/.claude.json, which this sign-in just wrote, until the next probe
     // writes the probe folder's file again.
     rmSync(join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true })
   }
-  const identity = provider === 'claude' ? (ref.usedByPlainCli ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home())) : null
+  const identity = ref.usedByPlainClaude ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home())
   // A check that could not run (`unknown`) does not undo a sign-in the CLI reported as done.
   if (identity === null && (await hasCredentials(ref, context.env, deps.home(), deps)) === false) {
     cleanUp()
     return fail(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`)
   }
-  const email = provider === 'claude' ? identity?.email ?? null : await deps.readCodexEmail(ref, context.env)
+  const email = identity?.email ?? null
   const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null }
 
   if (isNew && account !== null) {
@@ -328,25 +271,24 @@ async function signIn(run: SignInRun): Promise<number> {
       return fail(context, `${name} is signed in, but config.json could not be read: ${error.message} ` +
         `"kurmis logout ${ref.id}" removes its credentials and folder.`)
     }
-    const existing = await sameAccount(config, ref, account, context.env, deps)
-    if (existing !== null) return await dropDuplicate(run, config, existing, account.email)
+    const existing = sameAccount(config, ref, account, deps.home())
+    if (existing !== null) return await dropDuplicate(run, existing, account.email)
   }
 
   let saved: KurmisConfig
   try {
     saved = changeConfig((config) => {
-      // A Claude account is checked again from the config read under the lock, so two runs of
-      // `kurmis login claude` that sign in to one account at the same moment add it once.
-      // A Codex email is read from `codex app-server`, which is too slow to run under the lock.
-      const meanwhile = isNew && provider === 'claude' && account !== null ? sameClaudeAccount(config, ref, account, deps.home()) : null
-      if (meanwhile !== null) throw new AddedMeanwhile(meanwhile, config)
-      let next = isNew ? addLogin(config, ref, alias === undefined ? {} : { alias }) : config
+      // The account is checked again from the config read under the lock, so two runs of
+      // `kurmis login` that sign in to one account at the same moment add it once.
+      const meanwhile = isNew && account !== null ? sameAccount(config, ref, account, deps.home()) : null
+      if (meanwhile !== null) throw new AddedMeanwhile(meanwhile)
+      let next = isNew ? addLogin(config, ref.id, alias === undefined ? {} : { alias }) : config
       if (!isNew && alias !== undefined) next = updateLogin(next, ref.id, { alias })
       // Without an email the alias stays as it is.
       return followEmail(next, ref.id, email)
     })
   } catch (error) {
-    if (error instanceof AddedMeanwhile && email !== null) return await dropDuplicate(run, error.config, error.existing, email)
+    if (error instanceof AddedMeanwhile && email !== null) return await dropDuplicate(run, error.existing, email)
     if (!(error instanceof ConfigError)) throw error
     // The login is signed in, so its credentials are kept; logout removes them.
     return fail(context, isNew
@@ -354,12 +296,11 @@ async function signIn(run: SignInRun): Promise<number> {
       : `${name} is signed in again but its settings could not be saved: ${error.message}`)
   }
   const login = findLogin(saved, ref.id)!
-  const argument = loginArgument(saved, login)
 
   writeLine(context.stdout, email === null ? 'Signed in.' : `Signed in as ${email}.`)
   if (isNew) {
-    writeLine(context.stdout, `Added ${login.alias} (id ${login.id}), a ${PROVIDER_NAMES[provider]} login with Auto routing on and ` +
-      `both limits at 100%. "kurmis set ${argument}" changes that.`)
+    writeLine(context.stdout, `Added ${login.alias} (id ${login.id}), a login with Auto routing on and ` +
+      `both limits at 100%. "kurmis set ${login.alias}" changes that.`)
     const sibling = account === null ? null : otherOrganization(saved, ref, account, deps.home())
     if (sibling !== null) {
       writeLine(context.stdout, `${sibling.alias} has the same email in another organization. That is another subscription, ` +
@@ -370,12 +311,12 @@ async function signIn(run: SignInRun): Promise<number> {
   }
   if (!isNew && account !== null) {
     // Nothing is signed out: the person may have meant either login, and both still work.
-    const other = await sameAccount(saved, ref, account, context.env, deps)
+    const other = sameAccount(saved, ref, account, deps.home())
     if (other !== null) {
-      const which = other.usedByPlainCli ? `${other.alias}, ${plainCliLoginText(other.provider)},` : other.alias
+      const which = other.usedByPlainClaude ? `${other.alias}, ${plainClaudeLoginText()},` : other.alias
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ` +
         `${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. ` +
-        `"kurmis login ${argument}" signs ${login.alias} in to another account.`)
+        `"kurmis login ${login.alias}" signs ${login.alias} in to another account.`)
     }
   }
   for (const line of await tellDaemon(deps.daemon, login, context.env, deps.probeWaitMs)) writeLine(context.stdout, line)
@@ -386,7 +327,7 @@ async function signIn(run: SignInRun): Promise<number> {
  * A new sign-in of an account that `existing` already is: signs the new folder out again,
  * deletes it, and says which login the account is. Exit code 0, since the account is there.
  */
-async function dropDuplicate(run: SignInRun, config: KurmisConfig, existing: LoginSettings, email: string): Promise<number> {
+async function dropDuplicate(run: SignInRun, existing: LoginSettings, email: string): Promise<number> {
   const { ref, context, deps } = run
   const problem = await signOutLogin(ref, context.env, deps)
   if (problem !== null) {
@@ -394,18 +335,17 @@ async function dropDuplicate(run: SignInRun, config: KurmisConfig, existing: Log
   }
   try {
     removeTreeSync(loginFolder(ref))
-    if (ref.provider === 'codex') rmSync(codexMergedRecordPath(ref), { force: true })
   } catch (error) {
     return fail(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted ` +
       `(${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`)
   }
-  const which = existing.usedByPlainCli ? `${existing.alias}, ${plainCliLoginText(existing.provider)}` : existing.alias
-  writeLine(context.stdout, `${email} is already a kurmis ${PROVIDER_NAMES[ref.provider]} login: ${which} (id ${existing.id}). ` +
+  const which = existing.usedByPlainClaude ? `${existing.alias}, ${plainClaudeLoginText()}` : existing.alias
+  writeLine(context.stdout, `${email} is already a kurmis login: ${which} (id ${existing.id}). ` +
     'No login was added, and the new sign-in was signed out again.')
-  writeLine(context.stdout, `"kurmis login ${loginArgument(config, existing)}" signs ${existing.alias} in again.`)
+  writeLine(context.stdout, `"kurmis login ${existing.alias}" signs ${existing.alias} in again.`)
   if (run.alias !== undefined) {
     writeLine(context.stderr, `kurmis login: --alias ${run.alias} was not used, because no login was added. ` +
-      `"kurmis set ${loginArgument(config, existing)} --alias ${run.alias}" gives ${existing.alias} that alias.`)
+      `"kurmis set ${existing.alias} --alias ${run.alias}" gives ${existing.alias} that alias.`)
   }
   return EXIT_OK
 }
@@ -417,27 +357,23 @@ export function createLoginCommand(deps: Partial<LoginDeps> = {}): Command {
     findProgram: deps.findProgram ?? realFindProgram,
     runProgram: deps.runProgram ?? runProgram,
     home: deps.home ?? homedir,
-    prepareCodexHome: deps.prepareCodexHome ?? realPrepareCodexHome,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
     inCredentialManager: deps.inCredentialManager ?? ((folder, env) => holdsStoredRecord(folder, env)),
-    readCodexEmail: deps.readCodexEmail ?? ((login, env) => readCodexEmail(login, { env })),
     platform: deps.platform ?? process.platform
   }
   return {
     name: 'login',
     summary: 'Sign in a new login, or sign an existing one in again',
-    usage: `Usage: kurmis login claude|codex [--alias <alias>]
+    usage: `Usage: kurmis login [--alias <alias>]
        kurmis login <login> [--alias <alias>]
 
 Signs a login in through the browser.
 
-  kurmis login claude         Adds a new Claude login.
-  kurmis login codex          Adds a new Codex login.
+  kurmis login                Adds a new login.
   kurmis login work-example   Signs the login work-example in again, for example after it was
                               signed out.
 
-<login> is an alias or id that "kurmis status" shows. When a Claude login and a Codex login
-have the same alias, put claude: or codex: in front, for example claude:work-example.
+<login> is an alias or id that "kurmis status" shows.
 
 A new login's alias comes from its email: work@example.com gives work-example. When you sign in
 to an account kurmis already has, nothing is added and kurmis names the login it already is.
@@ -445,12 +381,12 @@ to an account kurmis already has, nothing is added and kurmis names the login it
 
 Options:
   --alias <alias>   Use this alias instead of the one from the email: 1 to 32 lowercase
-                    letters, digits, "-" or "_", and not "claude" or "codex".
+                    letters, digits, "-" or "_", starting with a letter or digit.
   -h, --help        Show this help.`,
     async run(args, context) {
       const parsed = parseCommandArgs('login', args, { alias: { type: 'string' } }, context, true)
       if (typeof parsed === 'number') return parsed
-      if (parsed.positionals.length !== 1) return usageError('login', 'takes claude, codex, or one login by its alias or id', context)
+      if (parsed.positionals.length > 1) return usageError('login', 'takes at most one login, by its alias or id', context)
       const alias = parsed.values.alias
 
       let config: KurmisConfig
@@ -460,12 +396,12 @@ Options:
         if (error instanceof ConfigError) return fail(context, error.message)
         throw error
       }
-      const target = loginTarget(parsed.positionals[0]!, config)
+      const target = loginTarget(parsed.positionals[0], config)
       if ('error' in target) return usageError('login', target.error, context)
       const isNew = target.kind === 'new'
       const ref: LoginRef = isNew
-        ? { id: freshLoginId(config), provider: target.provider, usedByPlainCli: false }
-        : { id: target.login.id, provider: target.login.provider, usedByPlainCli: target.login.usedByPlainCli }
+        ? { id: freshLoginId(config), usedByPlainClaude: false }
+        : { id: target.login.id, usedByPlainClaude: target.login.usedByPlainClaude }
       const name = isNew ? ref.id : target.login.alias
       if (alias !== undefined) {
         const problem = aliasProblem(config, ref, alias)
@@ -474,7 +410,7 @@ Options:
 
       let program: ResolvedProgram
       try {
-        program = full.findProgram(ref.provider, { env: context.env })
+        program = full.findProgram('claude', { env: context.env })
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail(context, error.message)
         throw error

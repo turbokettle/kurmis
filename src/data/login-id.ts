@@ -2,16 +2,10 @@
 //
 // A login id is a random string of lowercase letters and digits, made once when kurmis first
 // knows about the login (`newLoginId`) and never changed. It names the login's folder in the data
-// folder (`claude/<id>/`, `codex/<id>/`), its entries in `state.json` and the log. Ids are unique
-// across both providers, so an id alone names one login. Which provider a login belongs to, and
-// whether it is the login of plain claude or plain codex, is recorded with the login in `config.json`
-// (`LoginRef`), not in the id.
+// folder (`claude/<id>/`), its entries in `state.json` and the log. Whether a login is the one
+// plain claude uses is recorded with the login in `config.json` (`LoginRef`), not in the id.
 import { randomInt } from 'node:crypto'
-import { ACCOUNT_PROVIDERS, isLoginIdText, type AccountProvider } from '../core/accounts.ts'
-
-export type LoginProvider = AccountProvider
-
-export const LOGIN_PROVIDERS: readonly LoginProvider[] = ACCOUNT_PROVIDERS
+import { isLoginIdText } from '../core/accounts.ts'
 
 /**
  * A string that has been checked to be a valid login id. Only `toLoginId`, `isLoginId` and
@@ -23,23 +17,17 @@ export type LoginId = string & { readonly __loginId: true }
 /** What code needs to know about a login to find its credentials and folders. */
 export interface LoginRef {
   id: LoginId
-  provider: LoginProvider
   /**
-   * The login plain claude or plain codex uses: the credentials of a plain `claude` (`~/.claude`)
-   * or a plain `codex` (`~/.codex`). It has no folder in the data folder, and kurmis never signs
-   * it out.
+   * The login plain claude uses: the credentials of a plain `claude` (`~/.claude`). It has no
+   * folder in the data folder, and kurmis never signs it out.
    */
-  usedByPlainCli: boolean
+  usedByPlainClaude: boolean
 }
 
 /** The number of characters in an id `newLoginId` makes. */
 export const NEW_LOGIN_ID_LENGTH = 10
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
-
-export function isLoginProvider(value: unknown): value is LoginProvider {
-  return value === 'claude' || value === 'codex'
-}
 
 export function isLoginId(text: unknown): text is LoginId {
   return typeof text === 'string' && isLoginIdText(text)
@@ -55,7 +43,7 @@ export function toLoginId(text: string): LoginId {
 
 /**
  * A new random id, from the operating system's secure random source, that is none of `taken`.
- * `taken` holds the ids of every login of both providers.
+ * `taken` holds the ids of every login.
  */
 export function newLoginId(taken: Iterable<string> = []): LoginId {
   const used = new Set(taken)

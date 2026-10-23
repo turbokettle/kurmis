@@ -33,7 +33,7 @@ describe('the system program guard', () => {
   it('refuses the real system programs and CLIs, whatever the path, case or .exe, and records each refusal', () => {
     const programs = ['/bin/launchctl', '/usr/bin/security', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
       'C:\\Windows\\System32\\reg.exe', 'C:\\Windows\\System32\\TASKKILL.EXE', 'C:\\Windows\\System32\\wscript.exe',
-      '/opt/homebrew/bin/claude', '/usr/local/bin/codex']
+      '/opt/homebrew/bin/claude']
     for (const program of programs) expect(refusedByGuard(program, {}), program).not.toBeNull()
     expect(refusedByGuard(process.execPath, {})).toBeNull()
     expect(takeRefusals()).toEqual(programs)
@@ -55,7 +55,6 @@ describe('the system program guard', () => {
       USERPROFILE: process.env.USERPROFILE,
       KURMIS_HOME: process.env.KURMIS_HOME,
       KURMIS_CLAUDE_BIN: process.env.KURMIS_CLAUDE_BIN,
-      KURMIS_CODEX_BIN: process.env.KURMIS_CODEX_BIN,
       KURMIS_UPSTREAM_URL: process.env.KURMIS_UPSTREAM_URL
     })
     // A value the environment has, even an empty one, is kept.
@@ -68,7 +67,7 @@ describe('the system program guard', () => {
   })
 })
 
-describe('the guard against the real claude and codex run through Node', () => {
+describe('the guard against the real claude run through Node', () => {
   const root = mkdtempSync(join(tmpdir(), 'kurmis-guard-'))
   afterAll(() => rmSync(root, { recursive: true, force: true, maxRetries: 10 }))
 
@@ -81,8 +80,8 @@ describe('the guard against the real claude and codex run through Node', () => {
     return { script, mark }
   }
 
-  it('refuses Node running the entry script of either npm package, and records it', () => {
-    for (const script of ['/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js',
+  it('refuses Node running an entry script of the npm package, and records it', () => {
+    for (const script of ['/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js',
       'C:\\Users\\Example\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js',
       '/usr/lib/node_modules/@anthropic-ai/claude-code/cli-wrapper.cjs']) {
       expect(refusedByGuard(process.execPath, {}, [script]), script).not.toBeNull()
@@ -90,33 +89,33 @@ describe('the guard against the real claude and codex run through Node', () => {
     }
     expect(takeRefusals()).toHaveLength(6)
     // A stand-in script is started.
-    expect(refusedByGuard(process.execPath, {}, ['/repo/test/fakes/codex/fake-codex.js'])).toBeNull()
+    expect(refusedByGuard(process.execPath, {}, ['/repo/test/fakes/claude/fake-claude.js'])).toBeNull()
   })
 
   it('refuses the native programs of the per-platform packages and of the native installer, by their real path', () => {
-    expect(refusedByGuard('/x/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex-real', {})).not.toBeNull()
+    expect(refusedByGuard('/x/node_modules/@anthropic-ai/claude-code-darwin-arm64/claude', {})).not.toBeNull()
     expect(refusedByGuard('/Users/example/.local/share/claude/versions/2.1.306', {})).not.toBeNull()
     expect(takeRefusals()).toHaveLength(2)
   })
 
   it('stops every way kurmis starts a program from running such a script', async () => {
-    const { script, mark } = packageScript('@openai/codex/bin/codex.js')
+    const { script, mark } = packageScript('@anthropic-ai/claude-code/cli.js')
     const run = await runProgram(script, ['--version'], { timeoutMs: 10_000, env: {} })
     expect(run.error).toMatch(/KURMIS_REFUSE_SYSTEM_PROGRAMS/)
     await expect(spawnDetached({ command: process.execPath, args: [script], env: {} })).rejects.toThrow(/KURMIS_REFUSE_SYSTEM_PROGRAMS/)
-    const frames = startFrameProcess(script, ['app-server'], { env: {}, timeoutMs: 10_000, onFrame: () => undefined })
+    const frames = startFrameProcess(script, ['-p', '--input-format', 'stream-json'], { env: {}, timeoutMs: 10_000, onFrame: () => undefined })
     expect((await frames.exited).end).toBe('refused')
     expect(existsSync(mark)).toBe(false)
     expect(takeRefusals()).toHaveLength(3)
   })
 
-  it.skipIf(!canCreateSymlinks())('refuses a codex on PATH that links to the npm package, which findProgram runs through Node', async () => {
-    const { script, mark } = packageScript('@openai/codex/bin/codex.js')
+  it.skipIf(!canCreateSymlinks())('refuses a claude on PATH that links to the npm package, which findProgram runs through Node', async () => {
+    const { script, mark } = packageScript('@anthropic-ai/claude-code/cli.js')
     const bin = join(root, 'bin')
     mkdirSync(bin, { recursive: true })
-    symlinkSync(script, join(bin, 'codex'))
-    // An empty KURMIS_CODEX_BIN asks for the PATH search, as only the tests of the search do.
-    const found = findProgram('codex', { env: { PATH: bin, KURMIS_CODEX_BIN: '' }, platform: 'darwin', ownEntry: null })
+    symlinkSync(script, join(bin, 'claude'))
+    // An empty KURMIS_CLAUDE_BIN asks for the PATH search, as only the tests of the search do.
+    const found = findProgram('claude', { env: { PATH: bin, KURMIS_CLAUDE_BIN: '' }, platform: 'darwin', ownEntry: null })
     expect(found.command).toBe(process.execPath)
     const run = await runProgram(found.command, found.args, { timeoutMs: 10_000, env: {} })
     expect(run.error).toMatch(/KURMIS_REFUSE_SYSTEM_PROGRAMS/)
@@ -130,19 +129,18 @@ describe('the guard against the real claude and codex run through Node', () => {
     for (const platform of ['darwin', 'linux', 'win32'] as const) {
       expect(findProgram('claude', { env: { PATH: '/usr/local/bin:/opt/homebrew/bin' }, platform, ownEntry: null }))
         .toEqual({ command: process.execPath, args: [named], source: 'env' })
-      expect(findProgram('codex', { env: {}, platform, ownEntry: null }).args).toEqual([process.env.KURMIS_CODEX_BIN])
+      expect(findProgram('claude', { env: {}, platform, ownEntry: null }).args).toEqual([named])
     }
   })
 })
 
 describe('a daemon a test starts with an environment of its own', () => {
-  it('gets the test home, the claude and codex and the API address of test/setup.ts, not the real ones', () => {
+  it('gets the test home, the claude and the API address of test/setup.ts, not the real ones', () => {
     const env = daemonEnvironment({})
     expect(env.HOME).toBe(process.env.HOME)
     expect(env.USERPROFILE).toBe(process.env.USERPROFILE)
     expect(env.KURMIS_HOME).toBe(process.env.KURMIS_HOME)
     expect(env.KURMIS_CLAUDE_BIN).toBe(process.env.KURMIS_CLAUDE_BIN)
-    expect(env.KURMIS_CODEX_BIN).toBe(process.env.KURMIS_CODEX_BIN)
     expect(env.KURMIS_UPSTREAM_URL).toBe('http://127.0.0.1:1')
     expect(env[GUARD_VARIABLE]).toBe('1')
   })

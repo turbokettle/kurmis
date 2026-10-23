@@ -1,18 +1,12 @@
 // `kurmis status --json` (and the text form) end to end: the real bundle starts the real daemon,
-// whose usage probes run the fake claude and the fake codex app-server against each login's own
-// folder. Each login's `get_usage` and rate-limit answers come from the scenario file in that
-// folder (`~/.claude` and `~/.codex` of the world's HOME for the logins of plain claude and plain codex).
+// whose usage probes run the fake claude against each login's own folder. Each login's
+// `get_usage` answer comes from the scenario file in that folder (`~/.claude` of the world's HOME
+// for the login of plain claude).
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import {
-  reply,
-  writeClaudeIdentity,
-  writeClaudeScenario,
-  writeCodexAuth,
-  writeCodexScenario
-} from '../fakes/index.ts'
-import { createWorld, OWN_CLAUDE, OWN_CODEX, PACKAGE_VERSION, waitUntil, type StatusJson, type World } from './harness.ts'
+import { reply, writeClaudeIdentity, writeClaudeScenario } from '../fakes/index.ts'
+import { createWorld, OWN_CLAUDE, PACKAGE_VERSION, waitUntil, type StatusJson, type World } from './harness.ts'
 
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
@@ -36,7 +30,7 @@ function isoIn(ms: number): string {
   return new Date(Date.now() + ms).toISOString()
 }
 
-/** The ISO form of a time the API or app-server sends in whole unix seconds. */
+/** The ISO form of a time the API sends in whole unix seconds. */
 function isoSeconds(seconds: number): string {
   return new Date(seconds * 1000).toISOString()
 }
@@ -61,15 +55,12 @@ async function probedStatus(world: World): Promise<StatusJson> {
   return status
 }
 
-/** The line `kurmis status` prints under the title of the login plain claude or plain codex uses. */
-function ownLine(provider: 'claude' | 'codex'): string {
-  return `  the login plain ${provider} uses\n`
-}
+/** The line `kurmis status` prints under the title of the login plain claude uses. */
+const OWN_LINE = '  the login plain claude uses\n'
 
 describe('kurmis status, end to end', () => {
-  it("shows every Claude and Codex login's probed usage, limits and blocks, and gives the logins of plain claude and plain codex aliases from their emails", async () => {
+  it("shows every login's probed usage, limits and blocks, and gives the login of plain claude an alias from its email", async () => {
     const world = await createWorld()
-    const nowSeconds = Math.floor(Date.now() / 1000)
 
     // The login plain claude uses, its usage read through ~/.claude.
     world.signInDefaultClaude()
@@ -91,34 +82,27 @@ describe('kurmis status, end to end', () => {
     })
     expect((await world.kurmis(['set', 'work-example', '--five-hour', '80', '--weekly', '90'])).code).toBe(0)
 
-    // The login plain codex uses: ~/.codex.
-    writeCodexAuth(join(world.home, '.codex'), { email: 'codex-default@example.com', planType: 'plus' })
-    writeCodexScenario(join(world.home, '.codex'), {
-      primary: { usedPercent: 30, resetsAt: nowSeconds + 3600 },
-      secondary: { usedPercent: 50, resetsAt: nowSeconds + 5 * 86_400 }
-    })
+    // A second extra login, over the five-hour limit it is given below.
+    const spare = await world.addClaudeLogin('spare@example.com')
+    const spareFiveHourReset = isoIn(30 * MINUTE_MS)
+    writeClaudeScenario(spare.folder, { fiveHour: { utilization: 99, resetsAt: spareFiveHourReset }, usage: { subscription_type: 'pro' } })
+    expect((await world.kurmis(['set', 'spare-example', '--five-hour', '90'])).code).toBe(0)
 
-    // An extra Codex login, over the five-hour limit it is given below.
-    const spare = await world.addCodexLogin({ email: 'codex-spare@example.com', planType: 'pro' })
-    expect(spare.alias).toBe('codex-spare-example')
-    writeCodexScenario(spare.folder, { primary: { usedPercent: 99, resetsAt: nowSeconds + 1800 } })
-    expect((await world.kurmis(['set', 'codex-spare-example', '--five-hour', '90'])).code).toBe(0)
-
-    // Nothing has told kurmis the emails of the logins of plain claude and plain codex yet.
-    expect([world.configLogin(OWN_CLAUDE).alias, world.configLogin(OWN_CODEX).alias]).toEqual([OWN_CLAUDE, OWN_CODEX])
+    // Nothing has told kurmis the email of the login of plain claude yet.
+    expect(world.configLogin(OWN_CLAUDE).alias).toBe(OWN_CLAUDE)
 
     // Nothing has started a daemon yet, and `status` starts none: it shows the files.
     const offline = await statusJson(world)
     expect(world.daemonInfo()).toBeNull()
-    expect(offline).toMatchObject({ format: 6, daemon: null, source: 'files', globalRouting: 'off', codexStart: null, warnings: [] })
+    expect(offline).toMatchObject({ format: 7, daemon: null, source: 'files', globalRouting: 'off', warnings: [] })
     expect(offline.logins.map((login) => [login.id, login.signedIn, login.credentials, login.usage, login.blocked])).toEqual([
-      [OWN_CLAUDE, null, true, null, null], [OWN_CODEX, null, true, null, null], [work.id, null, true, null, null], [spare.id, null, true, null, null]
+      [OWN_CLAUDE, null, true, null, null], [work.id, null, true, null, null], [spare.id, null, true, null, null]
     ])
-    // Claude emails come from the profile files; a Codex login's only a running daemon knows.
-    expect(offline.logins.map((login) => login.email)).toEqual(['default@example.com', null, 'work@example.com', null])
+    // The emails come from the profile files, so they are known without a daemon.
+    expect(offline.logins.map((login) => login.email)).toEqual(['default@example.com', 'work@example.com', 'spare@example.com'])
     const offlineText = await world.kurmis(['status'])
     expect(offlineText.stdout).toMatch(/^The kurmis daemon is not running\. /)
-    expect(offlineText.stdout).toContain(`work-example (Claude, id ${work.id})  work@example.com\n  credentials on this machine, routing on`)
+    expect(offlineText.stdout).toContain(`work-example (id ${work.id})  work@example.com\n  credentials on this machine, routing on`)
 
     const startedAround = Date.now()
     expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
@@ -126,12 +110,12 @@ describe('kurmis status, end to end', () => {
     const daemon = world.daemonInfo()
     expect(daemon).not.toBeNull()
 
-    expect(status).toMatchObject({ format: 6, source: 'daemon', globalRouting: 'off' })
+    expect(status).toMatchObject({ format: 7, source: 'daemon', globalRouting: 'off' })
     expect(status.daemon).toEqual({
       version: PACKAGE_VERSION, pid: daemon?.pid, port: world.port, startedAt: new Date(daemon?.startedAt ?? 0).toISOString(), older: false, newer: false
     })
     expect(Math.abs(Date.parse(status.daemon?.startedAt ?? '') - startedAround)).toBeLessThan(MINUTE_MS)
-    expect(status.logins.map((login) => [login.id, login.usedByPlainCli])).toEqual([[OWN_CLAUDE, true], [OWN_CODEX, true], [work.id, false], [spare.id, false]])
+    expect(status.logins.map((login) => [login.id, login.usedByPlainClaude])).toEqual([[OWN_CLAUDE, true], [work.id, false], [spare.id, false]])
     expect(status.warnings).toEqual([])
     for (const login of status.logins) {
       expect(login, login.id).toMatchObject({ signedIn: true, probing: false, routing: true, useFirst: false })
@@ -139,14 +123,13 @@ describe('kurmis status, end to end', () => {
       expect(Math.abs(Date.parse(login.usage?.fetchedAt ?? '') - Date.now()), login.id).toBeLessThan(5 * MINUTE_MS)
     }
 
-    // The probes told the daemon the emails of the logins of plain claude and plain codex, and it gave them their
-    // automatic aliases in config.json.
-    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ usedByPlainCli: true, alias: 'default-example', aliasSetByUser: false })
-    expect(world.configLogin(OWN_CODEX)).toMatchObject({ usedByPlainCli: true, alias: 'codex-default-example', aliasSetByUser: false })
+    // The probe told the daemon the email of the login of plain claude, and it gave the login its
+    // automatic alias in config.json.
+    expect(world.configLogin(OWN_CLAUDE)).toMatchObject({ usedByPlainClaude: true, alias: 'default-example', aliasSetByUser: false })
 
     const claudeDefault = loginOf(status, OWN_CLAUDE)
     expect(claudeDefault).toMatchObject({
-      provider: 'claude', alias: 'default-example', email: 'default@example.com', fiveHourLimit: 100, weeklyLimit: 100, blocked: null, sessions: 0
+      alias: 'default-example', email: 'default@example.com', fiveHourLimit: 100, weeklyLimit: 100, blocked: null, sessions: 0
     })
     expect(windowOf(claudeDefault, 'five_hour')).toEqual({
       key: 'five_hour', label: '5 hour', durationMinutes: 300, utilization: 61, resetsAt: defaultFiveHourReset, plan: true, limitPercent: 100
@@ -160,48 +143,29 @@ describe('kurmis status, end to end', () => {
     expect(claudeDefault.usage?.windows.map((window) => window.key)).toEqual(['five_hour', 'seven_day', 'seven_day_opus'])
 
     const workRow = loginOf(status, work.id)
-    expect(workRow).toMatchObject({ provider: 'claude', alias: 'work-example', email: 'work@example.com', fiveHourLimit: 80, weeklyLimit: 90, sessions: 0 })
+    expect(workRow).toMatchObject({ alias: 'work-example', email: 'work@example.com', fiveHourLimit: 80, weeklyLimit: 90, sessions: 0 })
     expect(workRow.usage?.plan).toBe('team')
     expect(windowOf(workRow, 'five_hour')).toMatchObject({ utilization: 7, limitPercent: 80 })
     expect(windowOf(workRow, 'seven_day')).toMatchObject({ utilization: 95, resetsAt: workWeekReset, limitPercent: 90 })
     expect(workRow.blocked).toMatchObject({ kind: 'over-limit', until: workWeekReset })
 
-    const codexDefault = loginOf(status, OWN_CODEX)
-    expect(codexDefault).toMatchObject({
-      provider: 'codex', alias: 'codex-default-example', email: 'codex-default@example.com', fiveHourLimit: 100, weeklyLimit: 100, blocked: null, sessions: null
-    })
-    expect(codexDefault.usage?.plan).toBe('plus')
-    expect(codexDefault.usage?.windows).toEqual([
-      { key: 'codex:primary', label: 'Codex 5h', durationMinutes: 300, utilization: 30, resetsAt: isoSeconds(nowSeconds + 3600), plan: true, limitPercent: 100 },
-      { key: 'codex:secondary', label: 'Codex 7d', durationMinutes: 10080, utilization: 50, resetsAt: isoSeconds(nowSeconds + 5 * 86_400), plan: true, limitPercent: 100 }
-    ])
-
     const spareRow = loginOf(status, spare.id)
-    expect(spareRow).toMatchObject({ provider: 'codex', alias: 'codex-spare-example', fiveHourLimit: 90, weeklyLimit: 100, sessions: null })
+    expect(spareRow).toMatchObject({ alias: 'spare-example', email: 'spare@example.com', fiveHourLimit: 90, weeklyLimit: 100, sessions: 0 })
     expect(spareRow.usage?.plan).toBe('pro')
-    expect(windowOf(spareRow, 'codex:primary')).toMatchObject({ utilization: 99, resetsAt: isoSeconds(nowSeconds + 1800), limitPercent: 90 })
-    expect(spareRow.blocked).toMatchObject({ kind: 'over-limit', until: isoSeconds(nowSeconds + 1800) })
-    expect(status.codexStart).toEqual({ login: OWN_CODEX, alias: 'codex-default-example', note: null })
+    expect(windowOf(spareRow, 'five_hour')).toMatchObject({ utilization: 99, resetsAt: spareFiveHourReset, limitPercent: 90 })
+    expect(spareRow.blocked).toMatchObject({ kind: 'over-limit', until: spareFiveHourReset })
 
-    // Each Codex login was probed in its own home: the one plain codex uses with CODEX_HOME left unset.
-    const probedHomes = world.codexRecord()
-      .filter((line) => line.event === 'start' && line.mode === 'app-server')
-      .map((line) => line.event === 'start' ? line.codexHome : undefined)
-    expect(new Set(probedHomes)).toEqual(new Set([null, spare.folder]))
-
-    // The text form says the same, and marks the logins of plain claude and plain codex.
+    // The text form says the same, and marks the login of plain claude.
     const text = await world.kurmis(['status'])
     expect(text.code).toBe(0)
     expect(text.stdout).toContain(`kurmis daemon ${PACKAGE_VERSION}, pid ${String(daemon?.pid)}, port ${String(world.port)}`)
-    expect(text.stdout).toContain(`default-example (Claude, id ${OWN_CLAUDE})  default@example.com\n${ownLine('claude')}  signed in, routing on`)
-    expect(text.stdout).toContain(`codex-default-example (Codex, id ${OWN_CODEX})  codex-default@example.com\n${ownLine('codex')}  signed in, routing on`)
-    expect(text.stdout).toContain(`work-example (Claude, id ${work.id})  work@example.com\n` +
+    expect(text.stdout).toContain(`default-example (id ${OWN_CLAUDE})  default@example.com\n${OWN_LINE}  signed in, routing on`)
+    expect(text.stdout).toContain(`work-example (id ${work.id})  work@example.com\n` +
       '  signed in, routing on, limits 80% 5 hour, 90% weekly, 0 sessions, plan team\n')
     expect(text.stdout).toMatch(/\n {2}7 day +95% {2}resets in [^\n]+limit 90%\n/)
-    expect(text.stdout).toContain(`codex-spare-example (Codex, id ${spare.id})  codex-spare@example.com\n  signed in`)
-    expect(text.stdout).toMatch(/\n {2}Codex 5h +99% {2}resets in [^\n]+limit 90%\n/)
-    expect(text.stdout).toContain('kurmis codex would start on codex-default-example.')
-    expect(text.stdout.match(/^ {2}the login plain (claude|codex) uses$/gm)).toHaveLength(2)
+    expect(text.stdout).toContain(`spare-example (id ${spare.id})  spare@example.com\n  signed in`)
+    expect(text.stdout).toMatch(/\n {2}5 hour +99% {2}resets in [^\n]+limit 90%\n/)
+    expect(text.stdout.match(/^ {2}the login plain claude uses$/gm)).toHaveLength(1)
     expect((text.stdout.match(/\n {2}passed over: /g) ?? []).length).toBe(2)
 
     // Emails are shown, never kept by the daemon.
@@ -212,7 +176,7 @@ describe('kurmis status, end to end', () => {
 
   it('shows signed-out logins, a failed probe, and what forwarded answers and a usage-limit 429 told the daemon', async () => {
     const world = await createWorld()
-    // The logins of plain claude and plain codex have no credentials at all.
+    // The login of plain claude has no credentials at all.
     const work = await world.addClaudeLogin('work@example.com')
     const spare = await world.addClaudeLogin('spare@example.com')
     writeClaudeScenario(spare.folder, { getUsage: 'error' })
@@ -220,13 +184,11 @@ describe('kurmis status, end to end', () => {
     expect((await world.kurmis(['daemon', 'start'])).code).toBe(0)
     const first = await probedStatus(world)
     expect(loginOf(first, OWN_CLAUDE)).toMatchObject({
-      alias: OWN_CLAUDE, usedByPlainCli: true, signedIn: false, email: null, blocked: { kind: 'signed-out', until: null }, usage: { windows: [], error: null }
+      alias: OWN_CLAUDE, usedByPlainClaude: true, signedIn: false, email: null, blocked: { kind: 'signed-out', until: null }, usage: { windows: [], error: null }
     })
-    expect(loginOf(first, OWN_CODEX)).toMatchObject({ alias: OWN_CODEX, usedByPlainCli: true, signedIn: false, blocked: { kind: 'signed-out' } })
     expect(loginOf(first, spare.id)).toMatchObject({ alias: 'spare-example', signedIn: true, blocked: null, usage: { source: 'probe', windows: [] } })
     expect(loginOf(first, spare.id).usage?.error).toEqual(expect.any(String))
     expect(loginOf(first, work.id)).toMatchObject({ alias: 'work-example', signedIn: true, blocked: null, sessions: 0, usage: { source: 'probe', error: null } })
-    expect(first.codexStart).toEqual({ login: OWN_CODEX, alias: OWN_CODEX, note: expect.stringContaining('No Codex login') as string })
 
     // A forwarded answer's rate-limit headers update the usage of the login that served it.
     const fiveHourReset = Math.floor((Date.now() + HOUR_MS) / 1000)
@@ -253,8 +215,8 @@ describe('kurmis status, end to end', () => {
     expect(loginOf(afterQuota, spare.id)).toMatchObject({ sessions: 1, blocked: null, usage: { source: 'session', error: null } })
 
     const text = await world.kurmis(['status'])
-    expect(text.stdout).toContain(`${OWN_CLAUDE} (Claude)\n${ownLine('claude')}  signed out, routing on`)
-    expect(text.stdout).toMatch(new RegExp(`work-example \\(Claude, id ${work.id}\\) {2}work@example\\.com\\n[^\\n]*1 session[^\\n]*\\n` +
+    expect(text.stdout).toContain(`${OWN_CLAUDE}\n${OWN_LINE}  signed out, routing on`)
+    expect(text.stdout).toMatch(new RegExp(`work-example \\(id ${work.id}\\) {2}work@example\\.com\\n[^\\n]*1 session[^\\n]*\\n` +
       '(?: {2}[^\\n]*\\n)*? {2}usage read just now from a forwarded answer\\n {2}passed over: '))
     // The text gives the cooldown's end in local time; the JSON above keeps it as ISO.
     expect(text.stdout).toMatch(/passed over: cooling down until (?:\d{4}-\d{2}-\d{2} )?\d{2}:\d{2} \(in [^)]+\)\n/)

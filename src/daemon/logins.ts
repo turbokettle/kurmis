@@ -7,18 +7,18 @@
 // by the others at once. `onChange` tells listeners, which is how a request held for capacity
 // learns that the pool has changed.
 //
-// Which provider a login belongs to, and whether it is the login of plain claude or plain codex, is read from
-// its settings in the config (`find`, `ownLogin`), never from its id.
+// Whether a login is the one plain claude uses is read from its settings in the config (`find`,
+// `plainClaudeLogin`), never from its id.
 //
 // The table also writes one thing into `config.json`: a login's automatic alias, when a usage
-// probe has told the daemon the login's email (`noteEmail`). The email itself is kept only in
-// memory, and only for Codex (`codexEmail`); Claude's is read from its profile file when needed.
+// probe has told the daemon the login's email (`noteEmail`). The table keeps no email; it is read
+// from the login's profile file when needed.
 import { usageFromUnifiedHeaders, type RouteAccount, type UnifiedObservation } from '../core/account-router.ts'
 import type { AccountUsage } from '../core/claude-usage.ts'
 import {
-  changeConfig, configStamp, defaultConfig, findLogin, followEmail, loadConfig, plainCliLogin, type KurmisConfig, type LoginSettings
+  changeConfig, configStamp, defaultConfig, findLogin, followEmail, loadConfig, plainClaudeLogin, type KurmisConfig, type LoginSettings
 } from '../data/config.ts'
-import { isLoginId, type LoginId, type LoginProvider } from '../data/login-id.ts'
+import { isLoginId, type LoginId } from '../data/login-id.ts'
 import { LockTimeoutError } from '../data/lock.ts'
 import { errorCodeOf, type DaemonLog } from '../data/log.ts'
 import { configPath, statePath } from '../data/paths.ts'
@@ -43,7 +43,7 @@ export const STATE_WRITE_MS = 2_000
 
 /**
  * How long the daemon waits for `config.json`'s lock when it writes the file (an automatic
- * alias, or the logins of plain claude and plain codex added to a file that has none). The wait
+ * alias, or the login of plain claude added to a file that has none). The wait
  * blocks the event loop, so it is short; a write that does not get the lock in time is tried again later.
  */
 export const CONFIG_LOCK_TIMEOUT_MS = 500
@@ -70,8 +70,8 @@ export type AddedLoginsListener = (ids: LoginId[]) => void
 
 export class LoginTable {
   /**
-   * Until a config has been read, a stand-in with the logins of plain claude and plain codex
-   * under new random ids, because the proxy and the control API always need those two logins.
+   * Until a config has been read, a stand-in with the login of plain claude under a new random
+   * id, because the proxy and the control API always need that login.
    * The stand-in is never saved. The first config that reads replaces it, and that drops the
    * usage and cooldowns kept under the stand-in's ids.
    */
@@ -81,11 +81,6 @@ export class LoginTable {
   private state: DaemonState = emptyState()
   /** What the last probe of each login said about its sign-in. Absent: not probed yet. */
   private readonly signedIn = new Map<string, boolean>()
-  /**
-   * The email the last successful probe of each Codex login named, null when it named none.
-   * In memory only, for the status answer: it is never logged or written to a file.
-   */
-  private readonly codexEmails = new Map<string, string | null>()
   /**
    * Sessions held to one login after a 400 on the login they had just moved to
    * (`replayDecision`'s `pin-back`). The proxy lets go of a hold when the held login cannot
@@ -171,7 +166,6 @@ export class LoginTable {
     for (const id of [...this.state.usage.keys()]) if (!ids.has(id)) this.state.usage.delete(id)
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id)
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id)
-    for (const id of [...this.codexEmails.keys()]) if (!ids.has(id)) this.codexEmails.delete(id)
     for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id)
     for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id)
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id)
@@ -187,25 +181,18 @@ export class LoginTable {
     this.reloadConfig()
   }
 
-  /** Every login in `config.json`, the logins of plain claude and plain codex first. */
+  /** Every login in `config.json`, the login of plain claude first. */
   logins(): readonly LoginSettings[] {
     return this.config.logins
-  }
-
-  claudeLogins(): LoginSettings[] {
-    return this.config.logins.filter((login) => login.provider === 'claude')
   }
 
   find(id: string): LoginSettings | undefined {
     return findLogin(this.config, id)
   }
 
-  /**
-   * The login a plain `claude` or a plain `codex` uses: the one that CLI is signed in
-   * to. The config always has one for each provider.
-   */
-  ownLogin(provider: LoginProvider): LoginSettings {
-    return plainCliLogin(this.config, provider)
+  /** The login a plain `claude` uses: the one that CLI is signed in to. The config always has one. */
+  plainClaudeLogin(): LoginSettings {
+    return plainClaudeLogin(this.config)
   }
 
   port(): number {
@@ -213,7 +200,7 @@ export class LoginTable {
   }
 
   /**
-   * The routing rows of the Claude logins, for one request.
+   * The routing rows of every login, for one request.
    *
    * `startedOn` is the login the request's CLI was started on, and `callerSigns` whether the
    * request carries an `authorization` header of its own. Null `startedOn` says the CLI's own
@@ -229,8 +216,8 @@ export class LoginTable {
    */
   routeRows(startedOn: string | null, callerSigns: boolean, pinned: string | null = null): RouteAccount[] {
     const now = this.options.now()
-    return this.claudeLogins().map((login) => {
-      const notTheCli = startedOn === null && login.usedByPlainCli
+    return this.config.logins.map((login) => {
+      const notTheCli = startedOn === null && login.usedByPlainClaude
       const token = notTheCli ? null : this.options.tokens.read(login.id)
       const passThrough = token === null && callerSigns && login.id === startedOn
       const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned
@@ -321,17 +308,6 @@ export class LoginTable {
     this.changed()
   }
 
-  /** The email the last successful probe of a Codex login named, or null. In memory only. */
-  codexEmail(id: string): string | null {
-    return this.codexEmails.get(id) ?? null
-  }
-
-  /** Keeps what a successful probe of a Codex login said its email is (null: none). */
-  setCodexEmail(id: string, email: string | null): void {
-    if (this.find(id)?.provider !== 'codex') return
-    this.codexEmails.set(id, email)
-  }
-
   /**
    * Gives the login the automatic alias its email makes (`followEmail` in `config.ts`) when its
    * alias is automatic and does not fit the email yet, by writing `config.json` and reading it
@@ -379,7 +355,7 @@ export class LoginTable {
   }
 
   /**
-   * Whether a Claude login has credentials here: a token read, or a probe that found it
+   * Whether a login has credentials here: a token read, or a probe that found it
    * signed in. Null when neither has said yet.
    */
   claudeSignedIn(id: string): boolean | null {

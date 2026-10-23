@@ -1,7 +1,7 @@
 // Every test passes its own `env` with a PATH of temporary or made-up folders, so no test can
-// find the real claude or codex on this machine. The Windows tests use a made-up file system.
-// The tests of the PATH search go through `search`, which sets KURMIS_CLAUDE_BIN and
-// KURMIS_CODEX_BIN to empty values: in the tests a missing one is taken from test/setup.ts.
+// find the real claude on this machine. The Windows tests use a made-up file system.
+// The tests of the PATH search go through `search`, which sets KURMIS_CLAUDE_BIN to an empty
+// value: in the tests a missing one is taken from test/setup.ts.
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -17,7 +17,7 @@ import {
 import type { FindProgramOptions, ProgramFiles, ToolName } from '../../src/platform/programs.ts'
 
 function search(tool: ToolName, options: FindProgramOptions): ReturnType<typeof findProgram> {
-  return findProgram(tool, { ...options, env: { KURMIS_CLAUDE_BIN: '', KURMIS_CODEX_BIN: '', ...options.env } })
+  return findProgram(tool, { ...options, env: { KURMIS_CLAUDE_BIN: '', ...options.env } })
 }
 
 const fixture = (name: string): string => readFileSync(resolve('test/platform/fixtures', name), 'utf8')
@@ -33,10 +33,11 @@ function notFound(tool: ToolName, options: FindProgramOptions): ProgramNotFoundE
 }
 
 describe('the explicit variables', () => {
-  test('KURMIS_CLAUDE_BIN and KURMIS_CODEX_BIN win over PATH, and a .js runs through Node', () => {
-    const env = { KURMIS_CLAUDE_BIN: '/opt/fake/claude', KURMIS_CODEX_BIN: '/opt/fake/codex.mjs', PATH: '/usr/bin' }
+  test('KURMIS_CLAUDE_BIN wins over PATH, and a .js runs through Node', () => {
+    const env = { KURMIS_CLAUDE_BIN: '/opt/fake/claude', PATH: '/usr/bin' }
     expect(search('claude', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: '/opt/fake/claude', args: [], source: 'env' })
-    expect(search('codex', { env, platform: 'linux', nodePath: '/node' })).toEqual({ command: '/node', args: ['/opt/fake/codex.mjs'], source: 'env' })
+    const script = { KURMIS_CLAUDE_BIN: '/opt/fake/claude.mjs', PATH: '/usr/bin' }
+    expect(search('claude', { env: script, platform: 'linux', nodePath: '/node' })).toEqual({ command: '/node', args: ['/opt/fake/claude.mjs'], source: 'env' })
   })
 
   test('a batch file is refused', () => {
@@ -47,12 +48,12 @@ describe('the explicit variables', () => {
   })
 
   test('on Windows the variable name is case-insensitive', () => {
-    const found = search('codex', { env: { kurmis_codex_bin: 'C:\\x\\codex.exe' }, platform: 'win32', files: windowsFiles({}) })
-    expect(found).toEqual({ command: 'C:\\x\\codex.exe', args: [], source: 'env' })
+    const found = search('claude', { env: { kurmis_claude_bin: 'C:\\x\\claude.exe' }, platform: 'win32', files: windowsFiles({}) })
+    expect(found).toEqual({ command: 'C:\\x\\claude.exe', args: [], source: 'env' })
   })
 
   test('an empty variable counts as unset', () => {
-    const error = notFound('codex', { env: { KURMIS_CODEX_BIN: '', PATH: '' }, platform: 'linux' })
+    const error = notFound('claude', { env: { KURMIS_CLAUDE_BIN: '', PATH: '' }, platform: 'linux' })
     expect(error.message).toContain('the 0 folders on PATH')
   })
 })
@@ -88,13 +89,13 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
   test('goes on past a PATH entry that is a file or a folder it may not open', () => {
     const aFile = program(join(folder('e'), 'not-a-folder'))
     const closed = folder('f')
-    program(join(closed, 'codex'))
+    program(join(closed, 'claude'))
     chmodSync(closed, 0o000)
     try {
       const found = folder('g')
-      const codex = program(join(found, 'codex'))
+      const claude = program(join(found, 'claude'))
       const env = { PATH: [aFile, closed, found].join(':') }
-      expect(search('codex', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: codex, args: [], source: 'path' })
+      expect(search('claude', { env, platform: 'darwin', nodePath: '/node' })).toEqual({ command: claude, args: [], source: 'path' })
     } finally {
       chmodSync(closed, 0o755)
     }
@@ -109,13 +110,13 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
       .toEqual({ command: join(bin, 'claude'), args: [], source: 'path' })
   })
 
-  test('a symlink to a .js file runs the real file through Node', () => {
-    const packageBin = folder('lib/node_modules/@openai/codex/bin')
-    const entry = program(join(packageBin, 'codex.js'))
+  test('a symlink to a .js file, as an npm install of an older Claude Code makes, runs the real file through Node', () => {
+    const packageFolder = folder('lib/node_modules/@anthropic-ai/claude-code')
+    const entry = program(join(packageFolder, 'cli.js'))
     const bin = folder('prefix-bin')
-    symlinkSync('../lib/node_modules/@openai/codex/bin/codex.js', join(bin, 'codex'))
-    const found = search('codex', { env: { PATH: bin }, platform: 'darwin', nodePath: '/node' })
-    expect(found).toEqual({ command: '/node', args: [expect.stringMatching(/codex\.js$/)], source: 'path' })
+    symlinkSync('../lib/node_modules/@anthropic-ai/claude-code/cli.js', join(bin, 'claude'))
+    const found = search('claude', { env: { PATH: bin }, platform: 'darwin', nodePath: '/node' })
+    expect(found).toEqual({ command: '/node', args: [expect.stringMatching(/cli\.js$/)], source: 'path' })
     expect(readFileSync(found.args[0] as string, 'utf8')).toBe(readFileSync(entry, 'utf8'))
   })
 
@@ -139,8 +140,6 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
     const native = program(join(folder('home/.local/bin'), 'claude'))
     expect(search('claude', { env: { PATH: folder('empty'), HOME: home }, platform: 'darwin' }))
       .toEqual({ command: native, args: [], source: 'native-installer' })
-    // Codex has no such place.
-    expect(notFound('codex', { env: { PATH: folder('empty'), HOME: home }, platform: 'darwin' }).message).not.toContain('.local')
   })
 
   test('the message says what was searched and how to name the program', () => {
@@ -150,9 +149,10 @@ describe.skipIf(process.platform === 'win32')('PATH on macOS and Linux', () => {
       `Claude Code (claude) was not found. Looked in the 2 folders on PATH and at ${join(home, '.local/bin/claude')}.`,
       'Install Claude Code, or set KURMIS_CLAUDE_BIN to the full path of the program.'
     ].join('\n'))
-    expect(notFound('codex', { env: { PATH: folder('x') }, platform: 'linux' }).message).toBe([
-      'Codex (codex) was not found. Looked in the 1 folder on PATH.',
-      'Install Codex, or set KURMIS_CODEX_BIN to the full path of the program.'
+    // Without HOME there is no native installer place to name.
+    expect(notFound('claude', { env: { PATH: folder('x') }, platform: 'linux' }).message).toBe([
+      'Claude Code (claude) was not found. Looked in the 1 folder on PATH.',
+      'Install Claude Code, or set KURMIS_CLAUDE_BIN to the full path of the program.'
     ].join('\n'))
   })
 
@@ -183,7 +183,7 @@ describe('PATH on Windows', () => {
   const PNPM = 'C:\\Users\\example\\AppData\\Local\\pnpm'
   const HOME = 'C:\\Users\\example'
   const CLAUDE_PACKAGE = `${NPM}\\node_modules\\@anthropic-ai\\claude-code`
-  const CODEX_ENTRY = `${NPM}\\node_modules\\@openai\\codex\\bin\\codex.js`
+  const CLAUDE_CLI_JS = `${CLAUDE_PACKAGE}\\cli.js`
   const NATIVE = 'MZ\x90\x00 a Windows program'
   const PLACEHOLDER = 'echo "Error: claude native binary not installed." >&2\nexit 1\n'
   const NODE = 'C:\\Program Files\\nodejs\\node.exe'
@@ -196,24 +196,19 @@ describe('PATH on Windows', () => {
       .toEqual({ command: 'C:\\tools\\claude.exe', args: [], source: 'path' })
   })
 
-  test('npm shim for Codex: node bin\\codex.js, through the Node kurmis runs on', () => {
-    const files = { [`${NPM}\\codex.cmd`]: fixture('npm-global-codex.cmd'), [CODEX_ENTRY]: '#!/usr/bin/env node\n' }
-    expect(find('codex', { PATH: NPM }, files)).toEqual({ command: NODE, args: [CODEX_ENTRY], source: 'npm-shim' })
-  })
-
   test('a shim that starts kurmis\' own bundle is skipped, and the search goes on', () => {
     const files = {
-      [`${NPM}\\codex.cmd`]: fixture('npm-global-codex.cmd'),
-      [CODEX_ENTRY]: '',
-      'C:\\tools\\codex.exe': NATIVE
+      [`${NPM}\\claude.cmd`]: fixture('npm-global-claude-cli-js.cmd'),
+      [CLAUDE_CLI_JS]: '',
+      'C:\\tools\\claude.exe': NATIVE
     }
-    expect(search('codex', { env: { PATH: `${NPM};C:\\tools` }, platform: 'win32', nodePath: NODE, files: windowsFiles(files),
-      ownEntry: CODEX_ENTRY.toUpperCase() })).toEqual({ command: 'C:\\tools\\codex.exe', args: [], source: 'path' })
+    expect(search('claude', { env: { PATH: `${NPM};C:\\tools` }, platform: 'win32', nodePath: NODE, files: windowsFiles(files),
+      ownEntry: CLAUDE_CLI_JS.toUpperCase() })).toEqual({ command: 'C:\\tools\\claude.exe', args: [], source: 'path' })
   })
 
-  test('npm shim for Codex with a node.exe next to it, as with nvm-windows', () => {
-    const files = { [`${NPM}\\codex.cmd`]: fixture('npm-global-codex.cmd'), [CODEX_ENTRY]: '', [`${NPM}\\node.exe`]: NATIVE }
-    expect(find('codex', { PATH: NPM }, files)).toEqual({ command: `${NPM}\\node.exe`, args: [CODEX_ENTRY], source: 'npm-shim' })
+  test('npm shim for an older Claude Code with a node.exe next to it, as with nvm-windows', () => {
+    const files = { [`${NPM}\\claude.cmd`]: fixture('npm-global-claude-cli-js.cmd'), [CLAUDE_CLI_JS]: '', [`${NPM}\\node.exe`]: NATIVE }
+    expect(find('claude', { PATH: NPM }, files)).toEqual({ command: `${NPM}\\node.exe`, args: [CLAUDE_CLI_JS], source: 'npm-shim' })
   })
 
   test('npm shim for Claude Code: its claude.exe, started directly', () => {
@@ -237,113 +232,103 @@ describe('PATH on Windows', () => {
     expect(error.message).toContain('--ignore-scripts')
   })
 
-  test('npm shim for an older Claude Code: node cli.js', () => {
-    const files = { [`${NPM}\\claude.cmd`]: fixture('npm-global-claude-cli-js.cmd'), [`${CLAUDE_PACKAGE}\\cli.js`]: '' }
-    expect(find('claude', { PATH: NPM }, files)).toEqual({ command: NODE, args: [`${CLAUDE_PACKAGE}\\cli.js`], source: 'npm-shim' })
+  test('npm shim for an older Claude Code: node cli.js, through the Node kurmis runs on', () => {
+    const files = { [`${NPM}\\claude.cmd`]: fixture('npm-global-claude-cli-js.cmd'), [CLAUDE_CLI_JS]: '#!/usr/bin/env node\n' }
+    expect(find('claude', { PATH: NPM }, files)).toEqual({ command: NODE, args: [CLAUDE_CLI_JS], source: 'npm-shim' })
   })
 
   test('pnpm global shims', () => {
-    const codexEntry = `${PNPM}\\global\\5\\node_modules\\@openai\\codex\\bin\\codex.js`
+    const cliJs = `${PNPM}\\global\\5\\node_modules\\@anthropic-ai\\claude-code\\cli.js`
     const claudeExe = `${PNPM}\\global\\5\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`
-    const files = {
-      [`${PNPM}\\codex.cmd`]: fixture('pnpm-global-codex.cmd'),
-      [`${PNPM}\\claude.cmd`]: fixture('pnpm-global-claude-exe.cmd'),
-      [codexEntry]: '',
-      [claudeExe]: NATIVE
-    }
-    expect(find('codex', { PATH: PNPM }, files)).toEqual({ command: NODE, args: [codexEntry], source: 'npm-shim' })
-    expect(find('claude', { PATH: PNPM }, files)).toEqual({ command: claudeExe, args: [], source: 'npm-shim' })
+    expect(find('claude', { PATH: PNPM }, { [`${PNPM}\\claude.cmd`]: fixture('pnpm-global-claude-cli-js.cmd'), [cliJs]: '' }))
+      .toEqual({ command: NODE, args: [cliJs], source: 'npm-shim' })
+    expect(find('claude', { PATH: PNPM }, { [`${PNPM}\\claude.cmd`]: fixture('pnpm-global-claude-exe.cmd'), [claudeExe]: NATIVE }))
+      .toEqual({ command: claudeExe, args: [], source: 'npm-shim' })
   })
 
   test('npm 12 shims', () => {
-    const files = {
-      [`${NPM}\\codex.cmd`]: fixture('npm12-global-codex.cmd'),
-      [`${NPM}\\claude.cmd`]: fixture('npm12-global-claude-exe.cmd'),
-      [CODEX_ENTRY]: '',
-      [`${CLAUDE_PACKAGE}\\bin\\claude.exe`]: NATIVE
-    }
-    expect(find('codex', { PATH: NPM }, files)).toEqual({ command: NODE, args: [CODEX_ENTRY], source: 'npm-shim' })
+    expect(find('claude', { PATH: NPM }, { [`${NPM}\\claude.cmd`]: fixture('npm12-global-claude-cli-js.cmd'), [CLAUDE_CLI_JS]: '' }))
+      .toEqual({ command: NODE, args: [CLAUDE_CLI_JS], source: 'npm-shim' })
+    const files = { [`${NPM}\\claude.cmd`]: fixture('npm12-global-claude-exe.cmd'), [`${CLAUDE_PACKAGE}\\bin\\claude.exe`]: NATIVE }
     expect(find('claude', { PATH: NPM }, files)).toEqual({ command: `${CLAUDE_PACKAGE}\\bin\\claude.exe`, args: [], source: 'npm-shim' })
   })
 
   test('pnpm 11 global shims', () => {
     const group = `${PNPM}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules`
-    const codexEntry = `${group}\\@openai\\codex\\bin\\codex.js`
+    const cliJs = `${group}\\@anthropic-ai\\claude-code\\cli.js`
     const claudeExe = `${group}\\@anthropic-ai\\claude-code\\bin\\claude.exe`
-    const files = {
-      [`${PNPM}\\codex.cmd`]: fixture('pnpm11-global-codex.cmd'),
-      [`${PNPM}\\claude.cmd`]: fixture('pnpm11-global-claude-exe.cmd'),
-      [codexEntry]: '',
-      [claudeExe]: NATIVE
-    }
-    expect(find('codex', { PATH: PNPM }, files)).toEqual({ command: NODE, args: [codexEntry], source: 'npm-shim' })
-    expect(find('claude', { PATH: PNPM }, files)).toEqual({ command: claudeExe, args: [], source: 'npm-shim' })
+    expect(find('claude', { PATH: PNPM }, { [`${PNPM}\\claude.cmd`]: fixture('pnpm11-global-claude-cli-js.cmd'), [cliJs]: '' }))
+      .toEqual({ command: NODE, args: [cliJs], source: 'npm-shim' })
+    expect(find('claude', { PATH: PNPM }, { [`${PNPM}\\claude.cmd`]: fixture('pnpm11-global-claude-exe.cmd'), [claudeExe]: NATIVE }))
+      .toEqual({ command: claudeExe, args: [], source: 'npm-shim' })
   })
 
   test('a shim in a folder whose name has a %', () => {
     const folder = 'C:\\Users\\example\\100%\\npm'
-    const entry = `${folder}\\node_modules\\@openai\\codex\\bin\\codex.js`
-    const files = { [`${folder}\\codex.cmd`]: fixture('npm12-global-codex.cmd'), [entry]: '' }
-    expect(find('codex', { PATH: folder }, files)).toEqual({ command: NODE, args: [entry], source: 'npm-shim' })
+    const entry = `${folder}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`
+    const files = { [`${folder}\\claude.cmd`]: fixture('npm12-global-claude-cli-js.cmd'), [entry]: '' }
+    expect(find('claude', { PATH: folder }, files)).toEqual({ command: NODE, args: [entry], source: 'npm-shim' })
   })
 
   test('a UTF-8 shim with a byte order mark, in a folder with a non-ASCII name', () => {
     const home = 'C:\\Users\\ex\u00e4mple\\AppData\\Local\\pnpm'
     const node = `${home}\\nodejs\\24.11.0\\node.exe`
-    const entry = `${home}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules\\@openai\\codex\\bin\\codex.js`
+    const entry = `${home}\\global\\v11\\50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c\\node_modules\\@anthropic-ai\\claude-code\\cli.js`
     const bom = Buffer.from([0xef, 0xbb, 0xbf])
-    const files = {
-      [`${home}\\codex.cmd`]: Buffer.concat([bom, readFileSync(resolve('test/platform/fixtures', 'pnpm11-node-exec-path-non-ascii.cmd'))]),
+    const pnpmShim = {
+      [`${home}\\claude.cmd`]: Buffer.concat([bom, readFileSync(resolve('test/platform/fixtures', 'pnpm11-node-exec-path-non-ascii.cmd'))]),
       [entry]: '',
-      [node]: NATIVE,
+      [node]: NATIVE
+    }
+    expect(find('claude', { PATH: home }, pnpmShim)).toEqual({ command: node, args: [entry], source: 'npm-shim' })
+    const oneLineShim = {
       // A one-line shim, so the byte order mark is right before its run line.
       [`${home}\\claude.cmd`]: Buffer.concat([bom, Buffer.from('@"%~dp0\\t\u00f6\u00f6ls\\claude.exe"   %*\r\n', 'utf8')]),
       [`${home}\\t\u00f6\u00f6ls\\claude.exe`]: NATIVE
     }
-    expect(find('codex', { PATH: home }, files)).toEqual({ command: node, args: [entry], source: 'npm-shim' })
-    expect(find('claude', { PATH: home }, files)).toEqual({ command: `${home}\\t\u00f6\u00f6ls\\claude.exe`, args: [], source: 'npm-shim' })
+    expect(find('claude', { PATH: home }, oneLineShim)).toEqual({ command: `${home}\\t\u00f6\u00f6ls\\claude.exe`, args: [], source: 'npm-shim' })
   })
 
   test('a shim that is not UTF-8 is skipped', () => {
     // "ä" in Windows-1252, as an editor saving in the ANSI code page would write it.
-    const files = { 'C:\\a\\codex.cmd': Buffer.from([...Buffer.from('@"%~dp0\\'), 0xe4, ...Buffer.from('\\codex.exe"   %*\r\n')]) }
-    const error = notFound('codex', { env: { PATH: 'C:\\a' }, platform: 'win32', files: windowsFiles(files) })
-    expect(error.message).toContain('C:\\a\\codex.cmd: it is not a package manager shim kurmis can read (it is not UTF-8 text)')
+    const files = { 'C:\\a\\claude.cmd': Buffer.from([...Buffer.from('@"%~dp0\\'), 0xe4, ...Buffer.from('\\claude.exe"   %*\r\n')]) }
+    const error = notFound('claude', { env: { PATH: 'C:\\a' }, platform: 'win32', files: windowsFiles(files) })
+    expect(error.message).toContain('C:\\a\\claude.cmd: it is not a package manager shim kurmis can read (it is not UTF-8 text)')
   })
 
   test('PATHEXT order decides between a .cmd and an .exe in the same folder', () => {
-    const files = { [`${NPM}\\codex.cmd`]: fixture('npm-global-codex.cmd'), [CODEX_ENTRY]: '', [`${NPM}\\codex.exe`]: NATIVE }
-    expect(find('codex', { PATH: NPM, PATHEXT: '.CMD;.EXE' }, files).source).toBe('npm-shim')
-    expect(find('codex', { PATH: NPM, PATHEXT: '.EXE;.CMD' }, files).source).toBe('path')
-    expect(find('codex', { PATH: NPM }, files).source).toBe('path')
+    const files = { [`${NPM}\\claude.cmd`]: fixture('npm-global-claude-cli-js.cmd'), [CLAUDE_CLI_JS]: '', [`${NPM}\\claude.exe`]: NATIVE }
+    expect(find('claude', { PATH: NPM, PATHEXT: '.CMD;.EXE' }, files).source).toBe('npm-shim')
+    expect(find('claude', { PATH: NPM, PATHEXT: '.EXE;.CMD' }, files).source).toBe('path')
+    expect(find('claude', { PATH: NPM }, files).source).toBe('path')
   })
 
   test('.ps1 shims, extensionless shims and other PATHEXT types are never used', () => {
     const files = {
-      'C:\\a\\codex.ps1': '#!/usr/bin/env pwsh\n',
-      'C:\\a\\codex': '#!/bin/sh\n',
-      'C:\\a\\codex.js': '',
-      'C:\\a\\codex.vbs': ''
+      'C:\\a\\claude.ps1': '#!/usr/bin/env pwsh\n',
+      'C:\\a\\claude': '#!/bin/sh\n',
+      'C:\\a\\claude.js': '',
+      'C:\\a\\claude.vbs': ''
     }
-    const error = notFound('codex', { env: { PATH: 'C:\\a', PATHEXT: '.COM;.EXE;.BAT;.CMD;.VBS;.JS;.PS1' }, platform: 'win32', files: windowsFiles(files) })
+    const error = notFound('claude', { env: { PATH: 'C:\\a', PATHEXT: '.COM;.EXE;.BAT;.CMD;.VBS;.JS;.PS1' }, platform: 'win32', files: windowsFiles(files) })
     expect(error.message).toBe([
-      'Codex (codex) was not found. Looked in the 1 folder on PATH (as codex.com, codex.exe, codex.bat, codex.cmd).',
-      'Install Codex, or set KURMIS_CODEX_BIN to the full path of the program.'
+      'Claude Code (claude) was not found. Looked in the 1 folder on PATH (as claude.com, claude.exe, claude.bat, claude.cmd).',
+      'Install Claude Code, or set KURMIS_CLAUDE_BIN to the full path of the program.'
     ].join('\n'))
   })
 
   test('a shim kurmis cannot use is skipped and the search goes on', () => {
     const files = {
-      'C:\\first\\codex.cmd': '@echo off\r\npowershell -File "%~dp0\\codex.ps1"\r\n',
-      'C:\\second\\codex.bat': fixture('npm-global-codex.cmd'),
-      'C:\\third\\codex.cmd': fixture('npm-global-codex.cmd'),
-      'C:\\third\\node_modules\\@openai\\codex\\bin\\codex.js': ''
+      'C:\\first\\claude.cmd': '@echo off\r\npowershell -File "%~dp0\\claude.ps1"\r\n',
+      'C:\\second\\claude.bat': fixture('npm-global-claude-cli-js.cmd'),
+      'C:\\third\\claude.cmd': fixture('npm-global-claude-cli-js.cmd'),
+      'C:\\third\\node_modules\\@anthropic-ai\\claude-code\\cli.js': ''
     }
-    expect(find('codex', { PATH: 'C:\\first;C:\\second;C:\\third' }, files))
-      .toEqual({ command: NODE, args: ['C:\\third\\node_modules\\@openai\\codex\\bin\\codex.js'], source: 'npm-shim' })
-    const error = notFound('codex', { env: { PATH: 'C:\\first;C:\\second' }, platform: 'win32', files: windowsFiles(files) })
-    expect(error.message).toContain('Skipped:\n  C:\\first\\codex.cmd: it is not a package manager shim kurmis can read (no line passes the arguments on (%*))')
-    expect(error.message).toContain('  C:\\second\\codex.bat: it starts C:\\second\\node_modules\\@openai\\codex\\bin\\codex.js, which does not exist')
+    expect(find('claude', { PATH: 'C:\\first;C:\\second;C:\\third' }, files))
+      .toEqual({ command: NODE, args: ['C:\\third\\node_modules\\@anthropic-ai\\claude-code\\cli.js'], source: 'npm-shim' })
+    const error = notFound('claude', { env: { PATH: 'C:\\first;C:\\second' }, platform: 'win32', files: windowsFiles(files) })
+    expect(error.message).toContain('Skipped:\n  C:\\first\\claude.cmd: it is not a package manager shim kurmis can read (no line passes the arguments on (%*))')
+    expect(error.message).toContain('  C:\\second\\claude.bat: it starts C:\\second\\node_modules\\@anthropic-ai\\claude-code\\cli.js, which does not exist')
   })
 
   test('Claude Code from its native installer when PATH has none', () => {

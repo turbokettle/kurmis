@@ -22,7 +22,7 @@ describe('removeTreeSync on this machine', () => {
     writeFileSync(join(outside, 'sessions', 'one.jsonl'), 'kept')
     const home = join(root, 'home')
     mkdirSync(join(home, 'nested', 'deeper'), { recursive: true })
-    writeFileSync(join(home, 'auth.json'), '{}')
+    writeFileSync(join(home, '.credentials.json'), '{}')
     writeFileSync(join(home, 'nested', 'deeper', 'file'), 'x')
     linkFolder(join(outside, 'sessions'), join(home, 'sessions'))
     linkFolder(join(outside, 'sessions'), join(home, 'nested', 'link'))
@@ -37,16 +37,16 @@ describe('removeTreeSync on this machine', () => {
   it.runIf(canCreateSymlinks())('removes a folder with a file symlink and a dangling symlink and leaves the target alone', () => {
     const outside = join(root, 'outside')
     mkdirSync(outside)
-    writeFileSync(join(outside, 'config.toml'), 'kept')
+    writeFileSync(join(outside, 'settings.json'), 'kept')
     const home = join(root, 'home')
     mkdirSync(home)
-    symlinkSync(join(outside, 'config.toml'), join(home, 'config.toml'), 'file')
+    symlinkSync(join(outside, 'settings.json'), join(home, 'settings.json'), 'file')
     symlinkSync(join(root, 'nowhere'), join(home, 'broken'))
 
     removeTreeSync(home)
 
     expect(existsSync(home)).toBe(false)
-    expect(readFileSync(join(outside, 'config.toml'), 'utf8')).toBe('kept')
+    expect(readFileSync(join(outside, 'settings.json'), 'utf8')).toBe('kept')
   })
 
   // A junction (or directory symlink) whose folder was deleted afterwards: this needs no
@@ -128,19 +128,19 @@ function fakeWindowsFs(entries: Record<string, Entry>): { fs: RemoveTreeFs; call
 }
 
 describe('removeTreeSync on Windows', () => {
-  const home = join('C:', 'kurmis', 'codex', 'work')
+  const home = join('C:', 'kurmis', 'claude', 'work')
 
   it('removes a junction with rmdir and never lists what it points at', () => {
     const sessions = join(home, 'sessions')
-    const auth = join(home, 'auth.json')
+    const credentials = join(home, '.credentials.json')
     const { fs, calls, entries } = fakeWindowsFs({
-      [home]: { kind: 'dir', children: ['sessions', 'auth.json'] },
+      [home]: { kind: 'dir', children: ['sessions', '.credentials.json'] },
       [sessions]: { kind: 'junction' },
-      [auth]: { kind: 'file' }
+      [credentials]: { kind: 'file' }
     })
     removeTreeSync(home, { fs, platform: 'win32' })
     expect(entries).toEqual({})
-    expect(calls).toEqual([`readdir ${home}`, `unlink ${sessions}`, `rmdir ${sessions}`, `unlink ${auth}`, `rmdir ${home}`])
+    expect(calls).toEqual([`readdir ${home}`, `unlink ${sessions}`, `rmdir ${sessions}`, `unlink ${credentials}`, `rmdir ${home}`])
   })
 
   it('removes a volume mounted into a folder as an entry, without going into it', () => {

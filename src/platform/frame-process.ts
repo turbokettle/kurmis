@@ -1,6 +1,6 @@
 // Running a program that kurmis talks to over its standard input and output, one JSON value per
-// line in each direction: `claude -p --input-format stream-json` and `codex app-server`, which
-// the daemon's usage probes start.
+// line in each direction: `claude -p --input-format stream-json`, which the daemon's usage probe
+// starts.
 //
 // `runProgram` in `run.ts` closes stdin, so it cannot be used here. This keeps its other rules:
 // no shell, `windowsHide`, a deadline after which the program is killed, a cap on how much
@@ -13,9 +13,11 @@
 //
 // Killing takes the program's child processes with it where the OS allows it. On macOS and
 // Linux the program is started in a process group of its own and the whole group gets SIGKILL.
-// On Windows `taskkill /T /F` ends the process tree, because the Codex npm entry point is a
-// `node` process that starts the native `codex.exe`, and TerminateProcess on the `node` alone
-// would leave `codex.exe` running.
+// On Windows `taskkill /T /F` ends the process tree, because the program kurmis starts is not
+// always the one that does the work: for Claude Code's npm package without its postinstall step
+// kurmis starts `node cli-wrapper.cjs`, which starts the native `claude.exe` (`programs.ts`), and
+// Claude Code itself may start child processes such as MCP servers. TerminateProcess on the
+// started process alone would leave those running.
 import { spawn, type ChildProcess } from 'node:child_process'
 import { clearTimeout, setTimeout } from 'node:timers'
 import { invocationFor } from './run.ts'

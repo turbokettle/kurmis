@@ -2,11 +2,7 @@
 //
 // A login's alias is made from its account's email (`aliasFromEmail`) unless the person set one
 // (`kurmis login … --alias`, `kurmis set … --alias`). While no email is known the alias is the
-// login's id. Aliases are unique per provider, so the same account signed in to Claude and Codex
-// can have the same alias for both.
-
-/** The words `kurmis login` takes in place of a login, which an alias therefore cannot be. */
-const RESERVED_ALIASES: ReadonlySet<string> = new Set(['claude', 'codex'])
+// login's id. No two logins have the same alias.
 
 const ALIAS = /^[a-z0-9][a-z0-9_-]{0,31}$/
 
@@ -14,11 +10,11 @@ const ALIAS = /^[a-z0-9][a-z0-9_-]{0,31}$/
 export const MAX_ALIAS_LENGTH = 32
 
 /** The rule `isAliasText` checks, for messages. */
-export const ALIAS_RULE = '1 to 32 lowercase letters, digits, "-" or "_", starting with a letter or digit, and not "claude" or "codex"'
+export const ALIAS_RULE = '1 to 32 lowercase letters, digits, "-" or "_", starting with a letter or digit'
 
 /** Whether `text` may be an alias the person sets. */
 export function isAliasText(text: string): boolean {
-  return ALIAS.test(text) && !RESERVED_ALIASES.has(text)
+  return ALIAS.test(text)
 }
 
 /**
@@ -41,9 +37,9 @@ function trimDashes(text: string): string {
 
 /** What `automaticAlias` must not collide with. */
 export interface AliasNeighbours {
-  /** The aliases of the other logins of the same provider. */
+  /** The aliases of the other logins. */
   aliases: Iterable<string>
-  /** The ids of the other logins of both providers. */
+  /** The ids of the other logins. */
   ids: Iterable<string>
 }
 
@@ -58,7 +54,7 @@ export function automaticAlias(email: string | null, id: string, current: string
   const base = email === null ? '' : aliasFromEmail(email)
   if (base === '') return id
   const taken = new Set([...neighbours.aliases, ...neighbours.ids])
-  const free = (alias: string): boolean => !taken.has(alias) && !RESERVED_ALIASES.has(alias)
+  const free = (alias: string): boolean => !taken.has(alias)
   if (current !== null && free(current) && isNumbered(current, base)) return current
   if (free(base)) return base
   for (let number = 2; ; number++) {

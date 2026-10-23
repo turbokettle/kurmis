@@ -76,8 +76,8 @@ test.each(['C:\\tools\\claude.cmd', 'C:\\tools\\CLAUDE.CMD', '/tmp/run.bat', 'ru
 test('the command for each kind of program', () => {
   expect(invocationFor('/usr/bin/security', ['-w'], '/node')).toEqual({ command: '/usr/bin/security', args: ['-w'] })
   expect(invocationFor('C:\\tools\\claude.exe', ['-p'], 'C:\\node.exe')).toEqual({ command: 'C:\\tools\\claude.exe', args: ['-p'] })
-  expect(invocationFor('C:\\npm\\codex\\bin\\codex.js', ['app-server'], 'C:\\node.exe'))
-    .toEqual({ command: 'C:\\node.exe', args: ['C:\\npm\\codex\\bin\\codex.js', 'app-server'] })
+  expect(invocationFor('C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js', ['-p'], 'C:\\node.exe'))
+    .toEqual({ command: 'C:\\node.exe', args: ['C:\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js', '-p'] })
   expect(invocationFor('/x/fake.CJS', [], '/node')).toEqual({ command: '/node', args: ['/x/fake.CJS'] })
   expect(invocationFor('/x/fake.mjs', ['a'], '/node')).toEqual({ command: '/node', args: ['/x/fake.mjs', 'a'] })
 })

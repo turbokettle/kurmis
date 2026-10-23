@@ -1,7 +1,6 @@
 import { readFileSync, rmSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
-import { emptyCodexUsage } from '../../src/core/codex-usage.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import { loadConfig } from '../../src/data/config.ts'
 import type { ClaudeIdentity } from '../../src/data/identity.ts'
@@ -11,13 +10,12 @@ import { configPath, statePath } from '../../src/data/paths.ts'
 import { LoginTable } from '../../src/daemon/logins.ts'
 import type { TokenSource } from '../../src/daemon/tokens.ts'
 import { UsagePoller, type ProbeAnswer, type ProbeFunction } from '../../src/daemon/usage-poller.ts'
-import { loginOf, OWN_CLAUDE, OWN_CODEX } from '../logins.ts'
+import { loginOf, OWN_CLAUDE } from '../logins.ts'
 import { freshHome, writeLogins } from './harness.ts'
 
 const WORK = 'workclaude'
-const WORK_CODEX = 'workcodex1'
 
-/** The emails the stand-in identity reader answers for Claude logins, by id. */
+/** The emails the stand-in identity reader answers for the logins, by id. */
 const claudeEmails = new Map<string, string | null>()
 const identity = {
   read: (login: LoginRef): ClaudeIdentity | null => {
@@ -44,11 +42,11 @@ function usage(id: string, fiveHour: number, resetsAt: string | null = null): Ac
   return { ...emptyAccountUsage(id, Date.now()), rateLimitsAvailable: true, fiveHour: { utilization: fiveHour, resetsAt } }
 }
 
-function setup(probe: ProbeFunction, codex: ProbeFunction = probe): { table: LoginTable; poller: UsagePoller } {
+function setup(probe: ProbeFunction): { table: LoginTable; poller: UsagePoller } {
   const table = new LoginTable({ tokens: source, log: { write: (event, fields) => { events.push({ event, fields }) } }, now: Date.now, stateWriteMs: 0 })
   table.load()
   const poller = new UsagePoller({ table, tokens: source, identity, env: {}, log: { write: (event, fields) => { events.push({ event, fields }) } },
-    now: Date.now, probeClaude: probe, probeCodex: codex, intervalMs: 50 })
+    now: Date.now, probeClaude: probe, intervalMs: 50 })
   return tracked({ table, poller })
 }
 
@@ -112,12 +110,12 @@ describe('a probe', () => {
     expect(events.some((line) => line.event === 'usage_probe_failed')).toBe(true)
   })
 
-  test('that fails with nothing before it records the error on an empty snapshot of the right provider', async () => {
+  test('that fails with nothing before it records the error on an empty snapshot', async () => {
     writeLogins({})
     const { table, poller } = setup(() => Promise.resolve({ ok: false, signedIn: false, reason: 'other', error: 'No.' }))
-    await poller.probe(OWN_CODEX, 'request')
-    expect(table.usage(OWN_CODEX)).toMatchObject({ provider: 'codex', error: 'No.' })
-    expect(table.probedSignedIn(OWN_CODEX)).toBe(false)
+    await poller.probe(OWN_CLAUDE, 'request')
+    expect(table.usage(OWN_CLAUDE)).toMatchObject({ accountId: OWN_CLAUDE, fiveHour: null, sevenDay: null, error: 'No.' })
+    expect(table.probedSignedIn(OWN_CLAUDE)).toBe(false)
   })
 
   test('runs once at a time per login; a second request waits for the running one', async () => {
@@ -160,7 +158,7 @@ describe('a probe', () => {
     const table = new LoginTable({ tokens: source, log: { write: () => undefined }, now: () => clock.now, stateWriteMs: 0 })
     table.load()
     const poller = new UsagePoller({ table, tokens: source, identity, env: {}, log: { write: () => undefined }, now: () => clock.now,
-      probeClaude: probe, probeCodex: probe })
+      probeClaude: probe })
     return tracked({ table, poller, clock })
   }
 
@@ -214,7 +212,7 @@ describe('a probe', () => {
     const table = new LoginTable({ tokens: source, log: { write: () => undefined }, now: () => clock, stateWriteMs: 0 })
     table.load()
     const poller = new UsagePoller({ table, tokens: source, identity, env: {}, log: { write: () => undefined }, now: () => clock,
-      probeClaude: () => Promise.resolve({ ok: false, signedIn: null, reason: 'other', error: 'No.' }), probeCodex: () => Promise.reject(new Error('no')) })
+      probeClaude: () => Promise.resolve({ ok: false, signedIn: null, reason: 'other', error: 'No.' }) })
     tracked({ table, poller })
     await poller.probe(OWN_CLAUDE, 'request')
     expect(poller.recentStaleProbes()).toEqual(new Set())
@@ -264,9 +262,9 @@ describe('the poll', () => {
     poller.start()
     await expect.poll(() => probed.length).toBeGreaterThanOrEqual(6)
     await poller.close()
-    expect(probed.slice(0, 3).sort()).toEqual([OWN_CLAUDE, OWN_CODEX, WORK].sort())
-    expect(probed.slice(3)).not.toContain(WORK)
-    expect(poller.pollable()).toEqual([OWN_CLAUDE, OWN_CODEX])
+    expect(probed.slice(0, 2).sort()).toEqual([OWN_CLAUDE, WORK].sort())
+    expect(probed.slice(2)).not.toContain(WORK)
+    expect(poller.pollable()).toEqual([OWN_CLAUDE])
   })
 
   test('stops when the daemon starts to stop, while a probe asked for still runs', async () => {
@@ -292,42 +290,31 @@ describe('the poll', () => {
 describe("a probe and the login's email", () => {
   const claudeAnswer = (signedIn = true): ProbeFunction => ({ id }) =>
     Promise.resolve({ ok: true, signedIn, usage: usage(id, 1) })
-  const codexAnswer = (answer: () => ProbeAnswer): ProbeFunction => () => Promise.resolve(answer())
-  const codexUsage = (id: string): AccountUsage => emptyCodexUsage(id, Date.now())
 
-  test('is handed the login with its provider and whether it is the login of a plain CLI', async () => {
+  test('is handed the login and whether it is the login plain claude uses', async () => {
     writeLogins({ claude: { [WORK]: {} } })
     const seen: LoginRef[] = []
     const { poller } = setup((login) => {
       seen.push(login)
       return Promise.resolve({ ok: true, signedIn: true, usage: usage(login.id, 1) })
     })
-    await poller.probeMany([OWN_CLAUDE, WORK, OWN_CODEX], 'request')
+    await poller.probeMany([OWN_CLAUDE, WORK], 'request')
+    expect(seen).toHaveLength(2)
     expect(seen).toEqual(expect.arrayContaining([
-      { id: OWN_CLAUDE, provider: 'claude', usedByPlainCli: true },
-      { id: WORK, provider: 'claude', usedByPlainCli: false },
-      { id: OWN_CODEX, provider: 'codex', usedByPlainCli: true }
+      { id: OWN_CLAUDE, usedByPlainClaude: true },
+      { id: WORK, usedByPlainClaude: false }
     ]))
   })
 
-  test('gives a Claude login the automatic alias its profile\'s email makes', async () => {
+  test('gives a login the automatic alias its profile\'s email makes, and writes the email nowhere', async () => {
     writeLogins({ claude: { [WORK]: {} } })
     claudeEmails.set(WORK, 'work.person@example.com')
     claudeEmails.set(OWN_CLAUDE, 'own.person@example.org')
     const { table, poller } = setup(claudeAnswer())
     await poller.probeMany([OWN_CLAUDE, WORK], 'request')
+    await table.flush()
     expect(table.find(WORK)?.alias).toBe('work-person-example')
     expect(loginOf(loadConfig(), OWN_CLAUDE).alias).toBe('own-person-example')
-  })
-
-  test('gives a Codex login the automatic alias the probe\'s email makes, and keeps the email in memory only', async () => {
-    writeLogins({ codex: { [WORK_CODEX]: {} } })
-    const { table, poller } = setup(claudeAnswer(), codexAnswer(() =>
-      ({ ok: true, signedIn: true, usage: codexUsage(WORK_CODEX), email: 'codex.person@example.com' })))
-    await poller.probe(WORK_CODEX, 'request')
-    await table.flush()
-    expect(table.find(WORK_CODEX)?.alias).toBe('codex-person-example')
-    expect(table.codexEmail(WORK_CODEX)).toBe('codex.person@example.com')
     expect(readFileSync(configPath(), 'utf8')).not.toContain('@')
     expect(readFileSync(statePath(), 'utf8')).not.toContain('@')
     const log = events.map(({ event, fields }) => formatLogLine(event, fields)).join('')
@@ -340,36 +327,28 @@ describe("a probe and the login's email", () => {
     claudeEmails.set(OWN_CLAUDE, 'first@example.com')
     const { table, poller } = setup(claudeAnswer())
     await poller.probeMany([OWN_CLAUDE, WORK], 'request')
-    expect(table.ownLogin('claude').alias).toBe('first-example')
+    expect(table.plainClaudeLogin().alias).toBe('first-example')
     claudeEmails.set(OWN_CLAUDE, 'second@example.com')
     await poller.probeMany([OWN_CLAUDE, WORK], 'request')
-    expect(table.ownLogin('claude').alias).toBe('second-example')
+    expect(table.plainClaudeLogin().alias).toBe('second-example')
     expect(table.find(WORK)).toMatchObject({ alias: 'chosen', aliasSetByUser: true })
   })
 
   test('that failed, found the login signed out, or knows no email changes no alias', async () => {
-    writeLogins({ claude: { [WORK]: {} }, codex: { [WORK_CODEX]: {} } })
+    writeLogins({ claude: { [WORK]: {} } })
     claudeEmails.set(OWN_CLAUDE, 'signed.out@example.com')
     claudeEmails.set(WORK, null)
-    let codex: ProbeAnswer = { ok: true, signedIn: true, usage: codexUsage(WORK_CODEX), email: 'kept@example.com' }
+    let work: ProbeAnswer = { ok: true, signedIn: true, usage: usage(WORK, 1) }
     const { table, poller } = setup(({ id }) => Promise.resolve(id === OWN_CLAUDE
       ? { ok: true, signedIn: false, usage: emptyAccountUsage(id, Date.now()) }
-      : { ok: true, signedIn: true, usage: usage(id, 1) }), codexAnswer(() => codex))
-    await poller.probeMany([OWN_CLAUDE, WORK, WORK_CODEX], 'request')
-    expect(table.ownLogin('claude').alias).toBe(OWN_CLAUDE)
+      : work))
+    await poller.probeMany([OWN_CLAUDE, WORK], 'request')
+    expect(table.plainClaudeLogin().alias).toBe(OWN_CLAUDE)
     expect(table.find(WORK)?.alias).toBe(WORK)
-    expect(table.find(WORK_CODEX)?.alias).toBe('kept-example')
 
-    codex = { ok: false, signedIn: null, reason: 'timeout', error: 'The probe timed out.' }
-    await poller.probe(WORK_CODEX, 'request')
-    expect(table.codexEmail(WORK_CODEX)).toBe('kept@example.com')
-    codex = { ok: true, signedIn: true, usage: codexUsage(WORK_CODEX), email: null }
-    await poller.probe(WORK_CODEX, 'request')
-    expect(table.find(WORK_CODEX)?.alias).toBe('kept-example')
-    expect(table.codexEmail(WORK_CODEX)).toBeNull()
-    codex = { ok: true, signedIn: false, usage: codexUsage(WORK_CODEX), email: null }
-    await poller.probe(WORK_CODEX, 'request')
-    expect(table.find(WORK_CODEX)?.alias).toBe('kept-example')
-    expect(table.codexEmail(WORK_CODEX)).toBeNull()
+    claudeEmails.set(WORK, 'kept@example.com')
+    work = { ok: false, signedIn: null, reason: 'timeout', error: 'The probe timed out.' }
+    await poller.probe(WORK, 'request')
+    expect(table.find(WORK)?.alias).toBe(WORK)
   })
 })

@@ -19,7 +19,7 @@
 //   visible console unless it runs whether the user is logged on or not, which needs a stored
 //   password or elevation. When `wscript.exe` is missing, or Windows Script Host is turned off
 //   (`Enabled` = 0 under `Software\Microsoft\Windows Script Host\Settings`), setup writes no
-//   entry and says so; the next `kurmis claude` or `kurmis codex` starts the daemon anyway.
+//   entry and says so; the next `kurmis claude` starts the daemon anyway.
 // - **REG_SZ with full paths:** the value names `wscript.exe` by its full path, with the
 //   Windows folder read from `SystemRoot` when setup runs, rather than `%SystemRoot%` in a
 //   REG_EXPAND_SZ value. The Windows folder does not move, and so the value does not depend on
@@ -47,8 +47,8 @@
 //   sets the process variable `KURMIS_PERCENT_SIGN` to `%` and writes each `%` as
 //   `%KURMIS_PERCENT_SIGN%`. The expansion is done once, left to right, so that gives back the
 //   command line as it was. The script checks this with `ExpandEnvironmentStrings` and starts
-//   nothing when it does not match; the next `kurmis claude` or `kurmis codex` starts the daemon
-//   anyway. A command line without `%` is passed as it is.
+//   nothing when it does not match; the next `kurmis claude` starts the daemon anyway. A command
+//   line without `%` is passed as it is.
 // - **A `%` in the Run value:** the Run value names `wscript.exe` and the script by their full
 //   paths, and nothing there can escape a `%`. Whether Explorer replaces `%NAME%` in a REG_SZ Run
 //   value is not verified. So when the value has a `%` (the data folder's path has one), setup
@@ -318,7 +318,7 @@ export function percentWarning(wscript: string, scriptPath: string): string | nu
     : 'The Windows folder (SystemRoot) has the "%" in its path, which kurmis cannot change.'
   return `The logon entry names ${named.join(' and ')}, and a "%" in a path there may be read as the start of a ` +
     `variable name (%NAME%) at login, so the daemon may not start at login. ${advice} The entry was written anyway, ` +
-    'and the next "kurmis claude" or "kurmis codex" starts the daemon when it is not running.'
+    'and the next "kurmis claude" starts the daemon when it is not running.'
 }
 
 /** `result` with `percentWarning` added when the Run value has a `%`; the entry is written, so the warning is advice only. */
@@ -353,7 +353,7 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
     return {
       changed: false,
       where: null,
-      warning: `The logon entry was not written: ${unusable} The next "kurmis claude" or "kurmis codex" starts the daemon anyway.`,
+      warning: `The logon entry was not written: ${unusable} The next "kurmis claude" starts the daemon anyway.`,
       noEntryPossible: true
     }
   }
