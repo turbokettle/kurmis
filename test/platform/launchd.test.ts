@@ -5,7 +5,6 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   AUTOSTART_LABEL,
-  LAUNCHCTL_PROGRAM,
   bootoutJob,
   bootstrapFailure,
   bootstrapJob,
@@ -18,8 +17,7 @@ import {
   launchAgentsDir,
   launchctlFor,
   launchctlProgram,
-  parseLaunchctlPrint,
-  plistXml
+  parseLaunchctlPrint
 } from '../../src/platform/launchd.ts'
 import type { RunResult } from '../../src/platform/run.ts'
 import { withoutAddedVariables } from '../host.ts'
@@ -43,7 +41,7 @@ beforeEach(() => {
 
 describe('launchctl program', () => {
   it('is /bin/launchctl unless the test hook names another', () => {
-    expect(launchctlProgram({}, {})).toBe(LAUNCHCTL_PROGRAM)
+    expect(launchctlProgram({}, {})).toBe('/bin/launchctl')
     expect(launchctlProgram({ KURMIS_LAUNCHCTL_PROGRAM: '' }, {})).toBe('/bin/launchctl')
     expect(launchctlProgram({ KURMIS_LAUNCHCTL_PROGRAM: '/tmp/fake.mjs' })).toBe('/tmp/fake.mjs')
   })
@@ -61,44 +59,6 @@ describe('launchctl program', () => {
   it('keeps LaunchAgents in the home folder, which is a temporary one in tests', () => {
     expect(launchAgentsDir()).toBe(join(homedir(), 'Library', 'LaunchAgents'))
     expect(launchAgentsDir().startsWith(process.env.HOME ?? '?')).toBe(true)
-  })
-})
-
-describe('plistXml', () => {
-  it('writes strings, booleans, arrays and dictionaries, escaping XML', () => {
-    expect(plistXml({
-      Label: 'a&b',
-      RunAtLoad: true,
-      KeepAlive: false,
-      ProgramArguments: ['/usr/bin/node', '<x> "y"'],
-      EnvironmentVariables: { HOME: '/Users/example', FLAG: true }
-    })).toBe([
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-      '<plist version="1.0">',
-      '<dict>',
-      '  <key>Label</key>',
-      '  <string>a&amp;b</string>',
-      '  <key>RunAtLoad</key>',
-      '  <true/>',
-      '  <key>KeepAlive</key>',
-      '  <false/>',
-      '  <key>ProgramArguments</key>',
-      '  <array>',
-      '    <string>/usr/bin/node</string>',
-      '    <string>&lt;x&gt; &quot;y&quot;</string>',
-      '  </array>',
-      '  <key>EnvironmentVariables</key>',
-      '  <dict>',
-      '    <key>HOME</key>',
-      '    <string>/Users/example</string>',
-      '    <key>FLAG</key>',
-      '    <true/>',
-      '  </dict>',
-      '</dict>',
-      '</plist>',
-      ''
-    ].join('\n'))
   })
 })
 
@@ -159,6 +119,46 @@ describe('daemonJobPlist', () => {
     expect(text).toContain('<key>StandardOutPath</key>\n  <string>/dev/null</string>')
     expect(text).toContain('<key>StandardErrorPath</key>\n  <string>/dev/null</string>')
     expect(text).not.toContain('KeepAlive')
+  })
+
+  it('writes an XML plist of one dictionary, escaping XML', () => {
+    expect(daemonJobPlist({
+      label: 'a&b',
+      programArguments: ['/usr/bin/node', '<x> "y"'],
+      environment: { HOME: '/Users/example', 'A&B': '<1>' }
+    })).toBe([
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0">',
+      '<dict>',
+      '  <key>Label</key>',
+      '  <string>a&amp;b</string>',
+      '  <key>ProgramArguments</key>',
+      '  <array>',
+      '    <string>/usr/bin/node</string>',
+      '    <string>&lt;x&gt; &quot;y&quot;</string>',
+      '  </array>',
+      '  <key>EnvironmentVariables</key>',
+      '  <dict>',
+      '    <key>HOME</key>',
+      '    <string>/Users/example</string>',
+      '    <key>A&amp;B</key>',
+      '    <string>&lt;1&gt;</string>',
+      '  </dict>',
+      '  <key>WorkingDirectory</key>',
+      '  <string>/Users/example</string>',
+      '  <key>RunAtLoad</key>',
+      '  <true/>',
+      '  <key>AbandonProcessGroup</key>',
+      '  <true/>',
+      '  <key>StandardOutPath</key>',
+      '  <string>/dev/null</string>',
+      '  <key>StandardErrorPath</key>',
+      '  <string>/dev/null</string>',
+      '</dict>',
+      '</plist>',
+      ''
+    ].join('\n'))
   })
 })
 

@@ -2,14 +2,14 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { launchctlFor, plistXml } from '../../src/platform/launchd.ts'
+import { daemonJobPlist, launchctlFor } from '../../src/platform/launchd.ts'
 
 const dir = (): string => process.env.FAKE_LAUNCHCTL_DIR ?? ''
 const launchctl = launchctlFor()
 
 function writePlist(label: string): string {
   const file = join(process.env.HOME ?? '', `${label}.plist`)
-  writeFileSync(file, plistXml({ Label: label, ProgramArguments: ['/usr/bin/true'] }))
+  writeFileSync(file, daemonJobPlist({ label, programArguments: ['/usr/bin/true'], environment: {} }))
   return file
 }
 

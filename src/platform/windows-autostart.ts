@@ -62,9 +62,9 @@ import { dirname, join, win32 } from 'node:path'
 import { windowsAutostartScriptPath } from '../data/paths.ts'
 import { makePrivateDirSync } from './files.ts'
 import { windowsCommandLine } from './detach.ts'
-import { DAEMON_JOB_VARIABLES } from './launchd.ts'
-import { runProgram, type RunResult } from './run.ts'
-import { inheritedTestHooks, SYSTEM_PROGRAM_VARIABLES, systemProgram, systemRoot } from './system-programs.ts'
+import { daemonJobVariables } from './launchd.ts'
+import { runProgram, runResultText, type RunResult } from './run.ts'
+import { systemProgram } from './system-programs.ts'
 import type { AutostartResult } from './autostart.ts'
 
 /** The registry key whose values Explorer runs at the user's logon. */
@@ -73,15 +73,10 @@ export const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 /** The name of kurmis' value under `RUN_KEY`. */
 export const RUN_VALUE_NAME = 'kurmis'
 
-/** The test hook naming a stand-in for `reg.exe`. */
-export const REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg
-
 const REG_TIMEOUT_MS = 30_000
 
 /** Where the entry is, for the person to see. */
 export const RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`
-
-export { systemRoot }
 
 /** `KURMIS_REG_PROGRAM` (from `env`, else this process's environment), otherwise `<SystemRoot>\System32\reg.exe`. */
 export function regProgram(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): string {
@@ -181,18 +176,11 @@ export function jscriptString(text: string): string {
 }
 
 /**
- * The kurmis variables the logon script passes to `daemon start` as `--env NAME=VALUE`.
- * `KURMIS_HOME` is made absolute (Windows path rules, from the current folder), since the daemon
- * starts in another folder.
+ * The kurmis variables the logon script passes to `daemon start` as `--env NAME=VALUE`
+ * (`daemonJobVariables`), with `KURMIS_HOME` made absolute by Windows path rules.
  */
 export function windowsAutostartEnvironment(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const out: Record<string, string> = {}
-  const hooks = inheritedTestHooks(env, processEnv)
-  for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name] || hooks[name]
-    if (value !== undefined && value !== '') out[name] = name === 'KURMIS_HOME' ? win32.resolve(value) : value
-  }
-  return out
+  return daemonJobVariables(env, processEnv, win32.resolve)
 }
 
 export interface AutostartScript {
@@ -255,12 +243,6 @@ function readScript(path: string): string | null {
   }
   if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return bytes.subarray(2).toString('utf16le')
   return bytes.toString('utf8')
-}
-
-function regSaid(result: RunResult): string {
-  if (result.error !== null) return result.error
-  const said = `${result.stderr}\n${result.stdout}`.replace(/\s+/g, ' ').trim()
-  return said === '' ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`
 }
 
 const ok = (result: RunResult): boolean => result.code === 0 && result.error === null
@@ -375,7 +357,7 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   if (!ok(added)) {
     // The Run value may still name the old VBScript, which is kept so that logon still starts
     // the daemon.
-    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` }
+    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(added)}).` }
   }
   removeOldVbsScript(scriptPath)
   return withPercentWarning({ changed: true, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath)
@@ -404,7 +386,7 @@ export async function unregisterWindowsAutostart(options: WindowsAutostartOption
       return {
         changed,
         where: RUN_ENTRY_DESCRIPTION,
-        warning: `reg.exe could not read the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(query)}), so it may still be ` +
+        warning: `reg.exe could not read the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(query)}), so it may still be ` +
           `there. ${scriptPath}, which that entry runs, is kept.`
       }
     }
@@ -416,7 +398,7 @@ export async function unregisterWindowsAutostart(options: WindowsAutostartOption
       return {
         changed,
         where: RUN_ENTRY_DESCRIPTION,
-        warning: `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}). ${scriptPath}, ` +
+        warning: `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(deleted)}). ${scriptPath}, ` +
           'which that entry runs, is kept.'
       }
     }

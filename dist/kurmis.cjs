@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101437" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101458" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -2450,6 +2450,12 @@ function runProgram(program, args, options) {
       else finish(code, null);
     });
   });
+}
+function runResultText(result) {
+  if (result.error !== null) return result.error;
+  const said = `${result.stderr}
+${result.stdout}`.replace(/\s+/g, " ").trim();
+  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
 }
 
 // src/platform/programs.ts
@@ -7302,8 +7308,6 @@ function messageOf3(error) {
 // src/platform/launchd.ts
 var import_node_os11 = require("node:os");
 var import_node_path16 = require("node:path");
-var LAUNCHCTL_PROGRAM = realSystemProgram("launchctl");
-var LAUNCHCTL_VARIABLE = SYSTEM_PROGRAM_VARIABLES.launchctl;
 var LAUNCHCTL_TIMEOUT_MS = 3e4;
 var AUTOSTART_LABEL = "kurmis.daemon";
 var DAEMON_START_ARGS = ["daemon", "start"];
@@ -7326,68 +7330,66 @@ function launchAgentsDir() {
 function autostartPlistPath() {
   return (0, import_node_path16.join)(launchAgentsDir(), `${AUTOSTART_LABEL}.plist`);
 }
-function escapeXml(text) {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-function plistXml(root) {
-  const lines = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-    '<plist version="1.0">',
-    "<dict>"
-  ];
-  const string = (value) => `<string>${escapeXml(value)}</string>`;
-  const scalar = (value) => typeof value === "boolean" ? value ? "<true/>" : "<false/>" : string(value);
-  for (const [key, value] of Object.entries(root)) {
-    lines.push(`  <key>${escapeXml(key)}</key>`);
-    if (typeof value === "string" || typeof value === "boolean") lines.push(`  ${scalar(value)}`);
-    else if (Array.isArray(value)) lines.push("  <array>", ...value.map((item) => `    ${string(item)}`), "  </array>");
-    else {
-      lines.push("  <dict>");
-      for (const [name, item] of Object.entries(value)) {
-        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar(item)}`);
-      }
-      lines.push("  </dict>");
-    }
-  }
-  lines.push("</dict>", "</plist>", "");
-  return lines.join("\n");
-}
 var DAEMON_JOB_VARIABLES = [
   "KURMIS_HOME",
   "KURMIS_CLAUDE_BIN",
   "KURMIS_UPSTREAM_URL",
-  "KURMIS_SECURITY_PROGRAM",
   "KURMIS_ENTRY",
-  ...Object.values(SYSTEM_PROGRAM_VARIABLES).filter((name) => name !== "KURMIS_SECURITY_PROGRAM"),
+  ...Object.values(SYSTEM_PROGRAM_VARIABLES),
   GUARD_VARIABLE,
   REFUSAL_LOG_VARIABLE
 ];
-var FALLBACK_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-function daemonJobEnvironment(env = process.env, processEnv = process.env) {
-  const out = {
-    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os11.homedir)(),
-    PATH: env.PATH !== void 0 && env.PATH !== "" ? env.PATH : FALLBACK_PATH
-  };
+function daemonJobVariables(env, processEnv, resolvePath) {
+  const out = {};
   const hooks = inheritedTestHooks(env, processEnv);
   for (const name of DAEMON_JOB_VARIABLES) {
     const value = env[name] || hooks[name];
-    if (value === void 0 || value === "") continue;
-    out[name] = name === "KURMIS_HOME" ? (0, import_node_path16.resolve)(value) : value;
+    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? resolvePath(value) : value;
   }
   return out;
 }
+var FALLBACK_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+function daemonJobEnvironment(env = process.env, processEnv = process.env) {
+  return {
+    HOME: env.HOME !== void 0 && env.HOME !== "" ? env.HOME : (0, import_node_os11.homedir)(),
+    PATH: env.PATH !== void 0 && env.PATH !== "" ? env.PATH : FALLBACK_PATH,
+    ...daemonJobVariables(env, processEnv, import_node_path16.resolve)
+  };
+}
 function daemonJobPlist(job) {
-  return plistXml({
-    Label: job.label,
-    ProgramArguments: job.programArguments,
-    EnvironmentVariables: job.environment,
-    WorkingDirectory: job.environment.HOME ?? (0, import_node_os11.homedir)(),
-    RunAtLoad: true,
-    AbandonProcessGroup: true,
-    StandardOutPath: "/dev/null",
-    StandardErrorPath: "/dev/null"
-  });
+  const string = (value) => `<string>${escapeXml(value)}</string>`;
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    "<dict>",
+    "  <key>Label</key>",
+    `  ${string(job.label)}`,
+    "  <key>ProgramArguments</key>",
+    "  <array>",
+    ...job.programArguments.map((arg) => `    ${string(arg)}`),
+    "  </array>",
+    "  <key>EnvironmentVariables</key>",
+    "  <dict>",
+    ...Object.entries(job.environment).flatMap(([name, value]) => [`    <key>${escapeXml(name)}</key>`, `    ${string(value)}`]),
+    "  </dict>",
+    "  <key>WorkingDirectory</key>",
+    `  ${string(job.environment.HOME ?? (0, import_node_os11.homedir)())}`,
+    "  <key>RunAtLoad</key>",
+    "  <true/>",
+    "  <key>AbandonProcessGroup</key>",
+    "  <true/>",
+    "  <key>StandardOutPath</key>",
+    "  <string>/dev/null</string>",
+    "  <key>StandardErrorPath</key>",
+    "  <string>/dev/null</string>",
+    "</dict>",
+    "</plist>",
+    ""
+  ].join("\n");
+}
+function escapeXml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 function parseLaunchctlPrint(result) {
   if (result.code !== 0) return { loaded: false, path: null };
@@ -7396,12 +7398,6 @@ function parseLaunchctlPrint(result) {
 }
 async function jobState(label, launchctl = launchctlFor(), uid) {
   return parseLaunchctlPrint(await launchctl(["print", `${guiDomain(uid)}/${label}`]));
-}
-function launchctlSaid(result) {
-  if (result.error !== null) return result.error;
-  const said = `${result.stderr}
-${result.stdout}`.replace(/\s+/g, " ").trim();
-  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
 }
 function isNotLoaded(result) {
   if (result.code === 3 || result.code === 113) return true;
@@ -7414,7 +7410,7 @@ function isMissingGuiDomain(result) {
 ${result.stdout}`);
 }
 function bootstrapFailure(result, domain) {
-  const said = launchctlSaid(result);
+  const said = runResultText(result);
   if (result.error === null && isMissingGuiDomain(result)) {
     return `launchd could not load the job into ${domain} (${said}). This usually means nobody is logged in at this Mac's screen: the GUI session, the only one that can read the login Keychain, exists only while you are logged in there or through Screen Sharing.`;
   }
@@ -7430,7 +7426,7 @@ async function bootoutJob(label, launchctl = launchctlFor(), uid) {
   const result = await launchctl(["bootout", target]);
   if (result.code === 0 && result.error === null) return true;
   if (result.error === null && isNotLoaded(result)) return false;
-  throw new Error(`launchd could not unload ${target} (${launchctlSaid(result)}).`);
+  throw new Error(`launchd could not unload ${target} (${runResultText(result)}).`);
 }
 
 // src/cli/commands/daemon.ts
@@ -8407,7 +8403,6 @@ var import_node_fs21 = require("node:fs");
 var import_node_path21 = require("node:path");
 var RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 var RUN_VALUE_NAME = "kurmis";
-var REG_VARIABLE = SYSTEM_PROGRAM_VARIABLES.reg;
 var REG_TIMEOUT_MS = 3e4;
 var RUN_ENTRY_DESCRIPTION = `${RUN_KEY} (value "${RUN_VALUE_NAME}")`;
 function regProgram(env = process.env, processEnv = process.env) {
@@ -8465,13 +8460,7 @@ function jscriptString(text) {
   return `"${text.replace(/[\\"]/g, (char) => `\\${char}`)}"`;
 }
 function windowsAutostartEnvironment(env = process.env, processEnv = process.env) {
-  const out = {};
-  const hooks = inheritedTestHooks(env, processEnv);
-  for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name] || hooks[name];
-    if (value !== void 0 && value !== "") out[name] = name === "KURMIS_HOME" ? import_node_path21.win32.resolve(value) : value;
-  }
-  return out;
+  return daemonJobVariables(env, processEnv, import_node_path21.win32.resolve);
 }
 function autostartCommandLine(script) {
   const assignments = Object.entries(script.environment).flatMap(([name, value]) => ["--env", `${name}=${value}`]);
@@ -8513,12 +8502,6 @@ function readScript(path) {
   }
   if (bytes.length >= 2 && bytes[0] === 255 && bytes[1] === 254) return bytes.subarray(2).toString("utf16le");
   return bytes.toString("utf8");
-}
-function regSaid(result) {
-  if (result.error !== null) return result.error;
-  const said = `${result.stderr}
-${result.stdout}`.replace(/\s+/g, " ").trim();
-  return said === "" ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`;
 }
 var ok2 = (result) => result.code === 0 && result.error === null;
 function userProfile(env) {
@@ -8590,7 +8573,7 @@ async function registerWindowsAutostart(options) {
   }
   const added = await reg(regAddArgs(data));
   if (!ok2(added)) {
-    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(added)}).` };
+    return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(added)}).` };
   }
   removeOldVbsScript(scriptPath);
   return withPercentWarning({ changed: true, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath);
@@ -8609,7 +8592,7 @@ async function unregisterWindowsAutostart(options) {
       return {
         changed,
         where: RUN_ENTRY_DESCRIPTION,
-        warning: `reg.exe could not read the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(query)}), so it may still be there. ${scriptPath}, which that entry runs, is kept.`
+        warning: `reg.exe could not read the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(query)}), so it may still be there. ${scriptPath}, which that entry runs, is kept.`
       };
     }
     present = parseRegQuery(listing.stdout, RUN_VALUE_NAME) !== null;
@@ -8620,7 +8603,7 @@ async function unregisterWindowsAutostart(options) {
       return {
         changed,
         where: RUN_ENTRY_DESCRIPTION,
-        warning: `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${regSaid(deleted)}). ${scriptPath}, which that entry runs, is kept.`
+        warning: `reg.exe could not remove the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(deleted)}). ${scriptPath}, which that entry runs, is kept.`
       };
     }
     changed = true;

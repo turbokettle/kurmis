@@ -20,11 +20,11 @@ import {
   runValueData,
   sameRunData,
   scriptHostDisabled,
-  systemRoot,
   unregisterWindowsAutostart,
   windowsAutostartEnvironment,
   wscriptPath
 } from '../../src/platform/windows-autostart.ts'
+import { systemRoot } from '../../src/platform/system-programs.ts'
 
 /**
  * Splits a Windows command line the way the Microsoft C runtime does (and so reg.exe and

@@ -10,13 +10,8 @@
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { GUARD_VARIABLE, REFUSAL_LOG_VARIABLE } from './system-program-guard.ts'
-import { runProgram, type RunResult } from './run.ts'
-import { inheritedTestHooks, realSystemProgram, SYSTEM_PROGRAM_VARIABLES, systemProgram } from './system-programs.ts'
-
-export const LAUNCHCTL_PROGRAM = realSystemProgram('launchctl')
-
-/** The test hook naming a stand-in for `launchctl`. */
-export const LAUNCHCTL_VARIABLE = SYSTEM_PROGRAM_VARIABLES.launchctl
+import { runProgram, runResultText, type RunResult } from './run.ts'
+import { inheritedTestHooks, SYSTEM_PROGRAM_VARIABLES, systemProgram } from './system-programs.ts'
 
 /** How long one `launchctl` call may take. A `bootout` waits for the job's process to exit. */
 export const LAUNCHCTL_TIMEOUT_MS = 30_000
@@ -64,42 +59,7 @@ export function autostartPlistPath(): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Plists
-
-export type PlistValue = string | boolean | readonly string[] | Readonly<Record<string, string | boolean>>
-
-function escapeXml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-/**
- * An XML plist of one top-level dictionary, which is all a job needs. Values are strings,
- * booleans, arrays of strings, or dictionaries of strings and booleans.
- */
-export function plistXml(root: Readonly<Record<string, PlistValue>>): string {
-  const lines = [
-    '<?xml version="1.0" encoding="UTF-8"?>',
-    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-    '<plist version="1.0">',
-    '<dict>'
-  ]
-  const string = (value: string): string => `<string>${escapeXml(value)}</string>`
-  const scalar = (value: string | boolean): string => typeof value === 'boolean' ? (value ? '<true/>' : '<false/>') : string(value)
-  for (const [key, value] of Object.entries(root)) {
-    lines.push(`  <key>${escapeXml(key)}</key>`)
-    if (typeof value === 'string' || typeof value === 'boolean') lines.push(`  ${scalar(value)}`)
-    else if (Array.isArray(value)) lines.push('  <array>', ...(value as readonly string[]).map((item) => `    ${string(item)}`), '  </array>')
-    else {
-      lines.push('  <dict>')
-      for (const [name, item] of Object.entries(value as Readonly<Record<string, string | boolean>>)) {
-        lines.push(`    <key>${escapeXml(name)}</key>`, `    ${scalar(item)}`)
-      }
-      lines.push('  </dict>')
-    }
-  }
-  lines.push('</dict>', '</plist>', '')
-  return lines.join('\n')
-}
+// The login item
 
 /**
  * The variables a login item carries besides HOME and PATH, when they are set: the data
@@ -111,12 +71,27 @@ export const DAEMON_JOB_VARIABLES: readonly string[] = [
   'KURMIS_HOME',
   'KURMIS_CLAUDE_BIN',
   'KURMIS_UPSTREAM_URL',
-  'KURMIS_SECURITY_PROGRAM',
   'KURMIS_ENTRY',
-  ...Object.values(SYSTEM_PROGRAM_VARIABLES).filter((name) => name !== 'KURMIS_SECURITY_PROGRAM'),
+  ...Object.values(SYSTEM_PROGRAM_VARIABLES),
   GUARD_VARIABLE,
   REFUSAL_LOG_VARIABLE
 ]
+
+/**
+ * The variables of `DAEMON_JOB_VARIABLES` that are set in `env`, or for a test's stand-ins in
+ * `processEnv` (`inheritedTestHooks`), with `KURMIS_HOME` made absolute by `resolvePath`, since
+ * the daemon starts in another folder.
+ */
+export function daemonJobVariables(env: NodeJS.ProcessEnv, processEnv: NodeJS.ProcessEnv,
+  resolvePath: (path: string) => string): Record<string, string> {
+  const out: Record<string, string> = {}
+  const hooks = inheritedTestHooks(env, processEnv)
+  for (const name of DAEMON_JOB_VARIABLES) {
+    const value = env[name] || hooks[name]
+    if (value !== undefined && value !== '') out[name] = name === 'KURMIS_HOME' ? resolvePath(value) : value
+  }
+  return out
+}
 
 /** The PATH the login item gets when the caller has none: Homebrew's folders and the system's. */
 const FALLBACK_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
@@ -129,17 +104,11 @@ const FALLBACK_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:
  * `env` lacks them (`inheritedTestHooks`).
  */
 export function daemonJobEnvironment(env: NodeJS.ProcessEnv = process.env, processEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const out: Record<string, string> = {
+  return {
     HOME: env.HOME !== undefined && env.HOME !== '' ? env.HOME : homedir(),
-    PATH: env.PATH !== undefined && env.PATH !== '' ? env.PATH : FALLBACK_PATH
+    PATH: env.PATH !== undefined && env.PATH !== '' ? env.PATH : FALLBACK_PATH,
+    ...daemonJobVariables(env, processEnv, resolve)
   }
-  const hooks = inheritedTestHooks(env, processEnv)
-  for (const name of DAEMON_JOB_VARIABLES) {
-    const value = env[name] || hooks[name]
-    if (value === undefined || value === '') continue
-    out[name] = name === 'KURMIS_HOME' ? resolve(value) : value
-  }
-  return out
 }
 
 export interface DaemonJobPlist {
@@ -154,16 +123,30 @@ export interface DaemonJobPlist {
  * and throw its output away. The daemon writes its own log, so nothing goes to a file here.
  */
 export function daemonJobPlist(job: DaemonJobPlist): string {
-  return plistXml({
-    Label: job.label,
-    ProgramArguments: job.programArguments,
-    EnvironmentVariables: job.environment,
-    WorkingDirectory: job.environment.HOME ?? homedir(),
-    RunAtLoad: true,
-    AbandonProcessGroup: true,
-    StandardOutPath: '/dev/null',
-    StandardErrorPath: '/dev/null'
-  })
+  const string = (value: string): string => `<string>${escapeXml(value)}</string>`
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+    '<plist version="1.0">',
+    '<dict>',
+    '  <key>Label</key>', `  ${string(job.label)}`,
+    '  <key>ProgramArguments</key>', '  <array>', ...job.programArguments.map((arg) => `    ${string(arg)}`), '  </array>',
+    '  <key>EnvironmentVariables</key>', '  <dict>',
+    ...Object.entries(job.environment).flatMap(([name, value]) => [`    <key>${escapeXml(name)}</key>`, `    ${string(value)}`]),
+    '  </dict>',
+    '  <key>WorkingDirectory</key>', `  ${string(job.environment.HOME ?? homedir())}`,
+    '  <key>RunAtLoad</key>', '  <true/>',
+    '  <key>AbandonProcessGroup</key>', '  <true/>',
+    '  <key>StandardOutPath</key>', '  <string>/dev/null</string>',
+    '  <key>StandardErrorPath</key>', '  <string>/dev/null</string>',
+    '</dict>',
+    '</plist>',
+    ''
+  ].join('\n')
+}
+
+function escapeXml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -194,13 +177,6 @@ export async function jobState(label: string, launchctl: Launchctl = launchctlFo
   return parseLaunchctlPrint(await launchctl(['print', `${guiDomain(uid)}/${label}`]))
 }
 
-/** What launchctl printed, in one line, or why it did not run. */
-function launchctlSaid(result: RunResult): string {
-  if (result.error !== null) return result.error
-  const said = `${result.stderr}\n${result.stdout}`.replace(/\s+/g, ' ').trim()
-  return said === '' ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`
-}
-
 /**
  * Whether a failed `bootout` means the job was not loaded: launchctl answers 3 ("No such
  * process") or 113 ("Could not find specified service") for that.
@@ -222,7 +198,7 @@ export function isMissingGuiDomain(result: RunResult): boolean {
 
 /** A sentence saying why `launchctl bootstrap` did not load a job. */
 export function bootstrapFailure(result: RunResult, domain: string): string {
-  const said = launchctlSaid(result)
+  const said = runResultText(result)
   if (result.error === null && isMissingGuiDomain(result)) {
     return `launchd could not load the job into ${domain} (${said}). This usually means nobody is logged in at this ` +
       "Mac's screen: the GUI session, the only one that can read the login Keychain, exists only while you are " +
@@ -247,5 +223,5 @@ export async function bootoutJob(label: string, launchctl: Launchctl = launchctl
   const result = await launchctl(['bootout', target])
   if (result.code === 0 && result.error === null) return true
   if (result.error === null && isNotLoaded(result)) return false
-  throw new Error(`launchd could not unload ${target} (${launchctlSaid(result)}).`)
+  throw new Error(`launchd could not unload ${target} (${runResultText(result)}).`)
 }

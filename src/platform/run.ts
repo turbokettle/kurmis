@@ -156,3 +156,10 @@ export function runProgram(program: string, args: readonly string[], options: Ru
     })
   })
 }
+
+/** What a run printed, in one line, after its exit code, or why it did not run. */
+export function runResultText(result: RunResult): string {
+  if (result.error !== null) return result.error
+  const said = `${result.stderr}\n${result.stdout}`.replace(/\s+/g, ' ').trim()
+  return said === '' ? `exit ${String(result.code)}` : `exit ${String(result.code)}: ${said}`
+}
