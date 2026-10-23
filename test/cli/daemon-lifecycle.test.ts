@@ -242,7 +242,7 @@ describe('kurmis daemon', () => {
     // The build with the higher control API version replaces the one with the lower.
     const replaced = await kurmis(bundles.highApi, home, ['daemon', 'start'])
     expect(replaced.code, replaced.stderr).toBe(0)
-    expect(replaced.stdout).toContain('replacing version 0.5.0')
+    expect(replaced.stdout).toContain('replacing the daemon that ran before')
     const second = daemonInfo(home)?.pid ?? 0
     expect(second).not.toBe(first)
     await waitUntil(() => !processExists(first), 10_000, 'the replaced daemon to exit')
@@ -308,7 +308,7 @@ describe('kurmis daemon', () => {
     expect(restarted.code).toBe(0)
     const after = daemonInfo(home)?.pid ?? 0
     expect(after).not.toBe(before)
-    expect(restarted.stdout).toContain(`(pid ${String(after)})`)
+    expect(restarted.stdout).toContain(`(pid ${String(after)}), replacing the daemon that ran before, which stops`)
     await waitUntil(() => !processExists(before), 10_000, 'the old daemon to exit')
   }, 60_000)
 

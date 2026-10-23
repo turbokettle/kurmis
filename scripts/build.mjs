@@ -3,7 +3,10 @@
 import { build } from 'esbuild'
 import { chmodSync, readFileSync } from 'node:fs'
 
-const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+const { version: packageVersion } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+// The build time in UTC (`0.1.0+20261023120000`). A daemon of an earlier build counts as older,
+// so an update replaces the running daemon although the version number in package.json is the same.
+const version = `${packageVersion}+${new Date().toISOString().replace(/\D/g, '').slice(0, 14)}`
 
 await build({
   entryPoints: ['src/cli/main.ts'],

@@ -60,6 +60,11 @@ describe('compareVersions', () => {
     ['1.0.0', '1.0.0-beta.1', 1],
     ['1.0.0-beta.1', '1.0.0-beta.2', -1],
     ['1.0.0+build.5', '1.0.0', 0],
+    ['0.1.0+20261023120000', '0.1.0+20261023130000', -1],
+    ['0.1.0+20261023130000', '0.1.0+20261023120000', 1],
+    ['0.1.0+20261023120000', '0.1.0+20261023120000', 0],
+    ['0.1.0+20261023130000', '0.2.0+20261023120000', -1],
+    ['0.1.0+20261023120000', '0.1.0', 0],
     [' 2.0.0 ', '2.0.0', 0]
   ] as const)('%s against %s is %d', (a, b, expected) => {
     expect(compareVersions(a, b)).toBe(expected)
@@ -78,6 +83,11 @@ describe('shouldReplaceDaemon', () => {
     expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: CONTROL_API_VERSION - 1 }, '0.2.0')).toBe(true)
     expect(shouldReplaceDaemon({ version: '0.2.0' }, '0.2.0')).toBe(true)
     expect(shouldReplaceDaemon({ version: '0.2.0', apiVersion: 7 }, '0.2.0', 7)).toBe(false)
+  })
+
+  it('replaces a daemon of an earlier build of the same version', () => {
+    expect(shouldReplaceDaemon({ version: '0.1.0+20261023120000', apiVersion: CONTROL_API_VERSION }, '0.1.0+20261023130000')).toBe(true)
+    expect(shouldReplaceDaemon({ version: '0.1.0+20261023130000', apiVersion: CONTROL_API_VERSION }, '0.1.0+20261023120000')).toBe(false)
   })
 
   it('never replaces a newer daemon, one of the same version with a higher control API version, or one whose version cannot be compared', () => {

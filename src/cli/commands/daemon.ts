@@ -49,7 +49,8 @@ function describeStart(result: StartResult): string {
         `this kurmis is ${versionText(kurmisVersion, CONTROL_API_VERSION)}, and can use it.`
       : `The kurmis daemon ${connection.version} already runs ${where}.`
   }
-  const replaced = result.replaced === null ? '' : `, replacing version ${result.replaced}, which stops once its open requests finish`
+  const which = result.replaced === connection.version ? 'the daemon that ran before' : `version ${result.replaced ?? ''}`
+  const replaced = result.replaced === null ? '' : `, replacing ${which}, which stops once its open requests finish`
   return `Started the kurmis daemon ${connection.version} ${where}${replaced}.`
 }
 
@@ -218,7 +219,8 @@ needed.
   stop [--now]            Stop it after it finishes its open requests, waiting at most 30
                           seconds. With --now it stops at once, and open Claude sessions
                           retry the requests it cut.
-  restart                 Start a new one now; the old one finishes its open requests first.
+  restart                 Start a new one now; the old one finishes its open requests in
+                          the background.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
   run                     Run it in this terminal instead of the background.

@@ -212,7 +212,7 @@ describe('the kurmis daemon, end to end', () => {
         code: 0,
         stderr: '',
         stdout: `Started the kurmis daemon ${PACKAGE_VERSION} on 127.0.0.1:${String(world.port)} (pid ${String(after.pid)}), ` +
-          `replacing version ${PACKAGE_VERSION}, which stops once its open requests finish.\n`
+          'replacing the daemon that ran before, which stops once its open requests finish.\n'
       })
       expect(open.settled()).toBe(false)
       expect(processExists(before.pid)).toBe(true)
@@ -297,7 +297,7 @@ describe('the kurmis daemon, end to end', () => {
     expect(started).toMatchObject({
       code: 0,
       stdout: `Started the kurmis daemon ${PACKAGE_VERSION} on 127.0.0.1:${String(port)} (pid ${String(after.pid)}), ` +
-        `replacing version ${PACKAGE_VERSION}, which stops once its open requests finish.\n`
+        'replacing the daemon that ran before, which stops once its open requests finish.\n'
     })
     await waitUntil(() => !processExists(before.pid), GENEROUS_MS, 'the daemon on the old port to exit')
     expect(await portAcceptsConnections(world.port)).toBe(false)

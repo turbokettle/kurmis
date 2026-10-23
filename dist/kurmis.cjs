@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023094733" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -1162,15 +1162,19 @@ function compareVersions(a, b) {
     const y = right.parts[index] ?? 0;
     if (x !== y) return x < y ? -1 : 1;
   }
-  if (left.pre === right.pre) return 0;
+  if (left.pre === right.pre) {
+    if (left.build === null || right.build === null || left.build === right.build) return 0;
+    return left.build < right.build ? -1 : 1;
+  }
   if (left.pre === null) return 1;
   if (right.pre === null) return -1;
   return left.pre < right.pre ? -1 : 1;
 }
 function parseVersion(text) {
-  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(text.trim());
+  const match = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/.exec(text.trim());
   if (match === null) return null;
-  return { parts: (match[1] ?? "").split(".").map(Number), pre: match[2] ?? null };
+  const build = match[3] !== void 0 && /^\d+$/.test(match[3]) ? Number(match[3]) : null;
+  return { parts: (match[1] ?? "").split(".").map(Number), pre: match[2] ?? null, build };
 }
 function daemonAge(daemon, version, apiVersion = CONTROL_API_VERSION) {
   const order = compareVersions(daemon.version, version);
@@ -7490,7 +7494,8 @@ function describeStart(result) {
     const newer = daemonAge(connection, kurmisVersion) === "newer";
     return newer ? `A newer kurmis daemon (${versionText(connection.version, connection.apiVersion)}) already runs ${where}; this kurmis is ${versionText(kurmisVersion, CONTROL_API_VERSION)}, and can use it.` : `The kurmis daemon ${connection.version} already runs ${where}.`;
   }
-  const replaced = result.replaced === null ? "" : `, replacing version ${result.replaced}, which stops once its open requests finish`;
+  const which = result.replaced === connection.version ? "the daemon that ran before" : `version ${result.replaced ?? ""}`;
+  const replaced = result.replaced === null ? "" : `, replacing ${which}, which stops once its open requests finish`;
   return `Started the kurmis daemon ${connection.version} ${where}${replaced}.`;
 }
 var start = async (args, context) => {
@@ -7631,7 +7636,8 @@ needed.
   stop [--now]            Stop it after it finishes its open requests, waiting at most 30
                           seconds. With --now it stops at once, and open Claude sessions
                           retry the requests it cut.
-  restart                 Start a new one now; the old one finishes its open requests first.
+  restart                 Start a new one now; the old one finishes its open requests in
+                          the background.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
                           does not run.
   run                     Run it in this terminal instead of the background.

@@ -175,7 +175,7 @@ dropped and the rest is kept, and a file that is not JSON reads as empty.
 }
 
 // daemon.json
-{ "pid": 4242, "port": 28411, "version": "0.1.0", "startedAt": 1768478400000 }
+{ "pid": 4242, "port": 28411, "version": "0.1.0+20261023120000", "startedAt": 1768478400000 }
 
 // key: 64 hex characters on one line
 ```
@@ -456,7 +456,10 @@ once the stop is sent that counts as the old daemon going away, not as another p
 bind is tried again. The old daemon frees the port as soon as it has
 answered, and finishes its open requests in the background while the new one serves. A routed Claude
 CLI retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
-in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`), and an older kurmis
+in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`). `scripts/build.mjs`
+adds the build time to the version in `package.json` (`0.1.0+20261023120000`), and of two builds
+of one version the later is newer, so an update replaces the daemon although the version number
+stays the same (`compareVersions` in `src/daemon/lifecycle.ts`). An older kurmis
 never replaces a newer daemon, so two builds of one version with different control API versions
 do not keep replacing each other: the one with the higher control API version stays. A daemon on another port than `config.json` names (the port was
 changed while it ran) is not reached by the new daemon's bind, so the CLI asks it to stop with a

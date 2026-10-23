@@ -311,13 +311,10 @@ seconds for them; `stop --now` stops it at once and cuts those requests, and an 
 session then sees a dropped connection and retries the request; `restart` stops it and starts a
 new one; `run` runs it in the terminal, which helps when looking into a problem.
 
-A daemon is older when its kurmis version is lower, or when the version is the same and its
-control API version (the version of the requests the commands send it) is lower. A newer daemon
-is never replaced. When its control API version is not the one this kurmis speaks, this kurmis
-cannot use it. `kurmis claude`, `kurmis setup` and `kurmis daemon start` then stop and say
-that a newer daemon runs. Update
-this kurmis, or run `kurmis daemon stop` and then the command again, which starts a daemon of
-this kurmis.
+A daemon is older when it comes from an earlier build of kurmis, so updating kurmis replaces the
+running daemon at the next command that starts it. A newer daemon is never replaced. When this
+kurmis cannot use it, `kurmis claude`, `kurmis setup` and `kurmis daemon start` say so; update
+kurmis, or run `kurmis daemon stop` and then the command again.
 
 ## Uninstall
 
