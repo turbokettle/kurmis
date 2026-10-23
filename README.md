@@ -1,4 +1,4 @@
-<img src="assets/kurmis-icon.svg" alt="" width="96" align="right">
+<img src="assets/kurmis-icon.svg" alt="" width="96">
 
 # kurmis
 
