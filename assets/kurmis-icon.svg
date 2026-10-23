@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">kurmis</title>
+  <rect width="512" height="512" fill="#061E27"/>
+  <g fill="none" stroke="#22D3EE" stroke-width="20" stroke-linecap="butt" stroke-linejoin="round">
+    <path d="M 96 350 V 336 A 48 48 0 0 1 144 288 H 368 A 48 48 0 0 1 416 336 V 350"/>
+    <path d="M 256 288 V 350"/>
+    <path d="M 144 288 C 192 288 200 112 280 112 C 336 112 372 155 396.1 175.3"/>
+    <path d="M 396.1 208.7 C 373 228 360 248 320 248 C 280 248 256 256 256 288"/>
+    <circle cx="416" cy="192" r="26"/>
+    <circle cx="96" cy="376" r="26"/>
+    <circle cx="256" cy="376" r="26"/>
+    <circle cx="416" cy="376" r="26"/>
+  </g>
+  <circle cx="316" cy="176" r="12" fill="#22D3EE"/>
+</svg>

@@ -1,3 +1,5 @@
+<img src="assets/kurmis-icon.svg" alt="" width="96" align="right">
+
 # kurmis
 
 Kurmis lets one person use several Claude Code subscription logins on one machine.
