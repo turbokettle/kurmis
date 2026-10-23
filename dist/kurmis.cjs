@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101826" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101848" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -7778,11 +7778,11 @@ function otherOrganization(config, login, account, home) {
     return identity !== null && isSameEmail(identity.email, account.email) && !isSameClaudeAccount(identity, account);
   }) ?? null;
 }
-var AddedMeanwhile = class extends Error {
+var AlreadyALogin = class extends Error {
   constructor(existing) {
     super(`${existing.id} has the same account`);
     this.existing = existing;
-    this.name = "AddedMeanwhile";
+    this.name = "AlreadyALogin";
   }
   existing;
 };
@@ -7846,28 +7846,17 @@ async function signIn(run2) {
   }
   const email = identity?.email ?? null;
   const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null };
-  if (isNew && account !== null) {
-    let config;
-    try {
-      config = loadConfig();
-    } catch (error) {
-      if (!(error instanceof ConfigError)) throw error;
-      return fail2(context, `${name} is signed in, but config.json could not be read: ${error.message} "kurmis logout ${ref.id}" removes its credentials and folder.`);
-    }
-    const existing = sameAccount(config, ref, account, deps.home());
-    if (existing !== null) return await dropDuplicate(run2, existing, account.email);
-  }
   let saved;
   try {
     saved = changeConfig((config) => {
-      const meanwhile = isNew && account !== null ? sameAccount(config, ref, account, deps.home()) : null;
-      if (meanwhile !== null) throw new AddedMeanwhile(meanwhile);
+      const existing = isNew && account !== null ? sameAccount(config, ref, account, deps.home()) : null;
+      if (existing !== null) throw new AlreadyALogin(existing);
       let next = isNew ? addLogin(config, ref.id, alias === void 0 ? {} : { alias }) : config;
       if (!isNew && alias !== void 0) next = updateLogin(next, ref.id, { alias });
       return followEmail(next, ref.id, email);
     });
   } catch (error) {
-    if (error instanceof AddedMeanwhile && email !== null) return await dropDuplicate(run2, error.existing, email);
+    if (error instanceof AlreadyALogin && email !== null) return await dropDuplicate(run2, error.existing, email);
     if (!(error instanceof ConfigError)) throw error;
     return fail2(context, isNew ? `${name} is signed in but could not be added: ${error.message} "kurmis logout ${ref.id}" removes its credentials and folder.` : `${name} is signed in again but its settings could not be saved: ${error.message}`);
   }

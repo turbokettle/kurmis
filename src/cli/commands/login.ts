@@ -21,8 +21,8 @@
 // personal plan and a Team or Enterprise seat of one email are two logins, and the second gets
 // the alias with `-2`. When a new sign-in is an account that is already a kurmis login, the login
 // plain claude uses included, the new folder is signed out again and deleted, and the command
-// says which login that account already is. This is checked again under the config lock, before
-// the login is added. When an existing login is signed in to an account that another login
+// says which login that account already is. This is checked under the config lock, as the login
+// is added. When an existing login is signed in to an account that another login
 // already has, the command warns and signs nothing out.
 //
 // The run holds the login's lock (`login-lock.ts`) from before it creates the folder until it is
@@ -159,13 +159,13 @@ function otherOrganization(config: KurmisConfig, login: LoginRef, account: Claud
 }
 
 /**
- * Thrown inside `changeConfig` when the config read under the lock has a login of the new
- * sign-in's account: another `kurmis login` of the same account added it meanwhile.
+ * Thrown inside `changeConfig` when the config read under the lock already has a login of the
+ * new sign-in's account.
  */
-class AddedMeanwhile extends Error {
+class AlreadyALogin extends Error {
   constructor(readonly existing: LoginSettings) {
     super(`${existing.id} has the same account`)
-    this.name = 'AddedMeanwhile'
+    this.name = 'AlreadyALogin'
   }
 }
 
@@ -262,33 +262,20 @@ async function signIn(run: SignInRun): Promise<number> {
   const email = identity?.email ?? null
   const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null }
 
-  if (isNew && account !== null) {
-    let config: KurmisConfig
-    try {
-      config = loadConfig()
-    } catch (error) {
-      if (!(error instanceof ConfigError)) throw error
-      return fail(context, `${name} is signed in, but config.json could not be read: ${error.message} ` +
-        `"kurmis logout ${ref.id}" removes its credentials and folder.`)
-    }
-    const existing = sameAccount(config, ref, account, deps.home())
-    if (existing !== null) return await dropDuplicate(run, existing, account.email)
-  }
-
   let saved: KurmisConfig
   try {
     saved = changeConfig((config) => {
-      // The account is checked again from the config read under the lock, so two runs of
-      // `kurmis login` that sign in to one account at the same moment add it once.
-      const meanwhile = isNew && account !== null ? sameAccount(config, ref, account, deps.home()) : null
-      if (meanwhile !== null) throw new AddedMeanwhile(meanwhile)
+      // The account is checked in the config read under the lock, so two runs of `kurmis login`
+      // that sign in to one account at the same moment add it once.
+      const existing = isNew && account !== null ? sameAccount(config, ref, account, deps.home()) : null
+      if (existing !== null) throw new AlreadyALogin(existing)
       let next = isNew ? addLogin(config, ref.id, alias === undefined ? {} : { alias }) : config
       if (!isNew && alias !== undefined) next = updateLogin(next, ref.id, { alias })
       // Without an email the alias stays as it is.
       return followEmail(next, ref.id, email)
     })
   } catch (error) {
-    if (error instanceof AddedMeanwhile && email !== null) return await dropDuplicate(run, error.existing, email)
+    if (error instanceof AlreadyALogin && email !== null) return await dropDuplicate(run, error.existing, email)
     if (!(error instanceof ConfigError)) throw error
     // The login is signed in, so its credentials are kept; logout removes them.
     return fail(context, isNew

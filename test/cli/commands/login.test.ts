@@ -475,15 +475,15 @@ describe('kurmis login of an account that is already a kurmis login', () => {
     expect(findLogin(loadConfig(), 'workclaude')?.alias).toBe('work-example')
   })
 
-  it('adds an account once when another run added it after the first check', async () => {
+  it('adds an account once when another run added it while this one signed in', async () => {
     writeTestConfig()
     const signOut = fakeRun()
-    // The second look at the home folder is the check before the config is changed. Another
-    // `kurmis login` of the same account saves its login just then.
+    // The first look at the home folder reads the new sign-in's account. Another `kurmis login`
+    // of the same account saves its login just then, before this one changes the config.
     let calls = 0
     const homeWithRace = (): string => {
       calls++
-      if (calls === 2) {
+      if (calls === 1) {
         writeTestConfig({ extras: [{ id: 'raceclaude', alias: 'same-example' }] })
         writeClaudeIdentity(join(loginFolder(claudeRef('raceclaude')), '.claude.json'), { email: 'same@example.com' })
       }
