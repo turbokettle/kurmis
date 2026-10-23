@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101416" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101437" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -1392,13 +1392,6 @@ async function writeJsonFile(path, value, options) {
 function isMissing(error) {
   return error?.code === "ENOENT";
 }
-function parseJsonText(text) {
-  try {
-    return { status: "ok", value: JSON.parse(text), text };
-  } catch (error) {
-    return { status: "corrupt", reason: error instanceof Error ? error.message : String(error) };
-  }
-}
 function readJsonFileSync(path) {
   let text;
   try {
@@ -1407,7 +1400,11 @@ function readJsonFileSync(path) {
     if (isMissing(error)) return { status: "missing" };
     throw error;
   }
-  return parseJsonText(text);
+  try {
+    return { status: "ok", value: JSON.parse(text) };
+  } catch (error) {
+    return { status: "corrupt", reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 // src/data/login-id.ts
@@ -1630,12 +1627,6 @@ function statePath() {
 function logPath() {
   return (0, import_node_path3.join)(kurmisHome(), "daemon.log");
 }
-function previousLogPath() {
-  return (0, import_node_path3.join)(kurmisHome(), "daemon.log.1");
-}
-function configLockPath() {
-  return (0, import_node_path3.join)(kurmisHome(), "config.json.lock");
-}
 function ownClaudeProbeFolder() {
   return (0, import_node_path3.join)(kurmisHome(), "probe", "claude-own");
 }
@@ -1716,7 +1707,7 @@ function defaultConfig() {
 }
 function ensurePlainClaudeLogin(config) {
   if (config.logins.some((login) => login.usedByPlainClaude)) return config;
-  const id = newLoginId([...loginIds(config), ...config.logins.map((login) => login.alias)]);
+  const id = newLoginIdFor(config);
   return { ...config, logins: ordered([...config.logins, newLoginSettings({ id, usedByPlainClaude: true })]) };
 }
 function ordered(logins) {
@@ -1797,17 +1788,14 @@ function parseConfig(value, file) {
   });
   return { version: CONFIG_VERSION, port, logins: ordered(logins) };
 }
-function readConfigFile(path) {
+function readConfig(path = configPath()) {
   const read = readJsonFileSync(path);
   if (read.status === "missing") return emptyConfig();
   if (read.status === "corrupt") throw new ConfigError(`${path} is not valid JSON: ${read.reason}`);
   return withConfigErrors(() => parseConfig(read.value, path));
 }
-function readConfig(path = configPath()) {
-  return readConfigFile(path);
-}
 function loadConfig(path = configPath(), lockOptions = {}) {
-  const config = readConfigFile(path);
+  const config = readConfig(path);
   if (ensurePlainClaudeLogin(config) === config) return config;
   return changeConfig((current) => current, path, lockOptions);
 }
@@ -1825,7 +1813,7 @@ function newLoginIdFor(config) {
 }
 function resolveLogin(config, text) {
   const name = text.trim().toLowerCase();
-  const found = config.logins.find((login) => login.id === name) ?? config.logins.find((login) => login.alias === name);
+  const found = config.logins.find((login) => login.id === name || login.alias === name);
   if (found !== void 0) return { login: found };
   return { error: `there is no login called "${name}"` };
 }
@@ -1878,10 +1866,9 @@ function capitalized(text) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 function changeConfig(change, path = configPath(), lockOptions = {}) {
-  const lockPath = path === configPath() ? configLockPath() : `${path}.lock`;
   try {
-    return withFileLockSync(lockPath, () => {
-      const next = change(ensurePlainClaudeLogin(readConfigFile(path)));
+    return withFileLockSync(`${path}.lock`, () => {
+      const next = change(ensurePlainClaudeLogin(readConfig(path)));
       saveConfig(next, path);
       return next;
     }, lockOptions);
@@ -3558,10 +3545,10 @@ function claudeUserSettingsPath(env, home = (0, import_node_os6.homedir)()) {
   const configDir = env.CLAUDE_CONFIG_DIR;
   return configDir !== void 0 && configDir !== "" ? (0, import_node_path11.join)(configDir, "settings.json") : (0, import_node_path11.join)(home, ".claude", "settings.json");
 }
-function readUserSettingsEnv(path, readFile2 = (file) => (0, import_node_fs10.readFileSync)(file, "utf8")) {
+function readUserSettingsEnv(path, readFile = (file) => (0, import_node_fs10.readFileSync)(file, "utf8")) {
   let text;
   try {
-    text = readFile2(path);
+    text = readFile(path);
   } catch (error) {
     const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
     if (code === "ENOENT" || code === "ENOTDIR") return { env: null, warning: null };
@@ -3871,7 +3858,6 @@ var LOG_REASONS = [
   "unauthorized",
   "bad_secret",
   "no_credentials",
-  "token_expired",
   "timeout",
   /** A program the daemon started (a usage probe's CLI) ended before it answered. */
   "exited",
@@ -3885,11 +3871,8 @@ var LOG_REASONS = [
   /** A control `stop` named a wait of 0 (`kurmis daemon stop --now`). */
   "stop_now",
   "signal",
-  "replaced",
   "error",
-  "config_changed",
   "pinned",
-  "out_of_pool",
   // The macOS Keychain refused the read: it is locked, or the daemon runs in an ssh session.
   "not_allowed",
   "other"
@@ -3953,7 +3936,7 @@ function formatLogLine(event, fields = {}, now = Date.now()) {
 var DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024;
 function openDaemonLog(options = {}) {
   const path = options.path ?? logPath();
-  const previous = options.previousPath ?? (options.path === void 0 ? previousLogPath() : `${path}.1`);
+  const previous = `${path}.1`;
   const maxBytes = options.maxBytes ?? DEFAULT_LOG_MAX_BYTES;
   const now = options.now ?? Date.now;
   let size = null;
@@ -4765,9 +4748,6 @@ function createCoalescedWriter(write, options) {
         timer = null;
       }
       if (dirty) await run2();
-    },
-    pending() {
-      return dirty || inFlight !== null;
     }
   };
 }

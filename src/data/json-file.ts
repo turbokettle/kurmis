@@ -5,7 +5,7 @@
 // temp file is created with O_EXCL, so a write only ever removes a temp file it made itself.
 import { randomBytes } from 'node:crypto'
 import { closeSync, constants, fsyncSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs'
-import { open, readFile, rm } from 'node:fs/promises'
+import { open, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
   makePrivateDirSync,
@@ -88,19 +88,11 @@ export async function writeJsonFile(path: string, value: unknown, options?: Writ
  */
 export type JsonReadResult =
   | { status: 'missing' }
-  | { status: 'ok'; value: unknown; text: string }
+  | { status: 'ok'; value: unknown }
   | { status: 'corrupt'; reason: string }
 
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
-}
-
-function parseJsonText(text: string): JsonReadResult {
-  try {
-    return { status: 'ok', value: JSON.parse(text) as unknown, text }
-  } catch (error) {
-    return { status: 'corrupt', reason: error instanceof Error ? error.message : String(error) }
-  }
 }
 
 export function readJsonFileSync(path: string): JsonReadResult {
@@ -111,16 +103,9 @@ export function readJsonFileSync(path: string): JsonReadResult {
     if (isMissing(error)) return { status: 'missing' }
     throw error
   }
-  return parseJsonText(text)
-}
-
-export async function readJsonFile(path: string): Promise<JsonReadResult> {
-  let text: string
   try {
-    text = await readFile(path, 'utf8')
+    return { status: 'ok', value: JSON.parse(text) as unknown }
   } catch (error) {
-    if (isMissing(error)) return { status: 'missing' }
-    throw error
+    return { status: 'corrupt', reason: error instanceof Error ? error.message : String(error) }
   }
-  return parseJsonText(text)
 }

@@ -16,7 +16,7 @@ import { ALIAS_RULE, automaticAlias, isAliasText } from '../core/login-alias.ts'
 import { readJsonFileSync, writeJsonFileSync } from './json-file.ts'
 import { isLoginId, newLoginId, type LoginId, type LoginRef } from './login-id.ts'
 import { LockTimeoutError, withFileLockSync, type FileLockOptions } from './lock.ts'
-import { configLockPath, configPath } from './paths.ts'
+import { configPath } from './paths.ts'
 import {
   child,
   DataFileError,
@@ -84,11 +84,6 @@ export class ConfigError extends Error {
   }
 }
 
-/** Whether a login is the one plain claude uses, which kurmis never signs out. */
-export function isUsedByPlainClaude(login: LoginRef): boolean {
-  return login.usedByPlainClaude
-}
-
 /** The login plain claude uses. Every loaded config has one. */
 export function plainClaudeLogin(config: KurmisConfig): LoginSettings {
   const own = config.logins.find((login) => login.usedByPlainClaude)
@@ -140,10 +135,9 @@ export function defaultConfig(): KurmisConfig {
  * The config with a login for plain claude, added with a new id when the config has none. The
  * same object when it has one.
  */
-export function ensurePlainClaudeLogin(config: KurmisConfig): KurmisConfig {
+function ensurePlainClaudeLogin(config: KurmisConfig): KurmisConfig {
   if (config.logins.some((login) => login.usedByPlainClaude)) return config
-  // A new id must not be another login's alias either, or the file would be refused on the next load.
-  const id = newLoginId([...loginIds(config), ...config.logins.map((login) => login.alias)])
+  const id = newLoginIdFor(config)
   return { ...config, logins: ordered([...config.logins, newLoginSettings({ id, usedByPlainClaude: true })]) }
 }
 
@@ -245,14 +239,6 @@ export function parseConfig(value: unknown, file: string): KurmisConfig {
   return { version: CONFIG_VERSION, port, logins: ordered(logins) }
 }
 
-/** Reads `config.json` as it is: a config with no logins when there is no file. */
-function readConfigFile(path: string): KurmisConfig {
-  const read = readJsonFileSync(path)
-  if (read.status === 'missing') return emptyConfig()
-  if (read.status === 'corrupt') throw new ConfigError(`${path} is not valid JSON: ${read.reason}`)
-  return withConfigErrors(() => parseConfig(read.value, path))
-}
-
 /**
  * Reads `config.json` without writing anything, for a reader that must not change the data
  * folder (`findDaemon`, and `kurmis setup` before it removes anything). The login of plain
@@ -261,7 +247,10 @@ function readConfigFile(path: string): KurmisConfig {
  * `ConfigError`, as for `loadConfig`.
  */
 export function readConfig(path = configPath()): KurmisConfig {
-  return readConfigFile(path)
+  const read = readJsonFileSync(path)
+  if (read.status === 'missing') return emptyConfig()
+  if (read.status === 'corrupt') throw new ConfigError(`${path} is not valid JSON: ${read.reason}`)
+  return withConfigErrors(() => parseConfig(read.value, path))
 }
 
 /**
@@ -271,7 +260,7 @@ export function readConfig(path = configPath()): KurmisConfig {
  * under the lock (`changeConfig`), so the id stays the same from then on.
  */
 export function loadConfig(path = configPath(), lockOptions: FileLockOptions = {}): KurmisConfig {
-  const config = readConfigFile(path)
+  const config = readConfig(path)
   if (ensurePlainClaudeLogin(config) === config) return config
   return changeConfig((current) => current, path, lockOptions)
 }
@@ -298,22 +287,14 @@ export function newLoginIdFor(config: KurmisConfig): LoginId {
   return newLoginId([...loginIds(config), ...config.logins.map((login) => login.alias)])
 }
 
-/** What `resolveLogin` found. */
-export type ResolvedLogin<L = LoginSettings> = { login: L } | { error: string }
-
-/** What `resolveLogin` needs of a login. */
-export interface NamedLogin {
-  id: string
-  alias: string
-}
-
 /**
- * The login a person named, by its alias or its id, without regard to case. The error is a
+ * The login a person named, by its alias or its id, without regard to case. No two logins can
+ * match: an id is never another login's alias (`parseConfig`, `addLogin`). The error is a
  * sentence without the command's name.
  */
-export function resolveLogin<L extends NamedLogin = LoginSettings>(config: { readonly logins: readonly L[] }, text: string): ResolvedLogin<L> {
+export function resolveLogin(config: KurmisConfig, text: string): { login: LoginSettings } | { error: string } {
   const name = text.trim().toLowerCase()
-  const found = config.logins.find((login) => login.id === name) ?? config.logins.find((login) => login.alias === name)
+  const found = config.logins.find((login) => login.id === name || login.alias === name)
   if (found !== undefined) return { login: found }
   return { error: `there is no login called "${name}"` }
 }
@@ -387,9 +368,8 @@ function capitalized(text: string): string {
 }
 
 /**
- * Loads the config, applies `change`, and saves the result, holding the lock file
- * (`configLockPath()`, or `<path>.lock` for another path) from before the read until after the
- * write, so two kurmis processes changing the config at the same moment both keep their change.
+ * Loads the config, applies `change`, and saves the result, holding the lock file `<path>.lock`
+ * (`config.json.lock`) from before the read until after the write, so two kurmis processes changing the config at the same moment both keep their change.
  * `change` gets the config with the login of plain claude in it and must not
  * call `changeConfig` itself. A lock that cannot be taken in time is a `ConfigError` saying who holds it.
  */
@@ -398,10 +378,9 @@ export function changeConfig(
   path = configPath(),
   lockOptions: FileLockOptions = {}
 ): KurmisConfig {
-  const lockPath = path === configPath() ? configLockPath() : `${path}.lock`
   try {
-    return withFileLockSync(lockPath, () => {
-      const next = change(ensurePlainClaudeLogin(readConfigFile(path)))
+    return withFileLockSync(`${path}.lock`, () => {
+      const next = change(ensurePlainClaudeLogin(readConfig(path)))
       saveConfig(next, path)
       return next
     }, lockOptions)

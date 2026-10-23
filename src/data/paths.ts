@@ -39,16 +39,6 @@ export function logPath(): string {
   return join(kurmisHome(), 'daemon.log')
 }
 
-/** The log as it was before its last rotation. */
-export function previousLogPath(): string {
-  return join(kurmisHome(), 'daemon.log.1')
-}
-
-/** The lock file `config.json`'s read-modify-write takes, so two CLIs do not lose each other's change. */
-export function configLockPath(): string {
-  return join(kurmisHome(), 'config.json.lock')
-}
-
 /**
  * The config folder (`CLAUDE_CONFIG_DIR`) of the usage probe of plain claude's login.
  * A probe on the user's own `~/.claude` would walk its transcripts and write into

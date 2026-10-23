@@ -6,7 +6,7 @@
 // that is not JSON reads as empty, and an entry that does not check out is dropped on its own
 // while the rest is kept.
 import type { AccountUsage, UsageWindow } from '../core/claude-usage.ts'
-import { readJsonFileSync, writeJsonFile, writeJsonFileSync } from './json-file.ts'
+import { readJsonFileSync, writeJsonFile } from './json-file.ts'
 import { isLoginId, type LoginId } from './login-id.ts'
 import { statePath } from './paths.ts'
 import { isPlainObject } from './validate.ts'
@@ -189,18 +189,11 @@ export async function saveState(state: DaemonState, path = statePath()): Promise
   await writeJsonFile(path, serializeState(state))
 }
 
-/** For the daemon's last write while it shuts down. */
-export function saveStateSync(state: DaemonState, path = statePath()): void {
-  writeJsonFileSync(path, serializeState(state))
-}
-
 export interface CoalescedWriter {
   /** Asks for a write. It happens at once, or `minIntervalMs` after the previous one started. */
   schedule(): void
   /** Writes now if a write was asked for and has not happened, and waits for it. */
   flush(): Promise<void>
-  /** Whether a write was asked for and has not finished yet. */
-  pending(): boolean
 }
 
 /**
@@ -257,9 +250,6 @@ export function createCoalescedWriter(
         timer = null
       }
       if (dirty) await run()
-    },
-    pending() {
-      return dirty || inFlight !== null
     }
   }
 }

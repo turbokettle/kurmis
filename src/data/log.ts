@@ -15,7 +15,7 @@ import { appendFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { makePrivateDirSync, PRIVATE_FILE_MODE, retryWhileLockedSync } from '../platform/files.ts'
 import { isLoginId, type LoginId } from './login-id.ts'
-import { logPath, previousLogPath } from './paths.ts'
+import { logPath } from './paths.ts'
 
 export const LOG_EVENTS = [
   'daemon_started',
@@ -60,7 +60,6 @@ export const LOG_REASONS = [
   'unauthorized',
   'bad_secret',
   'no_credentials',
-  'token_expired',
   'timeout',
   /** A program the daemon started (a usage probe's CLI) ended before it answered. */
   'exited',
@@ -74,11 +73,8 @@ export const LOG_REASONS = [
   /** A control `stop` named a wait of 0 (`kurmis daemon stop --now`). */
   'stop_now',
   'signal',
-  'replaced',
   'error',
-  'config_changed',
   'pinned',
-  'out_of_pool',
   // The macOS Keychain refused the read: it is locked, or the daemon runs in an ssh session.
   'not_allowed',
   'other'
@@ -190,8 +186,6 @@ export interface DaemonLog {
 
 export interface DaemonLogOptions {
   path?: string
-  /** Where the rotated file goes. Defaults to `daemon.log.1` beside `path`. */
-  previousPath?: string
   /** Default 5 MB. */
   maxBytes?: number
   now?: () => number
@@ -205,7 +199,7 @@ export const DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024
  */
 export function openDaemonLog(options: DaemonLogOptions = {}): DaemonLog {
   const path = options.path ?? logPath()
-  const previous = options.previousPath ?? (options.path === undefined ? previousLogPath() : `${path}.1`)
+  const previous = `${path}.1`
   const maxBytes = options.maxBytes ?? DEFAULT_LOG_MAX_BYTES
   const now = options.now ?? Date.now
   let size: number | null = null

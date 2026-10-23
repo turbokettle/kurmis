@@ -9,7 +9,6 @@ import {
   loginLockPath,
   logPath,
   ownClaudeProbeFolder,
-  previousLogPath,
   statePath
 } from '../../src/data/paths.ts'
 import { claudeRef, OWN_CLAUDE_REF } from '../logins.ts'
@@ -44,7 +43,6 @@ describe('file paths', () => {
     expect(statePath()).toBe(join(kurmisHome(), 'state.json'))
     expect(daemonFilePath()).toBe(join(kurmisHome(), 'daemon.json'))
     expect(logPath()).toBe(join(kurmisHome(), 'daemon.log'))
-    expect(previousLogPath()).toBe(join(kurmisHome(), 'daemon.log.1'))
     expect(ownClaudeProbeFolder()).toBe(join(kurmisHome(), 'probe', 'claude-own'))
   })
 

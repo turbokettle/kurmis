@@ -12,7 +12,6 @@ import {
   extraLogins,
   findLogin,
   followEmail,
-  isUsedByPlainClaude,
   loadConfig,
   loginIds,
   plainClaudeLogin,
@@ -28,8 +27,11 @@ import {
 } from '../../src/data/config.ts'
 import { readJsonFileSync } from '../../src/data/json-file.ts'
 import { isLoginId } from '../../src/data/login-id.ts'
-import { configLockPath, configPath } from '../../src/data/paths.ts'
+import { configPath } from '../../src/data/paths.ts'
 import { loginOf, OWN_CLAUDE, testConfig, writeTestConfig } from '../logins.ts'
+
+/** The lock file `changeConfig` takes around `config.json`. */
+const configLockPath = (): string => `${configPath()}.lock`
 
 function writeRaw(value: unknown): void {
   saveRawText(JSON.stringify(value))
@@ -242,8 +244,8 @@ describe("the login of plain claude", () => {
   it('is found by its setting, and is not an extra login', () => {
     const config = testConfig({ extras: [{ id: 'workclaude' }, { id: 'sideclaude1' }] })
     expect(plainClaudeLogin(config).id).toBe(OWN_CLAUDE)
-    expect(isUsedByPlainClaude(loginOf(config, OWN_CLAUDE))).toBe(true)
-    expect(isUsedByPlainClaude(loginOf(config, 'workclaude'))).toBe(false)
+    expect(loginOf(config, OWN_CLAUDE).usedByPlainClaude).toBe(true)
+    expect(loginOf(config, 'workclaude').usedByPlainClaude).toBe(false)
     expect(extraLogins(config).map((login) => login.id)).toEqual(['workclaude', 'sideclaude1'])
     expect(loginIds(config)).toEqual([OWN_CLAUDE, 'workclaude', 'sideclaude1'])
   })

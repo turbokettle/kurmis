@@ -2,7 +2,6 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
-  readJsonFile,
   readJsonFileSync,
   writeFileAtomic,
   writeFileAtomicSync,
@@ -58,13 +57,11 @@ describe('atomic writes', () => {
 })
 
 describe('reading', () => {
-  it('tells a missing file from a corrupt one', async () => {
+  it('tells a missing file from a corrupt one', () => {
     const dir = freshDir()
     expect(readJsonFileSync(join(dir, 'none.json'))).toEqual({ status: 'missing' })
-    expect(await readJsonFile(join(dir, 'none.json'))).toEqual({ status: 'missing' })
     writeFileSync(join(dir, 'bad.json'), '{"a":')
     expect(readJsonFileSync(join(dir, 'bad.json')).status).toBe('corrupt')
-    expect((await readJsonFile(join(dir, 'bad.json'))).status).toBe('corrupt')
   })
 
   it('throws read errors other than a missing file', () => {

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, test } from 'vitest'
 import { createStatusCommand, nothingProbedYet, type StatusDeps } from '../../../src/cli/commands/status.ts'
 import { STATUS_JSON_FORMAT, type StatusJson } from '../../../src/cli/status-format.ts'
 import { configPath, kurmisHome, loginFolder } from '../../../src/data/paths.ts'
-import { emptyState, saveStateSync } from '../../../src/data/state.ts'
+import { emptyState, saveState } from '../../../src/data/state.ts'
 import { CONFIG_VERSION } from '../../../src/data/config.ts'
 import type { LoginId } from '../../../src/data/login-id.ts'
 import { accountUsage, usageWindow } from '../../core/usage-fixtures.ts'
@@ -166,7 +166,7 @@ describe('kurmis status with the daemon not running', () => {
     const state = emptyState()
     state.usage.set('workclaude' as LoginId, accountUsage({ accountId: 'workclaude', fetchedAt: NOW - 3 * HOUR, fiveHour: usageWindow(42, new Date(NOW + HOUR).toISOString()) }))
     state.sessions.set('0b7c0a52-1111-4222-8333-944445555666', { login: 'workclaude' as LoginId, lastUsed: NOW - HOUR })
-    saveStateSync(state)
+    await saveState(state)
     writeClaudeCredentials(loginFolder(claudeRef('workclaude')))
     writeClaudeIdentity(join(loginFolder(claudeRef('workclaude')), '.claude.json'), { email: 'work@example.com' })
 

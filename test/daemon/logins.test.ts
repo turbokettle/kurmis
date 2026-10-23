@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { ClaudeCredentials } from '../../src/core/credentials.ts'
 import { loadConfig } from '../../src/data/config.ts'
 import { formatLogLine, type LogEvent, type LogFields } from '../../src/data/log.ts'
-import { configLockPath, configPath, kurmisHome, statePath } from '../../src/data/paths.ts'
+import { configPath, kurmisHome, statePath } from '../../src/data/paths.ts'
 import { MAX_SESSIONS, SESSION_MAX_AGE_MS } from '../../src/data/state.ts'
 import { LoginTable, NO_SESSION_KEY } from '../../src/daemon/logins.ts'
 import type { TokenSource } from '../../src/daemon/tokens.ts'
@@ -197,12 +197,12 @@ describe('the config', () => {
     // A file without the login of plain claude has to be written to get it, which needs the lock.
     mkdirSync(kurmisHome(), { recursive: true })
     writeFileSync(configPath(), '{"version": 3, "logins": []}')
-    writeFileSync(configLockPath(), JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: 'held-by-a-test' }))
+    writeFileSync(`${configPath()}.lock`, JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: 'held-by-a-test' }))
     let logins: LoginTable
     try {
       logins = table()
     } finally {
-      rmSync(configLockPath(), { force: true })
+      rmSync(`${configPath()}.lock`, { force: true })
     }
     expect(lines.find((line) => line.includes('config_invalid'))).toMatch(/ config_invalid reason=timeout\n$/)
     expect(events).not.toContain('config_loaded')
@@ -296,8 +296,8 @@ describe("the login of plain claude", () => {
 describe('automatic aliases', () => {
   /** Holds `config.json`'s lock as a running process would, until the returned function is called. */
   const holdConfigLock = (): () => void => {
-    writeFileSync(configLockPath(), JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: 'held-by-a-test' }))
-    return () => { rmSync(configLockPath(), { force: true }) }
+    writeFileSync(`${configPath()}.lock`, JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: 'held-by-a-test' }))
+    return () => { rmSync(`${configPath()}.lock`, { force: true }) }
   }
 
   test('follow the email a probe learned, in the file and in the table', () => {

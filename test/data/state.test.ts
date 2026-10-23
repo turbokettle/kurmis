@@ -10,7 +10,6 @@ import {
   parseState,
   pruneState,
   saveState,
-  saveStateSync,
   serializeState
 } from '../../src/data/state.ts'
 
@@ -61,13 +60,6 @@ describe('saving and loading', () => {
     expect(read.state.cooldowns.get(WORK)).toBe(NOW + 60_000)
     expect(read.state.usage.get(WORK)).toEqual(usage('workclaude'))
     expect(read.state.sessions.get('0b7c0a52-1111-4222-8333-944445555666')).toEqual({ login: WORK, lastUsed: NOW - 5000 })
-  })
-
-  it('saveStateSync writes the same', () => {
-    const state = emptyState()
-    state.cooldowns.set(WORK, NOW + 1)
-    saveStateSync(state)
-    expect(loadState(NOW).state.cooldowns.get(WORK)).toBe(NOW + 1)
   })
 
   it('starts empty from a missing, corrupt or unknown-version file, without throwing', () => {
@@ -183,7 +175,6 @@ describe('createCoalescedWriter', () => {
     expect(write).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(5000)
     expect(write).toHaveBeenCalledTimes(2)
-    expect(writer.pending()).toBe(false)
   })
 
   it('never overlaps two writes, and writes again after one that saw a change mid-way', async () => {
