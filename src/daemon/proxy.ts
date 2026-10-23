@@ -21,8 +21,8 @@
 //    usage-limit 429 on Auto is sent again on another login before the CLI sees anything, and a
 //    400 on a login the session has just moved to sends it back to its previous login
 //    (`replayDecision`), which the session is then held to while that login can serve.
-// 5. The accepted answer is forwarded byte for byte and the session is placed on its login.
-//    When no login is left, the CLI gets the real 429 of the login that is back first, or the
+// 5. An answer with a status under 400 places the session on its login, and the answer is
+//    forwarded byte for byte. When no login is left, the CLI gets the real 429 of the login that is back first, or the
 //    proxy's own answer (`refusalAnswer`) when it holds none.
 //
 // Nothing here logs a token, a body or an email; the log takes fixed fields only.

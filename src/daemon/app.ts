@@ -23,7 +23,7 @@ export interface DaemonAppOptions {
    * The daemon's environment: `KURMIS_CLAUDE_BIN`, `KURMIS_UPSTREAM_URL` (a test hook: the
    * Anthropic API's base URL, default `https://api.anthropic.com`) and `KURMIS_SECURITY_PROGRAM`
    * (a test hook: the `security` program, default `/usr/bin/security`) are read from it, and the
-   * CLIs it starts inherit it.
+   * usage probes' claude processes inherit it.
    */
   env: NodeJS.ProcessEnv
   log: DaemonLog

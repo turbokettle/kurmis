@@ -15,8 +15,8 @@
 //    `replayDecision` says whether to pass the answer on, send it again on another login, or
 //    pin the session back. The pin-back holds the session to that login only while the login
 //    can serve. With no login left, answer `refusalAnswer(...)`.
-// 5. Forward the answer with `downstreamResponseHeaders` and the body byte for byte, and only
-//    then record the login as the session's current one.
+// 5. Record the login as the session's current one when its answer is accepted (a status under
+//    400), then forward the answer with `downstreamResponseHeaders` and the body byte for byte.
 import {
   accountsInScope, effectivePin, limitForWindow, poolReadyAt, tokenIsFresh,
   type RouteAccount, type RouteBlock, type RouteSession
