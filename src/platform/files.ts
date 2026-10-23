@@ -35,7 +35,7 @@ export function restrictToUserSync(path: string, platform: NodeJS.Platform = pro
 
 /**
  * The codes Windows gives when a rename fails because another program has the destination
- * open: an editor, a virus scanner, a backup tool, or the CLI reading the same file.
+ * open: an editor, a virus scanner, a backup tool, or another kurmis process reading the file.
  */
 const LOCKED_FILE_CODES: readonly string[] = ['EPERM', 'EBUSY', 'EACCES']
 
@@ -47,7 +47,8 @@ export function isLockedFileError(error: unknown): boolean {
   return LOCKED_FILE_CODES.includes(String((error as { code?: unknown }).code))
 }
 
-function sleepSync(ms: number): void {
+/** Blocks this thread for `ms` milliseconds. */
+export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 

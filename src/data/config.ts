@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { DEFAULT_AUTO_ROUTE, DEFAULT_FIVE_HOUR_LIMIT_PERCENT, DEFAULT_WEEKLY_LIMIT_PERCENT } from '../core/accounts.ts'
 import { ALIAS_RULE, automaticAlias, isAliasText } from '../core/login-alias.ts'
 import { readJsonFileSync, writeJsonFileSync } from './json-file.ts'
-import { isLoginId, newLoginId, type LoginId, type LoginRef } from './login-id.ts'
+import { isLoginId, LOGIN_ID_RULE, newLoginId, type LoginId, type LoginRef } from './login-id.ts'
 import { LockTimeoutError, withFileLockSync, type FileLockOptions } from './lock.ts'
 import { configPath } from './paths.ts'
 import {
@@ -173,7 +173,7 @@ function applyPatch(login: LoginSettings, patch: LoginSettingsPatch, where: Wher
 function parseLogin(value: unknown, where: Where): LoginSettings {
   const raw = expectObject(value, where)
   const id = expectString(raw.id, child(where, 'id'))
-  if (!isLoginId(id)) fail(child(where, 'id'), 'must be 1 to 32 lowercase letters and digits')
+  if (!isLoginId(id)) fail(child(where, 'id'), `must be ${LOGIN_ID_RULE}`)
   const usedByPlainClaude = raw.usedByPlainClaude === undefined ? false : expectBoolean(raw.usedByPlainClaude, child(where, 'usedByPlainClaude'))
   const patch: LoginSettingsPatch = {}
   for (const key of ['routing', 'fiveHourLimit', 'weeklyLimit', 'useFirst'] as const) {

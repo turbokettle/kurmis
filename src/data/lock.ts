@@ -1,5 +1,6 @@
 // A lock file that lets one kurmis process at a time run a read-modify-write on a data file
-// (`config.json`), so two CLIs that change it at the same moment do not lose each other's change.
+// (`config.json`), so two kurmis processes that change it at the same moment do not lose each
+// other's change.
 //
 // The lock is a file created with `open(path, 'wx')`, which fails when the file exists, on every
 // OS. It holds the owner's pid, when it was taken, and a random token, as JSON. Whoever creates
@@ -23,7 +24,7 @@
 import { randomBytes } from 'node:crypto'
 import { closeSync, openSync, readFileSync, rmSync, statSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { isLockedFileError, makePrivateDirSync, PRIVATE_FILE_MODE, retryWhileLockedSync } from '../platform/files.ts'
+import { isLockedFileError, makePrivateDirSync, PRIVATE_FILE_MODE, retryWhileLockedSync, sleepSync } from '../platform/files.ts'
 
 /** How long `acquireFileLockSync` waits for a lock before it gives up. */
 export const DEFAULT_LOCK_TIMEOUT_MS = 15_000
@@ -125,10 +126,6 @@ export function readLockHolder(path: string): LockHolder | null {
   } catch {
     return null
   }
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
 function codeOf(error: unknown): string | undefined {

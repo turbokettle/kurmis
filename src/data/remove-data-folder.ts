@@ -76,8 +76,8 @@ export function removeDataFolder(platform: NodeJS.Platform = process.platform): 
   const stat = lstatOrNull(path)
   if (stat === null) return { path, removed: true, left: [] }
   const link = stat.isSymbolicLink()
-  const folder = link ? realpathSync.native(path) : path
-  const root = realpathSync.native(folder)
+  const root = realpathSync.native(path)
+  const folder = link ? root : path
   for (const name of readdirSync(folder)) {
     if (isKurmisEntry(name)) removeTreeSync(join(folder, name), { platform, root })
   }

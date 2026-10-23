@@ -90,7 +90,9 @@ export function extraLoginsFolder(): string {
 }
 
 /**
- * The folder of an extra login: `claude/<id>/`, its `CLAUDE_SECURESTORAGE_CONFIG_DIR`. The id is
+ * The folder of an extra login: `claude/<id>/`, its `CLAUDE_SECURESTORAGE_CONFIG_DIR`. Claude
+ * Code names the login's Keychain item and Credential Manager record after this exact path
+ * (`keychainService`), so the path must not change, or the login is signed out. The id is
  * checked again here, so a slash or `..` can never produce a path. The login of plain claude has
  * no folder here, since it uses `~/.claude`; asking for it is an error.
  */

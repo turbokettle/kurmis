@@ -14,7 +14,7 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, linkSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { makePrivateDirSync, PRIVATE_FILE_MODE, retryWhileLockedSync } from '../platform/files.ts'
+import { makePrivateDirSync, PRIVATE_FILE_MODE, retryWhileLockedSync, sleepSync } from '../platform/files.ts'
 import { readJsonFileSync, writeFileAtomicSync, writeJsonFileSync } from './json-file.ts'
 import { daemonFilePath, keyPath } from './paths.ts'
 import { isPlainObject } from './validate.ts'
@@ -97,7 +97,7 @@ function readKeySettled(path: string): string | null {
   for (let attempt = 0; ; attempt++) {
     const key = readKey(path)
     if (key !== null || attempt >= 10) return key
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)
+    sleepSync(20)
   }
 }
 

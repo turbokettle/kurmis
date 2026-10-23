@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101549" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101610" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -1409,6 +1409,7 @@ function readJsonFileSync(path) {
 
 // src/data/login-id.ts
 var import_node_crypto3 = require("node:crypto");
+var LOGIN_ID_RULE = "1 to 32 lowercase letters and digits, and not con, prn, aux, nul, com0 to com9, lpt0 to lpt9, none or invalid";
 var NEW_LOGIN_ID_LENGTH = 10;
 var ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 function isLoginId(text) {
@@ -1416,7 +1417,7 @@ function isLoginId(text) {
 }
 function toLoginId(text) {
   if (!isLoginId(text)) {
-    throw new Error(`"${text}" is not a login id. A login id is 1 to 32 lowercase letters and digits.`);
+    throw new Error(`"${text}" is not a login id. A login id is ${LOGIN_ID_RULE}.`);
   }
   return text;
 }
@@ -1479,9 +1480,6 @@ function readLockHolder(path) {
   } catch {
     return null;
   }
-}
-function sleepSync2(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function codeOf(error) {
   return error?.code;
@@ -1565,7 +1563,7 @@ function acquireFileLockSync(path, options = {}) {
     breakIfStale(path, settings);
     const waited = Date.now() - started;
     if (waited >= timeoutMs) throw new LockTimeoutError(path, readLockHolder(path), waited);
-    sleepSync2(Math.min(timeoutMs - waited, 1 + Math.floor(Math.random() * retryMs)));
+    sleepSync(Math.min(timeoutMs - waited, 1 + Math.floor(Math.random() * retryMs)));
   }
   heldByThisProcess.add(path);
   let released = false;
@@ -1578,7 +1576,7 @@ function acquireFileLockSync(path, options = {}) {
       const waitUntil = Date.now() + timeoutMs;
       let holdsBreak = tryTakeBreakLock(path, settings);
       while (!holdsBreak && Date.now() < waitUntil) {
-        sleepSync2(1 + Math.floor(Math.random() * retryMs));
+        sleepSync(1 + Math.floor(Math.random() * retryMs));
         holdsBreak = tryTakeBreakLock(path, settings);
       }
       try {
@@ -1736,7 +1734,7 @@ function applyPatch(login, patch, where) {
 function parseLogin(value, where) {
   const raw = expectObject(value, where);
   const id = expectString(raw.id, child(where, "id"));
-  if (!isLoginId(id)) fail(child(where, "id"), "must be 1 to 32 lowercase letters and digits");
+  if (!isLoginId(id)) fail(child(where, "id"), `must be ${LOGIN_ID_RULE}`);
   const usedByPlainClaude = raw.usedByPlainClaude === void 0 ? false : expectBoolean(raw.usedByPlainClaude, child(where, "usedByPlainClaude"));
   const patch = {};
   for (const key of ["routing", "fiveHourLimit", "weeklyLimit", "useFirst"]) {
@@ -2691,7 +2689,7 @@ function readKeySettled(path) {
   for (let attempt = 0; ; attempt++) {
     const key = readKey(path);
     if (key !== null || attempt >= 10) return key;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    sleepSync(20);
   }
 }
 function isPositiveInteger(value) {
@@ -8371,8 +8369,8 @@ function removeDataFolder(platform = process.platform) {
   const stat = lstatOrNull(path);
   if (stat === null) return { path, removed: true, left: [] };
   const link = stat.isSymbolicLink();
-  const folder = link ? import_node_fs20.realpathSync.native(path) : path;
-  const root = import_node_fs20.realpathSync.native(folder);
+  const root = import_node_fs20.realpathSync.native(path);
+  const folder = link ? root : path;
   for (const name of (0, import_node_fs20.readdirSync)(folder)) {
     if (isKurmisEntry(name)) removeTreeSync((0, import_node_path20.join)(folder, name), { platform, root });
   }

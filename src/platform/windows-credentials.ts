@@ -302,8 +302,8 @@ export function recordFromItems(service: string, items: ReadonlyMap<string, Buff
 
 /**
  * Reads the record of each login (`secureStorageDirs`, as `keychainService` takes them) from
- * Credential Manager. One PowerShell run reads up to 247 logins, the most `credentialBatches`
- * fits in one command line, and more take several runs. Throws when PowerShell could not read
+ * Credential Manager. One PowerShell run reads as many logins as `credentialBatches` fits in one
+ * command line, and more take several runs. Throws when PowerShell could not read
  * at all.
  */
 export async function readStoredRecords(secureStorageDirs: ReadonlyArray<string | null>, read: CredentialRead,

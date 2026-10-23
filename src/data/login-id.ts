@@ -24,6 +24,9 @@ export interface LoginRef {
   usedByPlainClaude: boolean
 }
 
+/** What a login id is, for messages (`isLoginIdText` in `src/core/accounts.ts`). */
+export const LOGIN_ID_RULE = '1 to 32 lowercase letters and digits, and not con, prn, aux, nul, com0 to com9, lpt0 to lpt9, none or invalid'
+
 /** The number of characters in an id `newLoginId` makes. */
 export const NEW_LOGIN_ID_LENGTH = 10
 
@@ -36,7 +39,7 @@ export function isLoginId(text: unknown): text is LoginId {
 /** The id as a `LoginId`, or an error naming what is wrong with it. */
 export function toLoginId(text: string): LoginId {
   if (!isLoginId(text)) {
-    throw new Error(`"${text}" is not a login id. A login id is 1 to 32 lowercase letters and digits.`)
+    throw new Error(`"${text}" is not a login id. A login id is ${LOGIN_ID_RULE}.`)
   }
   return text
 }

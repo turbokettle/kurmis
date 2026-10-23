@@ -23,7 +23,7 @@ export function topOf(file: string): Where {
   return { file, field: '' }
 }
 
-/** The location of a key of an object (`logins[1].label`) or an index of an array. */
+/** The location of a key of an object (`logins[1].alias`) or an index of an array. */
 export function child(where: Where, key: string | number): Where {
   if (typeof key === 'number') return { file: where.file, field: `${where.field}[${String(key)}]` }
   return { file: where.file, field: where.field === '' ? key : `${where.field}.${key}` }

@@ -183,7 +183,7 @@ describe('loading', () => {
     [{ version: 3, logins: {} }, 'logins must be a list'],
     [{ version: 3, logins: [{ id: '../x' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
     [{ version: 3, logins: [{ id: 'claude:work' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
-    [{ version: 3, logins: [{ id: 'none' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits'],
+    [{ version: 3, logins: [{ id: 'none' }] }, 'logins[0].id must be 1 to 32 lowercase letters and digits, and not con, prn, aux, nul'],
     [{ version: 3, logins: [{}] }, 'logins[0].id must be a string'],
     [{ version: 3, logins: [{ id: 'alogin', usedByPlainClaude: 'yes' }] }, 'logins[0].usedByPlainClaude must be true or false'],
     [{ version: 3, logins: [{ id: 'alogin', routing: 'yes' }] }, 'logins[0].routing must be true or false, not a string'],
