@@ -13,8 +13,10 @@
 // The table also writes one thing into `config.json`: a login's automatic alias, when a usage
 // probe has told the daemon the login's email (`noteEmail`). The table keeps no email; it is read
 // from the login's profile file when needed.
+import { createHash } from 'node:crypto'
 import { usageFromUnifiedHeaders, type RouteAccount, type UnifiedObservation } from '../core/account-router.ts'
 import type { AccountUsage } from '../core/claude-usage.ts'
+import type { ClaudeCredentials } from '../core/credentials.ts'
 import {
   changeConfig, configStamp, defaultConfig, findLogin, followEmail, loadConfig, plainClaudeLogin, type KurmisConfig, type LoginSettings
 } from '../data/config.ts'
@@ -91,11 +93,12 @@ export class LoginTable {
   private readonly held = new Map<string, { login: LoginId; lastUsed: number }>()
   /**
    * Logins whose token Anthropic refused with a 401 on a request of a CLI that was started on
-   * another login, after the one renewal the proxy tries (`markRefused`), with when that was.
-   * Routing treats them as signed out until a probe of the login that started later succeeds.
-   * In memory only.
+   * another login, after the one renewal the proxy tries (`markRefused`), with when that was and
+   * the refused token's `tokenStamp`. Routing treats them as signed out until a probe of the
+   * login that started later succeeds, or until the token read is another one, as after the
+   * login was signed in again from a terminal. In memory only.
    */
-  private readonly refused = new Map<string, number>()
+  private readonly refused = new Map<string, { at: number; stamp: string | null }>()
   /**
    * What the rate-limit headers of each login's answers said since its last probe started
    * (`noteObservation`, `noteProbeStarted`), merged into one observation: for each window and
@@ -216,9 +219,10 @@ export class LoginTable {
     const now = this.options.now()
     return this.config.logins.map((login) => {
       const notTheCli = startedOn === null && login.usedByPlainClaude
-      const token = notTheCli ? null : this.options.tokens.read(login.id)
+      const read = this.options.tokens.read(login.id)
+      const token = notTheCli ? null : read
       const passThrough = token === null && callerSigns && login.id === startedOn
-      const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned
+      const refused = this.refusalHolds(login.id, read) && login.id !== startedOn && login.id !== pinned
       return {
         id: login.id,
         loggedIn: !notTheCli && !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
@@ -334,17 +338,20 @@ export class LoginTable {
     this.reloadConfig()
   }
 
-  /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
-  markRefused(id: string): void {
+  /**
+   * Records that Anthropic refused the login's token after the proxy tried to renew it (see
+   * `refused`). `token` is the refused token; by default the one read now.
+   */
+  markRefused(id: string, token: ClaudeCredentials | null = this.options.tokens.read(id)): void {
     if (this.find(id) === undefined) return
     const known = this.refused.has(id)
-    this.refused.set(id, this.options.now())
+    this.refused.set(id, { at: this.options.now(), stamp: token === null ? null : tokenStamp(token) })
     if (!known) this.changed()
   }
 
   /** Whether `markRefused` holds for the login. */
   isRefused(id: string): boolean {
-    return this.refused.has(id)
+    return this.refusalHolds(id, this.options.tokens.read(id))
   }
 
   /**
@@ -353,7 +360,7 @@ export class LoginTable {
    * it ran is newer and stays.
    */
   clearRefused(id: string, probeStartedAt = Infinity): void {
-    const at = this.refused.get(id)
+    const at = this.refused.get(id)?.at
     if (at === undefined || at > probeStartedAt) return
     this.refused.delete(id)
     this.changed()
@@ -448,6 +455,18 @@ export class LoginTable {
     return this.writer.flush()
   }
 
+  /**
+   * Whether the login's refusal still holds with `token`, the token read now. It ends when that
+   * is another token than the refused one; a login with no token read keeps it.
+   */
+  private refusalHolds(id: string, token: ClaudeCredentials | null): boolean {
+    const refusal = this.refused.get(id)
+    if (refusal === undefined) return false
+    if (token === null || refusal.stamp === null || tokenStamp(token) === refusal.stamp) return true
+    this.refused.delete(id)
+    return false
+  }
+
   private save(): void {
     this.writer.schedule()
   }
@@ -486,6 +505,14 @@ function mergeObservations(kept: UnifiedObservation, next: UnifiedObservation): 
     representativeClaim: claimFromNext ? next.representativeClaim : kept.representativeClaim,
     windows
   }
+}
+
+/**
+ * A fingerprint of a token, to tell whether the token read for a login is still the one a mark
+ * was set for. The token cannot be read back from it, and it is kept in memory only.
+ */
+function tokenStamp(token: ClaudeCredentials): string {
+  return createHash('sha256').update(token.accessToken).digest('base64url').slice(0, 22)
 }
 
 /** Whether `changeConfig` failed because another process held the config lock for too long. */

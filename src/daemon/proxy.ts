@@ -517,7 +517,7 @@ export function createProxy(options: ProxyOptions): Proxy {
         if (row.id !== startedOn && info.login === null) {
           answer.discard()
           excluded.add(row.id)
-          table.markRefused(row.id)
+          table.markRefused(row.id, token)
           log.write('retry_other_login', { login: asLogin(row.id), reason: 'unauthorized', status })
           continue
         }

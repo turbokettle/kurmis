@@ -263,7 +263,9 @@ old one finishes its open requests in the background ("Version handover" below).
     the login is the one the CLI was started on (the CLI can sign it in again) or the session
     is pinned to it with `x-kurmis-login`. Otherwise the request goes on to the next login, and
     Auto treats the login as signed out (`markRefused` in `logins.ts`, in memory only) until a
-    usage probe of it succeeds and finds it signed in, at the latest the next 15-minute poll.
+    usage probe of it succeeds and finds it signed in, at the latest the next 15-minute poll, or
+    until the token read for it is another one, as after it was signed in again from a terminal.
+    Only a fingerprint of the refused token is kept for that, never the token.
     With no login left, the CLI gets the proxy's own 599 below, never that 401.
 - **Sessions** are told apart by the `X-Claude-Code-Session-Id` header the CLI sends. That is
   what a session stays on its login by. The CLI's subagents and small-model requests share it.

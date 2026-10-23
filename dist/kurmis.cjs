@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023103932" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023104347" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -4518,6 +4518,9 @@ async function readProbeRequest(req) {
   return { logins };
 }
 
+// src/daemon/logins.ts
+var import_node_crypto8 = require("node:crypto");
+
 // src/data/state.ts
 var STATE_VERSION = 1;
 var SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -4693,9 +4696,10 @@ var LoginTable = class {
   held = /* @__PURE__ */ new Map();
   /**
    * Logins whose token Anthropic refused with a 401 on a request of a CLI that was started on
-   * another login, after the one renewal the proxy tries (`markRefused`), with when that was.
-   * Routing treats them as signed out until a probe of the login that started later succeeds.
-   * In memory only.
+   * another login, after the one renewal the proxy tries (`markRefused`), with when that was and
+   * the refused token's `tokenStamp`. Routing treats them as signed out until a probe of the
+   * login that started later succeeds, or until the token read is another one, as after the
+   * login was signed in again from a terminal. In memory only.
    */
   refused = /* @__PURE__ */ new Map();
   /**
@@ -4799,9 +4803,10 @@ var LoginTable = class {
     const now = this.options.now();
     return this.config.logins.map((login) => {
       const notTheCli = startedOn === null && login.usedByPlainClaude;
-      const token = notTheCli ? null : this.options.tokens.read(login.id);
+      const read = this.options.tokens.read(login.id);
+      const token = notTheCli ? null : read;
       const passThrough = token === null && callerSigns && login.id === startedOn;
-      const refused = this.refused.has(login.id) && login.id !== startedOn && login.id !== pinned;
+      const refused = this.refusalHolds(login.id, read) && login.id !== startedOn && login.id !== pinned;
       return {
         id: login.id,
         loggedIn: !notTheCli && !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
@@ -4904,16 +4909,19 @@ var LoginTable = class {
     }
     this.reloadConfig();
   }
-  /** Records that Anthropic refused the login's token after the proxy tried to renew it (see `refused`). */
-  markRefused(id) {
+  /**
+   * Records that Anthropic refused the login's token after the proxy tried to renew it (see
+   * `refused`). `token` is the refused token; by default the one read now.
+   */
+  markRefused(id, token = this.options.tokens.read(id)) {
     if (this.find(id) === void 0) return;
     const known = this.refused.has(id);
-    this.refused.set(id, this.options.now());
+    this.refused.set(id, { at: this.options.now(), stamp: token === null ? null : tokenStamp(token) });
     if (!known) this.changed();
   }
   /** Whether `markRefused` holds for the login. */
   isRefused(id) {
-    return this.refused.has(id);
+    return this.refusalHolds(id, this.options.tokens.read(id));
   }
   /**
    * Ends `markRefused`: a probe of the login succeeded. A probe that started at `probeStartedAt`
@@ -4921,7 +4929,7 @@ var LoginTable = class {
    * it ran is newer and stays.
    */
   clearRefused(id, probeStartedAt = Infinity) {
-    const at = this.refused.get(id);
+    const at = this.refused.get(id)?.at;
     if (at === void 0 || at > probeStartedAt) return;
     this.refused.delete(id);
     this.changed();
@@ -5007,6 +5015,17 @@ var LoginTable = class {
   flush() {
     return this.writer.flush();
   }
+  /**
+   * Whether the login's refusal still holds with `token`, the token read now. It ends when that
+   * is another token than the refused one; a login with no token read keeps it.
+   */
+  refusalHolds(id, token) {
+    const refusal = this.refused.get(id);
+    if (refusal === void 0) return false;
+    if (token === null || refusal.stamp === null || tokenStamp(token) === refusal.stamp) return true;
+    this.refused.delete(id);
+    return false;
+  }
   save() {
     this.writer.schedule();
   }
@@ -5036,6 +5055,9 @@ function mergeObservations(kept, next) {
     representativeClaim: claimFromNext ? next.representativeClaim : kept.representativeClaim,
     windows
   };
+}
+function tokenStamp(token) {
+  return (0, import_node_crypto8.createHash)("sha256").update(token.accessToken).digest("base64url").slice(0, 22);
 }
 function isLockTimeout(error) {
   return error instanceof Error && error.cause instanceof LockTimeoutError;
@@ -5721,7 +5743,7 @@ function createProxy(options) {
         if (row.id !== startedOn && info.login === null) {
           answer2.discard();
           excluded.add(row.id);
-          table.markRefused(row.id);
+          table.markRefused(row.id, token);
           log.write("retry_other_login", { login: asLogin(row.id), reason: "unauthorized", status: status2 });
           continue;
         }
@@ -6067,11 +6089,11 @@ var CredentialsFileReader = class {
 var import_node_os9 = require("node:os");
 
 // src/core/keychain-service.ts
-var import_node_crypto8 = require("node:crypto");
+var import_node_crypto9 = require("node:crypto");
 var KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
 function keychainService(secureStorageDir) {
   if (secureStorageDir === null || secureStorageDir.length === 0) return KEYCHAIN_SERVICE_BASE;
-  const digest = (0, import_node_crypto8.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
+  const digest = (0, import_node_crypto9.createHash)("sha256").update(secureStorageDir.normalize("NFC")).digest("hex");
   return `${KEYCHAIN_SERVICE_BASE}-${digest.slice(0, 8)}`;
 }
 

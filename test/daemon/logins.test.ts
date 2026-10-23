@@ -106,6 +106,20 @@ describe('the routing rows', () => {
     expect(logins.routeRows(OWN_CLAUDE, false).map((row) => row.loggedIn)).toEqual([true, true])
   })
 
+  test('count a refused login as signed in again once the token read changes', () => {
+    writeLogins({ claude: { [WORK]: {} } })
+    tokens.set(OWN_CLAUDE, { accessToken: 'd', expiresAt: null, hasRefreshToken: true })
+    tokens.set(WORK, { accessToken: 'w', expiresAt: null, hasRefreshToken: true })
+    const logins = table()
+    logins.markRefused(WORK)
+    // The same token read again keeps the mark.
+    expect(logins.routeRows(OWN_CLAUDE, false).map((row) => row.loggedIn)).toEqual([true, false])
+    // Signed in again from a terminal: a new token.
+    tokens.set(WORK, { accessToken: 'w2', expiresAt: null, hasRefreshToken: true })
+    expect(logins.routeRows(OWN_CLAUDE, false).map((row) => row.loggedIn)).toEqual([true, true])
+    expect(logins.isRefused(WORK)).toBe(false)
+  })
+
   test('drop a cooldown that has run out', () => {
     writeLogins({})
     const logins = table()
