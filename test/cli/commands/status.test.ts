@@ -39,7 +39,7 @@ describe('kurmis status with the daemon running', () => {
     const daemon = fakeDaemonClient({ status: PROBED })
     const out = collect()
     expect(await command({ daemon }).run([], out.context)).toBe(0)
-    expect(daemon.calls).toEqual(['findDaemon', 'readStatus'])
+    expect(daemon.calls).toEqual(['findDaemon'])
     expect(out.stdout()).toContain('kurmis daemon 0.1.0, pid 4242, port 40123')
     expect(out.stdout()).toContain('Global routing is off: only "kurmis claude" goes through kurmis. Plain "claude"\ndoes not.\nRun "kurmis setup" to turn on global routing.\n')
     expect(out.stdout()).toContain('  5 hour    7%')
@@ -81,7 +81,7 @@ describe('kurmis status with the daemon running', () => {
     const daemon = fakeDaemonClient({ status: statusAnswer([loginStatus(OWN_CLAUDE_REF), loginStatus(claudeRef('workclaude'))]), probed: PROBED })
     const out = collect()
     await command({ daemon }).run(['--json'], out.context)
-    expect(daemon.calls).toEqual(['findDaemon', 'readStatus', 'requestProbe'])
+    expect(daemon.calls).toEqual(['findDaemon', 'requestProbe'])
     expect(out.stdout()).toContain('"five_hour"')
   })
 
@@ -104,7 +104,7 @@ describe('kurmis status with the daemon running', () => {
     const daemon = fakeDaemonClient({ status: PROBED })
     const out = collect()
     expect(await command({ daemon, version: '0.2.0' }).run([], out.context)).toBe(0)
-    expect(daemon.calls).toEqual(['findDaemon', 'readStatus'])
+    expect(daemon.calls).toEqual(['findDaemon'])
     expect(out.stdout()).toContain('kurmis daemon 0.1.0, pid 4242, port 40123, running for')
     expect(out.stdout()).toContain('It runs an older kurmis than this one (0.2.0).')
     expect(out.stdout()).toContain('  signed in, routing on')
@@ -115,24 +115,10 @@ describe('kurmis status with the daemon running', () => {
     const daemon = fakeDaemonClient({ status: { ...PROBED, version: '0.0.9', apiVersion: 1 } })
     const out = collect()
     expect(await command({ daemon }).run(['--json'], out.context)).toBe(0)
-    expect(daemon.calls).toEqual(['findDaemon', 'readStatus'])
+    expect(daemon.calls).toEqual(['findDaemon'])
     const json = JSON.parse(out.stdout()) as StatusJson
     expect(json).toMatchObject({ source: 'files', daemon: { version: '0.0.9', older: true } })
     expect(json.logins.map((login) => [login.id, login.signedIn, login.credentials])).toEqual([[OWN_CLAUDE, null, false]])
-  })
-
-  test('shows the files, with a note on stderr, when the daemon does not answer the status request', async () => {
-    writeTestConfig({ extras: [{ id: 'workclaude', alias: 'work-example' }] })
-    const daemon = fakeDaemonClient({ readFails: 'the request timed out' })
-    const out = collect()
-    expect(await command({ daemon }).run([], out.context)).toBe(0)
-    expect(out.stderr()).toContain('kurmis status: the kurmis daemon (pid 4242) did not answer the status request: the request timed out')
-    expect(out.stderr()).toContain('Showing the logins from config.json instead.')
-    expect(out.stdout()).toContain('The kurmis daemon is not running.')
-    expect(out.stdout()).toContain('work-example (id workclaude)')
-    const json = collect()
-    expect(await command({ daemon }).run(['--json'], json.context)).toBe(0)
-    expect(JSON.parse(json.stdout())).toMatchObject({ source: 'files', daemon: null })
   })
 
   test('warns about two extra logins with the same email, and says how to remove the second', async () => {

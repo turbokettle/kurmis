@@ -7,7 +7,6 @@ import {
   DaemonError,
   findDaemon,
   keyRefusedProblem,
-  readStatus,
   restartDaemon,
   silentDaemon,
   startDaemon,
@@ -88,22 +87,18 @@ const stop: Handler = async (args, context) => {
   if (typeof parsed === 'number') return parsed
   const now = parsed.values.now === true
   try {
-    const found = await findDaemon(clientOptions(context))
-    if (found === null) {
-      const problem = await keyRefusedProblem(clientOptions(context))
-      if (problem !== null) throw new DaemonError(problem)
-    }
-    if (found === null || !(await stopDaemon({ ...clientOptions(context), now }))) {
+    const pid = await stopDaemon({ ...clientOptions(context), now })
+    if (pid === null) {
       writeLine(context.stdout, 'The kurmis daemon is not running.')
-      const silent = found === null ? silentDaemon() : null
+      const silent = silentDaemon()
       if (silent !== null) {
         writeLine(context.stdout, `Process ${String(silent.pid)}, named in daemon.json, does not answer on ${address(silent.port)}, so ` +
           'it was not asked to stop. It may be finishing its open requests before it stops.')
       }
     } else {
       writeLine(context.stdout, now
-        ? `Stopped the kurmis daemon (pid ${String(found.pid)}) without waiting for its open requests.`
-        : `Stopped the kurmis daemon (pid ${String(found.pid)}).`)
+        ? `Stopped the kurmis daemon (pid ${String(pid)}) without waiting for its open requests.`
+        : `Stopped the kurmis daemon (pid ${String(pid)}).`)
     }
     return EXIT_OK
   } catch (error) {
@@ -116,7 +111,7 @@ const status: Handler = async (args, context) => {
   if (typeof parsed === 'number') return parsed
   const json = parsed.values.json === true
   try {
-    const found = await findDaemon(clientOptions(context))
+    const found = await findDaemon()
     if (found === null) {
       const silent = silentDaemon()
       const refused = silent === null ? null : await keyRefusedProblem(clientOptions(context))
@@ -138,7 +133,7 @@ const status: Handler = async (args, context) => {
       }
       return EXIT_FAILURE
     }
-    const answer = await readStatus(found)
+    const answer = found.status
     if (json) {
       writeLine(context.stdout, JSON.stringify({
         running: true,

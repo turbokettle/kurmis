@@ -122,7 +122,7 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
         if (error instanceof ConfigError) return fail(context, error.message, prefix)
         throw error
       }
-      reload = reloadText(await reloadIfRunning(daemon, context.env))
+      reload = reloadText(await reloadIfRunning(daemon))
       return null
     }
 

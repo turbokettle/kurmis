@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101804" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101826" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -2755,13 +2755,12 @@ function configuredPort() {
     throw error;
   }
 }
-function connectionOf(status2, key) {
-  const connection = { port: status2.port, key, pid: status2.pid, version: status2.version };
-  if (typeof status2.apiVersion === "number") connection.apiVersion = status2.apiVersion;
-  return connection;
+function foundDaemon(status2, key) {
+  const found = { port: status2.port, key, pid: status2.pid, version: status2.version, status: status2 };
+  if (typeof status2.apiVersion === "number") found.apiVersion = status2.apiVersion;
+  return found;
 }
-async function findDaemon(options, timeoutMs) {
-  void options;
+async function findDaemon(timeoutMs) {
   const until = timeoutMs === void 0 ? null : Date.now() + timeoutMs;
   const requestTimeout = () => until === null ? FIND_TIMEOUT_MS : Math.min(FIND_TIMEOUT_MS, Math.max(1, until - Date.now()));
   const key = readKey();
@@ -2780,7 +2779,7 @@ async function findDaemon(options, timeoutMs) {
     } else {
       triedPort = port2;
       const holder2 = await portHolder(port2, key, requestTimeout());
-      if (holder2.kind === "kurmis") return connectionOf(holder2.status, key);
+      if (holder2.kind === "kurmis") return foundDaemon(holder2.status, key);
     }
   }
   let port;
@@ -2791,7 +2790,7 @@ async function findDaemon(options, timeoutMs) {
   }
   if (port === triedPort) return null;
   const holder = await portHolder(port, key, requestTimeout());
-  return holder.kind === "kurmis" ? connectionOf(holder.status, key) : null;
+  return holder.kind === "kurmis" ? foundDaemon(holder.status, key) : null;
 }
 function removeDaemonFileIfDamaged() {
   const again = readDaemonFile();
@@ -2845,7 +2844,7 @@ async function startDaemon(options) {
   const version = options.version ?? kurmisVersion;
   const apiVersion = options.apiVersion ?? CONTROL_API_VERSION;
   const port = configuredPort();
-  const found = await findDaemon(options);
+  const found = await findDaemon();
   let replaced = null;
   if (found !== null) {
     const age = daemonAge(found, version, apiVersion);
@@ -2876,7 +2875,7 @@ async function startDaemon(options) {
       throw new DaemonError(portBusyMessage(port, holder.reason));
     }
     if (holder.kind === "kurmis" && !shouldReplaceDaemon(holder.status, version, apiVersion)) {
-      return { connection: usable(connectionOf(holder.status, key), version, apiVersion), started: false, replaced: null };
+      return { connection: usable(foundDaemon(holder.status, key), version, apiVersion), started: false, replaced: null };
     }
   }
   const entry = options.entry ?? kurmisEntry({ env: options.env });
@@ -2900,7 +2899,7 @@ async function waitForDaemon(wait) {
     exitCode = code;
   });
   for (; ; ) {
-    const found = await findDaemon({ env: {} });
+    const found = await findDaemon(Math.max(1, deadline - Date.now()));
     if (found !== null && found.port === wait.port && !shouldReplaceDaemon(found, wait.version, wait.apiVersion)) return found;
     if (exitCode !== void 0 && exitCode !== 0) {
       throw new DaemonError(`The kurmis daemon exited at start (${exitCode === null ? "ended by a signal" : `exit code ${String(exitCode)}`}). Run "kurmis daemon run" to see why, or look in ${logPath()}.`);
@@ -2923,11 +2922,6 @@ function failureOf(result, connection, what) {
   }
   const said = isPlainObject(result.body) && typeof result.body.error === "string" ? result.body.error : `HTTP ${String(result.status)}`;
   return new DaemonError(`The kurmis daemon refused ${what}: ${said}`);
-}
-async function readStatus3(connection) {
-  const result = await controlRequest({ port: connection.port, key: connection.key, method: "GET", path: CONTROL_PATHS.status });
-  if (result.kind === "answered" && result.status === 200 && isStatusAnswer(result.body)) return result.body;
-  throw failureOf(result, connection, "a status request");
 }
 async function requestProbe(connection, logins, signal) {
   const result = await controlRequest({
@@ -2985,11 +2979,11 @@ async function keyRefusedProblem(options) {
 }
 async function stopDaemon(options) {
   const platform = options.platform ?? process.platform;
-  const found = await findDaemon(options);
+  const found = await findDaemon();
   if (found === null) {
     const problem = await keyRefusedProblem(options);
     if (problem !== null) throw new DaemonError(problem);
-    return false;
+    return null;
   }
   const now = options.now === true;
   const waitMs = options.stopTimeoutMs ?? (now ? NOW_STOP_TIMEOUT_MS : STOP_TIMEOUT_MS);
@@ -2997,23 +2991,23 @@ async function stopDaemon(options) {
   const result = await controlRequest({ port: found.port, key: found.key, method: "POST", path: CONTROL_PATHS.stop, body });
   if (result.kind === "answered" && result.status !== 200) throw failureOf(result, found, "the stop request");
   const graceMs = platform === "win32" && !now ? options.stopGraceMs ?? STOP_GRACE_MS : 0;
-  if (await waitForExit(found.pid, waitMs + graceMs)) return true;
+  if (await waitForExit(found.pid, waitMs + graceMs)) return found.pid;
   const kill = options.kill ?? ((pid, signal) => process.kill(pid, signal));
   try {
     kill(found.pid, "SIGTERM");
   } catch (error) {
     const code = error.code;
-    if (code === "ESRCH") return true;
+    if (code === "ESRCH") return found.pid;
     const stopIt = platform === "win32" ? `taskkill /PID ${String(found.pid)} /F` : `kill ${String(found.pid)}`;
     throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running, and this command may not end it (${code ?? String(error)}). It probably runs as another user or as administrator; end it from there with "${stopIt}".`);
   }
-  if (await waitForExit(found.pid, KILL_WAIT_MS)) return true;
+  if (await waitForExit(found.pid, KILL_WAIT_MS)) return found.pid;
   throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running.`);
 }
 async function restartDaemon(options) {
   const version = options.version ?? kurmisVersion;
   const apiVersion = options.apiVersion ?? CONTROL_API_VERSION;
-  const found = await findDaemon(options);
+  const found = await findDaemon();
   if (found !== null) {
     if (daemonAge(found, version, apiVersion) === "newer") {
       throw new DaemonError(`The running kurmis daemon is newer than this kurmis (the daemon is ${versionText(found.version, found.apiVersion)}, this kurmis is ${versionText(version, apiVersion)}), so this kurmis does not replace it. Update this kurmis, or run "kurmis daemon stop" and then "kurmis daemon start".`);
@@ -3184,16 +3178,16 @@ function finishLikeChild(end, options) {
 }
 
 // src/cli/command-deps.ts
-var realDaemonClient = { findDaemon, ensureDaemon, readStatus: readStatus3, requestProbe, requestReload };
+var realDaemonClient = { findDaemon, ensureDaemon, requestProbe, requestReload };
 var realChildRunner = { runInteractive, finishLikeChild };
-async function reloadIfRunning(client, env) {
+async function reloadIfRunning(client) {
   try {
-    const connection = await client.findDaemon({ env });
+    const connection = await client.findDaemon();
     if (connection === null) return { kind: "not-running" };
     await client.requestReload(connection);
     return { kind: "reloaded" };
   } catch (error) {
-    return { kind: "failed", message: error instanceof DaemonError || error instanceof Error ? error.message : String(error) };
+    return { kind: "failed", message: error instanceof Error ? error.message : String(error) };
   }
 }
 function reloadText(result) {
@@ -3648,7 +3642,7 @@ async function runClaude(args, login, context, deps) {
   }
   let connection;
   try {
-    const running = config === null ? await deps.daemon.findDaemon({ env: context.env }) : null;
+    const running = config === null ? await deps.daemon.findDaemon() : null;
     connection = running !== null && canUseDaemon(running) ? running : await deps.daemon.ensureDaemon({ env: context.env });
   } catch (error) {
     return fail4(daemonUnreachable(error));
@@ -3657,17 +3651,11 @@ async function runClaude(args, login, context, deps) {
   if (pinned !== null) {
     startedOn = pinned;
   } else {
-    let status2;
-    try {
-      status2 = await deps.daemon.readStatus(connection);
-    } catch (error) {
-      return fail4(daemonUnreachable(error));
-    }
-    const ownRow = status2.logins.find((login2) => login2.usedByPlainClaude);
+    const ownRow = connection.status.logins.find((login2) => login2.usedByPlainClaude);
     if (config === null) {
       startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true };
     } else {
-      status2 = await withFirstProbe(connection, status2, context, deps);
+      const status2 = await withFirstProbe(connection, connection.status, context, deps);
       startedOn = autoStartLogin(status2.logins) ?? plainClaudeLogin(config);
       if (!startedOn.usedByPlainClaude) {
         const own = ownRow ?? plainClaudeLogin(config);
@@ -7436,19 +7424,15 @@ var stop = async (args, context) => {
   if (typeof parsed === "number") return parsed;
   const now = parsed.values.now === true;
   try {
-    const found = await findDaemon(clientOptions(context));
-    if (found === null) {
-      const problem = await keyRefusedProblem(clientOptions(context));
-      if (problem !== null) throw new DaemonError(problem);
-    }
-    if (found === null || !await stopDaemon({ ...clientOptions(context), now })) {
+    const pid = await stopDaemon({ ...clientOptions(context), now });
+    if (pid === null) {
       writeLine(context.stdout, "The kurmis daemon is not running.");
-      const silent = found === null ? silentDaemon() : null;
+      const silent = silentDaemon();
       if (silent !== null) {
         writeLine(context.stdout, `Process ${String(silent.pid)}, named in daemon.json, does not answer on ${address(silent.port)}, so it was not asked to stop. It may be finishing its open requests before it stops.`);
       }
     } else {
-      writeLine(context.stdout, now ? `Stopped the kurmis daemon (pid ${String(found.pid)}) without waiting for its open requests.` : `Stopped the kurmis daemon (pid ${String(found.pid)}).`);
+      writeLine(context.stdout, now ? `Stopped the kurmis daemon (pid ${String(pid)}) without waiting for its open requests.` : `Stopped the kurmis daemon (pid ${String(pid)}).`);
     }
     return EXIT_OK;
   } catch (error) {
@@ -7460,7 +7444,7 @@ var status = async (args, context) => {
   if (typeof parsed === "number") return parsed;
   const json = parsed.values.json === true;
   try {
-    const found = await findDaemon(clientOptions(context));
+    const found = await findDaemon();
     if (found === null) {
       const silent = silentDaemon();
       const refused = silent === null ? null : await keyRefusedProblem(clientOptions(context));
@@ -7481,7 +7465,7 @@ var status = async (args, context) => {
       }
       return EXIT_FAILURE;
     }
-    const answer2 = await readStatus3(found);
+    const answer2 = found.status;
     if (json) {
       writeLine(context.stdout, JSON.stringify({
         running: true,
@@ -7802,10 +7786,10 @@ var AddedMeanwhile = class extends Error {
   }
   existing;
 };
-async function tellDaemon(daemon, login, env, probeWaitMs) {
+async function tellDaemon(daemon, login, probeWaitMs) {
   let connection;
   try {
-    connection = await daemon.findDaemon({ env });
+    connection = await daemon.findDaemon();
     if (connection === null) return [];
     await daemon.requestReload(connection);
   } catch (error) {
@@ -7905,7 +7889,7 @@ async function signIn(run2) {
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. "kurmis login ${login.alias}" signs ${login.alias} in to another account.`);
     }
   }
-  for (const line of await tellDaemon(deps.daemon, login, context.env, deps.probeWaitMs)) writeLine(context.stdout, line);
+  for (const line of await tellDaemon(deps.daemon, login, deps.probeWaitMs)) writeLine(context.stdout, line);
   return EXIT_OK;
 }
 async function dropDuplicate(run2, existing, email) {
@@ -8069,7 +8053,7 @@ function createLoginLogout(deps = {}) {
         if (error instanceof ConfigError) return fail3(context, error.message, prefix);
         throw error;
       }
-      reload = reloadText(await reloadIfRunning(daemon, context.env));
+      reload = reloadText(await reloadIfRunning(daemon));
       return null;
     };
     if (!keep) {
@@ -8284,7 +8268,7 @@ Example:
         throw error;
       }
       writeLine(context.stdout, formatLoginSettings(login));
-      const reload = reloadText(await reloadIfRunning(daemon, context.env));
+      const reload = reloadText(await reloadIfRunning(daemon));
       if (reload !== null) writeLine(context.stdout, reload);
       return EXIT_OK;
     }
@@ -9426,9 +9410,9 @@ async function daemonStep(port, path, hadKurmis, deps, context) {
     return null;
   }
 }
-async function runningDaemonPid(deps, context) {
+async function runningDaemonPid(deps) {
   try {
-    return (await deps.daemon.findDaemon({ env: context.env }))?.pid ?? null;
+    return (await deps.daemon.findDaemon())?.pid ?? null;
   } catch {
     return null;
   }
@@ -9572,7 +9556,7 @@ async function runPause(deps, context) {
   if (changed) {
     writeLine(context.stdout, "Claude Code sessions that are already open keep the settings they started with, and so keep using kurmis until they end; start them again.");
   }
-  if (await runningDaemonPid(deps, context) !== null) {
+  if (await runningDaemonPid(deps) !== null) {
     writeLine(context.stdout, '"kurmis claude" still uses the daemon; "kurmis daemon stop" stops it.');
   }
   return EXIT_OK;
@@ -9668,7 +9652,7 @@ async function runUninstall(yes, deps, context) {
   const { added: logins, others } = loginsKurmisAdded(config);
   const backups = files.filter((file) => (0, import_node_fs25.existsSync)(backupPathFor(file)));
   const autostart = autostartEntry(deps.platform);
-  const pid = await runningDaemonPid(deps, context);
+  const pid = await runningDaemonPid(deps);
   const dataFolder = kurmisHome();
   writeLine(context.stdout, "This removes what kurmis set up on this machine:");
   for (const file of withKurmis) listLine(context, `kurmis' settings in ${file}`);
@@ -9706,7 +9690,8 @@ async function runUninstall(yes, deps, context) {
     keepData = true;
   }
   try {
-    writeLine(context.stdout, await deps.stopDaemon({ env: context.env }) ? `Stopped the daemon${pid === null ? "" : ` (pid ${String(pid)})`}.` : "The daemon was not running.");
+    const stopped = await deps.stopDaemon({ env: context.env });
+    writeLine(context.stdout, stopped === null ? "The daemon was not running." : `Stopped the daemon (pid ${String(stopped)}).`);
   } catch (error) {
     if (!(error instanceof DaemonError)) throw error;
     writeLine(context.stderr, `Could not stop the daemon: ${error.message}`);
@@ -10145,39 +10130,21 @@ async function runStatus(args, context, deps) {
     config = error;
   }
   const globalRouting = deps.globalRouting(context.env);
-  let connection;
+  let found;
   try {
-    connection = await deps.daemon.findDaemon({ env: context.env });
+    found = await deps.daemon.findDaemon();
   } catch (error) {
     writeLine(context.stderr, `kurmis status: could not look for the kurmis daemon: ${messageOf4(error)}`);
-    connection = null;
+    found = null;
   }
   let report;
-  if (connection === null) {
-    const files = await reportFromFiles(config, null, globalRouting, context, deps);
+  if (found === null || found.status.apiVersion !== CONTROL_API_VERSION) {
+    const files = await reportFromFiles(config, found?.status ?? null, globalRouting, context, deps);
     if (files === null) return EXIT_FAILURE;
     report = files;
   } else {
-    let status2;
-    try {
-      status2 = await deps.daemon.readStatus(connection);
-    } catch (error) {
-      writeLine(context.stderr, `kurmis status: the kurmis daemon (pid ${String(connection.pid)}) did not answer the status request: ${messageOf4(error)}`);
-      writeLine(context.stderr, `Showing the logins from config.json instead. The daemon's log is daemon.log in the kurmis data folder; "kurmis daemon restart" replaces the daemon.`);
-      status2 = null;
-    }
-    if (status2 === null) {
-      const files = await reportFromFiles(config, null, globalRouting, context, deps);
-      if (files === null) return EXIT_FAILURE;
-      report = files;
-    } else if (status2.apiVersion !== CONTROL_API_VERSION) {
-      const files = await reportFromFiles(config, status2, globalRouting, context, deps);
-      if (files === null) return EXIT_FAILURE;
-      report = files;
-    } else {
-      if (nothingProbedYet(status2)) status2 = await firstProbe(connection, status2, context, deps);
-      report = daemonReport(status2, globalRouting, deps.version);
-    }
+    const status2 = nothingProbedYet(found.status) ? await firstProbe(found, context, deps) : found.status;
+    report = daemonReport(status2, globalRouting, deps.version);
   }
   const now = deps.now();
   const options = { keychain: deps.platform === "darwin" };
@@ -10188,11 +10155,11 @@ async function runStatus(args, context, deps) {
   }
   return EXIT_OK;
 }
-async function firstProbe(connection, status2, context, deps) {
-  const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, void 0, signal), deps.probeWaitMs);
+async function firstProbe(found, context, deps) {
+  const probed = await settleWithin((signal) => deps.daemon.requestProbe(found, void 0, signal), deps.probeWaitMs);
   if (probed.kind === "done") return probed.value;
   writeLine(context.stderr, probed.kind === "timeout" ? `kurmis status: the first usage probe did not finish within ${String(deps.probeWaitMs / 1e3)} s; showing what the daemon has.` : `kurmis status: the usage probe failed (${messageOf4(probed.error)}); showing what the daemon has.`);
-  return status2;
+  return found.status;
 }
 async function reportFromFiles(config, daemon, globalRouting, context, deps) {
   if (config instanceof ConfigError) {

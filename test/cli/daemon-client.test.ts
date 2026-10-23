@@ -19,7 +19,6 @@ import {
   findDaemon,
   keyRefusedProblem,
   NOW_STOP_TIMEOUT_MS,
-  readStatus,
   requestProbe,
   requestReload,
   restartDaemon,
@@ -132,7 +131,7 @@ async function deadPid(): Promise<number> {
 
 describe('findDaemon', () => {
   it('finds nothing without a key file', async () => {
-    expect(await findDaemon({ env: {} })).toBeNull()
+    expect(await findDaemon()).toBeNull()
   })
 
   it('answers the daemon daemon.json names when it answers with the key', async () => {
@@ -140,7 +139,9 @@ describe('findDaemon', () => {
     const daemon = await fakeDaemon(key)
     usePort(daemon.port)
     writeDaemonFile({ pid: process.pid, port: daemon.port, version: '1.2.3', startedAt: 1 })
-    expect(await findDaemon({ env: {} })).toEqual({ port: daemon.port, key, pid: process.pid, version: '1.2.3', apiVersion: CONTROL_API_VERSION })
+    const found = await findDaemon()
+    expect(found).toMatchObject({ port: daemon.port, key, pid: process.pid, version: '1.2.3', apiVersion: CONTROL_API_VERSION })
+    expect(found?.status).toMatchObject({ ok: true, port: daemon.port, pid: process.pid, version: '1.2.3' })
     expect(daemon.requests[0]?.key).toBe(key)
   })
 
@@ -148,7 +149,7 @@ describe('findDaemon', () => {
     readOrCreateKey()
     usePort(await freePort())
     writeDaemonFile({ pid: await deadPid(), port: 1024, version: '1.2.3', startedAt: 1 })
-    expect(await findDaemon({ env: {} })).toBeNull()
+    expect(await findDaemon()).toBeNull()
     expect(existsSync(daemonFilePath())).toBe(false)
   })
 
@@ -156,7 +157,7 @@ describe('findDaemon', () => {
     readOrCreateKey()
     usePort(await freePort())
     writeFileSync(daemonFilePath(), '{ not json')
-    expect(await findDaemon({ env: {} })).toBeNull()
+    expect(await findDaemon()).toBeNull()
     expect(existsSync(daemonFilePath())).toBe(false)
   })
 
@@ -165,7 +166,7 @@ describe('findDaemon', () => {
     const port = await freePort()
     usePort(port)
     writeDaemonFile({ pid: process.pid, port, version: '1.2.3', startedAt: 1 })
-    expect(await findDaemon({ env: {} })).toBeNull()
+    expect(await findDaemon()).toBeNull()
     expect(existsSync(daemonFilePath())).toBe(true)
   })
 
@@ -173,7 +174,7 @@ describe('findDaemon', () => {
     const key = readOrCreateKey()
     const daemon = await fakeDaemon(key)
     usePort(daemon.port)
-    expect((await findDaemon({ env: {} }))?.port).toBe(daemon.port)
+    expect((await findDaemon())?.port).toBe(daemon.port)
   })
 
   it('waits for a daemon that is slower than a few seconds to answer', async () => {
@@ -181,14 +182,14 @@ describe('findDaemon', () => {
     const daemon = await fakeDaemon(key, {}, { statusDelayMs: 4_000 })
     writeDaemonFile({ pid: process.pid, port: daemon.port, version: '1.2.3', startedAt: 1 })
     usePort(daemon.port)
-    expect((await findDaemon({ env: {} }))?.port).toBe(daemon.port)
+    expect((await findDaemon())?.port).toBe(daemon.port)
   }, 20_000)
 
   it('does not take a server that refuses the key for a daemon', async () => {
     readOrCreateKey()
     const other = await fakeDaemon('0'.repeat(64))
     usePort(other.port)
-    expect(await findDaemon({ env: {} })).toBeNull()
+    expect(await findDaemon()).toBeNull()
   })
 })
 
@@ -367,7 +368,7 @@ describe('stopDaemon', () => {
     await new Promise((resolve) => setTimeout(resolve, 900))
     // Past the deadline but within the grace period: not ended yet.
     expect(processExists(pid)).toBe(true)
-    expect(await stopping).toBe(true)
+    expect(await stopping).toBe(pid)
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_700)
     expect(processExists(pid)).toBe(false)
     const stop = daemon.requests.find((request) => request.url === '/_kurmis/stop')
@@ -380,7 +381,7 @@ describe('stopDaemon', () => {
     const daemon = await fakeDaemon(key, { pid })
     usePort(daemon.port)
     const startedAt = Date.now()
-    expect(await stopDaemon({ env: {}, platform: 'win32', now: true, stopTimeoutMs: 300, stopGraceMs: 60_000 })).toBe(true)
+    expect(await stopDaemon({ env: {}, platform: 'win32', now: true, stopTimeoutMs: 300, stopGraceMs: 60_000 })).toBe(pid)
     expect(Date.now() - startedAt).toBeLessThan(10_000)
     expect(processExists(pid)).toBe(false)
     const stop = daemon.requests.find((request) => request.url === '/_kurmis/stop')
@@ -399,7 +400,7 @@ describe('stopDaemon', () => {
     const pid = await lingeringPid()
     const daemon = await fakeDaemon(key, { pid })
     usePort(daemon.port)
-    expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, stopGraceMs: 60_000 })).toBe(true)
+    expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, stopGraceMs: 60_000 })).toBe(pid)
     expect(processExists(pid)).toBe(false)
   })
 
@@ -417,21 +418,20 @@ describe('stopDaemon', () => {
     const gone = (): void => {
       throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
     }
-    expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, kill: gone })).toBe(true)
+    expect(await stopDaemon({ env: {}, platform: 'linux', stopTimeoutMs: 200, kill: gone })).toBe(pid)
   })
 })
 
 describe('control requests', () => {
-  it('reads the status, asks for a probe with the logins, and asks for a reload', async () => {
+  it('asks for a probe with the logins, and asks for a reload', async () => {
     const key = readOrCreateKey()
     const daemon = await fakeDaemon(key)
     const connection = { port: daemon.port, key, pid: process.pid, version: '1.2.3' }
-    expect((await readStatus(connection)).port).toBe(daemon.port)
     expect((await requestProbe(connection, ['claude:work'])).ok).toBe(true)
     await requestReload(connection)
     expect(daemon.requests.map((request) => `${request.method} ${request.url}`))
-      .toEqual(['GET /_kurmis/status', 'POST /_kurmis/probe', 'POST /_kurmis/reload'])
-    expect(JSON.parse(daemon.requests[1]?.body ?? '')).toEqual({ logins: ['claude:work'] })
+      .toEqual(['POST /_kurmis/probe', 'POST /_kurmis/reload'])
+    expect(JSON.parse(daemon.requests[0]?.body ?? '')).toEqual({ logins: ['claude:work'] })
   })
 
   it('closes the probe request and its connection when the signal is aborted', async () => {
@@ -456,9 +456,9 @@ describe('control requests', () => {
   it('turns a refused key and a stopped daemon into sentences', async () => {
     const key = readOrCreateKey()
     const daemon = await fakeDaemon('1'.repeat(64))
-    await expect(readStatus({ port: daemon.port, key, pid: 1, version: '1' })).rejects.toThrow(/did not accept the key/)
+    await expect(requestReload({ port: daemon.port, key, pid: 1, version: '1' })).rejects.toThrow(/did not accept the key/)
     const port = await freePort()
-    await expect(readStatus({ port, key, pid: 1, version: '1' })).rejects.toThrow(/not running/)
+    await expect(requestReload({ port, key, pid: 1, version: '1' })).rejects.toThrow(/not running/)
   })
 })
 

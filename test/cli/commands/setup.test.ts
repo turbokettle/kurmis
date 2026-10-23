@@ -662,7 +662,7 @@ describe('kurmis setup --uninstall-and-logout', () => {
       async stopDaemon() {
         world.stops++
         if (options.stopFails !== undefined) throw new DaemonError(options.stopFails)
-        return options.running ?? true
+        return options.running === false ? null : FAKE_CONNECTION.pid
       },
       stdinIsTerminal: () => options.terminal ?? false,
       async ask(question) {

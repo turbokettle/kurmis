@@ -173,10 +173,10 @@ class AddedMeanwhile extends Error {
  * Tells a running daemon about the login: it reads config.json again, and probes the login,
  * so a signed-out state it held from before ends now. Answers lines for the person.
  */
-async function tellDaemon(daemon: DaemonClient, login: LoginSettings, env: NodeJS.ProcessEnv, probeWaitMs: number): Promise<string[]> {
+async function tellDaemon(daemon: DaemonClient, login: LoginSettings, probeWaitMs: number): Promise<string[]> {
   let connection
   try {
-    connection = await daemon.findDaemon({ env })
+    connection = await daemon.findDaemon()
     if (connection === null) return []
     await daemon.requestReload(connection)
   } catch (error) {
@@ -319,7 +319,7 @@ async function signIn(run: SignInRun): Promise<number> {
         `"kurmis login ${login.alias}" signs ${login.alias} in to another account.`)
     }
   }
-  for (const line of await tellDaemon(deps.daemon, login, context.env, deps.probeWaitMs)) writeLine(context.stdout, line)
+  for (const line of await tellDaemon(deps.daemon, login, deps.probeWaitMs)) writeLine(context.stdout, line)
   return EXIT_OK
 }
 

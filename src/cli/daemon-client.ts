@@ -74,6 +74,12 @@ export interface DaemonConnection {
   apiVersion?: number
 }
 
+/** A running daemon as `findDaemon` found it. */
+export interface FoundDaemon extends DaemonConnection {
+  /** The answer to the status request that found it. */
+  status: StatusAnswer
+}
+
 /** A control request that failed, with a sentence a person can read. */
 export class DaemonError extends Error {
   constructor(message: string) {
@@ -159,11 +165,11 @@ function configuredPort(): number {
   }
 }
 
-function connectionOf(status: StatusAnswer, key: string): DaemonConnection {
-  const connection: DaemonConnection = { port: status.port, key, pid: status.pid, version: status.version }
+function foundDaemon(status: StatusAnswer, key: string): FoundDaemon {
+  const found: FoundDaemon = { port: status.port, key, pid: status.pid, version: status.version, status }
   // An older daemon's status answer may have no `apiVersion`.
-  if (typeof status.apiVersion === 'number') connection.apiVersion = status.apiVersion
-  return connection
+  if (typeof status.apiVersion === 'number') found.apiVersion = status.apiVersion
+  return found
 }
 
 /**
@@ -172,8 +178,7 @@ function connectionOf(status: StatusAnswer, key: string): DaemonConnection {
  * just bound its port may not have written `daemon.json` yet. Each status request may take
  * `FIND_TIMEOUT_MS`; with `timeoutMs`, the requests together also take at most about that long.
  */
-export async function findDaemon(options: DaemonClientOptions, timeoutMs?: number): Promise<DaemonConnection | null> {
-  void options
+export async function findDaemon(timeoutMs?: number): Promise<FoundDaemon | null> {
   const until = timeoutMs === undefined ? null : Date.now() + timeoutMs
   const requestTimeout = (): number => until === null ? FIND_TIMEOUT_MS : Math.min(FIND_TIMEOUT_MS, Math.max(1, until - Date.now()))
   const key = readKey()
@@ -194,7 +199,7 @@ export async function findDaemon(options: DaemonClientOptions, timeoutMs?: numbe
     } else {
       triedPort = port
       const holder = await portHolder(port, key, requestTimeout())
-      if (holder.kind === 'kurmis') return connectionOf(holder.status, key)
+      if (holder.kind === 'kurmis') return foundDaemon(holder.status, key)
     }
   }
   let port: number
@@ -206,7 +211,7 @@ export async function findDaemon(options: DaemonClientOptions, timeoutMs?: numbe
   }
   if (port === triedPort) return null
   const holder = await portHolder(port, key, requestTimeout())
-  return holder.kind === 'kurmis' ? connectionOf(holder.status, key) : null
+  return holder.kind === 'kurmis' ? foundDaemon(holder.status, key) : null
 }
 
 function removeDaemonFileIfDamaged(): void {
@@ -250,7 +255,7 @@ function portBusyMessage(port: number, reason: string): string {
 }
 
 export interface StartResult {
-  connection: DaemonConnection
+  connection: FoundDaemon
   /** Whether this call started a daemon (false when one of this version or newer already ran). */
   started: boolean
   /** The version of the daemon this start replaced, or null. */
@@ -292,7 +297,7 @@ export class DaemonNotUsableError extends DaemonError {
 }
 
 /** `connection` when this kurmis can use it; otherwise throws a `DaemonNotUsableError` that says why. */
-function usable(connection: DaemonConnection, version: string, apiVersion: number): DaemonConnection {
+function usable<T extends DaemonConnection>(connection: T, version: string, apiVersion: number): T {
   const problem = unusableDaemonText(connection, version, apiVersion)
   if (problem !== null) throw new DaemonNotUsableError(problem)
   return connection
@@ -308,7 +313,7 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
   const version = options.version ?? kurmisVersion
   const apiVersion = options.apiVersion ?? CONTROL_API_VERSION
   const port = configuredPort()
-  const found = await findDaemon(options)
+  const found = await findDaemon()
   let replaced: string | null = null
   if (found !== null) {
     const age = daemonAge(found, version, apiVersion)
@@ -350,7 +355,7 @@ export async function startDaemon(options: DaemonClientOptions): Promise<StartRe
       throw new DaemonError(portBusyMessage(port, holder.reason))
     }
     if (holder.kind === 'kurmis' && !shouldReplaceDaemon(holder.status, version, apiVersion)) {
-      return { connection: usable(connectionOf(holder.status, key), version, apiVersion), started: false, replaced: null }
+      return { connection: usable(foundDaemon(holder.status, key), version, apiVersion), started: false, replaced: null }
     }
   }
   const entry = options.entry ?? kurmisEntry({ env: options.env })
@@ -379,14 +384,15 @@ interface WaitForDaemon {
 }
 
 /** Waits until a daemon answers on `port` that `shouldReplaceDaemon` keeps: as old as this kurmis, or newer. */
-async function waitForDaemon(wait: WaitForDaemon): Promise<DaemonConnection> {
+async function waitForDaemon(wait: WaitForDaemon): Promise<FoundDaemon> {
   const deadline = Date.now() + wait.timeoutMs
   let exitCode: number | null | undefined
   void wait.child.exited.then((code) => {
     exitCode = code
   })
   for (;;) {
-    const found = await findDaemon({ env: {} })
+    // The lookup gets only the time that is left, so a status request that hangs cannot stretch the wait.
+    const found = await findDaemon(Math.max(1, deadline - Date.now()))
     if (found !== null && found.port === wait.port && !shouldReplaceDaemon(found, wait.version, wait.apiVersion)) return found
     // A child that exited 0 lost the port to another daemon starting at the same moment, which
     // this loop finds next. Any other exit is a failure.
@@ -407,7 +413,7 @@ async function waitForDaemon(wait: WaitForDaemon): Promise<DaemonConnection> {
  * (`shouldReplaceDaemon`). Throws a `DaemonNotUsableError` when a newer daemon runs that this
  * kurmis cannot use (`unusableDaemonText`).
  */
-export async function ensureDaemon(options: DaemonClientOptions): Promise<DaemonConnection> {
+export async function ensureDaemon(options: DaemonClientOptions): Promise<FoundDaemon> {
   return (await startDaemon(options)).connection
 }
 
@@ -422,13 +428,6 @@ function failureOf(result: ControlResult, connection: DaemonConnection, what: st
   }
   const said = isPlainObject(result.body) && typeof result.body.error === 'string' ? result.body.error : `HTTP ${String(result.status)}`
   return new DaemonError(`The kurmis daemon refused ${what}: ${said}`)
-}
-
-/** `GET /_kurmis/status`. */
-export async function readStatus(connection: DaemonConnection): Promise<StatusAnswer> {
-  const result = await controlRequest({ port: connection.port, key: connection.key, method: 'GET', path: CONTROL_PATHS.status })
-  if (result.kind === 'answered' && result.status === 200 && isStatusAnswer(result.body)) return result.body
-  throw failureOf(result, connection, 'a status request')
 }
 
 /**
@@ -517,20 +516,20 @@ export async function keyRefusedProblem(options: DaemonClientOptions): Promise<s
 }
 
 /**
- * Stops the running daemon and waits for it to exit. False when none was running. The daemon
- * finishes its open requests first, for at most `stopTimeoutMs` (sent as `maxWaitMs`), or cuts
- * them at once with `now`. When it has not exited by then it gets SIGTERM on macOS and Linux,
+ * Stops the running daemon and waits for it to exit. Answers its pid, or null when none was
+ * running. The daemon finishes its open requests first, for at most `stopTimeoutMs` (sent as
+ * `maxWaitMs`), or cuts them at once with `now`. When it has not exited by then it gets SIGTERM on macOS and Linux,
  * which makes a daemon that ignored `maxWaitMs` stop waiting; on Windows, where that ends the
  * process at once, the CLI first waits `stopGraceMs` more (not with `now`). Only a pid that
  * answered the keyed status request as the daemon's own is ever signalled.
  */
-export async function stopDaemon(options: DaemonClientOptions): Promise<boolean> {
+export async function stopDaemon(options: DaemonClientOptions): Promise<number | null> {
   const platform = options.platform ?? process.platform
-  const found = await findDaemon(options)
+  const found = await findDaemon()
   if (found === null) {
     const problem = await keyRefusedProblem(options)
     if (problem !== null) throw new DaemonError(problem)
-    return false
+    return null
   }
   const now = options.now === true
   const waitMs = options.stopTimeoutMs ?? (now ? NOW_STOP_TIMEOUT_MS : STOP_TIMEOUT_MS)
@@ -539,13 +538,13 @@ export async function stopDaemon(options: DaemonClientOptions): Promise<boolean>
   if (result.kind === 'answered' && result.status !== 200) throw failureOf(result, found, 'the stop request')
   // With `now` the wait above is already the time the daemon needs to exit after its requests.
   const graceMs = platform === 'win32' && !now ? options.stopGraceMs ?? STOP_GRACE_MS : 0
-  if (await waitForExit(found.pid, waitMs + graceMs)) return true
+  if (await waitForExit(found.pid, waitMs + graceMs)) return found.pid
   const kill = options.kill ?? ((pid: number, signal: NodeJS.Signals) => process.kill(pid, signal))
   try {
     kill(found.pid, 'SIGTERM')
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ESRCH') return true
+    if (code === 'ESRCH') return found.pid
     // EPERM: the daemon runs as another user, or on Windows as administrator while this
     // command does not.
     const stopIt = platform === 'win32' ? `taskkill /PID ${String(found.pid)} /F` : `kill ${String(found.pid)}`
@@ -553,7 +552,7 @@ export async function stopDaemon(options: DaemonClientOptions): Promise<boolean>
       `command may not end it (${code ?? String(error)}). It probably runs as another user or as administrator; end it from ` +
       `there with "${stopIt}".`)
   }
-  if (await waitForExit(found.pid, KILL_WAIT_MS)) return true
+  if (await waitForExit(found.pid, KILL_WAIT_MS)) return found.pid
   throw new DaemonError(`The kurmis daemon (pid ${String(found.pid)}) was asked to stop but is still running.`)
 }
 
@@ -565,7 +564,7 @@ export async function stopDaemon(options: DaemonClientOptions): Promise<boolean>
 export async function restartDaemon(options: DaemonClientOptions): Promise<StartResult> {
   const version = options.version ?? kurmisVersion
   const apiVersion = options.apiVersion ?? CONTROL_API_VERSION
-  const found = await findDaemon(options)
+  const found = await findDaemon()
   if (found !== null) {
     if (daemonAge(found, version, apiVersion) === 'newer') {
       throw new DaemonError(`The running kurmis daemon is newer than this kurmis (the daemon is ` +

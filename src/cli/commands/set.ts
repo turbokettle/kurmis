@@ -133,7 +133,7 @@ Example:
         throw error
       }
       writeLine(context.stdout, formatLoginSettings(login))
-      const reload = reloadText(await reloadIfRunning(daemon, context.env))
+      const reload = reloadText(await reloadIfRunning(daemon))
       if (reload !== null) writeLine(context.stdout, reload)
       return EXIT_OK
     }

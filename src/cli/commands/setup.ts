@@ -67,8 +67,8 @@ export interface SetupDeps {
   daemon: DaemonClient
   registerAutostart(options: AutostartOptions): Promise<AutostartResult>
   unregisterAutostart(options: AutostartOptions): Promise<AutostartResult>
-  /** `stopDaemon` in `daemon-client.ts`: false when no daemon was running. */
-  stopDaemon(options: DaemonClientOptions): Promise<boolean>
+  /** `stopDaemon` in `daemon-client.ts`: the pid it stopped, or null when no daemon was running. */
+  stopDaemon(options: DaemonClientOptions): Promise<number | null>
   /** Removes one login the way `kurmis logout` does. */
   logOutLogin: LoginLogout
   /** Whether standard input is a terminal, where `--uninstall-and-logout` can ask. */
@@ -227,9 +227,9 @@ async function daemonStep(port: number, path: string, hadKurmis: boolean, deps: 
 }
 
 /** The pid of the running daemon, or null when none answers. */
-async function runningDaemonPid(deps: SetupDeps, context: CliContext): Promise<number | null> {
+async function runningDaemonPid(deps: SetupDeps): Promise<number | null> {
   try {
-    return (await deps.daemon.findDaemon({ env: context.env }))?.pid ?? null
+    return (await deps.daemon.findDaemon())?.pid ?? null
   } catch {
     return null
   }
@@ -421,7 +421,7 @@ async function runPause(deps: SetupDeps, context: CliContext): Promise<number> {
     writeLine(context.stdout, 'Claude Code sessions that are already open keep the settings they started with, and so keep ' +
       'using kurmis until they end; start them again.')
   }
-  if (await runningDaemonPid(deps, context) !== null) {
+  if (await runningDaemonPid(deps) !== null) {
     writeLine(context.stdout, '"kurmis claude" still uses the daemon; "kurmis daemon stop" stops it.')
   }
   return EXIT_OK
@@ -564,7 +564,7 @@ async function runUninstall(yes: boolean, deps: SetupDeps, context: CliContext):
   const { added: logins, others } = loginsKurmisAdded(config)
   const backups = files.filter((file) => existsSync(backupPathFor(file)))
   const autostart = autostartEntry(deps.platform)
-  const pid = await runningDaemonPid(deps, context)
+  const pid = await runningDaemonPid(deps)
   const dataFolder = kurmisHome()
 
   writeLine(context.stdout, 'This removes what kurmis set up on this machine:')
@@ -614,9 +614,8 @@ async function runUninstall(yes: boolean, deps: SetupDeps, context: CliContext):
 
   // 3. The daemon.
   try {
-    writeLine(context.stdout, await deps.stopDaemon({ env: context.env })
-      ? `Stopped the daemon${pid === null ? '' : ` (pid ${String(pid)})`}.`
-      : 'The daemon was not running.')
+    const stopped = await deps.stopDaemon({ env: context.env })
+    writeLine(context.stdout, stopped === null ? 'The daemon was not running.' : `Stopped the daemon (pid ${String(stopped)}).`)
   } catch (error) {
     if (!(error instanceof DaemonError)) throw error
     writeLine(context.stderr, `Could not stop the daemon: ${error.message}`)

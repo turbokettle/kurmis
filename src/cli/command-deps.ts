@@ -1,30 +1,28 @@
 // What the commands reach outside themselves through, so a unit test can hand each command fakes
-// instead of a daemon, a real `claude`, or autostart. Every command module exports a
-// `create<Name>Command(deps)` that takes a `Partial` of what it needs and fills the rest with the
-// real functions here.
+// instead of a daemon, a real `claude`, or autostart. A command module that its tests run with
+// fakes exports a `create<Name>Command(deps)` that takes a `Partial` of what it needs and fills
+// the rest with the real functions here.
 import {
-  DaemonError,
   ensureDaemon,
   findDaemon,
-  readStatus,
   requestProbe,
   requestReload,
   type DaemonClientOptions,
-  type DaemonConnection
+  type DaemonConnection,
+  type FoundDaemon
 } from './daemon-client.ts'
 import type { StatusAnswer } from '../core/control-api.ts'
 import { finishLikeChild, runInteractive } from './wrapper.ts'
 
 /** The daemon client functions the commands use. */
 export interface DaemonClient {
-  findDaemon(options: DaemonClientOptions): Promise<DaemonConnection | null>
-  ensureDaemon(options: DaemonClientOptions): Promise<DaemonConnection>
-  readStatus(connection: DaemonConnection): Promise<StatusAnswer>
+  findDaemon(): Promise<FoundDaemon | null>
+  ensureDaemon(options: DaemonClientOptions): Promise<FoundDaemon>
   requestProbe(connection: DaemonConnection, logins?: string[], signal?: AbortSignal): Promise<StatusAnswer>
   requestReload(connection: DaemonConnection): Promise<void>
 }
 
-export const realDaemonClient: DaemonClient = { findDaemon, ensureDaemon, readStatus, requestProbe, requestReload }
+export const realDaemonClient: DaemonClient = { findDaemon, ensureDaemon, requestProbe, requestReload }
 
 /** Starting the interactive child and ending like it (`wrapper.ts`). */
 export interface ChildRunner {
@@ -44,14 +42,14 @@ export type ReloadResult =
  * Tells a running daemon to read `config.json` again. Never starts one: a daemon that is not
  * running reads the file when it starts. Never throws.
  */
-export async function reloadIfRunning(client: DaemonClient, env: NodeJS.ProcessEnv): Promise<ReloadResult> {
+export async function reloadIfRunning(client: DaemonClient): Promise<ReloadResult> {
   try {
-    const connection = await client.findDaemon({ env })
+    const connection = await client.findDaemon()
     if (connection === null) return { kind: 'not-running' }
     await client.requestReload(connection)
     return { kind: 'reloaded' }
   } catch (error) {
-    return { kind: 'failed', message: error instanceof DaemonError || error instanceof Error ? error.message : String(error) }
+    return { kind: 'failed', message: error instanceof Error ? error.message : String(error) }
   }
 }
 

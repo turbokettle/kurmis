@@ -116,7 +116,7 @@ describe('kurmis claude on Auto', () => {
     const code = await createClaudeCommand(h.deps).run(['-p', 'hi', '--login', 'x'], out.context)
     expect(code).toBe(3)
     expect(out.stderr()).toBe('')
-    expect(h.daemon.calls).toEqual(['ensureDaemon', 'readStatus'])
+    expect(h.daemon.calls).toEqual(['ensureDaemon'])
     const headers = routedHeaders(`x-kurmis-key: ${KEY}`, `x-kurmis-started-on: ${OWN_CLAUDE}`)
     const routing = { ANTHROPIC_BASE_URL: BASE_URL, ANTHROPIC_CUSTOM_HEADERS: headers, ENABLE_TOOL_SEARCH: 'true', CLAUDE_CODE_MAX_RETRIES: '15' }
     expect(h.specs).toEqual([{
@@ -327,15 +327,6 @@ describe('kurmis claude on Auto', () => {
     expect(out.stderr()).toBe('kurmis claude: A newer kurmis daemon runs on port 40123 (pid 4242), so this kurmis does not replace it. Update this kurmis. Claude is not started unrouted.\n')
     expect(h.specs).toEqual([])
   })
-
-  test('a status that cannot be read is the same error', async () => {
-    const h = harness()
-    h.daemon.readStatus = () => Promise.reject(new Error('connection reset'))
-    const out = collect()
-    expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(1)
-    expect(out.stderr()).toContain('could not be reached (connection reset)')
-    expect(h.specs).toEqual([])
-  })
 })
 
 describe('kurmis claude --login', () => {
@@ -407,7 +398,7 @@ describe('kurmis claude --login', () => {
     expect(await createClaudeCommand(h.deps).run(['-p', 'hi'], out.context)).toBe(3)
     expect(out.stderr()).toBe('kurmis claude: Another kurmis command (pid 4321) holds the lock of config.json. ' +
       'Starting claude on the login plain claude uses.\n')
-    expect(h.daemon.calls).toEqual(['findDaemon', 'readStatus'])
+    expect(h.daemon.calls).toEqual(['findDaemon'])
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`, `x-kurmis-started-on: ${OWN_CLAUDE}`))
     expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
   })
@@ -420,7 +411,7 @@ describe('kurmis claude --login', () => {
     })
     const out = collect()
     expect(await createClaudeCommand(h.deps).run([], out.context)).toBe(3)
-    expect(h.daemon.calls).toEqual(['findDaemon', 'ensureDaemon', 'readStatus'])
+    expect(h.daemon.calls).toEqual(['findDaemon', 'ensureDaemon'])
     // The status names no login of plain claude, so no started-on header is sent: the daemon reads that as plain claude's login.
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`))
   })

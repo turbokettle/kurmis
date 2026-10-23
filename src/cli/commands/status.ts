@@ -1,8 +1,8 @@
 // `kurmis status [--json]`: every login with its settings and usage, whether the daemon runs, and
 // whether global routing is on. It never starts the daemon, and exits 0 whether or not one runs.
-// When the daemon runs, the logins come from its status answer. When none runs, or its status
-// request fails, or this kurmis cannot read its answer, they come from `config.json`, with the
-// usage the daemon last wrote to `state.json` and whether each login's credentials are on this
+// When the daemon runs, the logins come from the status answer it was found with
+// (`findDaemon`). When none answers, or this kurmis cannot read its answer, they come from
+// `config.json`, with the usage the daemon last wrote to `state.json` and whether each login's credentials are on this
 // machine (`checkCredentials`).
 //
 // Status reads `config.json` with `loadConfig`, as the other commands do, so when the file has no
@@ -17,7 +17,7 @@ import { runProgram } from '../../platform/run.ts'
 import { kurmisVersion } from '../../version.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, settleWithin, type DaemonClient } from '../command-deps.ts'
-import type { DaemonConnection } from '../daemon-client.ts'
+import type { FoundDaemon } from '../daemon-client.ts'
 import { globalRoutingState, type GlobalRoutingState } from '../global-routing.ts'
 import { checkCredentials } from '../local-credentials.ts'
 import { daemonOf, daemonReport, formatStatus, statusJson, type StatusReport } from '../status-format.ts'
@@ -124,41 +124,21 @@ async function runStatus(args: string[], context: CliContext, deps: StatusDeps):
     config = error
   }
   const globalRouting = deps.globalRouting(context.env)
-  let connection: DaemonConnection | null
+  let found: FoundDaemon | null
   try {
-    connection = await deps.daemon.findDaemon({ env: context.env })
+    found = await deps.daemon.findDaemon()
   } catch (error) {
     writeLine(context.stderr, `kurmis status: could not look for the kurmis daemon: ${messageOf(error)}`)
-    connection = null
+    found = null
   }
   let report: StatusReport
-  if (connection === null) {
-    const files = await reportFromFiles(config, null, globalRouting, context, deps)
+  if (found === null || found.status.apiVersion !== CONTROL_API_VERSION) {
+    const files = await reportFromFiles(config, found?.status ?? null, globalRouting, context, deps)
     if (files === null) return EXIT_FAILURE
     report = files
   } else {
-    let status: StatusAnswer | null
-    try {
-      status = await deps.daemon.readStatus(connection)
-    } catch (error) {
-      writeLine(context.stderr, `kurmis status: the kurmis daemon (pid ${String(connection.pid)}) did not answer the status ` +
-        `request: ${messageOf(error)}`)
-      writeLine(context.stderr, 'Showing the logins from config.json instead. The daemon\'s log is daemon.log in the kurmis data ' +
-        'folder; "kurmis daemon restart" replaces the daemon.')
-      status = null
-    }
-    if (status === null) {
-      const files = await reportFromFiles(config, null, globalRouting, context, deps)
-      if (files === null) return EXIT_FAILURE
-      report = files
-    } else if (status.apiVersion !== CONTROL_API_VERSION) {
-      const files = await reportFromFiles(config, status, globalRouting, context, deps)
-      if (files === null) return EXIT_FAILURE
-      report = files
-    } else {
-      if (nothingProbedYet(status)) status = await firstProbe(connection, status, context, deps)
-      report = daemonReport(status, globalRouting, deps.version)
-    }
+    const status = nothingProbedYet(found.status) ? await firstProbe(found, context, deps) : found.status
+    report = daemonReport(status, globalRouting, deps.version)
   }
   const now = deps.now()
   const options = { keychain: deps.platform === 'darwin' }
@@ -170,14 +150,17 @@ async function runStatus(args: string[], context: CliContext, deps: StatusDeps):
   return EXIT_OK
 }
 
-/** The daemon's status after its first usage probe, or `status` when the probe fails or takes longer than `probeWaitMs`. */
-async function firstProbe(connection: DaemonConnection, status: StatusAnswer, context: CliContext, deps: StatusDeps): Promise<StatusAnswer> {
-  const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, undefined, signal), deps.probeWaitMs)
+/**
+ * The daemon's status after its first usage probe, or the status it was found with when the
+ * probe fails or takes longer than `probeWaitMs`.
+ */
+async function firstProbe(found: FoundDaemon, context: CliContext, deps: StatusDeps): Promise<StatusAnswer> {
+  const probed = await settleWithin((signal) => deps.daemon.requestProbe(found, undefined, signal), deps.probeWaitMs)
   if (probed.kind === 'done') return probed.value
   writeLine(context.stderr, probed.kind === 'timeout'
     ? `kurmis status: the first usage probe did not finish within ${String(deps.probeWaitMs / 1000)} s; showing what the daemon has.`
     : `kurmis status: the usage probe failed (${messageOf(probed.error)}); showing what the daemon has.`)
-  return status
+  return found.status
 }
 
 /**

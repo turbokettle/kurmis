@@ -3,7 +3,7 @@
 import { CONTROL_API_VERSION, type LoginStatus, type StatusAnswer } from '../../src/core/control-api.ts'
 import type { CliContext } from '../../src/cli/command.ts'
 import type { DaemonClient } from '../../src/cli/command-deps.ts'
-import type { DaemonConnection } from '../../src/cli/daemon-client.ts'
+import type { DaemonConnection, FoundDaemon } from '../../src/cli/daemon-client.ts'
 import { DaemonError, DaemonNotUsableError } from '../../src/cli/daemon-client.ts'
 import { daemonReport, type StatusReport } from '../../src/cli/status-format.ts'
 import type { LoginRef } from '../../src/data/login-id.ts'
@@ -86,7 +86,7 @@ export interface FakeDaemonClient extends DaemonClient {
 export interface FakeDaemonOptions {
   /** Whether a daemon is running for `findDaemon`. Default true. */
   running?: boolean
-  /** The status `readStatus` answers. */
+  /** The status answer `findDaemon` and `ensureDaemon` find the daemon with. */
   status?: StatusAnswer
   /** The status `requestProbe` answers; defaults to `status`. */
   probed?: StatusAnswer
@@ -98,8 +98,6 @@ export interface FakeDaemonOptions {
   connection?: DaemonConnection
   /** Makes `findDaemon` throw a `DaemonError` with this message. */
   findFails?: string
-  /** Makes `readStatus` throw a `DaemonError` with this message. */
-  readFails?: string
   /** Makes `requestReload` throw a `DaemonError` with this message. */
   reloadFails?: string
 }
@@ -108,23 +106,19 @@ export interface FakeDaemonOptions {
 export function fakeDaemonClient(options: FakeDaemonOptions = {}): FakeDaemonClient {
   const calls: string[] = []
   const status = options.status ?? statusAnswer([loginStatus(OWN_CLAUDE_REF)])
+  const found = (): FoundDaemon => ({ ...(options.connection ?? FAKE_CONNECTION), status })
   return {
     calls,
     async findDaemon() {
       calls.push('findDaemon')
       if (options.findFails !== undefined) throw new DaemonError(options.findFails)
-      return options.running === false ? null : options.connection ?? FAKE_CONNECTION
+      return options.running === false ? null : found()
     },
     async ensureDaemon() {
       calls.push('ensureDaemon')
       if (options.ensureFails !== undefined) throw new DaemonError(options.ensureFails)
       if (options.ensureNotUsable !== undefined) throw new DaemonNotUsableError(options.ensureNotUsable)
-      return options.connection ?? FAKE_CONNECTION
-    },
-    async readStatus() {
-      calls.push('readStatus')
-      if (options.readFails !== undefined) throw new DaemonError(options.readFails)
-      return status
+      return found()
     },
     async requestProbe(_connection, logins) {
       calls.push(logins === undefined ? 'requestProbe' : `requestProbe:${logins.join(',')}`)

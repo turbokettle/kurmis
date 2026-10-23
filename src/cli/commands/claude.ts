@@ -34,7 +34,7 @@ import { EXIT_FAILURE, PLAIN_CLAUDE_LOGIN, writeLine, type CliContext, type Comm
 import {
   realChildRunner, realDaemonClient, settleWithin, type ChildRunner, type DaemonClient
 } from '../command-deps.ts'
-import { DaemonNotUsableError, type DaemonConnection } from '../daemon-client.ts'
+import { DaemonNotUsableError, type DaemonConnection, type FoundDaemon } from '../daemon-client.ts'
 import {
   claudeArgsWithSettings,
   claudeUserSettingsPath,
@@ -175,13 +175,13 @@ async function runClaude(args: string[], login: string | null, context: CliConte
     pinned = resolved.login
   }
 
-  let connection: DaemonConnection
+  let connection: FoundDaemon
   try {
     // Without the config `ensureDaemon` cannot tell which port the daemon belongs on, so a daemon
     // that runs is used as it is, when this kurmis can read its answers. Otherwise
     // `ensureDaemon` reads the config again, which works when the config only had its lock taken
     // a moment ago, and says why it cannot use a daemon that runs.
-    const running = config === null ? await deps.daemon.findDaemon({ env: context.env }) : null
+    const running = config === null ? await deps.daemon.findDaemon() : null
     connection = running !== null && canUseDaemon(running) ? running : await deps.daemon.ensureDaemon({ env: context.env })
   } catch (error) {
     return fail(daemonUnreachable(error))
@@ -191,19 +191,13 @@ async function runClaude(args: string[], login: string | null, context: CliConte
   if (pinned !== null) {
     startedOn = pinned
   } else {
-    let status: StatusAnswer
-    try {
-      status = await deps.daemon.readStatus(connection)
-    } catch (error) {
-      return fail(daemonUnreachable(error))
-    }
-    const ownRow = status.logins.find((login) => login.usedByPlainClaude)
+    const ownRow = connection.status.logins.find((login) => login.usedByPlainClaude)
     if (config === null) {
       // The daemon's id for the login plain claude uses. Without one, no started-on header is
       // sent, which the daemon reads as that login too.
       startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true }
     } else {
-      status = await withFirstProbe(connection, status, context, deps)
+      const status = await withFirstProbe(connection, connection.status, context, deps)
       startedOn = autoStartLogin(status.logins) ?? plainClaudeLogin(config)
       if (!startedOn.usedByPlainClaude) {
         const own = ownRow ?? plainClaudeLogin(config)
