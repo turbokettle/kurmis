@@ -124,7 +124,7 @@ describe('when the plan comes back', () => {
     const usage = claudeUsage({
       status: 'rejected',
       fiveHour: { utilization: 3, resetsAt: EARLY },
-      limited: { window: 'seven_day_opus', utilization: null, threshold: null, resetsAt: LATE }
+      limited: { window: 'seven_day_opus', utilization: null, resetsAt: LATE }
     })
 
     expect(resetsAtFromUsage(usage)).toBe(LATE)

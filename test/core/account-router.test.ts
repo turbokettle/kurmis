@@ -56,7 +56,7 @@ describe('unified response headers', () => {
   test('missing headers are unknown and name no windows', () => {
     const observed = parseUnifiedHeaders(() => null, NOW)
     expect(observed).toEqual({ observedAt: NOW, status: null, resetsAt: null,
-      representativeClaim: null, windows: {}, overageStatus: null, overageDisabledReason: null })
+      representativeClaim: null, windows: {} })
     expect(usageFromUnifiedHeaders('homeclaude', null, observed)).toEqual({
       ...emptyAccountUsage('homeclaude', NOW), source: 'session'
     })
@@ -73,7 +73,6 @@ describe('unified response headers', () => {
     }), NOW)
     expect(observed).toEqual({
       observedAt: NOW, status: 'allowed_warning', resetsAt: iso(RESET), representativeClaim: '7d_oi',
-      overageStatus: 'rejected', overageDisabledReason: 'out_of_credits',
       windows: {
         '5h': { utilization: 0, resetsAt: iso(RESET), status: 'allowed' },
         '7d': { utilization: 0.512, resetsAt: null, status: 'allowed_warning' },
@@ -86,7 +85,7 @@ describe('unified response headers', () => {
       fiveHour: { utilization: 0, resetsAt: iso(RESET) },
       sevenDay: { utilization: 51.2, resetsAt: null },
       sevenDayOverage: { utilization: 100, resetsAt: null },
-      limited: { window: 'seven_day_overage_included', utilization: 100, threshold: null, resetsAt: iso(RESET) }
+      limited: { window: 'seven_day_overage_included', utilization: 100, resetsAt: iso(RESET) }
     })
     expect(folded.extraUsage).toBeNull()
   })
@@ -125,14 +124,14 @@ describe('unified response headers', () => {
       '5h-reset': String(RESET / 1000) }), NOW)
     const folded = usageFromUnifiedHeaders('homeclaude', null, observed)
     expect(folded.fiveHour).toBeNull()
-    expect(folded.limited).toEqual({ window: 'five_hour', utilization: null, threshold: null, resetsAt: iso(RESET) })
+    expect(folded.limited).toEqual({ window: 'five_hour', utilization: null, resetsAt: iso(RESET) })
   })
 
   test('an unfamiliar representative claim is preserved', () => {
     const observed = parseUnifiedHeaders(headers({ status: 'rejected', 'representative-claim': 'future_window',
       reset: String(RESET / 1000) }), NOW)
     expect(usageFromUnifiedHeaders('homeclaude', null, observed).limited).toEqual({
-      window: 'future_window', utilization: null, threshold: null, resetsAt: iso(RESET)
+      window: 'future_window', utilization: null, resetsAt: iso(RESET)
     })
   })
 
@@ -141,7 +140,7 @@ describe('unified response headers', () => {
       'overage-utilization': '0.9', 'overage-reset': String(RESET / 1000) }), NOW)
     const folded = usageFromUnifiedHeaders('homeclaude', null, observed)
     expect(folded.sevenDayOverage).toBeNull()
-    expect(folded.limited).toEqual({ window: 'overage', utilization: 90, threshold: null, resetsAt: iso(RESET) })
+    expect(folded.limited).toEqual({ window: 'overage', utilization: 90, resetsAt: iso(RESET) })
   })
 })
 
@@ -433,7 +432,7 @@ describe('a pool where every login is under its limits', () => {
       ...emptyAccountUsage(OWN_CLAUDE, NOW), status: 'allowed_warning',
       fiveHour: { utilization: 47, resetsAt: iso(RESET) },
       sevenDay: { utilization: 79, resetsAt: iso(LATER) },
-      limited: { window: 'seven_day', utilization: 79, threshold: 75, resetsAt: iso(LATER) }
+      limited: { window: 'seven_day', utilization: 79, resetsAt: iso(LATER) }
     }, ...patch }),
     account('personalclaude', { ...limits(90), usage: {
       ...emptyAccountUsage('personalclaude', NOW),
@@ -504,7 +503,7 @@ describe('a window whose reset time has passed', () => {
       ...emptyAccountUsage(OWN_CLAUDE, at), status: 'rejected',
       fiveHour: { utilization: 100, resetsAt: '2030-03-12T23:30:00.000+00:00' },
       sevenDay: { utilization: 71, resetsAt: '2030-03-17T18:00:00.000+00:00' },
-      limited: { window: 'five_hour', utilization: 100, threshold: null, resetsAt: '2030-03-12T23:30:00.000+00:00' }
+      limited: { window: 'five_hour', utilization: 100, resetsAt: '2030-03-12T23:30:00.000+00:00' }
     } }),
     account('workclaude', { fiveHourLimitPercent: 100, weeklyLimitPercent: 60, usage: {
       ...emptyAccountUsage('workclaude', readAt),
@@ -515,7 +514,7 @@ describe('a window whose reset time has passed', () => {
       ...emptyAccountUsage('teamclaude', readAt), status: 'allowed_warning',
       fiveHour: { utilization: 0, resetsAt: null },
       sevenDay: { utilization: 100, resetsAt: '2030-03-12T20:59:59.000+00:00' },
-      limited: { window: 'seven_day', utilization: 100, threshold: null, resetsAt: '2030-03-12T20:59:59.000+00:00' }
+      limited: { window: 'seven_day', utilization: 100, resetsAt: '2030-03-12T20:59:59.000+00:00' }
     } }),
     account('spareclaude', { ...limits(100), autoRoute: false, usage: null })
   ]

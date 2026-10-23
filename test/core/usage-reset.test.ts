@@ -78,7 +78,7 @@ describe('usageAsOf', () => {
       accountUsage({
         fiveHour: usageWindow(100, PAST),
         status: 'rejected',
-        limited: { window: 'five_hour', utilization: 100, threshold: 80, resetsAt: PAST }
+        limited: { window: 'five_hour', utilization: 100, resetsAt: PAST }
       }),
       NOW
     )
@@ -92,7 +92,7 @@ describe('usageAsOf', () => {
         fiveHour: usageWindow(30, PAST),
         sevenDay: usageWindow(100, LATER),
         status: 'rejected',
-        limited: { window: 'seven_day', utilization: 100, threshold: 80, resetsAt: LATER }
+        limited: { window: 'seven_day', utilization: 100, resetsAt: LATER }
       }),
       NOW
     )

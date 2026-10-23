@@ -1,14 +1,10 @@
-// The two conversions into a usage snapshot: a `get_usage` control response, and a rate-limit
-// report in the shape of the CLI's `rate_limit_event`. The payloads below are the shapes the
-// real CLI produced (2.1.261 for the probe).
+// The two conversions into a usage snapshot: a `get_usage` control response, and the rate-limit
+// headers of a forwarded answer. The payloads below are the shapes the real CLI and API produced
+// (2.1.261 for the probe).
 import { describe, expect, test } from 'vitest'
-import {
-  emptyAccountUsage,
-  usageFromGetUsage,
-  usageFromRateLimitEvent
-} from '../../src/core/usage.ts'
+import { parseUnifiedHeaders, usageFromUnifiedHeaders } from '../../src/core/account-router.ts'
+import { emptyAccountUsage, usageFromGetUsage } from '../../src/core/usage.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
-import { OVERAGE_WARNING } from './usage-fixtures.ts'
 
 const NOW = 1_788_300_000_000
 
@@ -43,21 +39,37 @@ function getUsageAnswer(): Record<string, unknown> {
   }
 }
 
-/** The `rate_limit_info` of a `rate_limit_event`, copied from a recorded session. */
-function rateLimitInfo(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    status: 'allowed',
-    resetsAt: 1_788_306_600,
-    rateLimitType: 'five_hour',
-    overageStatus: 'rejected',
-    overageDisabledReason: 'out_of_credits',
-    isUsingOverage: false,
-    unifiedWindows: {
-      five_hour: { utilization: 0.22, resetsAt: 1_788_306_600 },
-      seven_day: { utilization: 0.04, resetsAt: 1_788_379_200 }
-    },
-    ...overrides
-  }
+/** The usage an answer with these `anthropic-ratelimit-unified-*` headers leaves. */
+function folded(previous: AccountUsage | null, values: Record<string, string>, at = NOW): AccountUsage {
+  const get = (name: string): string | undefined => values[name.replace('anthropic-ratelimit-unified-', '')]
+  return usageFromUnifiedHeaders('workclaude', previous, parseUnifiedHeaders(get, at))
+}
+
+/** The rate-limit headers of an ordinary answer: five-hour and seven-day windows, status allowed. */
+const ALLOWED = {
+  status: 'allowed',
+  reset: '1788306600',
+  'representative-claim': 'five_hour',
+  '5h-utilization': '0.22',
+  '5h-reset': '1788306600',
+  '7d-utilization': '0.04',
+  '7d-reset': '1788379200'
+}
+
+/**
+ * The headers of a warning about the seven-day window that counts extra usage: that window at
+ * 96% while the five-hour and plain seven-day windows were nowhere near their limits.
+ */
+const OVERAGE_WARNING = {
+  status: 'allowed_warning',
+  reset: '1789408800',
+  'representative-claim': 'seven_day_overage_included',
+  '5h-utilization': '0.02',
+  '5h-reset': '1789267200',
+  '7d-utilization': '0.73',
+  '7d-reset': '1789408800',
+  '7d_oi-utilization': '0.96',
+  '7d_oi-reset': '1789408800'
 }
 
 describe('the get_usage answer', () => {
@@ -109,88 +121,54 @@ describe('the get_usage answer', () => {
   })
 })
 
-describe('a rate-limit report', () => {
+describe('the rate-limit headers', () => {
   test('fractions become percentages and unix seconds become ISO', () => {
-    const usage = usageFromRateLimitEvent('workclaude', null, rateLimitInfo(), NOW)
-
-    expect(usage).toMatchObject({
+    expect(folded(null, ALLOWED)).toMatchObject({
       accountId: 'workclaude',
       fetchedAt: NOW,
       source: 'session',
       rateLimitsAvailable: true,
       fiveHour: { utilization: 22, resetsAt: '2026-09-01T23:50:00.000Z' },
       sevenDay: { utilization: 4, resetsAt: '2026-09-02T20:00:00.000Z' },
+      sevenDayOverage: null,
       status: 'allowed',
+      // The headers named five_hour, and its figures come from that window.
+      limited: { window: 'five_hour', utilization: 22, resetsAt: '2026-09-01T23:50:00.000Z' },
       error: null
     })
   })
 
-  test('only the windows the event carries are replaced', () => {
+  test('only the windows the headers carry are replaced', () => {
     const probed = usageFromGetUsage('workclaude', getUsageAnswer(), NOW)
-    const folded = usageFromRateLimitEvent('workclaude', probed, rateLimitInfo({ status: 'rejected' }), NOW + 1000)
+    const usage = folded(probed, { ...ALLOWED, status: 'rejected' }, NOW + 1000)
 
-    // The five-hour window is the event's; everything the event says nothing
-    // about is still the probe's.
-    expect(folded.fiveHour).toEqual({ utilization: 22, resetsAt: '2026-09-01T23:50:00.000Z' })
-    expect(folded.sevenDayOpus).toEqual(probed.sevenDayOpus)
-    expect(folded.modelScoped).toEqual(probed.modelScoped)
-    expect(folded.extraUsage).toEqual(probed.extraUsage)
-    expect(folded.subscriptionType).toBe('max')
-    expect(folded.status).toBe('rejected')
-    expect(folded.fetchedAt).toBe(NOW + 1000)
-  })
-
-  test('an event without unifiedWindows still updates the window it names', () => {
-    const info = {
-      status: 'allowed_warning',
-      rateLimitType: 'seven_day',
-      utilization: 0.815,
-      resetsAt: 1_788_379_200
-    }
-    const usage = usageFromRateLimitEvent('workclaude', null, info, NOW)
-
-    expect(usage.sevenDay).toEqual({ utilization: 81.5, resetsAt: '2026-09-02T20:00:00.000Z' })
-    expect(usage.fiveHour).toBeNull()
-    expect(usage.status).toBe('allowed_warning')
+    // The five-hour window is the headers'; everything they say nothing about is still the probe's.
+    expect(usage.fiveHour).toEqual({ utilization: 22, resetsAt: '2026-09-01T23:50:00.000Z' })
+    expect(usage.sevenDayOpus).toEqual(probed.sevenDayOpus)
+    expect(usage.modelScoped).toEqual(probed.modelScoped)
+    expect(usage.extraUsage).toEqual(probed.extraUsage)
+    expect(usage.subscriptionType).toBe('max')
+    expect(usage.status).toBe('rejected')
+    expect(usage.fetchedAt).toBe(NOW + 1000)
   })
 
   test('a failed probe stops being reported once live numbers arrive', () => {
     const failed: AccountUsage = { ...emptyAccountUsage('workclaude', NOW), error: 'usage probe timed out' }
-    expect(usageFromRateLimitEvent('workclaude', failed, rateLimitInfo(), NOW).error).toBeNull()
-  })
-})
-
-describe('the window a rate-limit report was about', () => {
-  test('it is the one the event named, with the figures beside it', () => {
-    expect(usageFromRateLimitEvent('workclaude', null, rateLimitInfo(), NOW)).toMatchObject({
-      fiveHour: { utilization: 22, resetsAt: '2026-09-01T23:50:00.000Z' },
-      sevenDay: { utilization: 4, resetsAt: '2026-09-02T20:00:00.000Z' },
-      sevenDayOverage: null,
-      status: 'allowed',
-      // The event named five_hour, and its figures come from that unified window.
-      limited: {
-        window: 'five_hour',
-        utilization: 22,
-        threshold: null,
-        resetsAt: '2026-09-01T23:50:00.000Z'
-      }
-    })
+    expect(folded(failed, ALLOWED).error).toBeNull()
   })
 
-  test('an event with nothing readable in it leaves every field empty', () => {
-    expect(usageFromRateLimitEvent('workclaude', null, { status: 'made up' }, NOW))
-      .toEqual({ ...emptyAccountUsage('workclaude', NOW), source: 'session' })
+  test('headers with nothing readable in them leave every field empty', () => {
+    expect(folded(null, { status: 'made up' })).toEqual({ ...emptyAccountUsage('workclaude', NOW), source: 'session' })
   })
 
-  // The warning that made this necessary: it was about the seven-day window that
-  // counts extra usage, at 96%, while the five-hour window sat at 2%.
-  test('it keeps the window the warning named, and the window itself', () => {
-    const usage = usageFromRateLimitEvent('workclaude', null, OVERAGE_WARNING, NOW)
+  // The warning that made `limited` necessary: it was about the seven-day window that counts
+  // extra usage, at 96%, while the five-hour window sat at 2%.
+  test('keep the window the warning named, and the window itself', () => {
+    const usage = folded(null, OVERAGE_WARNING)
 
     expect(usage.limited).toEqual({
       window: 'seven_day_overage_included',
       utilization: 96,
-      threshold: 75,
       resetsAt: '2026-09-14T18:00:00.000Z'
     })
     expect(usage.fiveHour).toEqual({ utilization: 2, resetsAt: '2026-09-13T02:40:00.000Z' })
@@ -198,38 +176,12 @@ describe('the window a rate-limit report was about', () => {
     expect(usage.sevenDayOverage).toEqual({ utilization: 96, resetsAt: '2026-09-14T18:00:00.000Z' })
     expect(usage.status).toBe('allowed_warning')
   })
-
-  test('a window this build has never heard of is still the one it reports', () => {
-    const usage = usageFromRateLimitEvent('workclaude', null, {
-      status: 'rejected',
-      rateLimitType: 'thirty_day_something',
-      utilization: 1.02
-    }, NOW)
-
-    expect(usage.limited).toEqual({
-      window: 'thirty_day_something',
-      utilization: 102,
-      threshold: null,
-      resetsAt: null
-    })
-  })
-
-  test('a rejection that names a window without a percentage still says when it resets', () => {
-    const usage = usageFromRateLimitEvent('workclaude', null, {
-      status: 'rejected',
-      rateLimitType: 'five_hour',
-      resetsAt: 1_788_306_600
-    }, NOW)
-
-    expect(usage.limited)
-      .toEqual({ window: 'five_hour', utilization: null, threshold: null, resetsAt: '2026-09-01T23:50:00.000Z' })
-  })
 })
 
 describe('the status a probe carries over', () => {
   /** The account as the overage warning above left it. */
   function warned(): AccountUsage {
-    return usageFromRateLimitEvent('workclaude', null, OVERAGE_WARNING, NOW)
+    return folded(null, OVERAGE_WARNING)
   }
 
   /** A `get_usage` answer whose windows are given as percentages. */
@@ -237,20 +189,20 @@ describe('the status a probe carries over', () => {
     return { subscription_type: 'max', rate_limits_available: true, rate_limits: windows }
   }
 
-  test('the warning stands while the window it was about is still over the threshold', () => {
+  test('the status stands while the probe still measures the window it was about full', () => {
     const usage = usageFromGetUsage('workclaude', probe({
       five_hour: { utilization: 2, resets_at: '2026-09-13T02:40:00.000Z' },
-      seven_day_overage_included: { utilization: 97, resets_at: '2026-09-14T18:00:00.000Z' }
+      seven_day_overage_included: { utilization: 100, resets_at: '2026-09-14T18:00:00.000Z' }
     }), NOW, warned())
 
     expect(usage.status).toBe('allowed_warning')
     expect(usage.limited)
-      .toEqual({ window: 'seven_day_overage_included', utilization: 97, threshold: 75, resetsAt: '2026-09-14T18:00:00.000Z' })
+      .toEqual({ window: 'seven_day_overage_included', utilization: 100, resetsAt: '2026-09-14T18:00:00.000Z' })
   })
 
-  test('it goes once the probe measures that window under the threshold', () => {
+  test('it goes once the probe measures that window under 100%', () => {
     const usage = usageFromGetUsage('workclaude', probe({
-      seven_day_overage_included: { utilization: 12, resets_at: '2026-09-21T18:00:00.000Z' }
+      seven_day_overage_included: { utilization: 97, resets_at: '2026-09-14T18:00:00.000Z' }
     }), NOW, warned())
 
     expect(usage.status).toBeNull()
@@ -266,11 +218,7 @@ describe('the status a probe carries over', () => {
   })
 
   test('a window the probe did not measure leaves the status where it was', () => {
-    const rejected = usageFromRateLimitEvent('workclaude', null, {
-      status: 'rejected',
-      rateLimitType: 'thirty_day_something',
-      utilization: 1.02
-    }, NOW)
+    const rejected = folded(null, { status: 'rejected', 'representative-claim': 'thirty_day_something' })
     const usage = usageFromGetUsage('workclaude', probe({ five_hour: { utilization: 3 } }), NOW, rejected)
 
     expect(usage.status).toBe('rejected')

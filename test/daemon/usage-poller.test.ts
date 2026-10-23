@@ -163,7 +163,7 @@ describe('a probe', () => {
 
   const refusal = (observedAt: number): Parameters<LoginTable['noteObservation']>[1] => ({
     observedAt, status: 'rejected', resetsAt: null, representativeClaim: 'five_hour',
-    windows: { '5h': { utilization: 1, resetsAt: null, status: 'rejected' } }, overageStatus: null, overageDisabledReason: null
+    windows: { '5h': { utilization: 1, resetsAt: null, status: 'rejected' } }
   })
 
   test('that started before an answer\'s usage-limit refusal does not undo it', async () => {
@@ -208,8 +208,7 @@ describe('a probe', () => {
   /** The headers of an answer that carries only these windows, as fractions, and no status. */
   const windowsOnly = (observedAt: number, windows: { '5h'?: number; '7d'?: number }): Parameters<LoginTable['noteObservation']>[1] => ({
     observedAt, status: null, resetsAt: null, representativeClaim: null,
-    windows: Object.fromEntries(Object.entries(windows).map(([key, utilization]) => [key, { utilization, resetsAt: null, status: null }])),
-    overageStatus: null, overageDisabledReason: null
+    windows: Object.fromEntries(Object.entries(windows).map(([key, utilization]) => [key, { utilization, resetsAt: null, status: null }]))
   })
 
   test('keeps every window an answer reported after it started, not only the last answer\'s', async () => {

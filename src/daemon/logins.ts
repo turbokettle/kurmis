@@ -484,9 +484,7 @@ function mergeObservations(kept: UnifiedObservation, next: UnifiedObservation): 
     status: next.status ?? kept.status,
     resetsAt: claimFromNext ? next.resetsAt : kept.resetsAt,
     representativeClaim: claimFromNext ? next.representativeClaim : kept.representativeClaim,
-    windows,
-    overageStatus: next.overageStatus ?? kept.overageStatus,
-    overageDisabledReason: next.overageDisabledReason ?? kept.overageDisabledReason
+    windows
   }
 }
 

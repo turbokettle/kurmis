@@ -2,7 +2,8 @@
 // and the window says something the plain seven-day window does not.
 import { describe, expect, test } from 'vitest'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
-import { usageFromGetUsage, usageFromRateLimitEvent } from '../../src/core/usage.ts'
+import { parseUnifiedHeaders, usageFromUnifiedHeaders } from '../../src/core/account-router.ts'
+import { usageFromGetUsage } from '../../src/core/usage.ts'
 import { allUsageWindows, busiestPlanWindow, planUsageWindows } from '../../src/core/usage-rules.ts'
 
 const NOW = Date.parse('2026-09-01T12:00:00Z')
@@ -24,18 +25,20 @@ function probe(enabled = false): AccountUsage {
   }, NOW)
 }
 
+/** The usage after an answer whose rate-limit headers warn about the extra-usage window at `percent`. */
 function event(previous: AccountUsage | null, percent: number): AccountUsage {
-  return usageFromRateLimitEvent('exampleclaude', previous, {
+  const reset = String(Date.parse(RESET) / 1000)
+  const values: Record<string, string> = {
     status: 'allowed_warning',
-    rateLimitType: EXTRA_KEY,
-    utilization: percent / 100,
-    surpassedThreshold: 0.75,
-    resetsAt: Date.parse(RESET) / 1000,
-    unifiedWindows: {
-      seven_day: { utilization: 0.34, resetsAt: Date.parse(RESET) / 1000 },
-      [EXTRA_KEY]: { utilization: percent / 100, resetsAt: Date.parse(RESET) / 1000 }
-    }
-  }, NOW + 1000)
+    'representative-claim': EXTRA_KEY,
+    reset,
+    '7d-utilization': '0.34',
+    '7d-reset': reset,
+    '7d_oi-utilization': String(percent / 100),
+    '7d_oi-reset': reset
+  }
+  const get = (name: string): string | undefined => values[name.replace('anthropic-ratelimit-unified-', '')]
+  return usageFromUnifiedHeaders('exampleclaude', previous, parseUnifiedHeaders(get, NOW + 1000))
 }
 
 function expectHidden(usage: AccountUsage): void {

@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023102052" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023102115" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -267,30 +267,6 @@ function usageFromGetUsage(accountId, raw, now, previous = null) {
     limited: carried.limited
   };
 }
-function usageFromRateLimitEvent(accountId, previous, info, now) {
-  const event = asRecord(info);
-  const base = previous ?? emptyAccountUsage(accountId, now);
-  const windows = eventWindows(event);
-  const status2 = readStatus(event.status);
-  const limited = limitedWindow(event);
-  return {
-    ...base,
-    accountId,
-    fetchedAt: now,
-    source: "session",
-    // A report with windows proves the token can read rate limits, whatever a failed probe said.
-    rateLimitsAvailable: base.rateLimitsAvailable || countWindows(windows) > 0,
-    fiveHour: windows.fiveHour ?? base.fiveHour,
-    sevenDay: windows.sevenDay ?? base.sevenDay,
-    sevenDayOverage: windows.sevenDayOverage ?? base.sevenDayOverage,
-    sevenDayOpus: windows.sevenDayOpus ?? base.sevenDayOpus,
-    sevenDaySonnet: windows.sevenDaySonnet ?? base.sevenDaySonnet,
-    status: status2 ?? base.status,
-    limited: limited ?? (status2 === null ? base.limited : null),
-    // Fresh numbers, so whatever the last probe failed at no longer stands.
-    error: null
-  };
-}
 function statusAfterProbe(previous, fresh, now) {
   const status2 = previous?.status ?? null;
   if (previous === null || status2 === null) return { status: null, limited: null };
@@ -303,38 +279,11 @@ function statusAfterProbe(previous, fresh, now) {
   const spec = claudeWindowSpec(limited.window);
   const measured = spec === null ? void 0 : fresh[spec.field];
   if (measured === void 0) return { status: status2, limited };
-  if (measured.utilization < (limited.threshold ?? 100)) return { status: null, limited: null };
+  if (measured.utilization < 100) return { status: null, limited: null };
   return {
     status: status2,
     limited: { ...limited, utilization: measured.utilization, resetsAt: measured.resetsAt }
   };
-}
-function limitedWindow(event) {
-  const name = asString(event.rateLimitType);
-  if (name === null) return null;
-  const unified = asRecord(asRecord(event.unifiedWindows)[name]);
-  const utilization = asNumber(event.utilization) ?? asNumber(unified.utilization);
-  const threshold = asNumber(event.surpassedThreshold);
-  return {
-    window: name,
-    utilization: utilization === null ? null : roundTenth(utilization * 100),
-    threshold: threshold === null ? null : roundTenth(threshold * 100),
-    resetsAt: isoFromSeconds(event.resetsAt) ?? isoFromSeconds(unified.resetsAt)
-  };
-}
-function eventWindows(event) {
-  const out = {};
-  const unified = asRecord(event.unifiedWindows);
-  for (const spec of CLAUDE_WINDOWS) {
-    const window = fractionWindow(unified[spec.key]);
-    if (window !== null) out[spec.field] = window;
-  }
-  const named = claudeWindowSpec(event.rateLimitType);
-  if (named !== null && out[named.field] === void 0) {
-    const window = fractionWindow(event);
-    if (window !== null) out[named.field] = window;
-  }
-  return out;
 }
 function percentWindows(limits) {
   const out = {};
@@ -344,20 +293,11 @@ function percentWindows(limits) {
   }
   return out;
 }
-function countWindows(windows) {
-  return Object.keys(windows).length;
-}
 function percentWindow(value) {
   const row = asRecord(value);
   const utilization = asNumber(row.utilization);
   if (utilization === null) return null;
   return { utilization: roundTenth(utilization), resetsAt: asString(row.resets_at) };
-}
-function fractionWindow(value) {
-  const row = asRecord(value);
-  const utilization = asNumber(row.utilization);
-  if (utilization === null) return null;
-  return { utilization: roundTenth(utilization * 100), resetsAt: isoFromSeconds(row.resetsAt) };
 }
 function modelScopedWindows(value) {
   if (!Array.isArray(value)) return [];
@@ -381,9 +321,6 @@ function extraUsage(value) {
     utilization: asNumber(row.utilization),
     currency: asString(row.currency)
   };
-}
-function readStatus(value) {
-  return value === "allowed" || value === "allowed_warning" || value === "rejected" ? value : null;
 }
 function asRecord(value) {
   return typeof value === "object" && value !== null ? value : {};
@@ -561,43 +498,54 @@ function parseUnifiedHeaders(get, now) {
     windows[suffix] = {
       utilization: fraction !== null && fraction >= 0 && fraction <= 1 ? fraction : null,
       resetsAt: isoFromSeconds(headerNumber(reset)),
-      status: readStatus2(status2)
+      status: readStatus(status2)
     };
   }
   return {
     observedAt: now,
-    status: readStatus2(get(`${PREFIX}status`)),
+    status: readStatus(get(`${PREFIX}status`)),
     resetsAt: isoFromSeconds(headerNumber(get(`${PREFIX}reset`))),
     representativeClaim: headerText(get(`${PREFIX}representative-claim`)),
-    windows,
-    overageStatus: readStatus2(get(`${PREFIX}overage-status`)),
-    overageDisabledReason: headerText(get(`${PREFIX}overage-disabled-reason`))
+    windows
   };
 }
+function claimedWindow(observation) {
+  const named = observation.representativeClaim;
+  if (named === null) return void 0;
+  return Object.entries(observation.windows).find(([suffix]) => windowName(suffix) === windowName(named))?.[1];
+}
 function usageFromUnifiedHeaders(accountId, previous, observation) {
-  const unifiedWindows = {};
+  const base = previous ?? emptyAccountUsage(accountId, observation.observedAt);
+  const next = { ...base, accountId, fetchedAt: observation.observedAt, source: "session" };
   for (const [suffix, window] of Object.entries(observation.windows)) {
-    unifiedWindows[windowName(suffix)] = {
-      utilization: window.utilization,
-      resetsAt: secondsFromIso(window.resetsAt)
-    };
+    const spec = claudeWindowSpec(windowName(suffix));
+    if (spec === null || window.utilization === null) continue;
+    next[spec.field] = { utilization: roundTenth(window.utilization * 100), resetsAt: window.resetsAt };
+    next.rateLimitsAvailable = true;
   }
-  return usageFromRateLimitEvent(accountId, previous, {
-    status: observation.status,
-    resetsAt: secondsFromIso(observation.resetsAt),
-    rateLimitType: observation.representativeClaim === null ? null : windowName(observation.representativeClaim),
-    unifiedWindows
-  }, observation.observedAt);
+  if (observation.status !== null) next.status = observation.status;
+  const limited = limitedWindow(observation);
+  if (limited !== null || observation.status !== null) next.limited = limited;
+  next.error = null;
+  return next;
+}
+function limitedWindow(observation) {
+  if (observation.representativeClaim === null) return null;
+  const window = claimedWindow(observation);
+  const utilization = window?.utilization ?? null;
+  return {
+    window: windowName(observation.representativeClaim),
+    utilization: utilization === null ? null : roundTenth(utilization * 100),
+    resetsAt: observation.resetsAt ?? window?.resetsAt ?? null
+  };
 }
 function isDefinitiveQuotaRejection(status2, get) {
-  return status2 === 429 && (readStatus2(get(`${PREFIX}status`)) === "rejected" || get(`${PREFIX}representative-claim`) != null || get(`${PREFIX}overage-status`) != null);
+  return status2 === 429 && (readStatus(get(`${PREFIX}status`)) === "rejected" || get(`${PREFIX}representative-claim`) != null || get(`${PREFIX}overage-status`) != null);
 }
 function quotaCooldownUntil(status2, get) {
   if (!isDefinitiveQuotaRejection(status2, get)) return null;
   const observation = parseUnifiedHeaders(get, 0);
-  const named = observation.representativeClaim;
-  const window = Object.entries(observation.windows).find(([suffix]) => named !== null && windowName(suffix) === windowName(named))?.[1];
-  const reset = observation.resetsAt ?? window?.resetsAt ?? null;
+  const reset = observation.resetsAt ?? claimedWindow(observation)?.resetsAt ?? null;
   if (reset !== null) return Date.parse(reset);
   const rejected = Object.values(observation.windows).filter((entry) => entry.status === "rejected");
   return rejected.length === 0 ? Infinity : Math.max(
@@ -709,7 +657,7 @@ function poolReadyAt(accounts, now, pinnedAccountId, homeAccountId) {
   }
   return Number.isFinite(earliest) ? earliest : null;
 }
-function readStatus2(value) {
+function readStatus(value) {
   return value === "allowed" || value === "allowed_warning" || value === "rejected" ? value : null;
 }
 function headerText(value) {
@@ -720,9 +668,6 @@ function headerNumber(value) {
   if (text === null) return null;
   const number = Number(text);
   return Number.isFinite(number) ? number : null;
-}
-function secondsFromIso(value) {
-  return value === null ? null : Date.parse(value) / 1e3;
 }
 function windowName(value) {
   return Object.hasOwn(WINDOW_NAMES, value) ? WINDOW_NAMES[value] : value;
@@ -5062,9 +5007,7 @@ function mergeObservations(kept, next) {
     status: next.status ?? kept.status,
     resetsAt: claimFromNext ? next.resetsAt : kept.resetsAt,
     representativeClaim: claimFromNext ? next.representativeClaim : kept.representativeClaim,
-    windows,
-    overageStatus: next.overageStatus ?? kept.overageStatus,
-    overageDisabledReason: next.overageDisabledReason ?? kept.overageDisabledReason
+    windows
   };
 }
 function isLockTimeout(error) {

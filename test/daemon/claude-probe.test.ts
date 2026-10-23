@@ -221,7 +221,7 @@ test('the last snapshot decides whether a status the probe cannot measure still 
   const previous: AccountUsage = {
     ...emptyAccountUsage(id, 0),
     status: 'rejected',
-    limited: { window: 'seven_day_sonnet', utilization: 100, threshold: null, resetsAt: new Date(Date.now() + 86_400_000).toISOString() }
+    limited: { window: 'seven_day_sonnet', utilization: 100, resetsAt: new Date(Date.now() + 86_400_000).toISOString() }
   }
   const result = await probeClaudeUsage(claudeRef(id), { env, previous })
   expect(result).toMatchObject({ ok: true, usage: { status: 'rejected', limited: { window: 'seven_day_sonnet' } } })

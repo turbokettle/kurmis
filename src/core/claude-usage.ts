@@ -3,9 +3,9 @@
 //
 // Claude has two sources. A usage probe (a short-lived `claude` that answers the `get_usage`
 // control request) gives every window in percent with ISO reset times. The
-// `anthropic-ratelimit-unified-*` headers on every answer the proxy forwards give the same
-// windows as fractions with unix-second reset times, plus the window the answer's status is
-// about. Both are converted to the shape below before they are merged.
+// `anthropic-ratelimit-unified-*` headers on every answer the proxy forwards give the five-hour
+// and seven-day windows as fractions with unix-second reset times, plus the window the answer's
+// status is about. Both are converted to the shape below before they are merged.
 
 /** One rate-limit window. `utilization` is a percentage, 0-100 (it can exceed 100). */
 export type UsageWindow = {
@@ -49,13 +49,8 @@ export type UsageStatus = 'allowed' | 'allowed_warning' | 'rejected'
 export interface LimitedWindow {
   /** The key the server named, such as `seven_day_overage_included`. */
   window: string
-  /** How much of that window is used, as a percentage 0-100; null when it named none. */
+  /** How much of that window is used, as a percentage 0-100; null when the headers gave none. */
   utilization: number | null
-  /**
-   * The percentage the warning starts at, null when the server named none. Kept
-   * because the event carries it, and because a later probe is measured against it.
-   */
-  threshold: number | null
   resetsAt: string | null
 }
 
@@ -108,7 +103,7 @@ export type ClaudeWindowField =
 
 /** One window a Claude plan reports: what it is called, how long it is, what it limits. */
 interface ClaudeWindowSpec {
-  /** The key the CLI writes, in `unifiedWindows` and in `get_usage`'s `rate_limits`. */
+  /** The window's key in `get_usage`'s `rate_limits`, which the rate-limit headers' claim uses too. */
   key: string
   field: ClaudeWindowField
   /** The window's name in a status line, such as `5 hour`. */

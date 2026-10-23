@@ -4,8 +4,10 @@
 // `RouteAccount` is what the rules read of one login, `RouteSession` what they read of one
 // session. The daemon builds both from `config.json`, `state.json`, the token readers and the
 // usage snapshots, and keeps the results (cooldowns, the login a session is on) itself.
-import { isoFromSeconds, type AccountUsage, type NamedUsageWindow, type UsageStatus } from './claude-usage.ts'
-import { usageFromRateLimitEvent } from './usage.ts'
+import {
+  claudeWindowSpec, isoFromSeconds, roundTenth, type AccountUsage, type LimitedWindow, type NamedUsageWindow, type UsageStatus
+} from './claude-usage.ts'
+import { emptyAccountUsage } from './usage.ts'
 import { busiestPlanWindow, isSevenDayWindow, planUsageWindows, usageAsOf } from './usage-rules.ts'
 
 /** Reads one header of an answer, case-insensitively; null or undefined when it is not there. */
@@ -33,8 +35,6 @@ export interface UnifiedObservation {
   /** The window the answer's status is about, as the header names it (`five_hour`, `7d`, ...). */
   representativeClaim: string | null
   windows: Partial<Record<keyof typeof WINDOW_NAMES, UnifiedWindow>>
-  overageStatus: UsageStatus | null
-  overageDisabledReason: string | null
 }
 
 /**
@@ -60,34 +60,57 @@ export function parseUnifiedHeaders(get: HeaderGetter, now: number): UnifiedObse
     status: readStatus(get(`${PREFIX}status`)),
     resetsAt: isoFromSeconds(headerNumber(get(`${PREFIX}reset`))),
     representativeClaim: headerText(get(`${PREFIX}representative-claim`)),
-    windows,
-    overageStatus: readStatus(get(`${PREFIX}overage-status`)),
-    overageDisabledReason: headerText(get(`${PREFIX}overage-disabled-reason`))
+    windows
   }
 }
 
+/** The window the answer's status is about (`representativeClaim`), when the headers carry it. */
+function claimedWindow(observation: UnifiedObservation): UnifiedWindow | undefined {
+  const named = observation.representativeClaim
+  if (named === null) return undefined
+  return Object.entries(observation.windows).find(([suffix]) => windowName(suffix) === windowName(named))?.[1]
+}
+
 /**
- * Folds what one answer's headers said into the login's usage snapshot. Only the windows the
- * headers carry are replaced; the rest stays as the last probe left it.
+ * Folds what an answer's headers said into the login's usage snapshot. Only the windows the
+ * headers give a utilization for are replaced, as percentages; the subscription, the other
+ * windows, the per-model windows and the extra usage stay as the last probe left them. A status
+ * replaces the last one. The window it is about (`limited`) is the one the headers name, even
+ * one this build does not know, with that window's figures; a status that names no window
+ * clears it.
  */
 export function usageFromUnifiedHeaders(
   accountId: string,
   previous: AccountUsage | null,
   observation: UnifiedObservation
 ): AccountUsage {
-  const unifiedWindows: Record<string, { utilization: number | null; resetsAt: number | null }> = {}
+  const base = previous ?? emptyAccountUsage(accountId, observation.observedAt)
+  const next: AccountUsage = { ...base, accountId, fetchedAt: observation.observedAt, source: 'session' }
   for (const [suffix, window] of Object.entries(observation.windows)) {
-    unifiedWindows[windowName(suffix)] = {
-      utilization: window.utilization,
-      resetsAt: secondsFromIso(window.resetsAt)
-    }
+    const spec = claudeWindowSpec(windowName(suffix))
+    if (spec === null || window.utilization === null) continue
+    next[spec.field] = { utilization: roundTenth(window.utilization * 100), resetsAt: window.resetsAt }
+    // A window in the headers proves the token can read rate limits, whatever a failed probe said.
+    next.rateLimitsAvailable = true
   }
-  return usageFromRateLimitEvent(accountId, previous, {
-    status: observation.status,
-    resetsAt: secondsFromIso(observation.resetsAt),
-    rateLimitType: observation.representativeClaim === null ? null : windowName(observation.representativeClaim),
-    unifiedWindows
-  }, observation.observedAt)
+  if (observation.status !== null) next.status = observation.status
+  const limited = limitedWindow(observation)
+  if (limited !== null || observation.status !== null) next.limited = limited
+  // Fresh numbers, so whatever the last probe failed at no longer stands.
+  next.error = null
+  return next
+}
+
+/** The window the headers name, with how full it is and when it resets; null when they name none. */
+function limitedWindow(observation: UnifiedObservation): LimitedWindow | null {
+  if (observation.representativeClaim === null) return null
+  const window = claimedWindow(observation)
+  const utilization = window?.utilization ?? null
+  return {
+    window: windowName(observation.representativeClaim),
+    utilization: utilization === null ? null : roundTenth(utilization * 100),
+    resetsAt: observation.resetsAt ?? window?.resetsAt ?? null
+  }
 }
 
 /**
@@ -113,10 +136,7 @@ export function isDefinitiveQuotaRejection(status: number, get: HeaderGetter): b
 export function quotaCooldownUntil(status: number, get: HeaderGetter): number | null {
   if (!isDefinitiveQuotaRejection(status, get)) return null
   const observation = parseUnifiedHeaders(get, 0)
-  const named = observation.representativeClaim
-  const window = Object.entries(observation.windows).find(([suffix]) =>
-    named !== null && windowName(suffix) === windowName(named))?.[1]
-  const reset = observation.resetsAt ?? window?.resetsAt ?? null
+  const reset = observation.resetsAt ?? claimedWindow(observation)?.resetsAt ?? null
   if (reset !== null) return Date.parse(reset)
   const rejected = Object.values(observation.windows).filter((entry) => entry.status === 'rejected')
   return rejected.length === 0 ? Infinity : Math.max(
@@ -439,10 +459,6 @@ function headerNumber(value: string | null | undefined): number | null {
   if (text === null) return null
   const number = Number(text)
   return Number.isFinite(number) ? number : null
-}
-
-function secondsFromIso(value: string | null): number | null {
-  return value === null ? null : Date.parse(value) / 1000
 }
 
 function windowName(value: string): string {
