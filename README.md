@@ -315,9 +315,12 @@ anything; `--yes` skips the question, and without a terminal it needs `--yes`. I
   files and folders it knows by name, with everything in them. Other entries at the top of the
   data folder are left, and then so is the folder.
 
-The login plain `claude` uses is not signed out, so a plain `claude` keeps working. When a step
-fails, the command says which and what to do, keeps the data folder and exits 1; run it again
-once that is fixed. When every step worked, the command's last line tells you to run
+The login plain `claude` uses is not signed out, so a plain `claude` keeps working. When a
+settings file cannot be changed, nothing else is removed. When another step fails, the command
+says which and what to do, goes on with the steps after it and exits 1. It keeps the data
+folder only when the start at login, the daemon or a login could not be removed, because a
+second run needs it; a backup that could not be deleted does not keep it. Run the command again
+once that is fixed. When every step worked, its last line tells you to run
 `npm uninstall -g kurmis`.
 
 ## Troubleshooting

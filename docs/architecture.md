@@ -1315,7 +1315,7 @@ These are known and left as they are.
   sign-in as done. Otherwise a folder this run created is removed and nothing is added.
 - For the login plain claude uses, the email is read from `~/.claude.json`, and the probe
   folder's `.claude.json` is deleted first, because it may name the account signed in before.
-- A new login is compared with the others again under the config lock, just before it is
+- A new login is compared with the others under the config lock, just before it is
   added, so two `kurmis login` runs of one account at the same moment add it once.
 - Afterwards a running daemon is told to reload and asked to probe the login, waiting up to 15
   seconds, because it may still hold the login as signed out and Auto would pass it over until

@@ -527,11 +527,17 @@ export class LoginTable {
 }
 
 /**
- * One observation that, applied with `usageFromUnifiedHeaders`, gives what applying `kept` and
- * then `next` gives. Each window `next` reports with a utilization replaces the kept one; the
- * others stay. `next`'s status replaces the kept status when it has one. The window the status
- * is about (`representativeClaim`, with `resetsAt`) is `next`'s when it names one, none when
- * `next` has a status without naming one, and the kept one otherwise.
+ * One observation that holds what `kept` and then `next` said. Each window `next` reports with a
+ * utilization replaces the kept one; the others stay. `next`'s status replaces the kept status
+ * when it has one. The window the status is about (`representativeClaim`, with `resetsAt`) is
+ * `next`'s when it names one, none when `next` has a status without naming one, and the kept one
+ * otherwise.
+ *
+ * Applied with `usageFromUnifiedHeaders`, this gives what applying `kept` and then `next` gives,
+ * except in one case: when `next` names the limited window without carrying that window's own
+ * header. Applying `next` leaves the limited window's utilization empty then, and its reset too
+ * when `next` names none; the merge still has `kept`'s header of that window and takes them from
+ * it.
  */
 function mergeObservations(kept: UnifiedObservation, next: UnifiedObservation): UnifiedObservation {
   const windows = { ...kept.windows }
