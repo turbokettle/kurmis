@@ -8919,6 +8919,9 @@ function kurmisEnvValues(values, existingHeaders) {
 function hasKurmisHeader(headers) {
   return typeof headers === "string" && parseCustomHeaders(headers).some((header) => header.name.toLowerCase() === KEY_HEADER);
 }
+function hasKurmisHeaderLine(headers) {
+  return typeof headers === "string" && parseCustomHeaders(headers).some((header) => KURMIS_HEADERS.includes(header.name.toLowerCase()));
+}
 function othersHeaderLines(headers) {
   return headers.split(/\r?\n/).filter((line) => {
     const colon = line.indexOf(":");
@@ -9055,6 +9058,7 @@ function undoSetupInText(text, values) {
   const before = backup?.env ?? null;
   const plain = kurmisEnvValues({ port: values.port ?? 1, key: "unused" }, null);
   const baseUrlIsKurmis = isKurmisBaseUrl(env[BASE_URL], env, values.port);
+  const setupWasHere = baseUrlIsKurmis || hasKurmisHeaderLine(env[CUSTOM_HEADERS2]);
   for (const name of ROUTING_VARIABLES) {
     const current = parsed.env.value[name];
     if (current === void 0) continue;
@@ -9068,9 +9072,7 @@ function undoSetupInText(text, values) {
       body = removeMember(body, parsed.env.node, index);
       result.changes.push({ name, action: "removed" });
     } else if (name === CUSTOM_HEADERS2) {
-      if (typeof current !== "string" || !parseCustomHeaders(current).some((header) => KURMIS_HEADERS.includes(header.name.toLowerCase()))) {
-        continue;
-      }
+      if (!hasKurmisHeaderLine(current)) continue;
       const theirs = othersHeaderLines(current);
       if (theirs.length === 0) {
         body = removeMember(body, parsed.env.node, index);
@@ -9081,6 +9083,8 @@ function undoSetupInText(text, values) {
         body = replaceValue(body, member, JSON.stringify(restored));
         result.changes.push({ name, action: "updated", note: "kurmis' header lines were removed and yours were kept" });
       }
+    } else if (!setupWasHere) {
+      continue;
     } else if (current !== plain[name]) {
       result.changes.push({ name, action: "kept", note: `its value (${displayValue(current)}) is not the one kurmis sets` });
       continue;

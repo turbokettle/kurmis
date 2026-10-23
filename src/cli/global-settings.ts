@@ -18,9 +18,11 @@
 //   So undo still recognises it after the port in `config.json` was changed.
 // - The `x-kurmis-*` lines of `ANTHROPIC_CUSTOM_HEADERS`. Any other line is the user's and is
 //   kept, by setup and by undo.
-// - `ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_MAX_RETRIES` when they hold the value kurmis sets and
-//   the backup (the file as it was before kurmis first changed it) does not hold the same value.
-//   Setup leaves a different value the user set there, since routing works without them.
+// - `ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_MAX_RETRIES` when they hold the value kurmis sets, the
+//   same `env` has kurmis' `ANTHROPIC_BASE_URL` or an `x-kurmis-*` header line, and the backup
+//   (the file as it was before kurmis first changed it) does not hold the same value. Setup
+//   leaves a value the user set there, since routing works without them, so without kurmis' base
+//   URL or header lines next to them they are the user's.
 //
 // Setup refuses an `ANTHROPIC_BASE_URL` that is not kurmis', because replacing it would silently
 // cut off whatever the user pointed Claude Code at.
@@ -382,6 +384,12 @@ function hasKurmisHeader(headers: unknown): boolean {
     parseCustomHeaders(headers).some((header) => header.name.toLowerCase() === KEY_HEADER)
 }
 
+/** Whether a value has any of kurmis' `x-kurmis-*` header lines. */
+function hasKurmisHeaderLine(headers: unknown): headers is string {
+  return typeof headers === 'string' &&
+    parseCustomHeaders(headers).some((header) => KURMIS_HEADERS.includes(header.name.toLowerCase()))
+}
+
 /** The header lines of a value that are not kurmis', exactly as they were written. */
 function othersHeaderLines(headers: string): string[] {
   return headers.split(/\r?\n/).filter((line) => {
@@ -561,6 +569,9 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
   // The plain values kurmis sets; the port and key do not matter for these.
   const plain = kurmisEnvValues({ port: values.port ?? 1, key: 'unused' }, null)
   const baseUrlIsKurmis = isKurmisBaseUrl(env[BASE_URL], env, values.port)
+  // Setup keeps a value the user set for the plain variables, so they count as kurmis' only next
+  // to kurmis' base URL or header lines in the same `env`.
+  const setupWasHere = baseUrlIsKurmis || hasKurmisHeaderLine(env[CUSTOM_HEADERS])
 
   for (const name of ROUTING_VARIABLES) {
     const current = parsed.env!.value[name]
@@ -575,9 +586,7 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
       body = removeMember(body, parsed.env!.node, index)
       result.changes.push({ name, action: 'removed' })
     } else if (name === CUSTOM_HEADERS) {
-      if (typeof current !== 'string' || !parseCustomHeaders(current).some((header) => KURMIS_HEADERS.includes(header.name.toLowerCase()))) {
-        continue
-      }
+      if (!hasKurmisHeaderLine(current)) continue
       const theirs = othersHeaderLines(current)
       if (theirs.length === 0) {
         body = removeMember(body, parsed.env!.node, index)
@@ -590,6 +599,8 @@ export function undoSetupInText(text: string, values: UndoValues): SettingsEdit 
         body = replaceValue(body, member, JSON.stringify(restored))
         result.changes.push({ name, action: 'updated', note: 'kurmis\' header lines were removed and yours were kept' })
       }
+    } else if (!setupWasHere) {
+      continue
     } else if (current !== plain[name]) {
       result.changes.push({ name, action: 'kept', note: `its value (${displayValue(current)}) is not the one kurmis sets` })
       continue

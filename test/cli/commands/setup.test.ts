@@ -491,6 +491,17 @@ describe('kurmis setup --pause', () => {
     expect(result.stdout).toContain('Global routing is not on, so there is nothing to pause.')
   })
 
+  it('leaves the user\'s own ENABLE_TOOL_SEARCH and CLAUDE_CODE_MAX_RETRIES in a file setup never changed', async () => {
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    const theirs = '{"env":{"ENABLE_TOOL_SEARCH":"true","CLAUDE_CODE_MAX_RETRIES":"15"},"model":"opus"}'
+    writeFileSync(settingsPath, theirs)
+    const result = await run(setup().command, ['--pause'])
+    expect(result.code).toBe(0)
+    expect(readFileSync(settingsPath, 'utf8')).toBe(theirs)
+    expect(existsSync(pausedFilePath())).toBe(false)
+    expect(result.stdout).toContain('Global routing is not on, so there is nothing to pause.')
+  })
+
   it('leaves a value the user changed and says so', async () => {
     const { command } = setup()
     await run(command, [])
@@ -896,6 +907,17 @@ describe('kurmis setup --uninstall-and-logout', () => {
     expect(result.code).toBe(0)
     expect(result.stdout).not.toContain('logins added')
     expect(existsSync(kurmisHome)).toBe(false)
+  })
+
+  it('neither lists nor changes a settings file whose env has only the user\'s own values of kurmis\' plain variables', async () => {
+    mkdirSync(join(home, '.claude'), { recursive: true })
+    const theirs = '{"env":{"ENABLE_TOOL_SEARCH":"true","CLAUDE_CODE_MAX_RETRIES":"15"},"model":"opus"}'
+    writeFileSync(settingsPath, theirs)
+    const world = uninstaller({ running: false })
+    const result = await run(world.command, ['--uninstall-and-logout', '--yes'])
+    expect(result.code).toBe(0)
+    expect(result.stdout).not.toContain('kurmis\' settings in')
+    expect(readFileSync(settingsPath, 'utf8')).toBe(theirs)
   })
 
   it('keeps the data folder when the daemon cannot be stopped', async () => {

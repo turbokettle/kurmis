@@ -295,6 +295,24 @@ describe('undoSetupInText', () => {
     expect(undone.changes.find((change) => change.name === 'ENABLE_TOOL_SEARCH')?.action).toBe('kept')
   })
 
+  it('leaves kurmis\' values of the plain variables when nothing of kurmis\' is in the same env', () => {
+    // Setup keeps the user's own value for these, so without kurmis' base URL or header lines
+    // next to them they are not kurmis'.
+    const theirs = '{"env":{"ENABLE_TOOL_SEARCH":"true","CLAUDE_CODE_MAX_RETRIES":"15"},"model":"opus"}'
+    for (const backupText of [undefined, null, '{"model":"opus"}']) {
+      const undone = undoSetupInText(theirs, { port: PORT, backupText })
+      expect(undone.text).toBe(theirs)
+      expect(undone.changed).toBe(false)
+    }
+  })
+
+  it('removes the plain variables next to kurmis\' header lines, or next to kurmis\' base URL alone', () => {
+    const headersLeft = JSON.stringify({ env: { ...KURMIS_ENV, ANTHROPIC_BASE_URL: undefined } })
+    expect(envOf(undoSetupInText(headersLeft, { port: PORT }).text)).toBeUndefined()
+    const baseUrlLeft = JSON.stringify({ env: { ...KURMIS_ENV, ANTHROPIC_CUSTOM_HEADERS: undefined } })
+    expect(envOf(undoSetupInText(baseUrlLeft, { port: PORT }).text)).toBeUndefined()
+  })
+
   it('ignores a backup that already holds kurmis\' settings', () => {
     const set = applySetupToText(original, VALUES).text
     expect(undoSetupInText(set, { port: PORT, backupText: set }).text).toBe(original)

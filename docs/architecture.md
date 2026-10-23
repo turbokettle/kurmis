@@ -791,7 +791,10 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
 
 Taking kurmis' settings out (`undoSettingsFile`, which `--pause` and `--uninstall-and-logout`
 run) removes only the values that are still kurmis': a key the person changed is left and
-reported, and only the `x-kurmis-*` lines are taken out of the custom headers. When the lines
+reported, and only the `x-kurmis-*` lines are taken out of the custom headers. `ENABLE_TOOL_SEARCH`
+and `CLAUDE_CODE_MAX_RETRIES` are taken out only when the same `env` still has kurmis'
+`ANTHROPIC_BASE_URL` or an `x-kurmis-*` header line, since setup keeps a value the person set for
+them. When the lines
 left are the ones the backup has, the backup's value comes back as it was (with its line endings
 and blank lines); otherwise the lines left are joined by newlines. A value the backup already had
 (read with or without a byte order mark) is left. An `env` that this empties is removed, unless
