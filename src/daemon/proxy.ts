@@ -28,7 +28,7 @@
 // Nothing here logs a token, a body or an email; the log takes fixed fields only.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
-  accountsInScope, chooseAccount, effectivePin, isDefinitiveQuotaRejection, parseUnifiedHeaders, quotaCooldownUntil,
+  accountsInScope, chooseAccount, effectivePin, parseUnifiedHeaders, quotaCooldownUntil,
   replayDecision, routeBlock, tokenIsFresh, type RouteAccount, type RouteSession
 } from '../core/account-router.ts'
 import {
@@ -442,7 +442,7 @@ export function createProxy(options: ProxyOptions): Proxy {
           continue
         }
       }
-      const capacity = capacityRefusal(status, isDefinitiveQuotaRejection(status, get))
+      const capacity = capacityRefusal(status, until !== null)
       if (capacity !== null) {
         answer.discard()
         const note = cooling.noteNoCapacity(sessionKey, row.id, capacity, get('retry-after'), random(), now())
@@ -457,7 +457,7 @@ export function createProxy(options: ProxyOptions): Proxy {
         log.write('session_hold_ended', { login: asLogin(sentBack), reason: 'usage_limit' })
         endPinBack()
       }
-      const decision = replayDecision({ status, get, servedBy: row.id, session, attempted })
+      const decision = replayDecision({ status, cooldownUntil: until, servedBy: row.id, session, attempted })
       if (decision.kind === 'replay') {
         refusals.push({ login: row.id, until: decision.cooldownUntil, status, headers: answer.headers, body: await keepBody(answer, signal, keptAnswerTimeoutMs) })
         excluded.add(row.id)

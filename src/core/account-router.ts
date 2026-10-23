@@ -365,14 +365,12 @@ export function chooseAccount(
 
 export interface ReplayInput {
   status: number
-  get: HeaderGetter
+  /** What `quotaCooldownUntil` made of the answer: null when it is not a usage-limit refusal. */
+  cooldownUntil: number | null
   servedBy: string
   session: RouteSession
   /** Every login this request was already sent on, including `servedBy`. */
   attempted: ReadonlySet<string>
-  /** The answer's body has started reaching the CLI, so nothing can be sent again. */
-  responseStarted?: boolean
-  deadlineExpired?: boolean
 }
 
 /**
@@ -390,19 +388,18 @@ export interface ReplayInput {
  */
 export type ReplayDecision =
   | { kind: 'pass' }
-  | { kind: 'replay'; reason: 'quota'; cooldownUntil: number }
+  | { kind: 'replay'; cooldownUntil: number }
   | { kind: 'pin-back'; to: string }
 
 export function replayDecision(input: ReplayInput): ReplayDecision {
-  const { status, get, servedBy, session, attempted } = input
-  if (session.pinnedAccountId != null || input.responseStarted || input.deadlineExpired) return { kind: 'pass' }
+  const { status, cooldownUntil, servedBy, session, attempted } = input
+  if (session.pinnedAccountId != null) return { kind: 'pass' }
   const previous = session.currentAccountId
   if (status === 400 && previous !== null && previous !== servedBy && !attempted.has(previous)) {
     return { kind: 'pin-back', to: previous }
   }
-  const cooldownUntil = quotaCooldownUntil(status, get)
   if (cooldownUntil === null) return { kind: 'pass' }
-  return { kind: 'replay', reason: 'quota', cooldownUntil }
+  return { kind: 'replay', cooldownUntil }
 }
 
 /**

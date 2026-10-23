@@ -47,9 +47,11 @@ function limits(percent: number): Pick<RouteAccount, 'fiveHourLimitPercent' | 'w
 
 const session: RouteSession = { homeAccountId: 'homeclaude', currentAccountId: 'homeclaude' }
 
-function reply(patch: Partial<ReplayInput> = {}): ReplayInput {
-  return { status: 429, get: headers({ status: 'rejected', reset: String(RESET / 1000) }),
-    servedBy: 'otherclaude', session, attempted: new Set(['otherclaude']), ...patch }
+/** The replay input for an answer with these headers, with the cooldown the proxy works out of them. */
+function reply(patch: Partial<Omit<ReplayInput, 'cooldownUntil'>> & { get?: HeaderGetter } = {}): ReplayInput {
+  const { get = headers({ status: 'rejected', reset: String(RESET / 1000) }), ...rest } = patch
+  const input = { status: 429, servedBy: 'otherclaude', session, attempted: new Set(['otherclaude']), ...rest }
+  return { ...input, cooldownUntil: quotaCooldownUntil(input.status, get) }
 }
 
 describe('unified response headers', () => {
@@ -299,7 +301,7 @@ describe('replay decisions', () => {
   ])('a quota 429 is definitive with %j', (values) => {
     const get = headers(values)
     expect(isDefinitiveQuotaRejection(429, get)).toBe(true)
-    expect(replayDecision(reply({ get }))).toEqual({ kind: 'replay', reason: 'quota', cooldownUntil: Infinity })
+    expect(replayDecision(reply({ get }))).toEqual({ kind: 'replay', cooldownUntil: Infinity })
     expect(isDefinitiveQuotaRejection(503, get)).toBe(false)
   })
 
@@ -316,9 +318,9 @@ describe('replay decisions', () => {
   })
 
   test('quota cooldown uses the global reset, then the representative window reset', () => {
-    expect(replayDecision(reply())).toEqual({ kind: 'replay', reason: 'quota', cooldownUntil: RESET })
+    expect(replayDecision(reply())).toEqual({ kind: 'replay', cooldownUntil: RESET })
     expect(replayDecision(reply({ get: headers({ 'representative-claim': 'five_hour', '5h-reset': String(RESET / 1000) }) })))
-      .toEqual({ kind: 'replay', reason: 'quota', cooldownUntil: RESET })
+      .toEqual({ kind: 'replay', cooldownUntil: RESET })
   })
 
   test('400 pins back only to an untried previous serving account', () => {
@@ -331,14 +333,9 @@ describe('replay decisions', () => {
   test('falls back to all rejected window resets, including overage', () => {
     const get = headers({ status: 'rejected', '5h-status': 'rejected', '5h-reset': String(RESET / 1000),
       'overage-status': 'rejected', 'overage-reset': String(LATER / 1000) })
-    expect(replayDecision(reply({ get }))).toEqual({ kind: 'replay', reason: 'quota', cooldownUntil: LATER })
+    expect(replayDecision(reply({ get }))).toEqual({ kind: 'replay', cooldownUntil: LATER })
     expect(replayDecision(reply({ get: headers({ status: 'rejected', '5h-reset': String(RESET / 1000) }) })))
-      .toEqual({ kind: 'replay', reason: 'quota', cooldownUntil: Infinity })
-  })
-
-  test.each([400, 429])('never replays status %i after streaming starts or the deadline expires', (status) => {
-    expect(replayDecision(reply({ status, responseStarted: true }))).toEqual({ kind: 'pass' })
-    expect(replayDecision(reply({ status, deadlineExpired: true }))).toEqual({ kind: 'pass' })
+      .toEqual({ kind: 'replay', cooldownUntil: Infinity })
   })
 
   test('a pinned session passes its quota rejection back to the CLI', () => {
@@ -403,7 +400,7 @@ describe('a request that runs into a usage limit', () => {
     // The login serving the request is refused, which puts it on cooldown until its own
     // reset and sends the same request to the next opted-in login.
     const decision = replayDecision(reply({ servedBy: 'homeclaude', attempted: new Set(['homeclaude']) }))
-    expect(decision).toEqual({ kind: 'replay', reason: 'quota', cooldownUntil: RESET })
+    expect(decision).toEqual({ kind: 'replay', cooldownUntil: RESET })
     const pool = [account('homeclaude', { cooldownUntil: RESET, usage: usage(100) }), account('otherclaude')]
     expect(chooseAccount(session, pool, NOW, new Set(['homeclaude']))?.id).toBe('otherclaude')
     // The pool is ready now.
@@ -682,8 +679,8 @@ describe('the rules kurmis adds', () => {
   test('a usage-limit refusal of a pinned session still names the cooldown of its login', () => {
     const pinned = reply({ session: { ...session, pinnedAccountId: 'homeclaude' } })
     expect(replayDecision(pinned)).toEqual({ kind: 'pass' })
-    expect(quotaCooldownUntil(pinned.status, pinned.get)).toBe(RESET)
-    expect(quotaCooldownUntil(529, pinned.get)).toBeNull()
+    expect(pinned.cooldownUntil).toBe(RESET)
+    expect(quotaCooldownUntil(529, headers({ status: 'rejected', reset: String(RESET / 1000) }))).toBeNull()
     expect(quotaCooldownUntil(429, headers())).toBeNull()
   })
 

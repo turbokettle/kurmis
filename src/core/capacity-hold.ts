@@ -30,7 +30,7 @@ export const CAPACITY_STREAK_MS = 10 * 60_000
 
 /**
  * Why an upstream answer means Anthropic had no room for the request right now, or null.
- * A 429 that names a usage limit (`usageLimit`, from `isDefinitiveQuotaRejection`) is not
+ * A 429 that names a usage limit (`usageLimit`: `quotaCooldownUntil` answered a time) is not
  * this: that login is used up, and waiting on it would sleep through a login with room.
  */
 export function capacityRefusal(status: number, usageLimit: boolean): string | null {

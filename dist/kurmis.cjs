@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023102152" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023102219" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -628,15 +628,14 @@ function chooseAccount(session, accounts, now, exclude) {
   return rankAccounts(session, accounts, now, exclude)[0] ?? null;
 }
 function replayDecision(input) {
-  const { status: status2, get, servedBy, session, attempted } = input;
-  if (session.pinnedAccountId != null || input.responseStarted || input.deadlineExpired) return { kind: "pass" };
+  const { status: status2, cooldownUntil, servedBy, session, attempted } = input;
+  if (session.pinnedAccountId != null) return { kind: "pass" };
   const previous = session.currentAccountId;
   if (status2 === 400 && previous !== null && previous !== servedBy && !attempted.has(previous)) {
     return { kind: "pin-back", to: previous };
   }
-  const cooldownUntil = quotaCooldownUntil(status2, get);
   if (cooldownUntil === null) return { kind: "pass" };
-  return { kind: "replay", reason: "quota", cooldownUntil };
+  return { kind: "replay", cooldownUntil };
 }
 function accountsInScope(session, accounts) {
   const pinned = effectivePin(session, accounts);
@@ -5623,7 +5622,7 @@ function createProxy(options) {
           continue;
         }
       }
-      const capacity = capacityRefusal(status2, isDefinitiveQuotaRejection(status2, get));
+      const capacity = capacityRefusal(status2, until !== null);
       if (capacity !== null) {
         answer2.discard();
         const note = cooling.noteNoCapacity(sessionKey, row.id, capacity, get("retry-after"), random(), now());
@@ -5636,7 +5635,7 @@ function createProxy(options) {
         log.write("session_hold_ended", { login: asLogin(sentBack), reason: "usage_limit" });
         endPinBack();
       }
-      const decision = replayDecision({ status: status2, get, servedBy: row.id, session, attempted });
+      const decision = replayDecision({ status: status2, cooldownUntil: until, servedBy: row.id, session, attempted });
       if (decision.kind === "replay") {
         refusals.push({ login: row.id, until: decision.cooldownUntil, status: status2, headers: answer2.headers, body: await keepBody(answer2, signal, keptAnswerTimeoutMs) });
         excluded.add(row.id);
