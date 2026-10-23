@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023103535" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023103828" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -5350,6 +5350,7 @@ var KEPT_ANSWER_TIMEOUT_MS = 5e3;
 var RENEWAL_WAIT_MS = 5e3;
 var ClientGone = class extends Error {
 };
+var HOLD_OVER = /* @__PURE__ */ Symbol("hold over");
 function createProxy(options) {
   const { table, tokens, identity, poller, upstream, log, now } = options;
   const random = options.random ?? Math.random;
@@ -5468,9 +5469,9 @@ function createProxy(options) {
       excluded.delete(id);
       tokens.invalidate(id);
     };
-    const awaitRenewal = async (id) => {
+    const awaitRenewal = async (id, bound) => {
       const entry = deferred.get(id);
-      if (entry !== void 0) await abortable(entry.renewal, signal);
+      if (entry !== void 0) await abortable(entry.renewal, bound);
       takeBack(id);
     };
     const pinBackEnds = (rows) => {
@@ -5488,19 +5489,19 @@ function createProxy(options) {
       };
       return routeBlock(measured, now()) !== null;
     };
-    const pick = async () => {
+    const pick = async (bound) => {
       for (; ; ) {
         for (const [id, entry] of deferred) if (entry.ended) takeBack(id);
-        await abortable(tokens.prime(table.logins().map((login) => login.id)), signal);
+        await abortable(tokens.prime(table.logins().map((login) => login.id)), bound);
         const rows = rowsNow();
         const stale = staleUsageLogins(session, rows, now(), /* @__PURE__ */ new Set([...refreshed, ...poller.recentStaleProbes()]));
         if (stale.length > 0) {
           for (const id of stale) refreshed.add(id);
-          await abortable(poller.probeMany(stale, "stale"), signal);
+          await abortable(poller.probeMany(stale, "stale"), bound);
           continue;
         }
         if (sentBack !== null && deferred.has(sentBack)) {
-          await awaitRenewal(sentBack);
+          await awaitRenewal(sentBack, bound);
           continue;
         }
         if (sentBack !== null && pinBackEnds(rows)) {
@@ -5516,7 +5517,7 @@ function createProxy(options) {
         if (chosen === null) {
           const back = [...deferred.keys()].find((id) => !coolingNow.has(id));
           if (back === void 0) return null;
-          await awaitRenewal(back);
+          await awaitRenewal(back, bound);
           continue;
         }
         const row = rows.find((each) => each.id === chosen.id) ?? chosen;
@@ -5524,7 +5525,7 @@ function createProxy(options) {
         if (!reread.has(row.id)) {
           reread.add(row.id);
           tokens.invalidate(row.id);
-          await abortable(tokens.prime([row.id]), signal);
+          await abortable(tokens.prime([row.id]), bound);
           continue;
         }
         if (!renewable(row)) {
@@ -5534,7 +5535,7 @@ function createProxy(options) {
         renewed.add(row.id);
         const elsewhere = effectivePin(session, rows) === null && chooseAccount(session, candidates, now(), /* @__PURE__ */ new Set([...blocked, row.id])) !== null;
         const renewal = poller.probe(row.id, "renewal");
-        const finishedInTime = await abortable(elsewhere ? withTimeout(renewal, renewalWaitMs) : renewal.then(() => true), signal);
+        const finishedInTime = await abortable(elsewhere ? withTimeout(renewal, renewalWaitMs) : renewal.then(() => true), bound);
         if (!finishedInTime) {
           const entry = { renewal, ended: false };
           void renewal.finally(() => {
@@ -5552,6 +5553,23 @@ function createProxy(options) {
       if (placement.kind === "placed") log.write("session_placed", { login });
       else if (placement.kind === "moved") log.write("session_moved", { login, fromLogin: placement.from });
     };
+    const underHold = async (step) => {
+      if (holdSince === null) return step(signal);
+      const over = new AbortController();
+      const timer = setTimeout(() => {
+        over.abort();
+      }, Math.max(0, holdSince + holdMs - now()));
+      try {
+        return await step(AbortSignal.any([signal, over.signal]));
+      } catch (error) {
+        signal.throwIfAborted();
+        if (over.signal.aborted) return HOLD_OVER;
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const holdIsOver = () => holdSince !== null && now() >= holdSince + holdMs;
     const giveHoldBack = () => {
       const heldMs = now() - (holdSince ?? arrived);
       const answer2 = capacityHoldAnswer(cooling.coolingOf(sessionKey, now())?.reason ?? "529 Overloaded", heldMs);
@@ -5560,11 +5578,15 @@ function createProxy(options) {
     };
     for (; ; ) {
       signal.throwIfAborted();
-      if (holdSince !== null && now() >= holdSince + holdMs) {
+      if (holdIsOver()) {
         giveHoldBack();
         return;
       }
-      const row = await pick();
+      const row = await underHold(pick);
+      if (row === HOLD_OVER) {
+        giveHoldBack();
+        return;
+      }
       if (row === null) {
         const rows = rowsNow();
         const scope = new Set(accountsInScope(session, rows).map((each) => each.id));
@@ -5593,6 +5615,10 @@ function createProxy(options) {
       if (authorization === null) {
         excluded.add(row.id);
         continue;
+      }
+      if (holdIsOver()) {
+        giveHoldBack();
+        return;
       }
       const outgoing = upstreamRequest(req.headers, body, authorization, accountUuidOf(row.id));
       attempted.add(row.id);
@@ -5638,8 +5664,12 @@ function createProxy(options) {
           answer2.discard();
           renewed.add(row.id);
           log.write("retry_other_login", { login: asLogin(row.id), reason: "unauthorized", status: status2 });
-          await abortable(poller.probe(row.id, "renewal"), signal);
+          const renewal = await underHold((bound) => abortable(poller.probe(row.id, "renewal"), bound));
           tokens.invalidate(row.id);
+          if (renewal === HOLD_OVER) {
+            giveHoldBack();
+            return;
+          }
           attempted.delete(row.id);
           continue;
         }

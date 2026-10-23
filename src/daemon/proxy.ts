@@ -122,6 +122,9 @@ interface KeptRefusal {
 
 class ClientGone extends Error {}
 
+/** What `underHold` answers when the capacity hold ended before the step did. */
+const HOLD_OVER = Symbol('hold over')
+
 export function createProxy(options: ProxyOptions): Proxy {
   const { table, tokens, identity, poller, upstream, log, now } = options
   const random = options.random ?? Math.random
@@ -289,9 +292,9 @@ export function createProxy(options: ProxyOptions): Proxy {
     }
 
     /** Waits for a deferred login's renewal to end, and takes the login back. */
-    const awaitRenewal = async (id: string): Promise<void> => {
+    const awaitRenewal = async (id: string, bound: AbortSignal): Promise<void> => {
       const entry = deferred.get(id)
-      if (entry !== undefined) await abortable(entry.renewal, signal)
+      if (entry !== undefined) await abortable(entry.renewal, bound)
       takeBack(id)
     }
 
@@ -307,22 +310,23 @@ export function createProxy(options: ProxyOptions): Proxy {
       return routeBlock(measured, now()) !== null
     }
 
-    const pick = async (): Promise<RouteAccount | null> => {
+    /** Chooses the login to send on. `bound` is the client's signal, and ends with the hold too. */
+    const pick = async (bound: AbortSignal): Promise<RouteAccount | null> => {
       for (;;) {
         for (const [id, entry] of deferred) if (entry.ended) takeBack(id)
-        await abortable(tokens.prime(table.logins().map((login) => login.id)), signal)
+        await abortable(tokens.prime(table.logins().map((login) => login.id)), bound)
         const rows = rowsNow()
         // A login probed for a stale reading in the last minute, by this request or another
         // one, is not probed again: a probe that keeps failing would otherwise run every time.
         const stale = staleUsageLogins(session, rows, now(), new Set([...refreshed, ...poller.recentStaleProbes()]))
         if (stale.length > 0) {
           for (const id of stale) refreshed.add(id)
-          await abortable(poller.probeMany(stale, 'stale'), signal)
+          await abortable(poller.probeMany(stale, 'stale'), bound)
           continue
         }
         // A session sent back to a login whose renewal is still running waits for that renewal.
         if (sentBack !== null && deferred.has(sentBack)) {
-          await awaitRenewal(sentBack)
+          await awaitRenewal(sentBack, bound)
           continue
         }
         if (sentBack !== null && pinBackEnds(rows)) {
@@ -340,7 +344,7 @@ export function createProxy(options: ProxyOptions): Proxy {
           // unless that one is cooling after an answer without capacity, and waits for the renewal.
           const back = [...deferred.keys()].find((id) => !coolingNow.has(id))
           if (back === undefined) return null
-          await awaitRenewal(back)
+          await awaitRenewal(back, bound)
           continue
         }
         const row = rows.find((each) => each.id === chosen.id) ?? chosen
@@ -350,7 +354,7 @@ export function createProxy(options: ProxyOptions): Proxy {
         if (!reread.has(row.id)) {
           reread.add(row.id)
           tokens.invalidate(row.id)
-          await abortable(tokens.prime([row.id]), signal)
+          await abortable(tokens.prime([row.id]), bound)
           continue
         }
         if (!renewable(row)) {
@@ -362,7 +366,7 @@ export function createProxy(options: ProxyOptions): Proxy {
         const elsewhere = effectivePin(session, rows) === null &&
           chooseAccount(session, candidates, now(), new Set([...blocked, row.id])) !== null
         const renewal = poller.probe(row.id, 'renewal')
-        const finishedInTime = await abortable(elsewhere ? withTimeout(renewal, renewalWaitMs) : renewal.then(() => true), signal)
+        const finishedInTime = await abortable(elsewhere ? withTimeout(renewal, renewalWaitMs) : renewal.then(() => true), bound)
         if (!finishedInTime) {
           const entry = { renewal, ended: false }
           void renewal.finally(() => { entry.ended = true })
@@ -380,6 +384,28 @@ export function createProxy(options: ProxyOptions): Proxy {
       else if (placement.kind === 'moved') log.write('session_moved', { login, fromLogin: placement.from })
     }
 
+    /**
+     * Runs `step` with a signal that ends with the client's and, while the request is held, at
+     * the hold's end, so a probe, a Keychain read or a renewal does not keep a held request past
+     * it. Answers `HOLD_OVER` when the hold ended first; the request is then given back.
+     */
+    const underHold = async <T>(step: (bound: AbortSignal) => Promise<T>): Promise<T | typeof HOLD_OVER> => {
+      if (holdSince === null) return step(signal)
+      const over = new AbortController()
+      const timer = setTimeout(() => { over.abort() }, Math.max(0, holdSince + holdMs - now()))
+      try {
+        return await step(AbortSignal.any([signal, over.signal]))
+      } catch (error) {
+        signal.throwIfAborted()
+        if (over.signal.aborted) return HOLD_OVER
+        throw error
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+
+    const holdIsOver = (): boolean => holdSince !== null && now() >= holdSince + holdMs
+
     const giveHoldBack = (): void => {
       const heldMs = now() - (holdSince ?? arrived)
       const answer = capacityHoldAnswer(cooling.coolingOf(sessionKey, now())?.reason ?? '529 Overloaded', heldMs)
@@ -389,11 +415,15 @@ export function createProxy(options: ProxyOptions): Proxy {
 
     for (;;) {
       signal.throwIfAborted()
-      if (holdSince !== null && now() >= holdSince + holdMs) {
+      if (holdIsOver()) {
         giveHoldBack()
         return
       }
-      const row = await pick()
+      const row = await underHold(pick)
+      if (row === HOLD_OVER) {
+        giveHoldBack()
+        return
+      }
       if (row === null) {
         const rows = rowsNow()
         const scope = new Set(accountsInScope(session, rows).map((each) => each.id))
@@ -422,6 +452,11 @@ export function createProxy(options: ProxyOptions): Proxy {
       if (authorization === null) {
         excluded.add(row.id)
         continue
+      }
+      // The choice may have taken until the hold's end; a request given back is not sent.
+      if (holdIsOver()) {
+        giveHoldBack()
+        return
       }
       const outgoing = upstreamRequest(req.headers, body, authorization, accountUuidOf(row.id))
       attempted.add(row.id)
@@ -466,8 +501,12 @@ export function createProxy(options: ProxyOptions): Proxy {
           answer.discard()
           renewed.add(row.id)
           log.write('retry_other_login', { login: asLogin(row.id), reason: 'unauthorized', status })
-          await abortable(poller.probe(row.id, 'renewal'), signal)
+          const renewal = await underHold((bound) => abortable(poller.probe(row.id, 'renewal'), bound))
           tokens.invalidate(row.id)
+          if (renewal === HOLD_OVER) {
+            giveHoldBack()
+            return
+          }
           attempted.delete(row.id)
           continue
         }

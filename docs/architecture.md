@@ -286,7 +286,9 @@ old one finishes its open requests in the background ("Version handover" below).
   config), or for the client to close the request. After `CAPACITY_HOLD_MS` (two minutes) the
   proxy answers 529 itself, and the CLI sends the request again. The two minutes also end the
   wait for the headers of a request sent during the hold, but only until the headers arrive:
-  the body of an answer that started within the hold is passed on to its end.
+  the body of an answer that started within the hold is passed on to its end. They end the
+  choice of a login too, while it waits for a usage probe, a token read or a renewal, and the
+  renewal after a 401; a request whose hold ended meanwhile is given back and not sent.
 - **Moving a session back.** When an Auto session has just moved to another login and that login
   answers 400, the request is sent again on the login that served the session before, whatever
   that login's usage, and the session is held to that login for its later requests. Some

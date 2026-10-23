@@ -14,7 +14,7 @@ import { loginFolder } from '../../src/data/paths.ts'
 import { probeClaudeUsage } from '../../src/daemon/claude-probe.ts'
 import { createProxy } from '../../src/daemon/proxy.ts'
 import type { ProbeFunction } from '../../src/daemon/usage-poller.ts'
-import { fakeToken, reply, writeClaudeCredentials } from '../fakes/index.ts'
+import { fakeToken, reply, unifiedHeaders, writeClaudeCredentials } from '../fakes/index.ts'
 import { FAKE_SECURITY, FakeKeychain } from './fake-security/fake-keychain.ts'
 import { extraRef, OWN_CLAUDE } from '../logins.ts'
 import { call, KEY, messagesBody, routed, startHarness, type Harness } from './harness.ts'
@@ -93,6 +93,36 @@ describe('a capacity hold', () => {
     expect(answer.text).toContain('message_stop')
     expect(bearers(harness)).toEqual([DEFAULT, DEFAULT])
   }, 30_000)
+
+  /** A probe that fails after `delayMs`, without renewing anything. */
+  const slowFailingProbe = (delayMs: number): ProbeFunction => () => new Promise((resolve) => setTimeout(() => {
+    resolve({ ok: false, signedIn: null, reason: 'other', error: 'The usage probe failed.' })
+  }, delayMs))
+
+  test('gives the request back at its end while a stale usage probe is still running', async () => {
+    harness = await startHarness({ tuning: { holdBaseMs: 50, holdMaxMs: 50, holdMs: 400, probeClaude: slowFailingProbe(3_000) } })
+    writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
+    // The 529 reports a five-hour window whose reset has passed, so the next choice probes it first.
+    harness.api.scriptFor(DEFAULT, reply.overloaded({ headers: unifiedHeaders({ fiveHour: { utilization: 0.5, resetsAt: Date.now() - 60_000 } }) }))
+    const started = Date.now()
+    const answer = await messages(harness, S1)
+    expect(answer.status).toBe(529)
+    expect(answer.text).toContain('kurmis proxy')
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(bearers(harness)).toEqual([DEFAULT])
+  }, 15_000)
+
+  test('gives the request back at its end while the renewal after a 401 is still running', async () => {
+    harness = await startHarness({ tuning: { holdBaseMs: 50, holdMaxMs: 50, holdMs: 400, probeClaude: slowFailingProbe(3_000) } })
+    writeClaudeCredentials(join(harness.home, '.claude'), { accessToken: DEFAULT })
+    harness.api.scriptFor(DEFAULT, reply.overloaded(), reply.unauthorized())
+    const started = Date.now()
+    const answer = await messages(harness, S1)
+    expect(answer.status).toBe(529)
+    expect(answer.text).toContain('kurmis proxy')
+    expect(Date.now() - started).toBeLessThan(2_000)
+    expect(bearers(harness)).toEqual([DEFAULT, DEFAULT])
+  }, 15_000)
 })
 
 describe('a 401', () => {
