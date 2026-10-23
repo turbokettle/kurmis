@@ -113,7 +113,7 @@ describe('kurmis claude on Auto', () => {
       CLAUDE_SECURESTORAGE_CONFIG_DIR: '/somewhere/else',
       ANTHROPIC_BASE_URL: 'http://example.com'
     })
-    const code = await createClaudeCommand(h.deps).run(['--', '-p', 'hi', '--login', 'x'], out.context)
+    const code = await createClaudeCommand(h.deps).run(['-p', 'hi', '--login', 'x'], out.context)
     expect(code).toBe(3)
     expect(out.stderr()).toBe('')
     expect(h.daemon.calls).toEqual(['ensureDaemon', 'readStatus'])
@@ -162,7 +162,7 @@ describe('kurmis claude on Auto', () => {
       CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR: '3' } }))
     const h = harness()
     const out = collect()
-    await createClaudeCommand(h.deps).run(['--', '--settings', 'mine.json'], out.context)
+    await createClaudeCommand(h.deps).run(['--settings', 'mine.json'], out.context)
     expect(passedSettings(h.specs[0]).env).toMatchObject({ MINE: 'yes', ...NO_TOKEN })
     expect(out.stderr().trim().split('\n')).toEqual([
       `kurmis claude: CLAUDE_CODE_OAUTH_TOKEN is set in the "env" of ${userFile}, so claude would sign its requests with ` +
@@ -178,7 +178,7 @@ describe('kurmis claude on Auto', () => {
   test('an empty token variable in a settings file gives no note', async () => {
     const h = harness()
     const out = collect()
-    await createClaudeCommand(h.deps).run(['--', '--settings', '{"env":{"CLAUDE_CODE_OAUTH_TOKEN":""}}'], out.context)
+    await createClaudeCommand(h.deps).run(['--settings', '{"env":{"CLAUDE_CODE_OAUTH_TOKEN":""}}'], out.context)
     expect(out.stderr()).toBe('')
     expect(passedSettings(h.specs[0]).env).toMatchObject(NO_TOKEN)
   })
@@ -327,7 +327,7 @@ describe('kurmis claude --login', () => {
   test('pins the session: the login header, the started-on header and the login\'s folder; no status is read', async () => {
     const h = harness()
     const out = collect({ PATH: '/usr/bin' })
-    expect(await createClaudeCommand(h.deps).run(['--login', 'work-example', '--', 'mcp', 'list'], out.context)).toBe(3)
+    expect(await createClaudeCommand(h.deps).run(['mcp', 'list'], out.context, 'work-example')).toBe(3)
     expect(h.daemon.calls).toEqual(['ensureDaemon'])
     const spec = h.specs[0]
     const headers = routedHeaders(`x-kurmis-key: ${KEY}`, 'x-kurmis-login: workclaude', 'x-kurmis-started-on: workclaude')
@@ -349,7 +349,7 @@ describe('kurmis claude --login', () => {
 
   test('--login with the login plain claude uses starts on its credentials and needs no folder', async () => {
     const h = harness({}, { folderExists: () => false })
-    expect(await createClaudeCommand(h.deps).run(['--login', OWN_CLAUDE], collect({ CLAUDE_SECURESTORAGE_CONFIG_DIR: '/x' }).context)).toBe(3)
+    expect(await createClaudeCommand(h.deps).run([], collect({ CLAUDE_SECURESTORAGE_CONFIG_DIR: '/x' }).context, OWN_CLAUDE)).toBe(3)
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain(`x-kurmis-login: ${OWN_CLAUDE}`)
     expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')
   })
@@ -357,7 +357,7 @@ describe('kurmis claude --login', () => {
   test('--login takes the alias or the id, in any case', async () => {
     for (const text of ['work-example', 'workclaude', 'Work-Example', 'WORKCLAUDE']) {
       const h = harness()
-      expect(await createClaudeCommand(h.deps).run(['--login', text], collect().context)).toBe(3)
+      expect(await createClaudeCommand(h.deps).run([], collect().context, text)).toBe(3)
       expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain('x-kurmis-login: workclaude')
     }
   })
@@ -365,7 +365,7 @@ describe('kurmis claude --login', () => {
   test('a login that is not in config.json is an error, before the daemon is asked', async () => {
     const h = harness()
     const out = collect()
-    expect(await createClaudeCommand(h.deps).run(['--login', 'nobody'], out.context)).toBe(1)
+    expect(await createClaudeCommand(h.deps).run([], out.context, 'nobody')).toBe(1)
     expect(out.stderr()).toBe('kurmis claude: there is no login called "nobody". "kurmis status" shows the logins, and "kurmis login" adds one.\n')
     expect(h.daemon.calls).toEqual([])
   })
@@ -374,7 +374,7 @@ describe('kurmis claude --login', () => {
     for (const text of ['claude:work-example']) {
       const h = harness()
       const out = collect()
-      expect(await createClaudeCommand(h.deps).run(['--login', text], out.context)).toBe(1)
+      expect(await createClaudeCommand(h.deps).run([], out.context, text)).toBe(1)
       expect(out.stderr()).toContain(`there is no login called "${text}"`)
       expect(h.specs).toEqual([])
     }
@@ -389,7 +389,7 @@ describe('kurmis claude --login', () => {
       }
     })
     const out = collect()
-    expect(await createClaudeCommand(h.deps).run(['--', '-p', 'hi'], out.context)).toBe(3)
+    expect(await createClaudeCommand(h.deps).run(['-p', 'hi'], out.context)).toBe(3)
     expect(out.stderr()).toBe('kurmis claude: Another kurmis command (pid 4321) holds the lock of config.json. ' +
       'Starting claude on the login plain claude uses.\n')
     expect(h.daemon.calls).toEqual(['findDaemon', 'readStatus'])
@@ -441,30 +441,26 @@ describe('kurmis claude --login', () => {
       }
     })
     const out = collect()
-    expect(await createClaudeCommand(h.deps).run(['--login', 'work-example'], out.context)).toBe(1)
+    expect(await createClaudeCommand(h.deps).run([], out.context, 'work-example')).toBe(1)
     expect(out.stderr()).toBe('kurmis claude: config.json: logins[2].id must be 1 to 32 lowercase letters and digits\n')
   })
 
   test('an extra login whose folder is missing is an error that says how to sign it in again', async () => {
     const h = harness({}, { folderExists: () => false })
     const out = collect()
-    expect(await createClaudeCommand(h.deps).run(['--login', 'work-example'], out.context)).toBe(1)
+    expect(await createClaudeCommand(h.deps).run([], out.context, 'work-example')).toBe(1)
     expect(out.stderr()).toBe(`kurmis claude: the folder of work-example is missing (${WORK_FOLDER()}). Sign it in again with ` +
       '"kurmis login work-example".\n')
     expect(h.specs).toEqual([])
   })
 
-  test('an empty --login is a usage error', async () => {
-    const empty = collect()
-    expect(await createClaudeCommand(harness().deps).run(['--login='], empty.context)).toBe(2)
-  })
 })
 
 describe('kurmis claude with the person\'s own settings', () => {
   test('an inline --settings is merged: their keys and variables kept, kurmis\' address and key winning', async () => {
     const h = harness()
     const theirs = JSON.stringify({ model: 'opus', env: { MINE: 'yes', ANTHROPIC_BASE_URL: 'http://example.com', ENABLE_TOOL_SEARCH: 'false' } })
-    await createClaudeCommand(h.deps).run(['--', '-p', '--settings', theirs, 'hi'], collect().context)
+    await createClaudeCommand(h.deps).run(['-p', '--settings', theirs, 'hi'], collect().context)
     const settings = passedSettings(h.specs[0])
     // Their own ENABLE_TOOL_SEARCH is theirs to choose; the address is kurmis'.
     expect(settings).toMatchObject({ model: 'opus', env: { MINE: 'yes', ANTHROPIC_BASE_URL: BASE_URL, ENABLE_TOOL_SEARCH: 'false' } })
@@ -498,7 +494,7 @@ describe('kurmis claude with the person\'s own settings', () => {
     const h = harness()
     const text = '{\n  "env": { "MINE": "yes", "ANTHROPIC_CUSTOM_HEADERS": "x-team: blue" }\n}\n'
     writeFileSync(join(cwd, 'mine.json'), text)
-    await createClaudeCommand(h.deps).run(['--', '--settings=mine.json'], collect({ ANTHROPIC_CUSTOM_HEADERS: 'x-from: process' }).context)
+    await createClaudeCommand(h.deps).run(['--settings=mine.json'], collect({ ANTHROPIC_CUSTOM_HEADERS: 'x-from: process' }).context)
     const settings = passedSettings(h.specs[0]) as { env: Record<string, string> }
     expect(settings.env.MINE).toBe('yes')
     // Their --settings is the highest layer, so its headers are the ones kept, ahead of kurmis' own.
@@ -510,7 +506,7 @@ describe('kurmis claude with the person\'s own settings', () => {
   test('settings that cannot be read stop the start before the daemon is asked', async () => {
     const h = harness()
     const out = collect()
-    expect(await createClaudeCommand(h.deps).run(['--', '--settings', 'missing.json'], out.context)).toBe(1)
+    expect(await createClaudeCommand(h.deps).run(['--settings', 'missing.json'], out.context)).toBe(1)
     expect(out.stderr()).toBe(`kurmis claude: --settings: cannot read the settings file ${join(cwd, 'missing.json')}: it does not exist\n`)
     expect(h.daemon.calls).toEqual([])
     expect(h.specs).toEqual([])
@@ -531,7 +527,7 @@ describe('kurmis claude with the person\'s own settings', () => {
       ANTHROPIC_CUSTOM_HEADERS: `x-team: green\nx-kurmis-key: ${'b'.repeat(64)}`
     } }))
     const h = harness()
-    await createClaudeCommand(h.deps).run(['--login', 'work-example'], collect().context)
+    await createClaudeCommand(h.deps).run([], collect().context, 'work-example')
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(
       routedHeaders('x-team: green', `x-kurmis-key: ${KEY}`, 'x-kurmis-login: workclaude', 'x-kurmis-started-on: workclaude'))
   })
@@ -557,24 +553,10 @@ describe('kurmis claude with the person\'s own settings', () => {
 })
 
 describe('kurmis claude, other cases', () => {
-  test('--help prints the help and starts nothing', async () => {
+  test('--help and every other argument go to claude unchanged', async () => {
     const h = harness()
-    const out = collect()
-    expect(await createClaudeCommand(h.deps).run(['--help'], out.context)).toBe(0)
-    expect(out.stdout()).toContain('Usage: kurmis claude [--login <login>]')
-    expect(h.daemon.calls).toEqual([])
-  })
-
-  test('a claude argument before -- is a usage error and starts nothing', async () => {
-    const h = harness()
-    const out = collect()
-    expect(await createClaudeCommand(h.deps).run(['--login', 'work-example', '-p', '--help'], out.context)).toBe(2)
-    expect(out.stdout()).toBe('')
-    expect(out.stderr()).toBe(
-      'kurmis claude: kurmis does not know -p. Put claude\'s arguments after --, for example "kurmis claude -- -p"\n' +
-      'Run "kurmis help claude" for its options.\n')
-    expect(h.daemon.calls).toEqual([])
-    expect(h.specs).toEqual([])
+    expect(await createClaudeCommand(h.deps).run(['--help', '--login', 'x', '--'], collect().context)).toBe(3)
+    expect(h.specs[0]?.args.slice(-4)).toEqual(['--help', '--login', 'x', '--'])
   })
 
   test('a claude that cannot be found exits 127 with the lookup\'s message', async () => {

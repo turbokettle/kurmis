@@ -92,7 +92,7 @@ describe('the kurmis daemon, end to end', () => {
 
     const answer = gate()
     world.api.script(reply.ok({ text: 'Answered while the daemon stops', hold: answer.promise }))
-    const open = track(world.kurmis(['claude', '--', '-p', 'hi']))
+    const open = track(world.kurmis(['claude', '-p', 'hi']))
     try {
       await world.api.waitForRequests(1, GENEROUS_MS)
       const stop = track(world.kurmis(['daemon', 'stop']))
@@ -127,8 +127,8 @@ describe('the kurmis daemon, end to end', () => {
     const world = await createWorld()
     world.signInDefaultClaude()
     const [first, second] = await Promise.all([
-      world.kurmis(['claude', '--', '-p', 'one']),
-      world.kurmis(['claude', '--', '-p', 'two'])
+      world.kurmis(['claude', '-p', 'one']),
+      world.kurmis(['claude', '-p', 'two'])
     ])
     expect(first).toMatchObject({ code: 0, stdout: 'Hello from the fake API.\n' })
     expect(second).toMatchObject({ code: 0, stdout: 'Hello from the fake API.\n' })
@@ -157,10 +157,10 @@ describe('the kurmis daemon, end to end', () => {
     const answer = gate()
     world.api.script(reply.ok({ text: 'From the older daemon', hold: answer.promise }))
     world.api.setDefault(reply.ok({ text: 'From the newer daemon' }))
-    const first = track(world.kurmis(['claude', '--', '-p', 'first', '--session-id', SESSION_A], { bundle: older }))
+    const first = track(world.kurmis(['claude', '-p', 'first', '--session-id', SESSION_A], { bundle: older }))
     try {
       await world.api.waitForRequests(1, GENEROUS_MS)
-      const second = await world.kurmis(['claude', '--', '-p', 'second', '--session-id', SESSION_B])
+      const second = await world.kurmis(['claude', '-p', 'second', '--session-id', SESSION_B])
       expect(second).toMatchObject({ code: 0, stdout: 'From the newer daemon\n' })
       const now = daemonOf(world)
       expect(now).toMatchObject({ version: PACKAGE_VERSION, port: world.port })
@@ -177,7 +177,7 @@ describe('the kurmis daemon, end to end', () => {
       expect(logEvents(world, 'drain_cut_short')).toEqual([])
 
       // An older kurmis uses the newer daemon and leaves it running.
-      const third = await world.kurmis(['claude', '--', '-p', 'third'], { bundle: older })
+      const third = await world.kurmis(['claude', '-p', 'third'], { bundle: older })
       expect(third).toMatchObject({ code: 0, stdout: 'From the newer daemon\n' })
       expect(daemonOf(world).pid).toBe(now.pid)
 
@@ -202,7 +202,7 @@ describe('the kurmis daemon, end to end', () => {
     const answer = gate()
     world.api.script(reply.ok({ text: 'From the old daemon', hold: answer.promise }))
     world.api.setDefault(reply.ok({ text: 'From the new daemon' }))
-    const open = track(world.kurmis(['claude', '--', '-p', 'first']))
+    const open = track(world.kurmis(['claude', '-p', 'first']))
     try {
       await world.api.waitForRequests(1, GENEROUS_MS)
       const restarted = await world.kurmis(['daemon', 'restart'])
@@ -216,7 +216,7 @@ describe('the kurmis daemon, end to end', () => {
       })
       expect(open.settled()).toBe(false)
       expect(processExists(before.pid)).toBe(true)
-      expect(await world.kurmis(['claude', '--', '-p', 'second'])).toMatchObject({ code: 0, stdout: 'From the new daemon\n' })
+      expect(await world.kurmis(['claude', '-p', 'second'])).toMatchObject({ code: 0, stdout: 'From the new daemon\n' })
 
       answer.release()
       expect(await open.promise).toMatchObject({ code: 0, stdout: 'From the old daemon\n' })
@@ -239,7 +239,7 @@ describe('the kurmis daemon, end to end', () => {
     // No rate-limit headers, so the answers do not change the usage the probes read.
     world.api.setDefault((request) => reply.ok({ text: `served by ${request.bearer === work.token ? 'work' : 'default'}`, unified: null }))
     const ask = async (session: string): Promise<string> => {
-      const result = await world.kurmis(['claude', '--', '-p', 'hi', '--session-id', session])
+      const result = await world.kurmis(['claude', '-p', 'hi', '--session-id', session])
       expect(result.code, JSON.stringify(result)).toBe(0)
       return result.stdout.trim()
     }
@@ -302,7 +302,7 @@ describe('the kurmis daemon, end to end', () => {
     await waitUntil(() => !processExists(before.pid), GENEROUS_MS, 'the daemon on the old port to exit')
     expect(await portAcceptsConnections(world.port)).toBe(false)
 
-    const routed = await world.kurmis(['claude', '--', '-p', 'hi'])
+    const routed = await world.kurmis(['claude', '-p', 'hi'])
     expect(routed).toMatchObject({ code: 0, stdout: 'Hello from the fake API.\n' })
     const start = world.claudeRecord().filter((line) => line.kind === 'start' && line.argv.includes('-p') && line.argv.includes('hi')).at(-1)
     expect(start?.kind === 'start' ? start.effectiveEnv.ANTHROPIC_BASE_URL : null).toBe(`http://127.0.0.1:${String(port)}`)

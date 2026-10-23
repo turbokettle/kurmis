@@ -3624,54 +3624,22 @@ function plainClaudeLoginText() {
   return "the login plain claude uses";
 }
 
-// src/cli/wrapper-args.ts
-function parseWrapperArgs(args) {
-  const result = { help: false, login: null, passThrough: [] };
-  let index = 0;
-  while (index < args.length) {
-    const arg = args[index];
-    if (arg === "--") {
-      result.passThrough = args.slice(index + 1);
-      break;
-    }
-    if (isHelpFlag(arg)) {
-      result.help = true;
-      index++;
-      continue;
-    }
-    let value;
-    if (arg === "--login") {
-      value = args[index + 1];
-      index += 2;
-    } else if (arg.startsWith("--login=")) {
-      value = arg.slice("--login=".length);
-      index++;
-    } else {
-      return { error: `kurmis does not know ${arg}. Put claude's arguments after --, for example "kurmis claude -- ${arg}"` };
-    }
-    if (value === void 0 || value === "") return { error: "--login needs the alias or id of a login, for example --login work-example" };
-    if (result.login !== null) return { error: "--login was given twice" };
-    result.login = value;
-  }
-  return result;
-}
-
 // src/cli/commands/claude.ts
 var START_PROBE_WAIT_MS = 15e3;
-var USAGE = `Usage: kurmis claude [--login <login>] [-- <claude arguments...>]
+var USAGE = `Usage: kurmis [--login <login>] claude [<claude arguments...>]
 
 Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
 which signs each one with a login that has room, and the command exits with claude's exit code.
 The daemon is started first when it is not running.
 
+kurmis' options go before "claude", and claude's arguments after it, for example
+"kurmis --login work-example claude --resume".
+
 Options:
   --login <login>   Send every request of the session with one login, even when it is out
                     of usage. <login> is the login's alias or its id, as "kurmis status"
-                    shows them, for example --login work-example.
-                    Without --login, each request goes to a login that has room (Auto).
-  -h, --help        Show this help.
-  --                Pass everything after it to claude unchanged. claude's own arguments
-                    always go here, for example "kurmis claude -- --resume".
+                    shows them. Without --login, each request goes to a login that has room
+                    (Auto).
 
 claude needs a signed-in login of its own to start, even though the daemon re-signs every
 request. On Auto, kurmis starts it on the login plain claude uses, or on another signed-in login
@@ -3681,7 +3649,7 @@ starts, kurmis waits up to 15 seconds for its first usage probe to tell which.
 kurmis passes its own settings to claude with --settings. When you give a --settings of your
 own, kurmis adds its settings to yours and does not change your file.
 
-To use kurmis every time you run claude: alias claude='kurmis claude --'`;
+To use kurmis every time you run claude: alias claude='kurmis claude'`;
 function createClaudeCommand(overrides = {}) {
   const deps = {
     daemon: realDaemonClient,
@@ -3701,22 +3669,16 @@ function createClaudeCommand(overrides = {}) {
     summary: "Start Claude Code routed through the kurmis daemon",
     usage: USAGE,
     passesArguments: true,
-    run: (args, context) => runClaude(args, context, deps)
+    run: (args, context, login) => runClaude(args, login ?? null, context, deps)
   };
 }
 var claudeCommand = createClaudeCommand();
-async function runClaude(args, context, deps) {
-  const parsed = parseWrapperArgs(args);
-  if ("error" in parsed) return usageError("claude", parsed.error, context);
-  if (parsed.help) {
-    writeLine(context.stdout, USAGE);
-    return EXIT_OK;
-  }
+async function runClaude(args, login, context, deps) {
   const fail4 = (message, code = EXIT_FAILURE) => {
     writeLine(context.stderr, `kurmis claude: ${message}`);
     return code;
   };
-  const userSettings = readUserSettingsArg(parsed.passThrough, { cwd: deps.cwd(), readFile: deps.readFile });
+  const userSettings = readUserSettingsArg(args, { cwd: deps.cwd(), readFile: deps.readFile });
   if ("error" in userSettings) return fail4(userSettings.error);
   let program;
   try {
@@ -3730,13 +3692,13 @@ async function runClaude(args, context, deps) {
     config = deps.loadConfig();
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
-    if (parsed.login !== null) return fail4(error.message);
+    if (login !== null) return fail4(error.message);
     writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainClaudeLoginText()}.`);
     config = null;
   }
   let pinned = null;
-  if (parsed.login !== null && config !== null) {
-    const resolved = resolveLogin(config, parsed.login);
+  if (login !== null && config !== null) {
+    const resolved = resolveLogin(config, login);
     if ("error" in resolved) {
       return fail4(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login" adds one.`);
     }
@@ -3759,13 +3721,13 @@ async function runClaude(args, context, deps) {
     } catch (error) {
       return fail4(daemonUnreachable(error));
     }
-    const ownRow = status2.logins.find((login) => login.usedByPlainClaude);
+    const ownRow = status2.logins.find((login2) => login2.usedByPlainClaude);
     if (config === null) {
       startedOn = ownRow ?? { id: null, alias: plainClaudeLoginText(), usedByPlainClaude: true };
     } else {
       status2 = await withFirstProbe(connection, status2, context, deps);
       const startId = autoStartLogin(startableLogins(status2));
-      startedOn = status2.logins.find((login) => login.id === startId) ?? plainClaudeLogin(config);
+      startedOn = status2.logins.find((login2) => login2.id === startId) ?? plainClaudeLogin(config);
       if (!startedOn.usedByPlainClaude) {
         const own = ownRow ?? plainClaudeLogin(config);
         writeLine(context.stderr, `kurmis claude: ${own.alias}, ${plainClaudeLoginText()}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
@@ -10356,6 +10318,7 @@ function mainHelp() {
   return `kurmis ${kurmisVersion}: use several Claude Code logins on one machine.
 
 Usage: kurmis <command> [options]
+       kurmis [--login <login>] claude [<claude arguments...>]
 
 Commands:
 ${lines.join("\n")}
@@ -10368,7 +10331,16 @@ Options:
 Run "kurmis help <command>" for the options of a command.`;
 }
 async function runCli(argv, context) {
-  const [first, ...rest] = argv;
+  const leading = parseLogin2(argv);
+  if ("error" in leading) {
+    writeLine(context.stderr, `kurmis: ${leading.error}`);
+    return EXIT_USAGE;
+  }
+  const [first, ...rest] = leading.rest;
+  if (leading.login !== null && first !== "claude") {
+    writeLine(context.stderr, 'kurmis: --login goes right before claude, for example "kurmis --login work-example claude"');
+    return EXIT_USAGE;
+  }
   if (first === void 0 || isHelpFlag(first)) {
     writeLine(context.stdout, mainHelp());
     return EXIT_OK;
@@ -10392,7 +10364,26 @@ async function runCli(argv, context) {
       return EXIT_OK;
     }
   }
-  return await command.run(rest, context);
+  return await command.run(rest, context, leading.login);
+}
+function parseLogin2(argv) {
+  const [first, second] = argv;
+  let login;
+  let rest;
+  if (first === "--login") {
+    login = second;
+    rest = argv.slice(2);
+  } else if (first?.startsWith("--login=") === true) {
+    login = first.slice("--login=".length);
+    rest = argv.slice(1);
+  } else {
+    return { login: null, rest: argv };
+  }
+  if (login === void 0 || login === "" || login === "claude") {
+    return { error: '--login needs the alias or id of a login, for example "kurmis --login work-example claude"' };
+  }
+  if (rest[0] === "--login" || rest[0]?.startsWith("--login=") === true) return { error: "--login was given twice" };
+  return { login, rest };
 }
 function help(args, context) {
   const [name, ...extra] = args;

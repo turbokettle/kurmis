@@ -57,7 +57,7 @@ Then use `kurmis claude` where you used `claude`:
 
 ```sh
 kurmis claude                       # an interactive session, routed
-kurmis claude -- -p "explain this"  # claude's own arguments go after --
+kurmis claude -p "explain this"     # claude's own arguments go after "claude"
 ```
 
 `kurmis claude` starts the daemon when it is not running.
@@ -112,13 +112,14 @@ login runs at a time; a second one stops and says so.
 ### `kurmis claude`
 
 ```sh
-kurmis claude [--login <login>] [-- <claude arguments...>]
+kurmis [--login <login>] claude [<claude arguments...>]
 ```
 
-Starts Claude Code with the terminal attached and exits with its exit code. claude's own
-arguments go after `--` and reach it unchanged, as in `kurmis claude -- --resume` or
-`kurmis claude -- mcp list`. Anything else before `--` that is not a kurmis option is an error.
-To use kurmis every time you run claude, add `alias claude='kurmis claude --'` to your shell.
+Starts Claude Code with the terminal attached and exits with its exit code. kurmis' options go
+before `claude`, and claude's arguments after it, unchanged, as in `kurmis claude --resume` or
+`kurmis --login work-example claude mcp list`. `kurmis help claude` shows kurmis' help;
+`kurmis claude --help` shows claude's. To use kurmis every time you run claude, add
+`alias claude='kurmis claude'` to your shell.
 
 - **Auto** (no `--login`): each request goes to a login that is opted in to routing and is
   under its limits. A login marked "use first" is taken first. Otherwise a new session goes to

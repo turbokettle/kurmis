@@ -48,12 +48,18 @@ describe('dispatch', () => {
   })
 
 
-  it.each(NAMES)('shows the help of %s three ways', async (name) => {
+  it.each(NAMES.filter((name) => name !== 'claude'))('shows the help of %s three ways', async (name) => {
     const usage = COMMANDS.find((command) => command.name === name)!.usage
     expect(usage).toMatch(new RegExp(`^Usage: kurmis ${name}`))
     for (const argv of [[name, '--help'], [name, '-h'], ['help', name]]) {
       expect(await run(...argv)).toEqual({ code: 0, stdout: `${usage}\n`, stderr: '' })
     }
+  })
+
+  it('shows the help of claude with "kurmis help claude"', async () => {
+    const usage = COMMANDS.find((command) => command.name === 'claude')!.usage
+    expect(usage).toMatch(/^Usage: kurmis \[--login <login>\] claude/)
+    expect(await run('help', 'claude')).toEqual({ code: 0, stdout: `${usage}\n`, stderr: '' })
   })
 
   it('refuses help for an unknown command', async () => {
@@ -62,9 +68,9 @@ describe('dispatch', () => {
     expect(result.stderr).toContain('unknown command "nope"')
   })
 
-  it('passes --help after -- on to claude instead of showing kurmis help', async () => {
+  it('passes --help after claude on to claude instead of showing kurmis help', async () => {
     // The test environment is empty, so no claude is found and nothing is started.
-    const result = await run('claude', '--', '--help')
+    const result = await run('claude', '--help')
     expect(result.stdout).toBe('')
     expect(result.stderr).not.toContain('Usage: kurmis claude')
     expect(result.code).toBe(127)
@@ -74,7 +80,10 @@ describe('dispatch', () => {
     const status = await run('status', '--nope')
     expect(status.code).toBe(2)
     expect(status.stderr).toContain('kurmis status:')
-    expect((await run('claude', '--login=')).code).toBe(2)
+    for (const argv of [['--login=', 'claude'], ['--login', 'claude'], ['--login'], ['--login', 'a', '--login', 'b', 'claude'],
+      ['--login', 'a', 'status'], ['--login', 'a']]) {
+      expect((await run(...argv)).code).toBe(2)
+    }
     expect((await run('daemon')).code).toBe(2)
     expect((await run('daemon', 'nope')).code).toBe(2)
     expect((await run('daemon', 'stop', '--nope')).code).toBe(2)

@@ -19,13 +19,15 @@ export interface Command {
   /** The full help text, printed by `kurmis <name> --help` and `kurmis help <name>`. */
   usage: string
   /**
-   * True for `claude`, which passes its arguments on to another program. That command handles
-   * `--help` itself, since only `--help` before the first passed-on argument is kurmis'. For
-   * every other command, `--help` or `-h` anywhere prints `usage`.
+   * True for `claude`, which passes all its arguments on to claude, `--help` included. For every
+   * other command, `--help` or `-h` anywhere prints `usage`.
    */
   passesArguments?: boolean
-  /** Runs the command. The arguments are the ones after the command name. Returns the exit code. */
-  run(args: string[], context: CliContext): Promise<number> | number
+  /**
+   * Runs the command. The arguments are the ones after the command name. `login` is what
+   * `--login` before the command gave, which only `claude` takes. Returns the exit code.
+   */
+  run(args: string[], context: CliContext, login?: string | null): Promise<number> | number
 }
 
 /** Exit codes. */

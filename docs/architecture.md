@@ -656,11 +656,10 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
   settings into its own environment, so a shell in a routed session has both set to the empty
   string, and a `kurmis claude` run there says nothing about them.
 
-**Kurmis' own options come first, the CLI's after `--`.** `kurmis claude` reads its options
-(`--login <login>`, `--help`) up to `--`, and everything after `--` goes to
-the CLI unchanged. Any other argument before `--` is a usage error, so the rule has no
-exceptions: `kurmis claude -- --help` shows claude's own help, `kurmis claude --help` shows
-kurmis'. `--login` takes an alias or an id. The code is `src/cli/wrapper-args.ts`.
+**Kurmis' options go before `claude`, claude's after it.** `kurmis [--login <login>] claude
+…` passes everything after the word `claude` on unchanged, `--help` included. A separator such
+as `--` would not work: PowerShell drops `--` when it runs npm's `kurmis.ps1`. `--login` takes
+an alias or an id, and `dispatch.ts` refuses it before any other command.
 
 **The login the CLI starts on** (`src/cli/commands/claude.ts`). The wrapper starts the daemon
 when it is not running and reads its status. With `--login`, the CLI starts on that login, which
@@ -927,7 +926,7 @@ makes sure no request is signed as that login for a CLI on other credentials:
 - **macOS and Linux.** Ctrl-C (SIGINT) and Ctrl-\ (SIGQUIT) reach every process in the
   terminal's foreground process group, so the child gets them itself; the wrapper ignores them
   while the child runs, as `system(3)` does. That is so only when stdin is a terminal. When it
-  is not (a script or a program runs `kurmis claude -- -p`), a SIGINT or SIGQUIT is most likely
+  is not (a script or a program runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
   sent to the wrapper's pid alone, so the wrapper forwards them like SIGTERM. A child whose input
   is piped but that runs in a terminal's foreground process group then gets Ctrl-C twice, which
   a CLI that is not interactive does not mind: it ends at the first. SIGTERM and SIGHUP are
@@ -1207,7 +1206,7 @@ These are known and left as they are.
   Manager, put together in `tokens.ts`), the usage probes and the daemon's lifecycle.
 - `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and `dispatch.ts`
   picks the command and handles `--help`, `--version` and `help <command>`. `wrapper.ts` runs an
-  interactive child, `wrapper-args.ts` splits the wrappers' arguments, `settings-arg.ts` builds
+  interactive child, `settings-arg.ts` builds
   claude's `--settings`, `global-settings.ts` edits the user settings file for `setup`,
   `global-routing.ts` answers whether global routing is on, paused or off and keeps
   `settings-files.json`,

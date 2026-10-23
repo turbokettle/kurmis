@@ -63,7 +63,7 @@ describe('routing kurmis claude -p', () => {
     world.api.scriptFor(fakeToken('default'), reply.quota({ claim: 'five_hour', resetsAt: Date.now() + HOUR_MS }))
     world.api.setDefault(reply.ok({ text: 'Hello from the second login' }))
 
-    const result = await world.kurmis(['claude', '--', '-p', 'hi'])
+    const result = await world.kurmis(['claude', '-p', 'hi'])
     expect(result).toMatchObject({ code: 0, stdout: expect.stringContaining('Hello from the second login') as string })
     expect(bearers(world)).toEqual([fakeToken('default'), work.token])
     expectNoKurmisHeaders(world)
@@ -82,10 +82,10 @@ describe('routing kurmis claude -p', () => {
     world.api.setDefault(reply.ok({ text: 'answered', unified: later }))
 
     const first = randomUUID()
-    expect((await world.kurmis(['claude', '--', '-p', 'one', '--session-id', first])).code).toBe(0)
-    expect((await world.kurmis(['claude', '--', '-p', 'two', '--session-id', first])).code).toBe(0)
+    expect((await world.kurmis(['claude', '-p', 'one', '--session-id', first])).code).toBe(0)
+    expect((await world.kurmis(['claude', '-p', 'two', '--session-id', first])).code).toBe(0)
     const second = randomUUID()
-    expect((await world.kurmis(['claude', '--', '-p', 'three', '--session-id', second])).code).toBe(0)
+    expect((await world.kurmis(['claude', '-p', 'three', '--session-id', second])).code).toBe(0)
     expect(messages(world).map((request) => [request.sessionId, request.bearer])).toEqual([
       [first, fakeToken('default')],
       [first, fakeToken('default')],
@@ -94,7 +94,7 @@ describe('routing kurmis claude -p', () => {
 
     // A limit that the login plain claude uses is now over moves the first session too.
     expect((await world.kurmis(['set', OWN_CLAUDE, '--five-hour', '5'])).code).toBe(0)
-    expect((await world.kurmis(['claude', '--', '-p', 'four', '--session-id', first])).code).toBe(0)
+    expect((await world.kurmis(['claude', '-p', 'four', '--session-id', first])).code).toBe(0)
     expect(messages(world).at(-1)).toMatchObject({ sessionId: first, bearer: work.token })
     expectNoKurmisHeaders(world)
   }, 120_000)
@@ -106,7 +106,7 @@ describe('routing kurmis claude -p', () => {
     world.api.scriptFor(fakeToken('default'), reply.overloaded())
     world.api.setDefault(reply.ok({ text: 'Answered after the 529' }))
 
-    const result = await world.kurmis(['claude', '--', '-p', 'hi'])
+    const result = await world.kurmis(['claude', '-p', 'hi'])
     expect(result).toMatchObject({ code: 0, stdout: expect.stringContaining('Answered after the 529') as string })
     expect(bearers(world)).toEqual([fakeToken('default'), work.token])
     // The CLI never saw the 529, so it did not retry.
@@ -119,7 +119,7 @@ describe('routing kurmis claude -p', () => {
     world.api.script(reply.overloaded({ retryAfter: 1 }))
     world.api.setDefault(reply.ok({ text: 'Answered after the hold' }))
 
-    const result = await world.kurmis(['claude', '--', '-p', 'hi'])
+    const result = await world.kurmis(['claude', '-p', 'hi'])
     expect(result).toMatchObject({ code: 0, stdout: expect.stringContaining('Answered after the hold') as string })
     expect(messages(world).map((request) => [request.bearer, request.answeredWith?.status]))
       .toEqual([[fakeToken('default'), 529], [fakeToken('default'), 200]])
@@ -138,7 +138,7 @@ describe('routing kurmis claude -p', () => {
     world.api.scriptFor(fakeToken('default'), reply.quota({ claim: 'five_hour', resetsAt: defaultBack }))
     world.api.scriptFor(work.token, reply.quota({ claim: 'five_hour', resetsAt: workBack }))
 
-    const result = await world.kurmis(['claude', '--', '-p', 'hi'])
+    const result = await world.kurmis(['claude', '-p', 'hi'])
     expect(result.code).toBe(1)
     expect(result.stdout).toContain(`You've hit your session limit · resets ${resetText(workBack)}`)
     expect([...bearers(world)].sort()).toEqual([fakeToken('default'), work.token].sort())
@@ -155,18 +155,18 @@ describe('routing kurmis claude -p', () => {
     world.api.setDefault(reply.ok({ text: 'pinned answer', unified: { fiveHour: { utilization: 0.5, resetsAt: Date.now() + HOUR_MS } } }))
 
     const session = randomUUID()
-    const first = await world.kurmis(['claude', '--login', 'work-example', '--', '-p', 'hi', '--session-id', session])
+    const first = await world.kurmis(['--login', 'work-example', 'claude', '-p', 'hi', '--session-id', session])
     expect(first).toMatchObject({ code: 0, stdout: expect.stringContaining('pinned answer') as string })
     // Its usage-limit 429 reaches the CLI as it is, and the login plain claude uses is never tried.
     const back = wholeMinute(HOUR_MS)
     world.api.scriptFor(work.token, reply.quota({ claim: 'five_hour', resetsAt: back }))
     // This time the login is named by its id, which pins the session to the same login.
-    const second = await world.kurmis(['claude', '--login', work.id, '--', '-p', 'again', '--session-id', session])
+    const second = await world.kurmis(['--login', work.id, 'claude', '-p', 'again', '--session-id', session])
     expect(second.code).toBe(1)
     expect(second.stdout).toContain(`You've hit your session limit · resets ${resetText(back)}`)
     expect(bearers(world)).toEqual([work.token, work.token])
     // An Auto request meanwhile goes to the login plain claude uses, which has room.
-    expect((await world.kurmis(['claude', '--', '-p', 'auto'])).code).toBe(0)
+    expect((await world.kurmis(['claude', '-p', 'auto'])).code).toBe(0)
     expect(bearers(world).at(-1)).toBe(fakeToken('default'))
   }, 120_000)
 
@@ -179,14 +179,14 @@ describe('routing kurmis claude -p', () => {
     world.api.setDefault(reply.ok({ text: 'Answered with the token in ~/.claude' }))
 
     // The login plain claude uses, the one in ~/.claude, is not signed in: the CLI says so and sends nothing.
-    const signedOut = await world.kurmis(['claude', '--', '-p', 'hi'], { env: { CLAUDE_CONFIG_DIR: ownConfig } })
+    const signedOut = await world.kurmis(['claude', '-p', 'hi'], { env: { CLAUDE_CONFIG_DIR: ownConfig } })
     expect(signedOut.code).not.toBe(0)
     expect(signedOut.stdout).toContain('Not logged in')
     expect(signedOut.stderr).toContain("CLAUDE_CONFIG_DIR is set, but kurmis starts claude on the login plain claude uses, the one in ~/.claude")
     expect(bearers(world)).toEqual([])
 
     world.signInDefaultClaude()
-    const result = await world.kurmis(['claude', '--', '-p', 'hi'], { env: { CLAUDE_CONFIG_DIR: ownConfig } })
+    const result = await world.kurmis(['claude', '-p', 'hi'], { env: { CLAUDE_CONFIG_DIR: ownConfig } })
     expect(result).toMatchObject({ code: 0, stdout: expect.stringContaining('Answered with the token in ~/.claude') as string })
     expect(bearers(world)).toEqual([fakeToken('default')])
     expectNoKurmisHeaders(world)

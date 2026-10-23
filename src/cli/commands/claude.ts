@@ -31,7 +31,7 @@ import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data
 import type { LoginId } from '../../data/login-id.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
 import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
-import { EXIT_FAILURE, EXIT_OK, usageError, writeLine, type CliContext, type Command } from '../command.ts'
+import { EXIT_FAILURE, writeLine, type CliContext, type Command } from '../command.ts'
 import {
   realChildRunner, realDaemonClient, realFindProgram, settleWithin, type ChildRunner, type DaemonClient
 } from '../command-deps.ts'
@@ -51,7 +51,6 @@ import {
 } from '../settings-arg.ts'
 import { plainClaudeLoginText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
-import { parseWrapperArgs } from '../wrapper-args.ts'
 
 export interface ClaudeDeps {
   daemon: DaemonClient
@@ -80,20 +79,20 @@ export interface ClaudeDeps {
  */
 export const START_PROBE_WAIT_MS = 15_000
 
-const USAGE = `Usage: kurmis claude [--login <login>] [-- <claude arguments...>]
+const USAGE = `Usage: kurmis [--login <login>] claude [<claude arguments...>]
 
 Starts Claude Code with the terminal attached. Its requests go through the kurmis daemon,
 which signs each one with a login that has room, and the command exits with claude's exit code.
 The daemon is started first when it is not running.
 
+kurmis' options go before "claude", and claude's arguments after it, for example
+"kurmis --login work-example claude --resume".
+
 Options:
   --login <login>   Send every request of the session with one login, even when it is out
                     of usage. <login> is the login's alias or its id, as "kurmis status"
-                    shows them, for example --login work-example.
-                    Without --login, each request goes to a login that has room (Auto).
-  -h, --help        Show this help.
-  --                Pass everything after it to claude unchanged. claude's own arguments
-                    always go here, for example "kurmis claude -- --resume".
+                    shows them. Without --login, each request goes to a login that has room
+                    (Auto).
 
 claude needs a signed-in login of its own to start, even though the daemon re-signs every
 request. On Auto, kurmis starts it on the login plain claude uses, or on another signed-in login
@@ -103,7 +102,7 @@ starts, kurmis waits up to 15 seconds for its first usage probe to tell which.
 kurmis passes its own settings to claude with --settings. When you give a --settings of your
 own, kurmis adds its settings to yours and does not change your file.
 
-To use kurmis every time you run claude: alias claude='kurmis claude --'`
+To use kurmis every time you run claude: alias claude='kurmis claude'`
 
 export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Command {
   const deps: ClaudeDeps = {
@@ -124,7 +123,7 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
     summary: 'Start Claude Code routed through the kurmis daemon',
     usage: USAGE,
     passesArguments: true,
-    run: (args, context) => runClaude(args, context, deps)
+    run: (args, context, login) => runClaude(args, login ?? null, context, deps)
   }
 }
 
@@ -140,19 +139,13 @@ interface StartedOn {
   usedByPlainClaude: boolean
 }
 
-async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps): Promise<number> {
-  const parsed = parseWrapperArgs(args)
-  if ('error' in parsed) return usageError('claude', parsed.error, context)
-  if (parsed.help) {
-    writeLine(context.stdout, USAGE)
-    return EXIT_OK
-  }
+async function runClaude(args: string[], login: string | null, context: CliContext, deps: ClaudeDeps): Promise<number> {
   const fail = (message: string, code = EXIT_FAILURE): number => {
     writeLine(context.stderr, `kurmis claude: ${message}`)
     return code
   }
 
-  const userSettings = readUserSettingsArg(parsed.passThrough, { cwd: deps.cwd(), readFile: deps.readFile })
+  const userSettings = readUserSettingsArg(args, { cwd: deps.cwd(), readFile: deps.readFile })
   if ('error' in userSettings) return fail(userSettings.error)
 
   let program: ResolvedProgram
@@ -171,13 +164,13 @@ async function runClaude(args: string[], context: CliContext, deps: ClaudeDeps):
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error
     // A pinned login cannot be looked up without the config.
-    if (parsed.login !== null) return fail(error.message)
+    if (login !== null) return fail(error.message)
     writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainClaudeLoginText()}.`)
     config = null
   }
   let pinned: StartedOn | null = null
-  if (parsed.login !== null && config !== null) {
-    const resolved = resolveLogin(config, parsed.login)
+  if (login !== null && config !== null) {
+    const resolved = resolveLogin(config, login)
     if ('error' in resolved) {
       return fail(`${resolved.error}. "kurmis status" shows the logins, and "kurmis login" adds one.`)
     }
