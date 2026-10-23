@@ -2,7 +2,7 @@
 // running (or replacing one of an older version), stopping it, and the control API requests.
 //
 // **Finding.** `daemon.json` names the daemon's pid and port. A daemon counts as running only
-// when it answers a status request with the key from the `key` file and its own pid. A
+// when it answers a status request with the key from the `key` file. A
 // `daemon.json` whose pid no longer exists is removed. One whose pid exists but does not answer
 // is left alone: that daemon may be finishing its open requests before it stops.
 //

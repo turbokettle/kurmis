@@ -17,7 +17,7 @@
 // When the test ends, the world's kurmis commands that still run are killed, and every daemon
 // they started is stopped (`kurmis daemon stop`). After that, a daemon that still runs is killed
 // when it is shown to be the world's (`OwnDaemons` in `test/daemon/own-daemons.ts`): it answers
-// the world's key on the world's port, or, off Windows, its command line names a bundle the
+// the world's key on the world's port, or its command line names a bundle the
 // world's commands ran (its own, or one passed in `RunOptions.bundle`).
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'

@@ -2,8 +2,8 @@
 // `/_kurmis/` of the daemon's port. Every request needs the key; one without it gets 403 and
 // no body, the same as a proxied request.
 //
-// `status` shows each login's email, read from the login's identity file, for `kurmis status` and
-// `kurmis login` on the person's own terminal. The control API answers only on 127.0.0.1 and only
+// `status` shows each login's email, read from the login's identity file, for `kurmis status` on
+// the person's own terminal. The control API answers only on 127.0.0.1 and only
 // with the key, which only the user can read. The email is never logged.
 //
 // A request body larger than `MAX_CONTROL_BODY_BYTES` is answered 413 with an `ErrorAnswer`.

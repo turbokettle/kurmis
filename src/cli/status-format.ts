@@ -54,7 +54,7 @@ export interface StatusJsonUsage {
 export interface StatusJsonBlock {
   kind: RouteBlock['kind']
   /**
-   * The reason as a sentence, as the daemon's log words it, with how long is left. The text
+   * The reason as a sentence, with how long is left. The text
    * output says the same, except that it gives a cooldown's end in local time.
    */
   text: string
