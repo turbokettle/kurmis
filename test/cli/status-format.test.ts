@@ -87,7 +87,7 @@ work-example (id workclaude)  work@example.com
   1 session in the last 7 days, plan max, reading usage now
   5 hour       92%  resets in 45m         limit 90%
   7 day         0%  reset since read      limit 100%
-  usage read just now from a forwarded answer
+  usage read just now
   passed over: at its limit, the 5 hour window is at 92% of 90%; it resets in
     45m
 
@@ -323,7 +323,7 @@ own-example (id ownclaude1)  own@example.com
 work-example (id workclaude)  own@example.com
   no credentials on this machine, routing on, limits 100% 5 hour, 100% weekly,
   0 sessions in the last 7 days
-  usage not read yet
+  usage unknown
 `)
   })
 

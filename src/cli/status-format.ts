@@ -324,14 +324,18 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   if (login.usage?.plan) facts.push(`plan ${login.usage.plan}`)
   if (login.probing) facts.push('reading usage now')
   lines.push(...wrapList(facts, '  '))
-  if (login.usage === null) {
+  // A signed-out login keeps showing the usage read before it was signed out.
+  const signedOut = login.signedIn === false || login.credentials === false
+  if (signedOut && (login.usage === null || login.usage.windows.length === 0)) {
+    lines.push('  usage unknown')
+  } else if (login.usage === null) {
     lines.push('  usage not read yet')
   } else {
     for (const window of login.usage.windows) lines.push(windowLine(window, now, labelWidth))
     if (login.usage.windows.length === 0) lines.push('  no usage windows reported')
     const age = now - Date.parse(login.usage.fetchedAt)
     const when = age < 60_000 ? 'just now' : `${spanText(age)} ago`
-    lines.push(`  usage read ${when}${login.usage.source === 'session' ? ' from a forwarded answer' : ''}`)
+    lines.push(`  usage read ${when}`)
     if (login.usage.error !== null) lines.push(...wrap(`last probe failed: ${login.usage.error}`, '  ', '    '))
   }
   // A login that is off or signed out already says so above.

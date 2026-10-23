@@ -216,8 +216,9 @@ describe('kurmis status, end to end', () => {
 
     const text = await world.kurmis(['status'])
     expect(text.stdout).toContain(`${OWN_CLAUDE}\n${OWN_LINE}  signed out, routing on`)
+    expect(text.stdout).toMatch(new RegExp(`${OWN_CLAUDE}\\n(?: {2}[^\\n]*\\n)*? {2}usage unknown\\n`))
     expect(text.stdout).toMatch(new RegExp(`work-example \\(id ${work.id}\\) {2}work@example\\.com\\n(?:[^\\n]*\\n)?[^\\n]*1 session in the last 7 days[^\\n]*\\n` +
-      '(?: {2}[^\\n]*\\n)*? {2}usage read just now from a forwarded answer\\n {2}passed over: '))
+      '(?: {2}[^\\n]*\\n)*? {2}usage read just now\\n {2}passed over: '))
     // The text gives the cooldown's end in local time; the JSON above keeps it as ISO.
     expect(text.stdout).toMatch(/passed over: cooling down until (?:\d{4}-\d{2}-\d{2} )?\d{2}:\d{2} \(in [^)]+\)\n/)
   }, 120_000)
