@@ -30,11 +30,10 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
   happens, so two waiters never remove each other's new lock. A lock is released only by the
   process whose token it holds.
 - `settings/` holds the settings files `kurmis claude` passes to claude with `--settings`
-  (below), mode 0600. One that holds only kurmis' variables is named after a hash of its
-  contents and removed once no start has used it for 30 days. One that holds a copy of the
-  person's own `--settings` is `run-<pid>-<random>.json`, deleted when that wrapper ends; one a
-  killed wrapper left is removed by the next start once its pid no longer runs (or after 30
-  days, in case the pid was reused).
+  (see "How a Claude CLI reaches the daemon"), mode 0600. One that holds only kurmis' variables
+  is named after a hash of its contents and removed once no start has used it for 30 days. One
+  that holds a copy of the person's own `--settings` is `run-<pid>-<random>.json`, deleted when
+  that wrapper ends.
 - `claude/<id>/` is the config folder of the extra login with that id. On Windows it
   holds the login's `.credentials.json`. On macOS the CLI keeps the secret in the Keychain,
   under a name derived from this folder's path (`keychainService` in
@@ -52,14 +51,10 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 - `daemon.json` holds the running daemon's pid, port, version and start time. The daemon writes
   it once it has its port and removes it as the last step of stopping, only while the file still
   names its own pid, so a replaced daemon never removes its successor's file. The file is renamed
-  aside and checked again there before it is deleted, and one that names another pid by then is
-  linked back, so a file written between the check and the removal is kept. Where no hard link
-  can be made (exFAT) it is renamed back, and when that fails too it is left under its
-  `.removing` name rather than deleted. The CLI removes a `daemon.json` whose pid no longer
-  exists, and one that is damaged.
-- `autostart.js` is the script the Windows logon entry runs (see "Starting at login"). An
-  `autostart.vbs` an older kurmis wrote is removed by `setup --uninstall-and-logout`, and by
-  `setup` once the logon entry names `autostart.js`.
+  aside and checked again before it is deleted, so a file the successor writes between the
+  check and the removal is kept (`removeDaemonFile` in `src/data/daemon-file.ts`). The CLI
+  removes a `daemon.json` whose pid no longer exists, and one that is damaged.
+- `autostart.js` is the script the Windows logon entry runs (see "Starting at login").
 - `paused.json` exists while global routing is paused (`kurmis setup --pause`, see "Pausing and
   removing global routing"). It holds the time of the pause.
 - `settings-files.json` lists the Claude Code settings files `kurmis setup` put kurmis' settings
@@ -72,8 +67,8 @@ Everything kurmis keeps is in one folder: `~/.kurmis`, or `%USERPROFILE%\.kurmis
 - `key` holds the secret every proxied and control request carries. It is created once and
   kept, because a running Claude CLI and, in global mode, `~/.claude/settings.json` hold a copy
   of it and must keep working after the daemon restarts. Only the user can read it. It is
-  created by a hard link from a temporary file, or, where no hard link can be made (exFAT), by
-  an exclusive create, so two processes that create it at the same moment get the same key.
+  created in one step that fails when the file exists, so two processes that create it at the
+  same moment get the same key.
 - `state.json` holds the daemon's usage snapshots, cooldowns and which login each session is on,
   so a daemon restart keeps them.
 - `daemon.log` is the daemon's log. It names logins by their id only. It never holds a token, a
@@ -120,8 +115,8 @@ command takes a login by its alias or its id, without regard to case (`resolveLo
   that finds the login signed in and tells it the email from the profile the probe's CLI cached
   (`src/data/identity.ts`, `noteEmail` in `src/daemon/logins.ts`). The daemon writes
   `config.json` under the config lock and waits at most 500 ms for it (`CONFIG_LOCK_TIMEOUT_MS`),
-  because the wait blocks its event loop. When it does not get the lock or the write fails, it logs `alias_write_failed` with the
-  login's id and tries again after the next probe.
+  because the wait blocks its event loop. When it does not get the lock or the write fails, it
+  logs `alias_write_failed` with the login's id and tries again after the next probe.
 
 No email is stored in any file kurmis keeps. A login's email is read from its profile file when
 it is needed (`src/data/identity.ts`). For plain claude's login that is the
@@ -137,16 +132,17 @@ about a second. On macOS and Linux the data folder is created with mode 0700, an
 protected by the access list they inherit from `%USERPROFILE%`, which only lets in the user,
 SYSTEM and Administrators.
 
-**Reading files.** `loadConfig` adds the login of plain claude, with a new id, when
-the config has none, a missing `config.json` included, and saves the file under its lock, so every
-reader sees the same id from then on. `kurmis status` reads it this way too. `readConfig` reads
-the file without writing it, for the readers that must change nothing: `findDaemon` and the part
-of `setup --pause` and `--uninstall-and-logout` that reads before anything is removed. A `config.json` that is not JSON or has a wrong field is an
-error that names the file and the field. So is one whose `version` is not 3: an older file is
-refused with a message that says to delete it and add the extra logins again with
-`kurmis login`. Two logins with the same id, a second `usedByPlainClaude` login, two logins with
-the same alias, and an alias that is another login's id are errors too. A damaged `state.json` never stops the daemon: an entry that does not check out is
-dropped and the rest is kept, and a file that is not JSON reads as empty.
+**Reading files.** `loadConfig` adds the login of plain claude, with a new id, when the config
+has none, a missing `config.json` included, and saves the file under its lock, so every reader
+sees the same id from then on. `kurmis status` reads it this way too, so it creates the data
+folder when it is gone. `readConfig` reads the file without writing it, for the readers that
+must change nothing: `findDaemon` and the part of `setup --pause` and `--uninstall-and-logout`
+that reads before anything is removed. A `config.json` that is not JSON or has a wrong field is
+an error that names the file and the field. So is one whose `version` is not 3; its message says
+to delete the file and add the extra logins again with `kurmis login`. Two logins with the same
+id, a second `usedByPlainClaude` login, two logins with the same alias, and an alias that is
+another login's id are errors too. A damaged `state.json` never stops the daemon: an entry that
+does not check out is dropped and the rest is kept, and a file that is not JSON reads as empty.
 
 ```json
 // config.json
@@ -195,8 +191,8 @@ One daemon per user. It serves the proxy and the control API on one `127.0.0.1` 
 is fixed so that `settings.json` can name it. It is `port` in `config.json`, 28411 when that is
 not set, and a busy port is an error that says how to change it. 28411 is below the range every
 OS hands out for outgoing connections (32768 and up on Linux, 49152 and up on macOS and Windows),
-and no common tool uses it. Starting it again replaces a daemon of an older version, after that
-daemon finishes the requests it has open.
+and no common tool uses it. A new daemon replaces a daemon of an older version at once, and the
+old one finishes its open requests in the background ("Version handover" below).
 
 - **What the daemon answers itself.** `HEAD` and `GET /api/hello` get a 200 without the key,
   because the CLI checks the base URL with it before its first request and without its custom
@@ -206,16 +202,16 @@ daemon finishes the requests it has open.
   status, ask for a usage probe, reload config and stop the daemon. The paths and their answers are
   in `src/core/control-api.ts`. Every request needs the secret from `key`, in the header
   `x-kurmis-key`; without it the answer is 403 with no body. `status` gives each login's id, alias
-  and whether plain claude uses it (`usedByPlainClaude` in `LoginStatus`, control API version 4).
-  It also gives each login's email from its profile file (`src/data/identity.ts`), for
-  `kurmis status` on the person's own terminal. The email is never logged. A login also gets the
-  organization uuid from its profile file (`organizationUuid`), which `kurmis status` and
-  `kurmis login` compare along with the email to tell whether two logins are the same account. A request body may be at most 64
-  KB (`MAX_CONTROL_BODY_BYTES`). A larger one is answered 413 with the control API's error answer
-  (`{ "ok": false, "error": "…" }`) as soon as the size is known, from `content-length` or while
-  reading. The daemon then goes on reading the rest of the body and throws it away, for at most 30
-  seconds, instead of closing the connection: a connection closed while the client is still sending
-  is reset, and the reset can lose the answer before the client reads it.
+  and whether plain claude uses it (`usedByPlainClaude` in `LoginStatus`). It also gives each
+  login's email from its profile file (`src/data/identity.ts`), for `kurmis status` on the
+  person's own terminal. The email is never logged. A login also gets the organization uuid from
+  its profile file (`organizationUuid`), which `kurmis status` and `kurmis login` compare along
+  with the email to tell whether two logins are the same account. A request body may be at most
+  64 KB (`MAX_CONTROL_BODY_BYTES`). A larger one is answered 413 with the control API's error
+  answer (`{ "ok": false, "error": "…" }`) as soon as the size is known, from `content-length` or
+  while reading. The daemon then goes on reading the rest of the body and throws it away, for at
+  most 30 seconds, instead of closing the connection: a connection closed while the client is
+  still sending is reset, and the reset can lose the answer before the client reads it.
 - **The proxy** is every other routed path (`src/daemon/proxy.ts`). A request needs the header
   `x-kurmis-key: <secret>`, which reaches the CLI through `ANTHROPIC_CUSTOM_HEADERS`, else it gets
   403 with no body. Both other kurmis headers carry login ids, never aliases:
@@ -318,66 +314,74 @@ daemon finishes the requests it has open.
 - **Usage** is probed every 15 minutes for each signed-in login (and each login not probed
   yet), and on demand: the control API's `probe`, a stale reading, a token renewal, and a login
   that appears in `config.json` when the daemon reads it again, by a `reload` or because a
-  request found it changed (`onLoginsAdded` in `logins.ts`). One probe per login runs at a time; a second request waits for it. A
-  failed probe keeps the previous windows and records the error on the snapshot. A probe that
-  succeeds and finds the login signed in also gives the daemon the login's email, from which it
-  sets an automatic alias ("Aliases", under "The data folder"). The daemon also
-  updates usage from the rate-limit headers of every answer it forwards. A probe describes the
-  login as it was when the probe started, so what an answer said after that wins: the rate-limit
-  headers of the answers since the probe started, for each window the latest that reported it,
-  are applied again on top of the probe's snapshot, and a cooldown
-  or a refused token recorded after the probe started is not ended by it. The code is
+  request found it changed (`onLoginsAdded` in `logins.ts`). One probe per login runs at a time;
+  a second request waits for it. A failed probe keeps the previous windows and records the error
+  on the snapshot. A probe that succeeds and finds the login signed in also gives the daemon the
+  login's email, from which it sets an automatic alias ("Aliases", under "The data folder"). The
+  daemon also updates usage from the rate-limit headers of every answer it forwards. A probe
+  describes the login as it was when the probe started, so what an answer said after that wins:
+  the rate-limit headers of the answers since the probe started, for each window the latest that
+  reported it, are applied again on top of the probe's snapshot, and a cooldown or a refused
+  token recorded after the probe started is not ended by it. The code is
   `src/daemon/usage-poller.ts`, with the probe in `claude-probe.ts`.
-  A probe is `claude -p` in stream-json mode, sending `initialize` and `get_usage`, with
-  `claudeProbeEnv`, `--setting-sources=` (no settings file, so no `env` block or hook of the
+- **A usage probe** is `claude -p` in stream-json mode, sending `initialize` and `get_usage`,
+  with `claudeProbeEnv`, `--setting-sources=` (no settings file, so no `env` block or hook of the
   person's reaches it), no MCP servers, no saved session, `DISABLE_AUTOUPDATER=1`, and the empty
-  folder `probe/cwd` as its working folder. Each probe has 30 s from start to exit and is killed with its child processes after that, or when the
-  daemon closes (`src/platform/frame-process.ts`). After its answer the probe closes the CLI's
-  input and waits for it to exit, so a token the CLI renewed is on disk when the probe ends. The
-  daemon finds `claude` on the PATH it was started with, so a CLI installed or put on
-  PATH later is found only after a `kurmis daemon restart` from a shell that finds it; the error
-  a probe records when the program is missing says that.
+  folder `probe/cwd` as its working folder. Each probe has 30 s from start to exit and is killed
+  with its child processes after that, or when the daemon closes
+  (`src/platform/frame-process.ts`). After its answer the probe closes the CLI's input and waits
+  for it to exit, so a token the CLI renewed is on disk when the probe ends. The daemon finds
+  `claude` on the PATH it was started with, so a CLI installed or put on PATH later is found
+  only after a `kurmis daemon restart` from a shell that finds it; the error a probe records
+  when the program is missing says that.
 - **Tokens** (`src/daemon/tokens.ts`). On macOS the login's Keychain item comes first
   (`/usr/bin/security`, with stdin closed and a deadline), and its `.credentials.json` is read when
   the Keychain gives no token: the CLI falls back to the file when it cannot use the Keychain, for
-  example in an ssh session. On Linux only the file is read. On Windows, newer Claude Code versions
-  (seen from 2.1.150) keep the record in Windows Credential Manager instead, when
-  `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag `tengu_windows_credman` is on in
-  the CLI's config file: `.config.json` in the config folder the CLI runs with when that file is
-  there and not empty, else `.claude.json` in `CLAUDE_CONFIG_DIR` or the home folder. Such a CLI
-  reads Credential Manager first and the file only when Credential Manager has nothing, and deletes
-  the file when it first writes the record to Credential Manager. The daemon reads in the same order
-  (`src/daemon/credential-manager.ts`, `src/platform/windows-credentials.ts`). It lists the generic
-  credentials named `<Keychain item name>/<account>` and takes the account name Claude Code uses on
-  macOS (the user's name), else `claude-code-user`, else the only one there is, since the Windows
-  build's account name could not be checked. The blob is the same JSON as the file, or, when `…#m`
-  holds `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes a record longer
-  than 2400 bytes. Node cannot call `CredEnumerateW`, so a PowerShell script declares it with
-  `Add-Type` and prints each name and blob as base64; one run reads up to 247 logins, and more are
-  split into runs that keep the command line within Windows' 32,767 characters. That needs
-  PowerShell's full language mode: under Constrained Language Mode `Add-Type` is refused, the read
-  fails (logged once as `token_read_failed` for a login without the file, or whose record was found
-  there), and only the file is used. A failed read keeps the token and the found state from before,
-  and is tried again after 1, 2, 4, 8, then every 15 minutes. A request waits for a Credential
-  Manager read only for a login that was not read yet, or not since its token was refused or
-  renewed, and only when the login has no file or its record was found there; any other login is
-  answered from the file meanwhile. A usage probe of a login whose last read that worked found its
-  record in Credential Manager runs with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`probeEnvironment`):
-  the probe's config folder is not the one a routed CLI runs with, so its feature flag may be off,
-  and then it would not see the record and would report the login signed out. An extra login's file
-  is in its folder, that of the login plain claude uses is `~/.claude/.credentials.json`. A Keychain
-  or Credential Manager answer is kept for a minute. An old Credential Manager answer, and one after
-  a usage probe, is read again in the background while it goes on being used, since starting
-  PowerShell takes a second or two. After a refused token or a renewal, the Keychain and Credential
-  Manager readers go on answering the old token until the new read lands, and the next request waits
-  for that read; a read that started before is not used. A login whose file exists and for which
-  Credential Manager had no record is looked up there again only every 15 minutes, or after its
-  token was refused or renewed, so a machine whose logins all use the file runs PowerShell every 15
-  minutes, not every minute. A record can still appear while the file is there, when the CLI could
-  not delete the file after moving the record, or when a CLI with the flag off wrote the file after
-  a record was made. The file is read again when its size or modification time changes. Tokens are
-  never written anywhere. Only whether a record has a refresh token is kept, never the refresh token
-  itself.
+  example in an ssh session. On Linux only the file is read. An extra login's file is in its
+  folder; that of the login plain claude uses is `~/.claude/.credentials.json`. The file is read
+  again when its size or modification time changes. A Keychain or Credential Manager answer is
+  kept for a minute. After a refused token or a renewal, the Keychain and Credential Manager
+  readers go on answering the old token until the new read lands, and the next request waits
+  for that read; a read that started before is not used. Tokens are never written anywhere.
+  Only whether a record has a refresh token is kept, never the refresh token itself.
+
+  On Windows, Claude Code (seen in 2.1.150 and later) keeps the record in Credential Manager instead
+  of the file when `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` is set or the feature flag
+  `tengu_windows_credman` is on in the CLI's config file: `.config.json` in the config folder
+  the CLI runs with when that file is there and not empty, else `.claude.json` in
+  `CLAUDE_CONFIG_DIR` or the home folder. Such a CLI reads Credential Manager first and the file
+  only when Credential Manager has nothing, and deletes the file when it first writes the record
+  to Credential Manager. The daemon reads in the same order (`src/daemon/credential-manager.ts`,
+  `src/platform/windows-credentials.ts`):
+  - *Which record.* It lists the generic credentials named `<Keychain item name>/<account>` and
+    takes the account name Claude Code uses on macOS (the user's name), else
+    `claude-code-user`, else the only one there is, since the Windows build's account name could
+    not be checked. The blob is the same JSON as the file, or, when `…#m` holds
+    `{"n":…,"l":…}`, the base64 slices `#0` to `#n-1` joined, as the CLI writes a record longer
+    than 2400 bytes.
+  - *Reading through PowerShell.* Node cannot call `CredEnumerateW`, so a PowerShell script
+    declares it with `Add-Type` and prints each name and blob as base64. One run reads up to 247
+    logins; more are split into runs that keep the command line within Windows' 32,767
+    characters. That needs PowerShell's full language mode: under Constrained Language Mode
+    `Add-Type` is refused, the read fails (logged once as `token_read_failed` for a login
+    without the file, or whose record was found there), and only the file is used.
+  - *Failures and waiting.* A failed read keeps the token and the found state from before, and
+    is tried again after 1, 2, 4, 8, then every 15 minutes. A request waits for a Credential
+    Manager read only for a login that was not read yet, or not since its token was refused or
+    renewed, and only when the login has no file or its record was found there. Any other login
+    is answered from the file meanwhile. An old Credential Manager answer, and one after a usage
+    probe, is read again in the background while it goes on being used, since starting
+    PowerShell takes a second or two.
+  - *Logins that use the file.* A login whose file exists and for which Credential Manager had
+    no record is looked up there again only every 15 minutes, or after its token was refused or
+    renewed, so a machine whose logins all use the file runs PowerShell every 15 minutes, not
+    every minute. A record can still appear while the file is there, when the CLI could not
+    delete the file after moving the record, or when a CLI with the flag off wrote the file
+    after a record was made.
+  - *Probes.* A usage probe of a login whose last read that worked found its record in
+    Credential Manager runs with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1` (`probeEnvironment`). The
+    probe's config folder is not the one a routed CLI runs with, so its feature flag may be off,
+    and then it would not see the record and would report the login signed out.
 - **Config reload.** The daemon reads `config.json` again on the control API's `reload`, and when
   a request finds its contents changed (`configStamp`, checked at most every 2 s). A file that
   does not read leaves the config the daemon has. A file that could not be read because another
@@ -387,12 +391,6 @@ daemon finishes the requests it has open.
   refused token, and a probe or an answer of it that ends after the reload records nothing.
   Until a config has been read, the daemon uses a stand-in with the login of plain claude under
   a new random id, which it never saves.
-- **Test hooks.** `KURMIS_UPSTREAM_URL` replaces the Anthropic API origin
-  (`https://api.anthropic.com`), `KURMIS_SECURITY_PROGRAM` the `security` program
-  (`/usr/bin/security`) and `KURMIS_POWERSHELL_PROGRAM` PowerShell (see "Test hooks" below).
-  They exist so the tests can use the fakes in `test/fakes/` and
-  `test/daemon/fake-security/`. `createDaemonApp`'s `tuning` option shortens the daemon's
-  timings for tests in the same way.
 
 ### Starting and stopping
 
@@ -453,22 +451,25 @@ with a lower control API version) starts a new daemon, and the new daemon does t
 sends the old one a control `stop` and tries the bind every 100 ms for up to 10 seconds. While
 the old daemon closes, its port may answer the status request with nothing or with an error;
 once the stop is sent that counts as the old daemon going away, not as another program, and the
-bind is tried again. The old daemon frees the port as soon as it has
-answered, and finishes its open requests in the background while the new one serves. A routed Claude
-CLI retries a request that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment
-in between. Versions are compared numerically (`0.10.0` is newer than `0.9.1`). `scripts/build.mjs`
-adds the build time to the version in `package.json` (`0.1.0+20261023120000`), and of two builds
-of one version the later is newer, so an update replaces the daemon although the version number
-stays the same (`compareVersions` in `src/daemon/lifecycle.ts`). An older kurmis
-never replaces a newer daemon, so two builds of one version with different control API versions
-do not keep replacing each other: the one with the higher control API version stays. A daemon on another port than `config.json` names (the port was
-changed while it ran) is not reached by the new daemon's bind, so the CLI asks it to stop with a
-control `stop` before it starts the new one, and the old daemon finishes its open requests in the
-background as above. A `stop` that fails or is refused (anything but a 200, or the port already
-closed) is an error, and no new daemon is started, so two daemons never run on two ports. The CLI
-does this only when the running daemon is not newer than itself. When the daemon is
-newer, or the two versions cannot be compared and differ, the CLI stops with an error that says to
-update kurmis or to stop the daemon with `kurmis daemon stop`.
+bind is tried again. The old daemon frees the port as soon as it has answered, and finishes its
+open requests in the background while the new one serves. A routed Claude CLI retries a request
+that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment in between.
+
+Versions are compared numerically (`0.10.0` is newer than `0.9.1`). `scripts/build.mjs` adds the
+build time to the version in `package.json` (`0.1.0+20261023120000`), and of two builds of one
+version the later is newer, so an update replaces the daemon although the version number stays
+the same (`compareVersions` in `src/daemon/lifecycle.ts`). An older kurmis never replaces a
+newer daemon, so two builds of one version with different control API versions do not keep
+replacing each other: the one with the higher control API version stays.
+
+A daemon on another port than `config.json` names (the port was changed while it ran) is not
+reached by the new daemon's bind, so the CLI asks it to stop with a control `stop` before it
+starts the new one, and the old daemon finishes its open requests in the background as above. A
+`stop` that fails or is refused (anything but a 200, or the port already closed) is an error,
+and no new daemon is started, so two daemons never run on two ports. The CLI does this only when
+the running daemon is not newer than itself. When the daemon is newer, or the two versions
+cannot be compared and differ, the CLI stops with an error that says to update kurmis or to stop
+the daemon with `kurmis daemon stop`.
 
 **A newer daemon.** A newer daemon (a higher version, or the same version with a higher control
 API version) is kept. When its control API version is the CLI's own, the CLI uses it
@@ -501,14 +502,16 @@ not signal that pid itself: a daemon that refuses the key answers nothing that s
 kurmis daemon, and the pid may since belong to another program.
 
 **Starting it from the CLI** (`ensureDaemon`, `kurmis daemon start`): `kurmis claude`,
-`kurmis setup` and `kurmis daemon start` and `restart` start the daemon. `kurmis status`, `login`, `logout` and `set` only look for a running one
-(`findDaemon`) and never start it. When none answers, the CLI starts `<node> <bundle> daemon run` and waits up to 15 seconds for a daemon of its version or a
-newer one to answer. The bundle is the one running now, with symlinks resolved. The daemon does
-not inherit `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
-`ANTHROPIC_CUSTOM_HEADERS` or `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which a CLI started inside a
-routed session has. It runs in the home folder, so it holds no project folder open, and so
-`KURMIS_HOME` is made absolute (from the CLI's current folder) in every environment the CLI hands
-to a daemon: a direct start, the launchd login item and the Windows logon script.
+`kurmis setup` and `kurmis daemon start` and `restart` start the daemon. `kurmis status`,
+`login`, `logout` and `set` only look for a running one (`findDaemon`) and never start it.
+When none answers, the CLI starts `<node> <bundle> daemon run` and waits up to 15 seconds for a
+daemon of its version or a newer one to answer. The bundle is the one running now, with
+symlinks resolved. The daemon does not inherit `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS` or `CLAUDE_SECURESTORAGE_CONFIG_DIR`, which a
+CLI started inside a routed session has. It runs in the home folder, so it holds no project
+folder open, and so `KURMIS_HOME` is made absolute (from the CLI's current folder) in every
+environment the CLI hands to a daemon: a direct start, the launchd login item and the Windows
+logon script.
 
 The daemon is started detached, the same way on every platform and from every kind of session
 (`spawnDetached` in `src/platform/detach.ts`). On macOS and Linux `detached: true` puts it in a
@@ -522,14 +525,14 @@ start from ssh is under "Known limits".
 request cannot be sent instead: a daemon that has answered `stop` no longer listens on its
 port, and another daemon may hold the port by then. So the deadline goes with the first
 request, and the daemon ends its wait for its open requests by itself when it is over, writes
-`state.json` and exits. What happens when the pid is still there after the 30 seconds (a daemon
-older than `maxWaitMs`, which ignores the field) depends on the platform:
+`state.json` and exits. What happens when the pid is still there after the 30 seconds depends
+on the platform:
 
 - **macOS and Linux:** the CLI sends SIGTERM, which, as the second stop signal, ends the
   daemon's wait, and waits 5 more seconds.
 - **Windows:** `process.kill` ends the process at once there (TerminateProcess), without
   `state.json` being written or `daemon.json` removed. So the CLI first waits 25 seconds more,
-  for a daemon that ended its wait by itself to finish step 4 below, which takes at most 20
+  for a daemon that ended its wait by itself to finish step 4 above, which takes at most 20
   seconds, and only then ends the process and waits 5 more seconds.
 
 When the signal is refused with EPERM (a daemon of another user, or on Windows one started as
@@ -596,8 +599,8 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
     `KURMIS_PERCENT_SIGN` to `%` (`shell.Environment("Process")`), writes each `%` as
     `%KURMIS_PERCENT_SIGN%`, and runs the command only when `shell.ExpandEnvironmentStrings`
     gives back the command line as it was; otherwise it starts nothing and the next
-    `kurmis claude` starts the daemon. A command line without `%` is run as it is. The daemon inherits
-    `KURMIS_PERCENT_SIGN`, which nothing reads.
+    `kurmis claude` starts the daemon. A command line without `%` is run as it is. The daemon
+    inherits `KURMIS_PERCENT_SIGN`, which nothing reads.
   - *A `%` in the Run value.* The Run value names `wscript.exe` and `autostart.js` by their full
     paths, and a REG_SZ value has no escape for `%`. Whether Explorer replaces `%NAME%` in a
     REG_SZ Run value is not verified. So when the value has a `%` (the data folder's path has
@@ -605,16 +608,13 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
     says to use a data folder whose path has no `%` (set with `KURMIS_HOME`), and exits 0
     (`percentWarning`). A `%` only in the script's own command line (Node, the bundle,
     `KURMIS_HOME`) is handled by the script, so it gets no warning.
-  - *Replacing the VBScript.* An `autostart.vbs` an older kurmis wrote is removed only once the
-    Run value names `autostart.js` (it already did, or `reg add` succeeded), so a failed write
-    leaves the old entry working.
-  - *Why JScript.* The script was VBScript before. Microsoft has deprecated VBScript: since
-    Windows 11 24H2 it is an optional feature, to be turned off by default and later removed.
-    JScript runs in the same Windows Script Host and is not part of that deprecation, so the
-    start stays hidden and needs no admin rights. A shortcut in the Startup folder needs COM to
-    write and still shows node's console (minimized at best); a Task Scheduler logon task may
-    need elevation to create, depending on policy, and shows a console unless it runs whether
-    the user is logged on or not, which needs a stored password or elevation.
+  - *Why JScript.* Microsoft has deprecated VBScript: since Windows 11 24H2 it is an optional
+    feature, to be turned off by default and later removed. JScript runs in the same Windows
+    Script Host and is not part of that deprecation, so the start stays hidden and needs no
+    admin rights. A shortcut in the Startup folder needs COM to write and still shows node's
+    console (minimized at best). A Task Scheduler logon task may need elevation to create,
+    depending on policy, and shows a console unless it runs whether the user is logged on or
+    not, which needs a stored password or elevation.
   - *When Windows Script Host cannot run it.* Setup checks that `wscript.exe` exists and that
     `Enabled` is not 0 under `Software\Microsoft\Windows Script Host\Settings` (HKCU and HKLM).
     Otherwise it writes no entry and warns, and setup exits 0; the next `kurmis claude` starts
@@ -637,56 +637,67 @@ folder. Setup warns when the Node it registers is still in such a folder, and st
 - `ANTHROPIC_CUSTOM_HEADERS` carrying the key, and the login when one was named;
 - `ENABLE_TOOL_SEARCH=true`, because the CLI turns tool search off for any base URL that is not
   Anthropic's, and the proxy passes it through;
-- `CLAUDE_CODE_MAX_RETRIES=15`, so a request outlasts a daemon restart. These two are left out
-  when the person sets either themselves, in their `--settings`, the user settings file or the
-  environment, to a value that is not empty: routing works without them, so their value stays,
-  as `kurmis setup` keeps it in `settings.json`;
+- `CLAUDE_CODE_MAX_RETRIES=15`, so a request outlasts a daemon restart. Neither of these two is
+  set when the person already gives either a value that is not empty, in their `--settings`, the
+  user settings file or the environment. Routing works without them, so the person's value
+  stays, as `kurmis setup` keeps it in `settings.json`;
 - `CLAUDE_SECURESTORAGE_CONFIG_DIR` naming the folder of the login it starts on, or set to the
-  empty string on plain claude's login, which the CLI reads as the default
-  credentials, so that also a CLI with `CLAUDE_CONFIG_DIR` set signs in as that login;
+  empty string on plain claude's login, which the CLI reads as the default credentials, so that
+  also a CLI with `CLAUDE_CONFIG_DIR` set signs in as that login;
 - `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` removed, because a key would sign the requests
   itself and no subscription would be billed;
-- `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` removed, because a CLI
-  with a token of its own sends that token instead of the credentials of the login it was
-  started on, and the proxy forwards the started-on login's header when it has read no token
-  for that login, so the request would be billed to whatever account the token belongs to. A
-  value in the `env` of a settings file would beat that, so the wrapper's `--settings` (below)
-  sets both to the empty string, which Claude Code 2.1.306 reads as unset: it tests
-  `CLAUDE_CODE_OAUTH_TOKEN` for a value that is not empty wherever it reads it, and takes the
-  same path for an empty `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` as for an unset one (read
-  from its bundled source). The wrapper prints one line on stderr for each place that set either
-  to a value that is not empty: the environment, the user settings file, the person's
-  `--settings` (`settingsEnv` in `src/cli/settings-arg.ts`). Claude Code puts the `env` of its
-  settings into its own environment, so a shell in a routed session has both set to the empty
-  string, and a `kurmis claude` run there says nothing about them.
+- `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` removed. A CLI with a
+  token of its own sends that token instead of the credentials of the login it was started on.
+  The proxy forwards the started-on login's header when it has read no token for that login, so
+  the request would be billed to whatever account the token belongs to.
 
-**Kurmis' options go before `claude`, claude's after it.** `kurmis [--login <login>] claude
-…` passes everything after the word `claude` on unchanged, `--help` included. A separator such
-as `--` would not work: PowerShell drops `--` when it runs npm's `kurmis.ps1`. `--login` takes
-an alias or an id, and `dispatch.ts` refuses it before any other command.
+A value of the two token variables in the `env` of a settings file would beat the process
+environment, so the wrapper's `--settings` (below) sets both to the empty string. Claude Code
+2.1.306 reads that as unset: it tests `CLAUDE_CODE_OAUTH_TOKEN` for a value that is not empty
+wherever it reads it, and takes the same path for an empty
+`CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` as for an unset one (read from its bundled source).
+The wrapper prints one line on stderr for each place that set either to a value that is not
+empty: the environment, the user settings file, the person's `--settings` (`settingsEnv` in
+`src/cli/settings-arg.ts`).
+
+Claude Code puts the `env` of its settings into its own environment, so a shell in a routed
+session has both token variables set to the empty string, and a `kurmis claude` run there says
+nothing about them.
+
+**Kurmis' options go before `claude`, claude's after it.** `kurmis [--login <login>] claude …`
+passes everything after the word `claude` on, `--help` included, unchanged except for a
+`--settings` of the person's, which is merged with kurmis' own (below). A separator such as
+`--` would not work: PowerShell drops `--` when it runs npm's `kurmis.ps1`. `--login` takes an
+alias or an id, and `dispatch.ts` refuses it before any other command.
 
 **The login the CLI starts on** (`src/cli/commands/claude.ts`). The wrapper starts the daemon
 when it is not running and reads its status. With `--login`, the CLI starts on that login, which
-must be a login in `config.json` and, unless it is the login plain claude uses, must have
-its folder. On Auto, `autoStartLogin` picks the login: plain claude's login while it is
-signed in, otherwise a signed-in login of the pool, with a note on stderr. The daemon's status
-says whether a login is signed in once it has read a token for it or a probe has
-answered. Right after the daemon starts, it may have neither for plain claude's login. Then the
-wrapper first asks the daemon to probe the logins whose state is unknown and waits for
-the answer, at most 15 seconds (`START_PROBE_WAIT_MS`, `withFirstProbe`); the probes the daemon
-started on its own are already running, so this waits for them. When the wait ends without an
-answer, an unknown state counts as signed in for plain claude's login, and only for it, with a
-note on stderr. The proxy signs each request with the login
-it picks. When that is the login the CLI was started on, the proxy forwards the CLI's own
-`Authorization` header. The wrapper sends `x-kurmis-started-on` with that login's id, and with
-`--login` also `x-kurmis-login` with the same id. When the daemon cannot be reached, the
-wrapper does not start claude unrouted; it fails with a message naming `kurmis daemon start`
-and the log.
+must be a login in `config.json` and, unless it is the login plain claude uses, must have its
+folder. On Auto, `autoStartLogin` picks the login: plain claude's login while it is signed in,
+otherwise a signed-in login of the pool, with a note on stderr. The CLI needs credentials of
+its own only to send at all: a CLI that finds none answers "Not logged in" before it sends
+anything.
+
+The daemon's status says whether a login is signed in once it has read a token for it or a
+probe has answered. Right after the daemon starts, it may have neither for plain claude's
+login. Then the wrapper first asks the daemon to probe the logins whose state is unknown and
+waits for the answer, at most 15 seconds (`START_PROBE_WAIT_MS`, `withFirstProbe`); the probes
+the daemon started on its own are already running, so this waits for them. When the wait ends
+without an answer, an unknown state counts as signed in for plain claude's login, and only for
+it, with a note on stderr.
+
+The proxy signs each request with the stored token of the login it picks. Only when that is the
+login the CLI was started on and no token could be read for it does the proxy forward the CLI's
+own `Authorization` header ("Signing" under "The daemon"). The wrapper sends
+`x-kurmis-started-on` with that login's id, and with `--login` also `x-kurmis-login` with the
+same id. When the daemon cannot be reached, the wrapper does not start claude unrouted; it
+fails with a message naming `kurmis daemon start` and the log.
 
 When `config.json` cannot be read (it is damaged, or its lock stays busy), `--login` is an
 error, since the login cannot be looked up. Without `--login` the wrapper prints the reason
-and starts claude on the login plain claude uses. It takes that login's id from the daemon's status, and sends no
-`x-kurmis-started-on` when the status names none, which the daemon reads as the same login.
+and starts claude on the login plain claude uses. It takes that login's id from the daemon's
+status, and sends no `x-kurmis-started-on` when the status names none, which the daemon reads
+as the same login.
 A daemon that runs is used as it is, because the port it belongs on is in the config. When
 none runs, `ensureDaemon` reads the config again, and the start fails when it still cannot.
 
@@ -700,14 +711,14 @@ only.
 
 How Claude Code 2.1.301 reads `--settings`, from its bundled source: before it parses the
 command line it scans the arguments up to the first `--` and loads only the last `--settings
-<value>` or `--settings=<value>`. Its parser has positional options on, so a root option such as
-`--settings` must come before a subcommand (`claude --settings X mcp list`). A value whose
+<value>` or `--settings=<value>`. Its parser reads root options only before a subcommand, so
+`--settings` must come before one (`claude --settings X mcp list`). A value whose
 trimmed text starts with `{` and ends with `}` is inline JSON; anything else is a file path
 relative to the folder claude starts in.
 
 So the wrapper passes exactly one `--settings`, first, ahead of the person's arguments:
 
-- When the person's arguments carry `--settings` before claude's `--`, the last one is read
+- When the person's arguments carry `--settings` before a `--`, the last one is read
   (inline JSON, or the file, relative to the current folder), kurmis' variables are merged into
   its `env`, and every `--settings` of theirs is taken out. Their other keys and variables are
   kept; for the base URL and the custom headers kurmis' values win, and their own
@@ -741,8 +752,8 @@ so a plain `claude` runs on plain claude's login, except in a
 registers the daemon to start at login (a launchd agent on macOS, a logon entry on Windows) and
 starts the daemon.
 
-The daemon is started first. Once the file names the daemon, every Claude Code on the machine
-sends its requests there, so the file is written only after a daemon answers on the port
+The daemon is started first. Once the file names the daemon, every Claude Code that reads the
+file sends its requests there, so the file is written only after a daemon answers on the port
 `config.json` names, with the key that daemon accepted. Setup checks first that it could edit
 the file, so a file it would refuse starts no daemon. Autostart is registered last.
 
@@ -763,45 +774,47 @@ the file, so a file it would refuse starts no daemon. Autostart is registered la
   command that clears it, because a rename over a read-only file fails there. A write that fails
   because another program holds the file open is reported as a sentence, not a stack.
 - When setup changes an existing file that holds none of kurmis' settings, it first copies it
-  to `settings.json.kurmis-backup` (mode 0600), replacing an older backup: after a setup, a
-  pause and months of edits, the file as it is now is what "before kurmis" means. When the file
-  already holds kurmis' settings (setup run again after the port or the key changed), the
-  backup is left as it is.
+  to `settings.json.kurmis-backup` (mode 0600), replacing an older backup, so the backup is the
+  file as it was just before kurmis' settings went in. When the file already holds kurmis'
+  settings (setup run again after the port or the key changed), the backup is left as it is.
 - The file holds the key after setup, so setup makes it readable by the user only: a new file
   gets mode 0600, and an existing one has its group and other bits cleared (0644 becomes 0600),
   also when setup finds kurmis' settings already there and writes nothing. An existing backup
   has its group and other bits cleared too. Setup says when it changed a mode. Taking the
-  settings out keeps the mode the file has. On Windows node ignores modes, so nothing is changed there; the file is
-  protected by the access list it inherits from its folder (`PRIVATE_FILE_MODE` in
-  `src/platform/files.ts`).
+  settings out keeps the mode the file has. On Windows node ignores modes, so nothing is changed
+  there; the file is protected by the access list it inherits from its folder
+  (`PRIVATE_FILE_MODE` in `src/platform/files.ts`).
 - An `ANTHROPIC_BASE_URL` that is not kurmis' (`http://127.0.0.1:<port>` with the port of
   `config.json`, or with an `x-kurmis-key` in the same `env`'s headers) is refused, so another
   proxy is not cut off silently. A value of the person's own for `ENABLE_TOOL_SEARCH` or
   `CLAUDE_CODE_MAX_RETRIES` is kept, and setup says so. Their own header lines are kept exactly
   as written, ahead of kurmis' lines. An `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
   `CLAUDE_CODE_OAUTH_TOKEN` or `CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR` in the same `env` is
-  kept, with a warning when its value is not empty, since a plain `claude` then signs with that
-  key or token (`KEY_VARIABLES` in `src/cli/global-settings.ts`).
+  kept, with a warning when its value is not empty (`KEY_VARIABLES` in
+  `src/cli/global-settings.ts`). A plain `claude` then sends that key or token in place of its
+  login's credentials. The proxy always replaces an `x-api-key`, but it forwards the CLI's own
+  `authorization` header when it has read no token for the login the CLI was started on
+  ("Signing" under "The daemon").
 - When the daemon cannot be started, or runs on another port than `config.json` names, the
-  settings file is not written and setup exits 1. When autostart then fails, the settings change stands and setup
-  exits 1; running it again is safe. A launchd agent that is written but can be loaded only at
-  the next login, a Windows machine where no logon entry can be written because Windows Script
-  Host is missing or turned off (`noEntryPossible` in `src/platform/autostart.ts`), an entry
-  that starts a Node in a temporary folder (`warningOnly`), and a platform without autostart
-  (Linux) are warnings with exit 0: the daemon runs now, and after a restart the next
-  `kurmis claude` starts it. When the daemon cannot be started and the file already holds kurmis'
-  settings from an earlier setup, setup says so rather than that Claude Code does not use
-  kurmis yet.
+  settings file is not written and setup exits 1. When autostart then fails, the settings change
+  stands and setup exits 1; running it again is safe. A launchd agent that is written but can be
+  loaded only at the next login, a Windows machine where no logon entry can be written because
+  Windows Script Host is missing or turned off (`noEntryPossible` in
+  `src/platform/autostart.ts`), an entry that starts a Node in a temporary folder
+  (`warningOnly`), and a platform without autostart (Linux) are warnings with exit 0: the daemon
+  runs now, and after a restart the next `kurmis claude` starts it. When the daemon cannot be
+  started and the file already holds kurmis' settings from an earlier setup, setup says so
+  rather than that Claude Code does not use kurmis yet.
 
 Taking kurmis' settings out (`undoSettingsFile`, which `--pause` and `--uninstall-and-logout`
 run) removes only the values that are still kurmis': a key the person changed is left and
-reported, and only the `x-kurmis-*` lines are taken out of the custom headers. `ENABLE_TOOL_SEARCH`
-and `CLAUDE_CODE_MAX_RETRIES` are taken out only when the same `env` still has kurmis'
-`ANTHROPIC_BASE_URL` or an `x-kurmis-*` header line, since setup keeps a value the person set for
-them. When the lines
-left are the ones the backup has, the backup's value comes back as it was (with its line endings
-and blank lines); otherwise the lines left are joined by newlines. A value the backup already had
-(read with or without a byte order mark) is left. An `env` that this empties is removed, unless
+reported, and only the `x-kurmis-*` lines are taken out of the custom headers.
+`ENABLE_TOOL_SEARCH` and `CLAUDE_CODE_MAX_RETRIES` are taken out only when the same `env` still
+has kurmis' `ANTHROPIC_BASE_URL` or an `x-kurmis-*` header line, since setup keeps a value the
+person set for them. When the header lines left are the ones the backup has, the backup's value
+comes back as it was (with its line endings and blank lines); otherwise the lines left are
+joined by newlines. A value the backup already had (read with or without a byte order mark) is
+left. An `env` that this empties is removed, unless
 the backup shows the file had an `env` before kurmis. The file keeps its mode. Putting the
 settings in and taking them out can each be run again without changing anything more. Claude
 Code sessions that are already open keep the settings they started with, so every command that
@@ -840,8 +853,8 @@ settings file that has them (the current environment's and those `settings-files
 their backups, the start at login (on macOS when the plist is there, on Windows always), the
 logins kurmis added (when there are any), the other entries of the data folder's `claude/`
 folder, which are deleted without a logout, the running daemon and the data folder. It says that
-the login of plain claude is not signed out. At a terminal it then asks, and
-anything but `y` or `yes` removes nothing. `--yes` skips the question. Without a terminal on
+the login of plain claude is not signed out. At a terminal it then asks, and anything but `y` or
+`yes` removes nothing. `--yes` skips the question. Without a terminal on
 stdin and without `--yes` it refuses. A `config.json` it cannot read, or a settings file it
 cannot read or change, stops it before the list, with nothing removed. Up to there it writes
 nothing. Then, in this order:
@@ -850,10 +863,10 @@ nothing. Then, in this order:
    cannot be written, nothing else is removed, since the Claude Code that reads it still needs
    the daemon.
 2. The start at login is removed (`unregisterAutostart`). On Windows the Run value is removed
-   first, and `autostart.js` and an old `autostart.vbs` are deleted only once it is gone. When
+   first, and `autostart.js` is deleted only once it is gone. When
    `reg query` of the value fails, `reg query` of the whole Run key tells a missing value (the
    key lists its values without kurmis') from one that cannot be read. When the value cannot be
-   read or `reg delete` fails, the scripts are kept, since a Run value that names a missing
+   read or `reg delete` fails, the script is kept, since a Run value that names a missing
    script makes wscript show an error at every logon.
 3. The daemon is stopped as `kurmis daemon stop` stops it, so it uses no login and probes none
    while they are signed out.
@@ -861,8 +874,9 @@ nothing. Then, in this order:
    `src/cli/commands/logout.ts`), with `keepWhenSignOutFails`. The logins are the extra ones in
    `config.json` and every folder under `claude/` whose name is a login id, so a second run
    finds a folder a removal that stopped half-way left. A folder named by the id of the login
-   plain claude uses is left out, and that login is never signed out. Here the logout CLI runs before the login is taken out of `config.json`. When it fails,
-   nothing of that login is removed: it stays in `config.json` and its folder stays, since the
+   plain claude uses is left out, and that login is never signed out. Here the logout CLI runs
+   before the login is taken out of `config.json`. When it fails, nothing of that login is
+   removed: it stays in `config.json` and its folder stays, since the
    folder's path names the Keychain item and Credential Manager record that a second run's
    logout CLI removes. That holds for a login without a folder too. The message names the
    way out when the logout CLI can never finish (for example, the CLI is not installed):
@@ -882,9 +896,6 @@ A failed step is reported and the later steps still run, except that the data fo
 when the start at login could not be removed, the daemon could not be stopped or a login could
 not be removed. The command then exits 1 and says to run it again. When every step worked, its
 last line says to run `npm uninstall -g kurmis`.
-
-Before its first request the CLI sends `HEAD /api/hello` to the base URL, without the custom
-headers. The proxy answers that path itself.
 
 **Plain claude's login and `CLAUDE_CONFIG_DIR`.** Plain claude's login is
 the login in `~/.claude`: the daemon reads its token from the Keychain item with the plain name
@@ -934,10 +945,10 @@ makes sure no request is signed as that login for a CLI on other credentials:
   terminal's foreground process group, so the child gets them itself; the wrapper ignores them
   while the child runs, as `system(3)` does. That is so only when stdin is a terminal. When it
   is not (a script or a program runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
-  sent to the wrapper's pid alone, so the wrapper forwards them like SIGTERM. A child whose input
-  is piped but that runs in a terminal's foreground process group then gets Ctrl-C twice, which
-  a CLI that is not interactive does not mind: it ends at the first. SIGTERM and SIGHUP are
-  usually sent to the wrapper alone, so it forwards them to the child and keeps waiting.
+  sent to the wrapper's pid alone, so the wrapper forwards them like SIGTERM. A child with piped
+  input in a terminal's foreground process group then gets Ctrl-C twice and ends at the first.
+  SIGTERM and SIGHUP are usually sent to the wrapper alone, so it forwards them to the child and
+  keeps waiting.
 - **Windows.** Ctrl-C, Ctrl-Break and closing the console reach every process on the console
   (Node reports closing as SIGHUP). The wrapper ignores all three and forwards nothing, because
   `child.kill()` there ends the child at once with TerminateProcess.
@@ -952,8 +963,8 @@ makes sure no request is signed as that login for a CLI on other credentials:
   `kurmis claude`, and kurmis would start it, which starts kurmis, without end. The wrapper adds
   its pid to `KURMIS_WRAPPER_PIDS` in the child's environment, and refuses to start its child
   (exit 1, with a message that says to take the program off PATH or to set `KURMIS_CLAUDE_BIN`)
-  when its own parent is one of those pids, which is
-  what a script that `exec`s kurmis gives, or when eight wrappers already run inside each other,
+  when its own parent is one of those pids, which is what a script that `exec`s kurmis gives,
+  or when eight wrappers already run inside each other,
   which catches a script that starts kurmis without `exec`. A `kurmis claude` run from the shell
   of a session has the CLI or a shell as its parent, never a wrapper, so it is not refused. A
   PATH hit that is kurmis' own bundle is skipped when the program is looked up (below).
@@ -967,13 +978,6 @@ kills whatever is left in the process group. It needs `python3` and is skipped o
 - **Never start a `.cmd` or `.bat` shim.** Node will not start one without a shell, and
   through `cmd.exe` the user's arguments can be changed or run. Kurmis finds the real program
   behind the shim instead (below).
-- **Ctrl-C** goes to every process on the console. The wrapper ignores it and waits for the
-  child to exit ("The wrapper" above).
-- **The daemon** is started detached with no console, and at logon through a hidden `wscript`
-  JScript script ("Starting and stopping", "Starting at login"). One started from an ssh session
-  ends with it ("Known limits").
-- **Tokens** may be in Windows Credential Manager instead of `.credentials.json` ("Tokens"
-  under "The daemon").
 - **Deleting a folder** (`src/platform/remove-tree.ts`) never goes into a reparse point. Links
   and junctions are removed as links, and a folder whose real path (`realpathSync.native`)
   is outside the folder being removed, such as a volume mounted into it, which libuv reports as
@@ -982,18 +986,17 @@ kills whatever is left in the process group. It needs `python3` and is skipped o
   Credential Manager record through `claude auth logout`, as `kurmis logout` does.
 
 **Finding `claude`** (`src/platform/programs.ts`). `KURMIS_CLAUDE_BIN` names the program
-explicitly (a `.js` path runs through Node). Otherwise
-kurmis searches PATH. On Windows it tries each PATH folder with each extension in PATHEXT, in
-order, as `cmd.exe` does, and reads `Path` and `PATHEXT` whatever the case of their names. The
-current folder and relative PATH entries are skipped on every OS. An `.exe` or `.com` is started
-directly. A `.cmd` or `.bat` is read as a package manager's shim and its target is started.
-`.ps1` and extensionless shims are never used. When nothing is found, Claude Code is looked for
-where its native installer puts it: `%USERPROFILE%\.local\bin\claude.exe`
-(`~/.local/bin/claude` on macOS and Linux). On macOS and Linux a PATH hit that is a symlink to a
-`.js` file (an npm install of a Claude Code version whose bin was `cli.js`) runs that file
-through Node, so a PATH without `node` on it
-still works. A PATH hit that resolves to kurmis' own bundle (a link to it, or a shim that starts
-it) is skipped and named in the not-found message, because it is not the real program.
+explicitly (a `.js` path runs through Node). Otherwise kurmis searches PATH. On Windows it tries
+each PATH folder with each extension in PATHEXT, in order, as `cmd.exe` does, and reads `Path`
+and `PATHEXT` whatever the case of their names. The current folder and relative PATH entries are
+skipped on every OS. An `.exe` or `.com` is started directly. A `.cmd` or `.bat` is read as a
+package manager's shim and its target is started. `.ps1` and extensionless shims are never
+used. When nothing is found, Claude Code is looked for where its native installer puts it:
+`%USERPROFILE%\.local\bin\claude.exe` (`~/.local/bin/claude` on macOS and Linux). On macOS and
+Linux a PATH hit that is a symlink to a `.js` file (an npm install of a Claude Code version whose
+bin was `cli.js`) runs that file through Node, so a PATH without `node` on it still works. A
+PATH hit that resolves to kurmis' own bundle (a link to it, or a shim that starts it) is skipped
+and named in the not-found message, because it is not the real program.
 
 **Reading npm, pnpm and yarn shims** (`src/platform/npm-shim.ts`). Each generator writes a line
 that ends in the quoted target path, relative to `%~dp0` or `%dp0%` (the shim's own folder),
@@ -1009,15 +1012,14 @@ that runs kurmis. An `.exe` target is started directly. A shim kurmis cannot rea
 the search goes on; the not-found message lists every skipped shim and why. The fixtures in
 `test/platform/fixtures/` were generated by running the generators: npm's cmd-shim 8.0.0 (from
 npm 11.9.0) and 9.0.2 (from npm 12.2.0), `@zkochan/cmd-shim` 9.0.8, and `@pnpm/bins.cmd-shim`
-1100.0.4 (the same code pnpm 11.28.6 bundles). The older npm forms are written by hand from
-their source.
+1100.0.4 (the same code pnpm 11.28.6 bundles). The fixtures for cmd-shim 2 and 4 are written by
+hand from its source.
 
 **What the packages contain.** `@anthropic-ai/claude-code`'s bin is `bin/claude.exe`; its
 postinstall step replaces a placeholder script with the native program. When that step did
 not run, the file does not start with `MZ`, and kurmis runs the package's `cli-wrapper.cjs`
-through Node instead. Older versions had `cli.js`, which runs through Node. Kurmis does not
-take over the `NODE_PATH` that pnpm's shims
-set, because Node finds a package's dependencies from its real folder.
+through Node instead. Kurmis does not take over the `NODE_PATH` that pnpm's shims set, because
+Node finds a package's dependencies from its real folder.
 
 ## Test hooks
 
@@ -1030,8 +1032,7 @@ needs them.
 - `KURMIS_CLAUDE_BIN` names the program (also usable by a person). `test/setup.ts` points it
   at `test/no-real-program.mjs`, which only fails, so no test can start the real CLI from PATH
   by accident; a test that needs a CLI names a fake. While the guard below is on, `findProgram`
-  takes it from the process's environment when the environment it is given lacks it, so a test
-  of the PATH search sets it to an empty value.
+  falls back to the process's value, so a test of the PATH search sets it to an empty value.
 - `KURMIS_UPSTREAM_URL` is Anthropic's API base URL, `https://api.anthropic.com` by default.
 - **The system programs.** Every program of the operating system kurmis runs has a variable
   that names a stand-in (`src/platform/system-programs.ts`): `KURMIS_LAUNCHCTL_PROGRAM`
@@ -1045,11 +1046,11 @@ needs them.
   still gets the stand-in `test/setup.ts` set. For the same reason a daemon kurmis starts gets
   these variables, the guard and its log from the process's environment when the environment it
   is started with lacks them (`inheritedTestHooks`), and while the guard is on also `HOME`,
-  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN` and `KURMIS_UPSTREAM_URL`, so it uses the
-  test's temporary home and API address and not the real
-  ones. A stand-in that is a `.mjs` file runs through Node, as every
-  `.js` program does (`invocationFor` in `src/platform/run.ts`), since Windows cannot start such a
-  file itself. `test/setup.ts` points them at:
+  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN` and `KURMIS_UPSTREAM_URL`
+  (`TEST_HOME_VARIABLES`), so it uses the test's temporary home and API address and not the real
+  ones. A stand-in that is a `.mjs` file runs through Node, as every `.js` program does
+  (`invocationFor` in `src/platform/run.ts`), since Windows cannot start such a file itself.
+  `test/setup.ts` points them at:
   - `test/daemon/fake-security/security.mjs`, with its Keychain items in `$FAKE_SECURITY_DIR`;
   - `test/platform/fake-launchctl/launchctl.mjs`, which records its calls in
     `$FAKE_LAUNCHCTL_DIR` and answers bootstrap, bootout and print with launchctl's exit codes.
@@ -1061,9 +1062,9 @@ needs them.
   - `test/platform/fake-windows/powershell.mjs`, which records each call and its decoded script
     in `$FAKE_POWERSHELL_DIR`, answers the Credential Manager listing from the files in its
     `credentials/` folder (none by default) and fails for every other script, or for every
-    script when a `mode` file there says `fail`; `taskkill.mjs`, which records its calls in `$FAKE_TASKKILL_DIR` and ends
-    only the one pid it is given (not its children, as `/T` would); and `wscript.mjs`, which
-    only has to exist.
+    script when a `mode` file there says `fail`; `taskkill.mjs`, which records its calls in
+    `$FAKE_TASKKILL_DIR` and ends only the one pid it is given (not its children, as `/T`
+    would); and `wscript.mjs`, which only has to exist.
 - `KURMIS_ENTRY` names the bundle a daemon is started from, for tests that run the CLI from the
   source tree, where there is no bundle to start.
 - **The guard.** `KURMIS_REFUSE_SYSTEM_PROGRAMS=1`, which `test/setup.ts` and the integration
@@ -1073,11 +1074,11 @@ needs them.
   `claude`; a program inside the Claude Code npm packages or the native installer's
   `~/.local/share/claude/versions`; and Node running a script that is one of these, such as
   `node …/@anthropic-ai/claude-code/cli.js`, which is how a `claude` on PATH that links to a
-  `.js` file is started. It is passed on to every program kurmis starts, together with `HOME`,
-  `USERPROFILE`, `KURMIS_HOME`, `KURMIS_CLAUDE_BIN` and `KURMIS_UPSTREAM_URL` from the process's environment where that program's environment lacks
-  them. Each refusal is also written to the file
-  `KURMIS_REFUSED_PROGRAMS_LOG` names, and `test/setup.ts` fails any test after which that file is
-  not empty: a test whose code reached a real program fails even when the refusal let it pass.
+  `.js` file is started. It is passed on to every program kurmis starts, together with
+  `TEST_HOME_VARIABLES` (above) from the process's environment where that program's environment
+  lacks them. Each refusal is also written to the file `KURMIS_REFUSED_PROGRAMS_LOG` names, and
+  `test/setup.ts` fails any test after which that file is not empty: a test whose code reached a
+  real program fails even when the refusal let it pass.
 
 **Test processes.** Vitest runs each test file in a process of its own (`pool: 'forks'` in
 `vitest.config.ts`). In a worker thread a change to `process.env.HOME` does not reach
@@ -1090,6 +1091,7 @@ with an error when `os.homedir()` is not its temporary home.
 (`test/daemon/fake-app.ts`) and the real CLI for every other command. An older daemon is a
 bundle built with an older version, so no variable is needed to fake one. In-process tests pass
 `runDaemon` a fake app, an EventEmitter in place of `process`, and a `version`.
+`createDaemonApp`'s `tuning` option shortens the daemon's timings for tests.
 
 **Integration tests.** `test/integration/` runs the real bundle as `node <bundle> …` processes,
 end to end, against the fake claude and Anthropic API. `createWorld` in
@@ -1211,194 +1213,150 @@ These are known and left as they are.
 - `src/daemon/` holds the proxy, the control API, the token readers (`credentials.ts` for the
   file, `keychain.ts` for the macOS Keychain, `credential-manager.ts` for Windows Credential
   Manager, put together in `tokens.ts`), the usage probes and the daemon's lifecycle.
-- `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and `dispatch.ts`
-  picks the command and handles `--help`, `--version` and `help <command>`. `wrapper.ts` runs an
-  interactive child, `settings-arg.ts` builds
-  claude's `--settings`, `global-settings.ts` edits the user settings file for `setup`,
+- `src/cli/` holds the commands and the wrapper. `main.ts` is the bundle's entry and
+  `dispatch.ts` picks the command and handles `--login`, `--help`, `--version` and
+  `help <command>`. `wrapper.ts` runs an interactive child, `settings-arg.ts` builds claude's
+  `--settings`, `global-settings.ts` edits the user settings file for `setup`,
   `global-routing.ts` answers whether global routing is on, paused or off and keeps
-  `settings-files.json`,
-  `local-credentials.ts` checks whether a login's credentials are on this machine,
-  `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon,
+  `settings-files.json`, `local-credentials.ts` checks whether a login's credentials are on this
+  machine, `status-format.ts` renders `status`, `daemon-client.ts` reaches the daemon,
   `login-names.ts` names a login to the person and `sign-out.ts` signs an extra login out with
-  `claude auth logout`. Each command is one module in
-  `src/cli/commands/` exporting a `Command`: its name, a one-line summary, its help text and
-  `run(args, context)`, which returns the exit code (0 done, 1 failed, 2 wrong command line, or
-  the child's code for `claude`). Each exports a `create<Name>Command(deps)` too,
-  which takes fakes of what it reaches outside itself (the daemon client, the child runner,
-  `findProgram`; `command-deps.ts`), so unit tests run without a daemon or a
-  real CLI. The commands are:
-  - `claude` (above).
-  - `status [--json]` never starts the daemon and exits 0 whether one runs or not. It looks for a
-    running daemon with `findDaemon`. When one answers with the control API version of this
-    kurmis, the logins come from its status answer. When no signed-in login has been read yet it
-    asks for one probe and waits up to 15 seconds; then it ends the request and closes its
-    connection, so the command exits at once while the daemon finishes the probe. A daemon of an older kurmis is shown as it is, with a
-    line that says the next command that starts the daemon replaces it; `status` replaces
-    nothing. A newer daemon gets a line that says this kurmis does not replace it and, when its
-    control API version is another, that this kurmis cannot use it and what to do. When no daemon runs, the one that runs does not answer its status request (a note
-    on stderr says so), or it answers in another control API version, the logins come from
-    `config.json` and `state.json`: the settings, the last usage snapshot
-    with its age, the sessions counted from the placements, and each login's email from its
-    profile files (`readClaudeIdentity`). The sign-in is not known then; instead each login shows
-    whether its credentials are on this machine (`checkCredentials` in
-    `src/cli/local-credentials.ts`). A login counts when its token is there: its `.credentials.json` (the login's folder, or
-    `~/.claude` for plain claude's login) holds a `claudeAiOauth` record with an access token, or
-    the system's store has its record, named after the login's
-    `CLAUDE_SECURESTORAGE_CONFIG_DIR` (`keychainService`). On macOS that is
-    `security find-generic-password -s <service>` without `-w`, which prints the item's
-    attributes and not its secret (exit 0 yes, 44 no), one run per login without the file, side
-    by side, with a 3-second deadline. On Windows it is one PowerShell run for all of them that
-    lists Credential Manager's names without the blobs (`storedRecordsExist` in
-    `src/platform/windows-credentials.ts`). A `.claude.json` that names an account does not
-    count, because the CLI keeps it after the token is gone. When a check cannot run (`security`
-    or PowerShell missing, failing or past its deadline, a credentials file that cannot be read),
-    the login shows `credentials on this machine: unknown`, never yes. Status never starts
-    `claude` for this. Routing blocks are left out then, because they depend on the sign-in and
-    on usage the daemon reads again when it starts.
-
-    `status` reads `config.json` with `loadConfig`, before it looks for the daemon, as the other
-    commands do. So when the file has no entry for the login plain claude uses (before the first command, or after an uninstall), status adds it with a new id and saves
-    the file, creating the data folder when it is gone. A `config.json` that cannot be read is
-    reported only when the logins are shown from the files. Status writes no other file.
-
-    The text starts with the daemon's version, pid, port and uptime, or a line that says the
-    daemon is not running and names the commands that start it (`kurmis claude`, `kurmis setup`,
-    `kurmis daemon start`). The next line says whether global
-    routing is on, paused or off (`globalRoutingState`) and which `kurmis setup` command changes
-    it. Then it shows per login the alias, the id (left out while the alias is the id), the email
-    (on the terminal only), a line for the login plain claude uses, sign-in or credentials,
-    routing, limits, use-first, sessions, each usage window with its reset, how long ago the usage
-    was read, and why routing passes the login over (`routeBlockText` in
-    `src/cli/status-format.ts`). Above the logins it warns about any two logins that are the same
-    account, because both then use one subscription (`sameAccountWarnings`). Two logins are the
-    same account when their
-    emails, compared without regard to case, and their organization uuids (`organizationUuid` in
-    `LoginStatus`, from the same profile as the email) are the same, or their emails are the same
-    and either has no organization recorded (`isSameClaudeAccount` in `src/data/identity.ts`).
-    The logins are taken in order, the login plain claude uses first;
-    each is compared with the first login of every account found so far, and the warning names
-    the `kurmis logout` that removes the later one. It also warns
-    about global routing that is on while no daemon runs, because a plain `claude` then cannot
-    reach Anthropic. Resets are shown as the time left; a cooldown's
-    end is shown in local time (`02:10`, with the date when it is on another day) with the time
-    left after it.
-  - `login [--alias <alias>]` adds a new login, and `login <login> [--alias <alias>]` signs an
-    existing login in again, plain claude's included. A new login gets a fresh id first
-    (`freshLoginId`), and its folder is `claude/<id>/` from the start. A given `--alias` is checked against the config (`aliasProblem`) before anything
-    runs. Then the command takes the login's lock (`locks/`, above); for an existing login it reads
-    `config.json` again under it. The lock is held until the command ends, so a failed run can never
-    delete the folder of a run that signed in, and a logout cannot delete a folder a sign-in writes
-    into. The login's folder is created next (mode 0700). Then `claude auth login --claudeai`
-    runs with `claudeLoginEnv` through the wrapper. On Windows a login whose record is already in
-    Credential Manager (one PowerShell read, `holdsStoredRecord`) signs in with
-    `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new token replaces the record instead of going to
-    a file the record hides. The login counts as signed in when the CLI exits 0 and an account
-    (`.claude.json`) or credentials are there (`hasCredentials`, the check `status` uses; an
-    `unknown` answer counts as there, since the CLI reported the sign-in as done); otherwise a
-    folder this run created is removed and nothing is added.
-
-    After the sign-in the command reads the account's email from the `.claude.json` the CLI
-    wrote (`~/.claude.json` for the login plain claude uses, whose probe folder's `.claude.json`
-    is deleted first, because it may name the account signed in before). The email is printed
-    and never stored. When a new login is the same account as another login (the same email and
-    organization, `isSameClaudeAccount`), the login plain claude uses included, the new folder is
-    signed out again
-    (`signOutLogin` in `src/cli/sign-out.ts`) and deleted, the command names that login and says
-    that `kurmis login <alias>` signs it in again, and it exits 0. A given `--alias` is then not
-    used, and the command says so on stderr. The other logins' emails come from their profile
-    files. For a new login the comparison is made again with the config read under the config
-    lock, just before the login is added, so two `kurmis login` runs of one account at the same
-    moment add it once. When an existing login is signed in to an account that another login
-    has, the command prints a warning that
-    the two logins are now the same account and signs neither out. Otherwise the login is
-    added or updated under the config lock, with `--alias` as a user alias, and `followEmail`
-    makes an automatic alias from the email. A new login with the email of another login
-    in another organization is added, its alias gets the usual `-2`, and the command says that
-    the other login has the same email in another organization. A running daemon is told to reload and
-    asked to probe the login, waiting up to 15 seconds, because it may still hold the login as
-    signed out from before and Auto would pass it over until its next poll; none is started for
-    this.
-  - `logout <login>`: refuses the login of plain claude. It holds the login's lock
-    while it runs, and stops at once when a `kurmis login` of the login holds it. It removes the
-    login from `config.json`, tells a running daemon to reload (so it stops probing the login), runs
-    `claude auth logout` on it with a 30-second deadline (on Windows `claude auth
-    logout` gets `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, without which the CLI deletes only the file
-    and leaves the record in Credential Manager; a failure is a warning, naming the Keychain item or
-    the Windows credentials that may be left, and the removal goes on), and deletes the folder with
-    `removeTreeSync` (`src/platform/remove-tree.ts`), which removes links and junctions inside it
-    without following them. A bare id that names no login in `config.json` but has a folder in
-    `claude/` (a removal or a sign-in that stopped half-way) is cleaned up the same way. What the person typed is read
-    without the spaces around it and without regard to case, as `resolveLogin` reads it. The
-    removal itself is `createLoginLogout`, which `setup --uninstall-and-logout` calls for each
-    login with `keepWhenSignOutFails` (above, step 4).
-  - `set <login> [--auto on|off] [--five-hour <1-100>] [--weekly <1-100>] [--use-first on|off]
-    [--alias <alias>]`: needs at least one option, changes `config.json` under the lock, tells a
-    running daemon to reload and prints the login's settings, with where its alias comes from.
-    `--alias` sets a user alias.
-  - `setup [--pause | --uninstall-and-logout [--yes]]` (above).
-  - `daemon start|stop|restart|status|run`, where `daemon run` runs the daemon in the foreground
-    and is what `daemon start` launches in the background. `daemon status` exits 1 when no daemon
-    runs.
-
-  **`kurmis status --json`** prints its own shape, not the control API's answer, so it can stay
-  stable while the daemon's usage snapshot changes. Times are ISO strings. `format` is raised
-  only when a field is removed or changes meaning; fields may be added. Format 4 lets `id` and
-  `alias` be null. Format 5 calls a login's `machineOwn` `usedByPlainClaude`. Format 6 lets
-  `credentials` be `"unknown"`, and it counts only the token, not a `.claude.json` that names an
-  account. Format 7 drops a login's `provider`, and `sessions` is always a number.
-
-  ```json
-  { "format": 7,
-    "daemon": { "version": "0.1.0", "pid": 4242, "port": 28411, "startedAt": "<ISO>", "older": false, "newer": false },
-    "source": "daemon",
-    "globalRouting": "on",
-    "logins": [ {
-      "id": "k3v9q2m7xa", "alias": "work-example", "usedByPlainClaude": false,
-      "email": "<email or null>", "signedIn": true, "credentials": null, "probing": false,
-      "routing": true, "fiveHourLimit": 90, "weeklyLimit": 100, "useFirst": false,
-      "usage": { "fetchedAt": "<ISO>", "source": "probe", "plan": "max", "error": null,
-        "windows": [ { "key": "five_hour", "label": "5 hour", "durationMinutes": 300,
-          "utilization": 42, "resetsAt": "<ISO or null>", "plan": true, "limitPercent": 90 } ] },
-      "blocked": { "kind": "over-limit", "text": "<sentence>", "until": "<ISO or null>" },
-      "sessions": 2 } ],
-    "warnings": [ "<sentence>" ] }
-  ```
-
-  `daemon` is null while no daemon runs. `older` is true when the daemon is older than this
-  kurmis (a lower version, or the same version with a lower control API version), so the next
-  command that starts the daemon replaces it. `newer` is true when it is newer, so no command of
-  this kurmis replaces it. `source` is `daemon`
-  when the logins come from the daemon's status answer, and `files` when they come from
-  `config.json` and `state.json`: no daemon runs or answers its status request, or the one that
-  runs answers in another control API version, and then `daemon` is not null. `globalRouting` is `on`, `paused` or `off`.
-  The logins come in `config.json` order, plain claude's first. `id` never changes; `alias` is
-  what the person types. `email` is shown, never stored. `warnings` holds a sentence for each
-  login that is the same account as another login, and one when `globalRouting` is `on` and `daemon` is null. `signedIn` is what the daemon found: null when the daemon has not looked yet,
-  and always null with `source` `files`. `credentials` is whether the login's credentials are on
-  this machine (`checkCredentials`) with `source` `files`: `true`, `false`, or `"unknown"` when
-  a check could not run. It is null with `source` `daemon`. With
-  `source` `files`, `usage` is the last snapshot the daemon wrote to `state.json`, `probing` is
-  false and `blocked` is null. `usage` and `blocked` may be null. A window
-  whose reset has passed reads `utilization: 0`. `limitPercent` is null for a window that meters
-  one model rather than the plan. The CLI's `get_usage` answer has the server's `seven_day_opus`
-  and `seven_day_sonnet` windows and, in `model_scoped`, the per-model weekly windows from the
-  server's `limits` list, so one model's window can come twice, as `seven_day_opus` and as
-  `Opus`. An `Opus` or `Sonnet` entry with the same figure and reset as the fixed window is left
-  out of `windows` and the text (`repeatsModelWindow` in `src/core/usage-rules.ts`); the daemon's
-  snapshot keeps both. `blocked.text` gives a cooldown's end as an ISO time, as the daemon's log
-  does. `blocked` comes from the daemon.
+  `claude auth logout`. Each command is one module in `src/cli/commands/` exporting a `Command`
+  (`src/cli/command.ts`), whose `run` returns the exit code: 0 done, 1 failed, 2 wrong command
+  line, or the child's code for `claude`. Most also export a `create<Name>Command(deps)`, which
+  takes fakes of what the command reaches outside itself (the daemon client, the child runner,
+  `findProgram`; `command-deps.ts`), so unit tests run without a daemon or a real CLI. What the
+  commands do is in the README and in the header comment of each module; "The commands" below
+  has what those do not say.
 - `src/version.ts` holds the version, which the build takes from `package.json`.
-- `src/platform/` holds what differs per OS: finding programs and reading npm shims (`programs.ts`,
-  `npm-shim.ts`), deleting a folder without following its links
-  (`remove-tree.ts`), detaching (`detach.ts`), the launchd login item (`launchd.ts`),
-  autostart (`autostart.ts`, `windows-autostart.ts`), reading Windows Credential Manager
+- `src/platform/` holds what differs per OS: finding programs and reading npm shims
+  (`programs.ts`, `npm-shim.ts`), deleting a folder without following its links
+  (`remove-tree.ts`), detaching (`detach.ts`), the launchd login item (`launchd.ts`), autostart
+  (`autostart.ts`, `windows-autostart.ts`), reading Windows Credential Manager
   (`windows-credentials.ts`), where the system programs are and their test stand-ins
-  (`system-programs.ts`, `system-program-guard.ts`), and the file rename retry and
-  file modes (`files.ts`). Every short-lived program kurmis starts goes through `runProgram` in
+  (`system-programs.ts`, `system-program-guard.ts`), and the file rename retry and file modes
+  (`files.ts`). Every short-lived program kurmis starts goes through `runProgram` in
   `run.ts`: no shell, stdin closed, a deadline and a cap on the output. The usage probes, whose
   stdin carries JSON frames, go through `startFrameProcess` in `frame-process.ts`: no shell, a
   deadline, a cap on each frame and on all output, and a kill that takes the program's child
   processes with it (its process group on macOS and Linux, `taskkill /T /F` on Windows).
-- `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude` and Anthropic's API. `test/daemon/fake-security/` stands in for macOS's `security` program, with
-  its Keychain items in a temporary folder. No test reaches the network or the user's real
-  `~/.claude` or Keychain.
+- `test/` mirrors `src/`. `test/fakes/` holds stand-ins for `claude` and Anthropic's API.
+  `test/daemon/fake-security/` stands in for macOS's `security` program, with its Keychain
+  items in a temporary folder. No test reaches the network or the user's real `~/.claude` or
+  Keychain.
+
+## The commands
+
+`kurmis claude` and `kurmis setup` are described above.
+
+**`kurmis status`** never starts the daemon and exits 0 whether one runs or not.
+
+- When a daemon answers with this kurmis' control API version, the logins come from its status
+  answer. When it has read no signed-in login yet, status asks for one probe and waits up to 15
+  seconds. Then it ends the request and closes its connection, so the command exits at once
+  while the daemon finishes the probe. An older daemon is shown as it is; status replaces
+  nothing.
+- When no daemon runs, the one that runs does not answer its status request, or it answers in
+  another control API version, the logins come from `config.json` and `state.json`, and each
+  login's email from its profile files. The sign-in is not known then, so each login shows
+  whether its token is on this machine (`checkCredentials` in `src/cli/local-credentials.ts`):
+  its `.credentials.json` holds a `claudeAiOauth` record with an access token, or the system's
+  store has a record under the login's Keychain item name. On macOS that is
+  `security find-generic-password -s <service>` without `-w`, which prints the item's attributes
+  and not its secret (exit 0 yes, 44 no), one run per login without the file, side by side, with
+  a 3-second deadline. On Windows it is one PowerShell run that lists Credential Manager's names
+  without the blobs (`storedRecordsExist` in `src/platform/windows-credentials.ts`). A
+  `.claude.json` that names an account does not count, because the CLI keeps it after the token
+  is gone. A check that cannot run gives `unknown`, never yes. Status never starts `claude` for
+  this. The "passed over" lines are left out then, because they depend on the sign-in and on
+  usage the daemon reads again when it starts.
+- **The same account.** Two logins are the same account when their emails, compared without
+  regard to case, and their organization uuids are the same, or their emails are the same and
+  either has no organization recorded (`isSameClaudeAccount` in `src/data/identity.ts`). The
+  logins are taken in order, the login plain claude uses first. Each is compared with the first
+  login of every account found so far, and the warning names the `kurmis logout` that removes
+  the later one.
+
+**`kurmis login`**
+
+- A new login gets its id first, and its folder is `claude/<id>/` from the start, because the
+  folder's path names its Keychain item.
+- The command holds the login's lock (`locks/`) until it ends, so a failed run can never delete
+  the folder of a run that signed in, and a logout cannot delete a folder a sign-in writes into.
+- `claude auth login --claudeai` runs with `claudeLoginEnv` through the wrapper. On Windows a
+  login whose record is already in Credential Manager signs in with
+  `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so the new token replaces the record instead of going
+  to a file the record hides.
+- The sign-in counts when the CLI exits 0 and an account (`.claude.json`) or credentials are
+  there (`hasCredentials`). An `unknown` answer counts as there, since the CLI reported the
+  sign-in as done. Otherwise a folder this run created is removed and nothing is added.
+- For the login plain claude uses, the email is read from `~/.claude.json`, and the probe
+  folder's `.claude.json` is deleted first, because it may name the account signed in before.
+- A new login is compared with the others again under the config lock, just before it is
+  added, so two `kurmis login` runs of one account at the same moment add it once.
+- Afterwards a running daemon is told to reload and asked to probe the login, waiting up to 15
+  seconds, because it may still hold the login as signed out and Auto would pass it over until
+  its next poll. No daemon is started for this.
+
+**`kurmis logout`** takes the login out of `config.json`, tells a running daemon to reload (so
+it stops probing the login), runs `claude auth logout` with a 30-second deadline and deletes the
+folder with `removeTreeSync`. On Windows `claude auth logout` gets
+`CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, without which the CLI deletes only the file and leaves
+the record in Credential Manager. A failed sign-out is a warning that names the Keychain item or
+the Windows credentials that may be left, and the removal goes on. `setup
+--uninstall-and-logout` runs the same removal (`createLoginLogout`) with `keepWhenSignOutFails`
+(step 4 above).
+
+**`kurmis daemon status`** exits 1 when no daemon runs.
+
+## `kurmis status --json`
+
+`kurmis status --json` prints its own shape, not the control API's answer, so it can stay
+stable while the daemon's usage snapshot changes. Times are ISO strings. The current format is
+7. Fields may be added without changing it; removing a field or changing its meaning raises it
+(`STATUS_JSON_FORMAT` in `src/cli/status-format.ts`).
+
+```json
+{ "format": 7,
+  "daemon": { "version": "0.1.0", "pid": 4242, "port": 28411, "startedAt": "<ISO>", "older": false, "newer": false },
+  "source": "daemon",
+  "globalRouting": "on",
+  "logins": [ {
+    "id": "k3v9q2m7xa", "alias": "work-example", "usedByPlainClaude": false,
+    "email": "<email or null>", "signedIn": true, "credentials": null, "probing": false,
+    "routing": true, "fiveHourLimit": 90, "weeklyLimit": 100, "useFirst": false,
+    "usage": { "fetchedAt": "<ISO>", "source": "probe", "plan": "max", "error": null,
+      "windows": [ { "key": "five_hour", "label": "5 hour", "durationMinutes": 300,
+        "utilization": 42, "resetsAt": "<ISO or null>", "plan": true, "limitPercent": 90 } ] },
+    "blocked": { "kind": "over-limit", "text": "<sentence>", "until": "<ISO or null>" },
+    "sessions": 2 } ],
+  "warnings": [ "<sentence>" ] }
+```
+
+- `daemon` is null while no daemon runs. `older` is true when the daemon is older than this
+  kurmis, so the next command that starts the daemon replaces it. `newer` is true when it is
+  newer, so no command of this kurmis replaces it.
+- `source` is `daemon` when the logins come from the daemon's status answer, and `files` when
+  they come from `config.json` and `state.json`: no daemon runs or answers its status request,
+  or the one that runs answers in another control API version, and then `daemon` is not null.
+- `globalRouting` is `on`, `paused` or `off`.
+- The logins come in `config.json` order, plain claude's first. `id` never changes; `alias` is
+  what the person types. `email` is shown, never stored. `sessions` is the number of
+  sessions placed on the login in the last 7 days (at most 2000 are kept).
+- With `source` `daemon`: `signedIn` is what the daemon found, null when it has not looked yet,
+  and `credentials` is null.
+- With `source` `files`: `signedIn` is null, `credentials` is whether the login's token is on
+  this machine (`true`, `false`, or `"unknown"` when a check could not run), `usage` is the last
+  snapshot the daemon wrote to `state.json`, `probing` is false and `blocked` is null.
+- `usage` is null when the login's usage has not been read yet. A window whose reset has passed
+  reads `utilization: 0`. `limitPercent` is null for a window that meters one model rather than
+  the plan. The CLI's `get_usage` answer has the server's `seven_day_opus` and
+  `seven_day_sonnet` windows and, in `model_scoped`, the per-model weekly windows from the
+  server's `limits` list, so one model's window can come twice, as `seven_day_opus` and as
+  `Opus`. An `Opus` or `Sonnet` entry with the same figure and reset as the fixed window is left
+  out of `windows` and the text (`repeatsModelWindow` in `src/core/usage-rules.ts`); the
+  daemon's snapshot keeps both.
+- `blocked` is null when Auto could use the login. `blocked.text` gives a cooldown's end as an
+  ISO time, as the daemon's log does.
+- `warnings` holds a sentence for each login that is the same account as another login, and one
+  when `globalRouting` is `on` and `daemon` is null.
