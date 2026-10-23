@@ -6,7 +6,10 @@
 // A probe's answer goes into the login table: the usage snapshot, whether the login is signed
 // in, and the end of a cooldown that had no known end (`cooldownAfterProbe`). A successful
 // probe that finds the login signed in also ends `markRefused` (a token Anthropic refused). A
-// failed probe keeps the previous windows and records the error on the snapshot.
+// failed probe keeps the previous windows and records the error on the snapshot. A probe that
+// started with a token whose expiry had passed, and did not find the login signed in, reads the
+// token again: when it is still the same, the CLI could not renew it, and the login is signed
+// out until another token is read for it (`markSignInExpired`).
 //
 // A probe's answer describes the login as it was when the probe started, and a probe takes a
 // second or more. What a forwarded answer said in that time is newer and wins: its rate-limit
@@ -108,7 +111,8 @@ export class UsagePoller {
   /**
    * The logins a poll or a probe request without a list covers: every one signed in, and every
    * one not probed yet. A login whose last probe found it signed out is left out until a token
-   * appears for it or the config changes.
+   * appears for it or the config changes. A login with a token that is refused or whose sign-in
+   * expired is still probed, since a probe that renews it is what can end that.
    */
   pollable(): string[] {
     return this.options.table.logins()
@@ -152,13 +156,14 @@ export class UsagePoller {
   }
 
   private signedInOrUnknown(login: LoginSettings): boolean {
-    return this.options.table.claudeSignedIn(login.id) !== false
+    return this.options.table.hasCredentials(login.id) !== false
   }
 
   private async run(login: LoginSettings, cause: ProbeCause): Promise<void> {
     const { table, log, now } = this.options
     const id = login.id
     const startedAt = now()
+    const before = this.options.tokens.read(id)
     table.noteProbeStarted(id)
     log.write(cause === 'renewal' ? 'token_renewal_started' : 'usage_probe_started', { login: id })
     const ref: LoginRef = { id, usedByPlainClaude: login.usedByPlainClaude }
@@ -197,6 +202,21 @@ export class UsagePoller {
       if (answer.signedIn !== null) table.setSignedIn(id, answer.signedIn)
       log.write(cause === 'renewal' ? 'token_renewal_finished' : 'usage_probe_failed', { login: id, ms, ok: false, reason: answer.reason })
     }
+    const ranOut = before !== null && before.expiresAt !== null && before.expiresAt <= startedAt
+    if (ranOut && !(answer.ok && answer.signedIn)) await this.checkRenewed(id, before.accessToken)
+  }
+
+  /**
+   * After a probe that started with a run-out token and did not find the login signed in: reads
+   * the token again, and marks the login's sign-in expired when it is still `accessToken`.
+   */
+  private async checkRenewed(id: string, accessToken: string): Promise<void> {
+    const { tokens, table } = this.options
+    tokens.invalidate(id)
+    await tokens.prime([id])
+    if (this.closed) return
+    const after = tokens.read(id)
+    if (after !== null && after.accessToken === accessToken) table.markSignInExpired(id, after)
   }
 
   /**

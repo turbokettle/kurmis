@@ -100,6 +100,12 @@ export class LoginTable {
    */
   private readonly refused = new Map<string, { at: number; stamp: string | null }>()
   /**
+   * Logins whose sign-in expired and could not be renewed (`markSignInExpired`), with the
+   * `tokenStamp` of the token that was left. Treated like a refused token until the token read
+   * is another one. In memory only.
+   */
+  private readonly expired = new Map<string, string>()
+  /**
    * What the rate-limit headers of each login's answers said since its last probe started
    * (`noteObservation`, `noteProbeStarted`), merged into one observation: for each window and
    * for the status, the latest answer that reported it. The probe measured an older state, so
@@ -172,6 +178,7 @@ export class LoginTable {
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id)
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id)
     for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id)
+    for (const id of [...this.expired.keys()]) if (!ids.has(id)) this.expired.delete(id)
     for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id)
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id)
     this.options.log.write('config_loaded', { count: this.config.logins.length })
@@ -211,9 +218,10 @@ export class LoginTable {
    * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
    *
-   * A login whose token Anthropic refused (`markRefused`) counts as signed out, except the
-   * started-on login and `pinned`, the login the request names with `x-kurmis-login`: their
-   * requests go to it and get its 401 as it is.
+   * A login whose token Anthropic refused (`markRefused`), or whose sign-in expired
+   * (`markSignInExpired`), counts as signed out, except the started-on login and `pinned`, the
+   * login the request names with `x-kurmis-login`: their requests go to it and get its 401 as
+   * it is.
    */
   routeRows(startedOn: string | null, callerSigns: boolean, pinned: string | null = null): RouteAccount[] {
     const now = this.options.now()
@@ -222,7 +230,7 @@ export class LoginTable {
       const read = this.options.tokens.read(login.id)
       const token = notTheCli ? null : read
       const passThrough = token === null && callerSigns && login.id === startedOn
-      const refused = this.refusalHolds(login.id, read) && login.id !== startedOn && login.id !== pinned
+      const refused = this.signedOutByMark(login.id, read) && login.id !== startedOn && login.id !== pinned
       return {
         id: login.id,
         loggedIn: !notTheCli && !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
@@ -367,10 +375,31 @@ export class LoginTable {
   }
 
   /**
+   * Records that the login's sign-in expired and could not be renewed: `token` had run out when
+   * a usage probe started, and the probe's CLI, which renews such a token, left it in place.
+   */
+  markSignInExpired(id: string, token: ClaudeCredentials): void {
+    if (this.find(id) === undefined) return
+    const known = this.expired.has(id)
+    this.expired.set(id, tokenStamp(token))
+    if (!known) this.changed()
+  }
+
+  /**
+   * Whether a login is signed in here, for `kurmis status` and the login `kurmis claude` starts
+   * on: signed out while its token is refused (`markRefused`) or its sign-in expired
+   * (`markSignInExpired`), otherwise `hasCredentials`.
+   */
+  claudeSignedIn(id: string): boolean | null {
+    if (this.signedOutByMark(id, this.options.tokens.read(id))) return false
+    return this.hasCredentials(id)
+  }
+
+  /**
    * Whether a login has credentials here: a token read, or a probe that found it
    * signed in. Null when neither has said yet.
    */
-  claudeSignedIn(id: string): boolean | null {
+  hasCredentials(id: string): boolean | null {
     if (this.options.tokens.read(id) !== null) return true
     return this.probedSignedIn(id)
   }
@@ -465,6 +494,19 @@ export class LoginTable {
     if (token === null || refusal.stamp === null || tokenStamp(token) === refusal.stamp) return true
     this.refused.delete(id)
     return false
+  }
+
+  /**
+   * Whether a refusal (`refusalHolds`) or an expired sign-in holds for the login with `token`,
+   * the token read now. Either ends when that is another token than the one it was set for.
+   */
+  private signedOutByMark(id: string, token: ClaudeCredentials | null): boolean {
+    const refused = this.refusalHolds(id, token)
+    const stamp = this.expired.get(id)
+    if (stamp === undefined) return refused
+    if (token === null || tokenStamp(token) === stamp) return true
+    this.expired.delete(id)
+    return refused
   }
 
   private save(): void {

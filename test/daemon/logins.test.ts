@@ -112,12 +112,16 @@ describe('the routing rows', () => {
     tokens.set(WORK, { accessToken: 'w', expiresAt: null, hasRefreshToken: true })
     const logins = table()
     logins.markRefused(WORK)
+    // Status and the login `kurmis claude` starts on see it signed out; the poll still probes it.
+    expect(logins.claudeSignedIn(WORK)).toBe(false)
+    expect(logins.hasCredentials(WORK)).toBe(true)
     // The same token read again keeps the mark.
     expect(logins.routeRows(OWN_CLAUDE, false).map((row) => row.loggedIn)).toEqual([true, false])
     // Signed in again from a terminal: a new token.
     tokens.set(WORK, { accessToken: 'w2', expiresAt: null, hasRefreshToken: true })
     expect(logins.routeRows(OWN_CLAUDE, false).map((row) => row.loggedIn)).toEqual([true, true])
     expect(logins.isRefused(WORK)).toBe(false)
+    expect(logins.claudeSignedIn(WORK)).toBe(true)
   })
 
   test('drop a cooldown that has run out', () => {

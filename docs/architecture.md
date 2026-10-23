@@ -265,7 +265,12 @@ old one finishes its open requests in the background ("Version handover" below).
     Auto treats the login as signed out (`markRefused` in `logins.ts`, in memory only) until a
     usage probe of it succeeds and finds it signed in, at the latest the next 15-minute poll, or
     until the token read for it is another one, as after it was signed in again from a terminal.
-    Only a fingerprint of the refused token is kept for that, never the token.
+    Only a fingerprint of the refused token is kept for that, never the token. A login whose
+    token had run out when a usage probe started, and was still the same token after it while
+    the probe did not find the login signed in, could not be renewed: it is signed out in the
+    same way (`markSignInExpired`) until another token is read for it. With either mark the
+    status shows the login signed out, and `kurmis claude` on Auto does not start on it. The
+    15-minute poll still probes it.
     With no login left, the CLI gets the proxy's own 599 below, never that 401.
 - **Sessions** are told apart by the `X-Claude-Code-Session-Id` header the CLI sends. That is
   what a session stays on its login by. The CLI's subagents and small-model requests share it.

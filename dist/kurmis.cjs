@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023104347" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023104611" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -4703,6 +4703,12 @@ var LoginTable = class {
    */
   refused = /* @__PURE__ */ new Map();
   /**
+   * Logins whose sign-in expired and could not be renewed (`markSignInExpired`), with the
+   * `tokenStamp` of the token that was left. Treated like a refused token until the token read
+   * is another one. In memory only.
+   */
+  expired = /* @__PURE__ */ new Map();
+  /**
    * What the rate-limit headers of each login's answers said since its last probe started
    * (`noteObservation`, `noteProbeStarted`), merged into one observation: for each window and
    * for the status, the latest answer that reported it. The probe measured an older state, so
@@ -4761,6 +4767,7 @@ var LoginTable = class {
     for (const id of [...this.state.cooldowns.keys()]) if (!ids.has(id)) this.state.cooldowns.delete(id);
     for (const id of [...this.signedIn.keys()]) if (!ids.has(id)) this.signedIn.delete(id);
     for (const id of [...this.refused.keys()]) if (!ids.has(id)) this.refused.delete(id);
+    for (const id of [...this.expired.keys()]) if (!ids.has(id)) this.expired.delete(id);
     for (const id of [...this.observations.keys()]) if (!ids.has(id)) this.observations.delete(id);
     for (const id of [...this.cooldownSetAt.keys()]) if (!ids.has(id)) this.cooldownSetAt.delete(id);
     this.options.log.write("config_loaded", { count: this.config.logins.length });
@@ -4795,9 +4802,10 @@ var LoginTable = class {
    * header for the started-on login when it holds no token for it, so such a login counts as
    * signed in and signable. Every other login is signable only with a token the daemon read.
    *
-   * A login whose token Anthropic refused (`markRefused`) counts as signed out, except the
-   * started-on login and `pinned`, the login the request names with `x-kurmis-login`: their
-   * requests go to it and get its 401 as it is.
+   * A login whose token Anthropic refused (`markRefused`), or whose sign-in expired
+   * (`markSignInExpired`), counts as signed out, except the started-on login and `pinned`, the
+   * login the request names with `x-kurmis-login`: their requests go to it and get its 401 as
+   * it is.
    */
   routeRows(startedOn, callerSigns, pinned = null) {
     const now = this.options.now();
@@ -4806,7 +4814,7 @@ var LoginTable = class {
       const read = this.options.tokens.read(login.id);
       const token = notTheCli ? null : read;
       const passThrough = token === null && callerSigns && login.id === startedOn;
-      const refused = this.refusalHolds(login.id, read) && login.id !== startedOn && login.id !== pinned;
+      const refused = this.signedOutByMark(login.id, read) && login.id !== startedOn && login.id !== pinned;
       return {
         id: login.id,
         loggedIn: !notTheCli && !refused && (token !== null || passThrough || this.signedIn.get(login.id) === true),
@@ -4935,10 +4943,29 @@ var LoginTable = class {
     this.changed();
   }
   /**
+   * Records that the login's sign-in expired and could not be renewed: `token` had run out when
+   * a usage probe started, and the probe's CLI, which renews such a token, left it in place.
+   */
+  markSignInExpired(id, token) {
+    if (this.find(id) === void 0) return;
+    const known = this.expired.has(id);
+    this.expired.set(id, tokenStamp(token));
+    if (!known) this.changed();
+  }
+  /**
+   * Whether a login is signed in here, for `kurmis status` and the login `kurmis claude` starts
+   * on: signed out while its token is refused (`markRefused`) or its sign-in expired
+   * (`markSignInExpired`), otherwise `hasCredentials`.
+   */
+  claudeSignedIn(id) {
+    if (this.signedOutByMark(id, this.options.tokens.read(id))) return false;
+    return this.hasCredentials(id);
+  }
+  /**
    * Whether a login has credentials here: a token read, or a probe that found it
    * signed in. Null when neither has said yet.
    */
-  claudeSignedIn(id) {
+  hasCredentials(id) {
     if (this.options.tokens.read(id) !== null) return true;
     return this.probedSignedIn(id);
   }
@@ -5025,6 +5052,18 @@ var LoginTable = class {
     if (token === null || refusal.stamp === null || tokenStamp(token) === refusal.stamp) return true;
     this.refused.delete(id);
     return false;
+  }
+  /**
+   * Whether a refusal (`refusalHolds`) or an expired sign-in holds for the login with `token`,
+   * the token read now. Either ends when that is another token than the one it was set for.
+   */
+  signedOutByMark(id, token) {
+    const refused = this.refusalHolds(id, token);
+    const stamp = this.expired.get(id);
+    if (stamp === void 0) return refused;
+    if (token === null || tokenStamp(token) === stamp) return true;
+    this.expired.delete(id);
+    return refused;
   }
   save() {
     this.writer.schedule();
@@ -6732,7 +6771,8 @@ var UsagePoller = class {
   /**
    * The logins a poll or a probe request without a list covers: every one signed in, and every
    * one not probed yet. A login whose last probe found it signed out is left out until a token
-   * appears for it or the config changes.
+   * appears for it or the config changes. A login with a token that is refused or whose sign-in
+   * expired is still probed, since a probe that renews it is what can end that.
    */
   pollable() {
     return this.options.table.logins().filter((login) => this.signedInOrUnknown(login)).map((login) => login.id);
@@ -6772,12 +6812,13 @@ var UsagePoller = class {
     return started;
   }
   signedInOrUnknown(login) {
-    return this.options.table.claudeSignedIn(login.id) !== false;
+    return this.options.table.hasCredentials(login.id) !== false;
   }
   async run(login, cause) {
     const { table, log, now } = this.options;
     const id = login.id;
     const startedAt = now();
+    const before = this.options.tokens.read(id);
     table.noteProbeStarted(id);
     log.write(cause === "renewal" ? "token_renewal_started" : "usage_probe_started", { login: id });
     const ref = { id, usedByPlainClaude: login.usedByPlainClaude };
@@ -6795,10 +6836,10 @@ var UsagePoller = class {
       table.setProbeUsage(id, answer2.usage);
       table.setSignedIn(id, answer2.signedIn);
       if (answer2.signedIn) table.clearRefused(id, startedAt);
-      const before = table.cooldown(id);
+      const before2 = table.cooldown(id);
       const setAt = table.cooldownSince(id);
-      const after = setAt !== null && setAt > startedAt ? before : cooldownAfterProbe(before, answer2.usage);
-      if (after !== before) {
+      const after = setAt !== null && setAt > startedAt ? before2 : cooldownAfterProbe(before2, answer2.usage);
+      if (after !== before2) {
         table.setCooldown(id, after);
         if (after === null) log.write("cooldown_ended", { login: id });
       }
@@ -6811,6 +6852,20 @@ var UsagePoller = class {
       if (answer2.signedIn !== null) table.setSignedIn(id, answer2.signedIn);
       log.write(cause === "renewal" ? "token_renewal_finished" : "usage_probe_failed", { login: id, ms, ok: false, reason: answer2.reason });
     }
+    const ranOut = before !== null && before.expiresAt !== null && before.expiresAt <= startedAt;
+    if (ranOut && !(answer2.ok && answer2.signedIn)) await this.checkRenewed(id, before.accessToken);
+  }
+  /**
+   * After a probe that started with a run-out token and did not find the login signed in: reads
+   * the token again, and marks the login's sign-in expired when it is still `accessToken`.
+   */
+  async checkRenewed(id, accessToken) {
+    const { tokens, table } = this.options;
+    tokens.invalidate(id);
+    await tokens.prime([id]);
+    if (this.closed) return;
+    const after = tokens.read(id);
+    if (after !== null && after.accessToken === accessToken) table.markSignInExpired(id, after);
   }
   /**
    * After a successful probe that found the login signed in, gives the login the automatic alias

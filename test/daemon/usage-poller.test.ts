@@ -1,6 +1,7 @@
 import { readFileSync, rmSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
+import type { ClaudeCredentials } from '../../src/core/credentials.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import { loadConfig } from '../../src/data/config.ts'
 import type { ClaudeIdentity } from '../../src/data/identity.ts'
@@ -28,8 +29,10 @@ const identity = {
 let home = ''
 let invalidated: string[] = []
 let markedStale: string[] = []
+/** The tokens the stand-in source answers, by login id; none by default. */
+const readTokens = new Map<string, ClaudeCredentials>()
 const source: TokenSource = {
-  read: () => null,
+  read: (id) => readTokens.get(id) ?? null,
   prime: () => Promise.resolve(),
   invalidate: (id) => { invalidated.push(id) },
   markStale: (id) => { markedStale.push(id) },
@@ -54,6 +57,7 @@ beforeEach(() => {
   home = freshHome()
   invalidated = []
   markedStale = []
+  readTokens.clear()
   events.length = 0
   claudeEmails.clear()
 })
@@ -150,6 +154,37 @@ describe('a probe', () => {
     table.markRefused(OWN_CLAUDE)
     await poller.probe(OWN_CLAUDE, 'request')
     expect(table.isRefused(OWN_CLAUDE)).toBe(false)
+  })
+
+  test('that started with a token whose expiry had passed and left it in place marks the login signed out until the token changes', async () => {
+    writeLogins({})
+    const expired: ClaudeCredentials = { accessToken: 'a', expiresAt: Date.now() - 60_000, hasRefreshToken: true }
+    readTokens.set(OWN_CLAUDE, expired)
+    const { table, poller } = setup(() => Promise.resolve({ ok: false, signedIn: false, reason: 'other', error: 'No.' }))
+    expect(table.claudeSignedIn(OWN_CLAUDE)).toBe(true)
+    await poller.probe(OWN_CLAUDE, 'renewal')
+    expect(table.claudeSignedIn(OWN_CLAUDE)).toBe(false)
+    expect(table.routeRows(WORK, false)[0]?.loggedIn).toBe(false)
+    // Still probed by the poll, so a renewal that works later is seen.
+    expect(poller.pollable()).toEqual([OWN_CLAUDE])
+    // Signed in again from a terminal: a new token.
+    readTokens.set(OWN_CLAUDE, { accessToken: 'b', expiresAt: Date.now() + 3_600_000, hasRefreshToken: true })
+    expect(table.claudeSignedIn(OWN_CLAUDE)).toBe(true)
+    expect(table.routeRows(WORK, false)[0]?.loggedIn).toBe(true)
+  })
+
+  test('that renewed a token whose expiry had passed, or started with a token still valid, marks nothing', async () => {
+    writeLogins({})
+    readTokens.set(OWN_CLAUDE, { accessToken: 'a', expiresAt: Date.now() - 60_000, hasRefreshToken: true })
+    const { table, poller } = setup(({ id }) => {
+      readTokens.set(id, { accessToken: 'a2', expiresAt: Date.now() + 3_600_000, hasRefreshToken: true })
+      return Promise.resolve({ ok: true, signedIn: true, usage: usage(id, 1) })
+    })
+    await poller.probe(OWN_CLAUDE, 'renewal')
+    expect(table.claudeSignedIn(OWN_CLAUDE)).toBe(true)
+    const still = setup(() => Promise.resolve({ ok: false, signedIn: null, reason: 'timeout', error: 'The probe timed out.' }))
+    await still.poller.probe(OWN_CLAUDE, 'request')
+    expect(still.table.claudeSignedIn(OWN_CLAUDE)).toBe(true)
   })
 
   /** A table and poller on a clock the test moves. */
