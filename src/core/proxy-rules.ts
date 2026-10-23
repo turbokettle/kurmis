@@ -322,7 +322,7 @@ export function noSignerAnswer(cliOnOwnCredentials = false): ProxyAnswer {
   const message = cliOnOwnCredentials
     ? 'No Claude login kurmis may use for this session could sign the request. This Claude CLI runs with ' +
       'CLAUDE_CONFIG_DIR set, so it is signed in with the login in that folder, which is not the login a plain ' +
-      '`claude` uses, and kurmis signs its requests only with its extra logins. Add one with `kurmis login claude`, ' +
+      '`claude` uses, and kurmis signs its requests only with its extra logins. Add one with `kurmis login`, ' +
       'start Claude with `kurmis claude`, or run `kurmis setup --pause` with that CLAUDE_CONFIG_DIR.'
     : 'No Claude login kurmis may use for this session could sign the request. ' +
       'Run `kurmis status` to see which logins are signed in.'

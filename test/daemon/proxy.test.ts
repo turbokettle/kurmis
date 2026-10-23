@@ -222,7 +222,7 @@ describe('a CLI whose credentials are no kurmis login\'s (x-kurmis-started-on: n
     const answer = await messages(harness, S1, none)
     expect(answer.status).toBe(599)
     expect(answer.text).toContain('CLAUDE_CONFIG_DIR')
-    expect(answer.text).toContain('kurmis login claude')
+    expect(answer.text).toContain('Add one with `kurmis login`,')
     expect(answer.text).toContain('which is not the login a plain `claude` uses')
     expect(harness.api.apiRequests()).toHaveLength(0)
   })
