@@ -72,10 +72,6 @@ test('a file that goes away reads as no token', () => {
   expect(credentials.read(WORK)).toBeNull()
 })
 
-test('prime has nothing to do and resolves', async () => {
-  await expect(reader().prime([WORK])).resolves.toBeUndefined()
-})
-
 test.each([undefined, '{', 'null', '{}', '{"claudeAiOauth":{"accessToken":""}}',
   '{"claudeAiOauth":{"accessToken":12}}'])('unreadable credentials: %s', (body) => {
   if (body !== undefined) writeFileSync(path, body)

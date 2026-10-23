@@ -283,7 +283,6 @@ describe('the token source on Windows', () => {
     await expect.poll(() => empty.calls).toBe(1)
     expect(fileOnly.read(OWN_CLAUDE)?.accessToken).toBe('sk-ant-oat01-left-behind')
     expect(fileOnly.inCredentialManager(OWN_CLAUDE)).toBe(false)
-    expect(tokens.keychain).toBe(false)
   })
 
   it('gives the probe of a login found in Credential Manager CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1, and others nothing', async () => {

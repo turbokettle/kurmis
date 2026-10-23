@@ -126,14 +126,13 @@ export interface UpstreamAnswer {
   get(name: string): string | null
   /**
    * The body as it arrives, not decoded. When the connection fails, the idle timeout passes or
-   * the signal aborts before the body ends, the stream is destroyed and `failure()` says why.
-   * Pausing it stops reading from the connection.
+   * the signal aborts before the body ends, the stream is destroyed with the error that says
+   * why: an `UpstreamError` for the timeout and the signal. Pausing it stops reading from the
+   * connection.
    */
   body: Readable
   /** Reads and drops the rest of the body, for an answer the proxy does not forward (replays). A body that is too long or too slow is destroyed instead. */
   discard(): void
-  /** Why the body ended early, or null while it has not. */
-  failure(): UpstreamError | null
 }
 
 /**
@@ -261,14 +260,11 @@ export function createUpstream(options: UpstreamOptions): Upstream {
         }
         answered = true
         response = res
-        let failure: UpstreamError | null = null
-        // With a listener attached the body reports why it broke off, and an error never goes
-        // unhandled while the proxy has not started reading it yet.
-        res.on('error', (error) => {
-          failure ??= toUpstreamError(error)
-        })
+        // With a listener attached, an error of the body never goes unhandled while the proxy
+        // has not started reading it yet.
+        res.on('error', () => undefined)
         res.once('close', end)
-        resolve(answerOf(res, () => failure))
+        resolve(answerOf(res))
       })
       req.end(request.body)
     })
@@ -296,7 +292,7 @@ function toUpstreamError(error: unknown): UpstreamError {
   return new UpstreamError('network', code, `the request to the Anthropic API failed (${code})`, { cause: error })
 }
 
-function answerOf(res: http.IncomingMessage, failure: () => UpstreamError | null): UpstreamAnswer {
+function answerOf(res: http.IncomingMessage): UpstreamAnswer {
   const headers: Array<[string, string]> = []
   const raw = res.rawHeaders
   for (let index = 0; index + 1 < raw.length; index += 2) {
@@ -322,8 +318,7 @@ function answerOf(res: http.IncomingMessage, failure: () => UpstreamError | null
         if (bytes > DISCARD_LIMIT_BYTES) res.destroy()
       })
       res.resume()
-    },
-    failure
+    }
   }
 }
 
@@ -335,8 +330,8 @@ function answerOf(res: http.IncomingMessage, failure: () => UpstreamError | null
  *
  * Resolves `done` once `res` has finished. Resolves `aborted` when the client went away or
  * `signal` aborted; the upstream body is then destroyed, and so is `res`. Resolves `failed`
- * when the upstream body broke off (`answer.failure()` says why); `res` is then destroyed so
- * that the client sees a broken answer rather than a complete one. Never rejects.
+ * when the upstream body broke off; `res` is then destroyed so that the client sees a broken
+ * answer rather than a complete one. Never rejects.
  */
 export function forwardBody(answer: UpstreamAnswer, res: http.ServerResponse,
   signal: AbortSignal): Promise<'done' | 'aborted' | 'failed'> {

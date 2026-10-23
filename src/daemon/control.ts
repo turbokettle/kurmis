@@ -45,8 +45,6 @@ export interface ControlOptions {
 export interface Control {
   /** Handles one request whose path is under `/_kurmis/`. Never rejects. */
   handle(request: IncomingMessage, response: ServerResponse, path: string): Promise<void>
-  /** The status answer, as `GET /_kurmis/status` gives it. */
-  status(): Promise<StatusAnswer>
 }
 
 export function createControl(options: ControlOptions): Control {
@@ -166,7 +164,7 @@ export function createControl(options: ControlOptions): Control {
     }
   }
 
-  return { handle, status }
+  return { handle }
 }
 
 function allow(req: IncomingMessage, res: ServerResponse, method: 'GET' | 'POST'): boolean {

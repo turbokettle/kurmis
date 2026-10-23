@@ -197,10 +197,6 @@ export class LoginTable {
     return plainClaudeLogin(this.config)
   }
 
-  port(): number {
-    return this.config.port
-  }
-
   /**
    * The routing rows of every login, for one request.
    *

@@ -17,7 +17,6 @@ const SIDE = 'sideclaude1'
 let home = ''
 const tokens = new Map<string, ClaudeCredentials>()
 const source: TokenSource = {
-  keychain: false,
   read: (id) => tokens.get(id) ?? null,
   prime: () => Promise.resolve(),
   invalidate: () => undefined,

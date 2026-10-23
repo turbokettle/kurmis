@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023102026" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023102052" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -4446,7 +4446,7 @@ function createControl(options) {
       else res.destroy();
     }
   }
-  return { handle, status: status2 };
+  return { handle };
 }
 function allow(req, res, method) {
   if (req.method === method) return true;
@@ -4808,9 +4808,6 @@ var LoginTable = class {
   plainClaudeLogin() {
     return plainClaudeLogin(this.config);
   }
-  port() {
-    return this.config.port;
-  }
   /**
    * The routing rows of every login, for one request.
    *
@@ -5089,8 +5086,8 @@ function capacityRefusal(status2, usageLimit) {
 }
 function retryAfterMs(value) {
   if (value == null || value.trim().length === 0) return null;
-  const seconds3 = Number(value);
-  if (Number.isFinite(seconds3) && seconds3 >= 0) return seconds3 * 1e3;
+  const seconds2 = Number(value);
+  if (Number.isFinite(seconds2) && seconds2 >= 0) return seconds2 * 1e3;
   return null;
 }
 function capacityHoldDelayMs(attempt, asked, random, baseMs = CAPACITY_HOLD_BASE_MS, maxMs = CAPACITY_HOLD_MAX_MS) {
@@ -5303,12 +5300,9 @@ function createUpstream(options) {
         }
         answered = true;
         response = res;
-        let failure2 = null;
-        res.on("error", (error) => {
-          failure2 ??= toUpstreamError(error);
-        });
+        res.on("error", () => void 0);
         res.once("close", end);
-        resolve8(answerOf(res, () => failure2));
+        resolve8(answerOf(res));
       });
       req.end(request2.body);
     });
@@ -5332,7 +5326,7 @@ function toUpstreamError(error) {
   const code = errorCodeOf(error);
   return new UpstreamError("network", code, `the request to the Anthropic API failed (${code})`, { cause: error });
 }
-function answerOf(res, failure2) {
+function answerOf(res) {
   const headers = [];
   const raw = res.rawHeaders;
   for (let index = 0; index + 1 < raw.length; index += 2) {
@@ -5358,8 +5352,7 @@ function answerOf(res, failure2) {
         if (bytes > DISCARD_LIMIT_BYTES) res.destroy();
       });
       res.resume();
-    },
-    failure: failure2
+    }
   };
 }
 function forwardBody(answer2, res, signal) {
@@ -6029,10 +6022,6 @@ var CredentialsFileReader = class {
       return null;
     }
   }
-  /** Nothing to do: `read` reads the file itself. */
-  prime(_ids) {
-    return Promise.resolve();
-  }
   invalidate(id) {
     this.cache.delete(this.pathOf(id));
   }
@@ -6281,19 +6270,16 @@ async function storedRecordsExist(secureStorageDirs, read, preferred = preferred
 var KEYCHAIN_CACHE_MS = 6e4;
 var KEYCHAIN_READ_TIMEOUT_MS = 3e3;
 var MAX_OUTPUT_BYTES = 256 * 1024;
-var MAX_REASON_CHARS = 500;
 function keychainHoldsSecret(platform = process.platform) {
   return platform === "darwin";
 }
 var KeychainReadError = class extends Error {
-  constructor(reason, code, timedOut = false, outputTooLarge = false) {
-    super(reason);
-    this.reason = reason;
+  constructor(code, timedOut = false, outputTooLarge = false) {
+    super(`security failed (${timedOut ? "timed out" : outputTooLarge ? "printed too much" : `exit code ${String(code)}`})`);
     this.code = code;
     this.timedOut = timedOut;
     this.outputTooLarge = outputTooLarge;
   }
-  reason;
   code;
   timedOut;
   outputTooLarge;
@@ -6306,20 +6292,10 @@ async function readKeychainItem(securityProgram, service, timeoutMs = KEYCHAIN_R
     ["find-generic-password", "-w", "-s", service],
     { timeoutMs, maxOutputBytes: MAX_OUTPUT_BYTES }
   );
-  const failure2 = failureOf3(result, timeoutMs);
-  if (failure2 !== null) throw new KeychainReadError(failure2, result.code, result.timedOut, result.outputTooLarge);
+  if (result.timedOut || result.outputTooLarge || result.error !== null || result.code !== 0) {
+    throw new KeychainReadError(result.code, result.timedOut, result.outputTooLarge);
+  }
   return result.stdout.trim().length === 0 ? null : result.stdout;
-}
-function failureOf3(result, timeoutMs) {
-  if (result.timedOut) return `it did not answer within ${seconds2(timeoutMs)} seconds`;
-  if (result.outputTooLarge) return `it printed more than ${String(MAX_OUTPUT_BYTES)} bytes, which is not a credentials record`;
-  if (result.error !== null) return result.error;
-  if (result.code === 0) return null;
-  const said = result.stderr.trim();
-  return said.length > 0 ? said.slice(0, MAX_REASON_CHARS) : "it printed nothing on stderr";
-}
-function seconds2(ms) {
-  return String(ms / 1e3);
 }
 var KeychainCredentialsReader = class {
   constructor(options) {
@@ -6331,8 +6307,8 @@ var KeychainCredentialsReader = class {
   reading = /* @__PURE__ */ new Map();
   /** How often each login was invalidated. */
   invalidations = /* @__PURE__ */ new Map();
-  /** The logins whose failed read has been logged, until a read of one works. */
-  failureLogged = /* @__PURE__ */ new Set();
+  /** The logins whose failed read has been reported to `onFailure`, until a read of one works. */
+  failureReported = /* @__PURE__ */ new Set();
   /**
    * The items whose read was killed at its deadline. A `security` that does not answer is most
    * likely showing a Keychain dialog that nobody is there to answer, and reading the item again
@@ -6394,31 +6370,25 @@ var KeychainCredentialsReader = class {
     try {
       const secret = await run2(service);
       value = secret === null ? null : parseCredentials(secret);
-      if (secret === null) failure2 = { text: "the item is empty", kind: "empty", code: null };
-      else if (value === null) failure2 = { text: "the item holds no OAuth token", kind: "not_credentials", code: null };
+      if (secret === null) failure2 = { kind: "empty", code: null };
+      else if (value === null) failure2 = { kind: "not_credentials", code: null };
     } catch (error) {
       if (error instanceof KeychainReadError && error.timedOut) {
         this.unanswered.add(service);
         keep(null);
-        this.options.log?.(`reading login ${id} from the Keychain item "${service}" did not answer within ${seconds2(timeoutMs)} seconds, so the proxy holds no token for it, and this daemon will not read that item again until it restarts. A read that waits is usually a Keychain dialog: either a program other than the Claude CLI created the item or changed its access list, so /usr/bin/security may read it only after somebody allows it, or the login Keychain is locked. Reading again would put up another dialog.`);
         this.options.onFailure?.({ id, kind: "timeout", code: null });
         return;
       }
       if (!(error instanceof KeychainReadError && error.code === NO_SUCH_ITEM_EXIT_CODE)) {
-        failure2 = error instanceof KeychainReadError ? {
-          text: `${error.code === null ? "no exit code" : `exit ${String(error.code)}`}: ${error.reason}`,
-          kind: failureKindOf(error),
-          code: error.code
-        } : { text: `it threw: ${error instanceof Error ? error.message : String(error)}`, kind: "failed", code: null };
+        failure2 = error instanceof KeychainReadError ? { kind: failureKindOf(error), code: error.code } : { kind: "failed", code: null };
       }
     }
     if (!keep(value)) return;
     if (failure2 === null) {
-      this.failureLogged.delete(id);
-    } else if (!this.failureLogged.has(id)) {
-      this.failureLogged.add(id);
-      this.options.log?.(`reading login ${id} from the Keychain item "${service}" failed, so the proxy holds no token for it (${failure2.text})`);
-      this.options.onFailure?.({ id, kind: failure2.kind, code: failure2.code });
+      this.failureReported.delete(id);
+    } else if (!this.failureReported.has(id)) {
+      this.failureReported.add(id);
+      this.options.onFailure?.({ id, ...failure2 });
     }
   }
   now() {
@@ -6608,7 +6578,6 @@ function createTokenSource(options) {
     }
   }) : null;
   return {
-    keychain: keychain !== null,
     read(id) {
       if (!isKnownLogin(id)) return null;
       return credentialManager?.read(id) ?? keychain?.read(id) ?? file.read(id);
@@ -7121,22 +7090,22 @@ async function bindPort(server, options) {
     }
     if (Date.now() >= deadline) {
       log.write("port_in_use", { port, reason: "timeout" });
-      const seconds3 = String(Math.round(options.bindDeadlineMs / 1e3));
-      complain(bindTimeoutText(port, seconds3, askedToStop, lastHolder ?? null));
+      const seconds2 = String(Math.round(options.bindDeadlineMs / 1e3));
+      complain(bindTimeoutText(port, seconds2, askedToStop, lastHolder ?? null));
       return 1;
     }
     await delay(BIND_RETRY_MS);
   }
 }
-function bindTimeoutText(port, seconds3, askedToStop, lastHolder) {
+function bindTimeoutText(port, seconds2, askedToStop, lastHolder) {
   const where = `port ${String(port)} on ${DAEMON_HOST}`;
-  if (askedToStop === null) return `${where} stayed busy for ${seconds3} s with nothing answering on it`;
+  if (askedToStop === null) return `${where} stayed busy for ${seconds2} s with nothing answering on it`;
   const old = `the kurmis daemon ${askedToStop.version} (pid ${String(askedToStop.pid)})`;
   if (lastHolder?.kind === "kurmis" && lastHolder.status.pid === askedToStop.pid) {
-    return `${old} did not give up port ${String(port)} within ${seconds3} s`;
+    return `${old} did not give up port ${String(port)} within ${seconds2} s`;
   }
   const answer2 = lastHolder?.kind === "other" ? ` (${lastHolder.reason})` : "";
-  return `${old} was asked to stop, but ${where} stayed busy for ${seconds3} s, and what holds it now does not answer as that daemon${answer2}. Another program may have taken the port. To use another port, set "port" in ${configPath()} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)}.`;
+  return `${old} was asked to stop, but ${where} stayed busy for ${seconds2} s, and what holds it now does not answer as that daemon${answer2}. Another program may have taken the port. To use another port, set "port" in ${configPath()} to a number from ${String(MIN_PORT)} to ${String(MAX_PORT)}.`;
 }
 var UNUSABLE_PORT_CODES = /* @__PURE__ */ new Set(["EACCES", "EADDRNOTAVAIL"]);
 function unusablePortText(port, code, configFile) {

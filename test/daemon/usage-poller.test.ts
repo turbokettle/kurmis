@@ -28,7 +28,6 @@ let home = ''
 let invalidated: string[] = []
 let markedStale: string[] = []
 const source: TokenSource = {
-  keychain: false,
   read: () => null,
   prime: () => Promise.resolve(),
   invalidate: (id) => { invalidated.push(id) },

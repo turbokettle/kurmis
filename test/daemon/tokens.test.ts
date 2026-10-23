@@ -6,7 +6,6 @@ import { keychainService } from '../../src/core/keychain-service.ts'
 import { formatLogLine, type DaemonLog, type LogEvent, type LogFields } from '../../src/data/log.ts'
 import { findLogin } from '../../src/data/config.ts'
 import { loginFolder } from '../../src/data/paths.ts'
-import { SECURITY_PROGRAM } from '../../src/daemon/keychain.ts'
 import {
   claudeCredentialsDir,
   claudeSecureStorageDir,
@@ -69,8 +68,8 @@ afterEach(() => {
 
 test('the security program comes from KURMIS_SECURITY_PROGRAM, else /usr/bin/security', () => {
   expect(securityProgramOf({ KURMIS_SECURITY_PROGRAM: '/tmp/fake-security' })).toBe('/tmp/fake-security')
-  expect(securityProgramOf({ KURMIS_SECURITY_PROGRAM: '' }, {})).toBe(SECURITY_PROGRAM)
-  expect(securityProgramOf({}, {})).toBe(SECURITY_PROGRAM)
+  expect(securityProgramOf({ KURMIS_SECURITY_PROGRAM: '' }, {})).toBe('/usr/bin/security')
+  expect(securityProgramOf({}, {})).toBe('/usr/bin/security')
   // An environment without the hook still gets the stand-in test/setup.ts names.
   expect(securityProgramOf({})).toBe(process.env.KURMIS_SECURITY_PROGRAM)
 })
@@ -98,12 +97,6 @@ test('a login is told apart by its settings in the config, not by its id', async
   const none = source({ platform: 'linux', login: () => undefined })
   await none.prime([WORK])
   expect(none.read(WORK)).toBeNull()
-})
-
-test('macOS reads the Keychain, so the source says so; Windows and Linux do not', () => {
-  expect(source().keychain).toBe(true)
-  expect(source({ platform: 'win32' }).keychain).toBe(false)
-  expect(source({ platform: 'linux' }).keychain).toBe(false)
 })
 
 test('macOS: with no item, an extra login is read from its .credentials.json, and nothing is logged', async () => {

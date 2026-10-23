@@ -52,7 +52,7 @@ export interface TokenSourceOptions {
    * config has a token; any other id is answered null and never reaches the Keychain.
    */
   login: (id: string) => LoginRef | undefined
-  /** `KURMIS_SECURITY_PROGRAM` (a test hook) names the `security` program; else `SECURITY_PROGRAM`. */
+  /** `KURMIS_SECURITY_PROGRAM` (a test hook) names the `security` program; else `/usr/bin/security`. */
   env: NodeJS.ProcessEnv
   /** Defaults to `process.platform`. */
   platform?: NodeJS.Platform
@@ -70,8 +70,6 @@ export interface TokenSourceOptions {
 }
 
 export interface TokenSource extends CredentialsSource {
-  /** True when tokens come from the macOS Keychain (with the file as fallback). For whyPassedOver's `keychain`. */
-  readonly keychain: boolean
   /**
    * Has the next `prime` read the login again, as `invalidate` does, except that `prime` does
    * not wait for the Credential Manager read: it goes on in the background. A Credential Manager
@@ -167,7 +165,6 @@ export function createTokenSource(options: TokenSourceOptions): TokenSource {
     : null
 
   return {
-    keychain: keychain !== null,
     read(id: string): ClaudeCredentials | null {
       if (!isKnownLogin(id)) return null
       return credentialManager?.read(id) ?? keychain?.read(id) ?? file.read(id)

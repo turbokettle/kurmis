@@ -14,11 +14,12 @@ import { parseCredentials, type ClaudeCredentials } from '../core/credentials.ts
 export const CREDENTIALS_FILE_NAME = '.credentials.json'
 
 /**
- * Where the proxy reads a login's token. Both readers keep tokens in memory only.
+ * Where the proxy reads a login's token: the Keychain and Credential Manager readers, and the
+ * token source that puts the readers together. They keep tokens in memory only.
  *
  * `read` is what every routing decision calls, so it answers from what the source already has
- * rather than going to look. `prime` does the looking, for a source that has to run a program
- * to find out (the Keychain). A source that has nothing for a login answers null for it.
+ * rather than going to look. `prime` does the looking, because these sources have to run a
+ * program to find out. A source that has nothing for a login answers null for it.
  */
 export interface CredentialsSource {
   /** The login's token as last read, or null when there is none. Never blocks. */
@@ -45,11 +46,12 @@ export interface CredentialsFileReaderOptions {
 }
 
 /**
- * Reads `<credentialsDir>/.credentials.json` whenever `read` is called. The parsed answer is kept
- * for as long as the file's modification time and size stay the same, so a token the CLI has
- * just renewed is seen on the next request, and an unchanged file costs one `stat`.
+ * Reads `<credentialsDir>/.credentials.json` whenever `read` is called, so it needs no `prime`.
+ * The parsed answer is kept for as long as the file's modification time and size stay the same,
+ * so a token the CLI has just renewed is seen on the next request, and an unchanged file costs
+ * one `stat`.
  */
-export class CredentialsFileReader implements CredentialsSource {
+export class CredentialsFileReader {
   private readonly cache = new Map<string, { mtime: number; size: number; value: ClaudeCredentials | null }>()
 
   constructor(private readonly options: CredentialsFileReaderOptions) {}
@@ -71,9 +73,6 @@ export class CredentialsFileReader implements CredentialsSource {
       return null
     }
   }
-
-  /** Nothing to do: `read` reads the file itself. */
-  prime(_ids: readonly string[]): Promise<void> { return Promise.resolve() }
 
   invalidate(id: string): void { this.cache.delete(this.pathOf(id)) }
 

@@ -66,11 +66,11 @@ function readAll(body: NodeJS.ReadableStream): Promise<Buffer> {
 }
 
 /** Resolves with the error the body broke off with, or rejects when it ended normally. */
-function bodyFailure(answer: UpstreamAnswer): Promise<UpstreamError | null> {
+function bodyFailure(answer: UpstreamAnswer): Promise<unknown> {
   return new Promise((resolve, reject) => {
     answer.body.on('data', () => undefined)
     answer.body.on('end', () => reject(new Error('the body ended normally')))
-    answer.body.on('close', () => resolve(answer.failure()))
+    answer.body.on('error', resolve)
   })
 }
 
@@ -185,7 +185,6 @@ describe('createUpstream', () => {
     expect(answer.headers.filter(([name]) => name === 'set-cookie')).toEqual([['set-cookie', 'a=1'], ['set-cookie', 'b=2']])
     expect(answer.headers.every(([name]) => name === name.toLowerCase())).toBe(true)
     expect((await readAll(answer.body)).toString('utf8')).toBe('{"ok":true}')
-    expect(answer.failure()).toBeNull()
     expect(seen.method).toBe('POST')
     expect(seen.url).toBe('/v1/messages?beta=true')
     expect(seen.headers?.['x-custom']).toBe('value')
@@ -335,7 +334,6 @@ describe('createUpstream', () => {
       })
       const answer = await upstreamFor(server.url, { idleTimeoutMs }).send(get('/'))
       expect((await readAll(answer.body)).toString('utf8')).toBe('one two')
-      expect(answer.failure()).toBeNull()
     })
 
     it('ends a wait for the headers that is longer than it', async () => {
@@ -518,7 +516,6 @@ describe('forwardBody', () => {
     expect(response.complete).toBe(false)
     expect(await forwarder.outcomes[0]).toBe('failed')
     expect(forwarder.responses[0]?.destroyed).toBe(true)
-    expect(forwarder.answers[0]?.failure()).toMatchObject({ kind: 'network', code: 'ECONNRESET' })
   })
 
   it('answers aborted and closes the upstream connection when the client goes away', async () => {
