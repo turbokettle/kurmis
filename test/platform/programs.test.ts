@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, test } from 'vitest'
 import {
   findProgram,
+  findProgramForLaunch,
   pathExtensions,
   posixPathFolders,
   ProgramNotFoundError,
@@ -173,7 +174,10 @@ function windowsFiles(contents: Record<string, string | Uint8Array>): ProgramFil
     isFile: (path) => files.has(path.toLowerCase()),
     isExecutable: (path) => files.has(path.toLowerCase()),
     realPath: (path) => (files.has(path.toLowerCase()) ? path : null),
-    read: (path, maxBytes) => files.get(path.toLowerCase())?.subarray(0, maxBytes) ?? null
+    read: (path, maxBytes) => files.get(path.toLowerCase())?.subarray(0, maxBytes) ?? null,
+    list: (folder) => [...files.keys()]
+      .filter((path) => path.startsWith(`${folder.toLowerCase()}\\`) && !path.slice(folder.length + 1).includes('\\'))
+      .map((path) => path.slice(folder.length + 1))
   }
 }
 
@@ -347,6 +351,49 @@ describe('PATH on Windows', () => {
     // On PATH, the PATH entry wins.
     expect(find({ PATH: 'C:\\tools', USERPROFILE: HOME }, { [native]: NATIVE, 'C:\\tools\\claude.exe': NATIVE }))
       .toEqual({ command: 'C:\\tools\\claude.exe', args: [] })
+  })
+
+  describe('while the native installer replaces claude.exe', () => {
+    const LOCAL_BIN = `${HOME}\\.local\\bin`
+    const LAUNCHER = `${LOCAL_BIN}\\claude.exe`
+    const newCopy = (writtenAt: number): string => `${LAUNCHER}.new.4321.${String(writtenAt)}.9f2c`
+    const npmClaude = { [`${NPM}\\claude.cmd`]: fixture('npm-global-claude-exe.cmd'), [`${CLAUDE_PACKAGE}\\bin\\claude.exe`]: NATIVE }
+
+    /** The made-up file system with claude.exe missing, put back `backAfterMs` later when that is set. */
+    const swapping = (contents: Record<string, string>, backAfterMs?: number): ProgramFiles => {
+      const files = windowsFiles(contents)
+      let back = false
+      if (backAfterMs !== undefined) setTimeout(() => { back = true }, backAfterMs)
+      return { ...files, isFile: (path) => (back && path.toLowerCase() === LAUNCHER.toLowerCase()) || files.isFile(path) }
+    }
+    const launch = (path: string, files: ProgramFiles, waitMs?: number) => findProgramForLaunch({
+      env: { PATH: path, USERPROFILE: HOME, KURMIS_CLAUDE_BIN: '' }, platform: 'win32', nodePath: NODE, files, waitMs
+    })
+
+    test('a start waits for claude.exe instead of starting the npm claude later on PATH', async () => {
+      const files = swapping({ ...npmClaude, [newCopy(Date.now())]: NATIVE }, 100)
+      expect(await launch(`${LOCAL_BIN};${NPM}`, files)).toEqual({ command: LAUNCHER, args: [] })
+    })
+
+    test('a start waits for claude.exe when PATH does not have its folder', async () => {
+      const files = swapping({ [newCopy(Date.now())]: NATIVE }, 100)
+      expect(await launch('C:\\Windows\\system32', files)).toEqual({ command: LAUNCHER, args: [] })
+    })
+
+    test('when the wait runs out the start still gets claude.exe, so it fails rather than start another install', async () => {
+      const files = swapping({ ...npmClaude, [newCopy(Date.now())]: NATIVE })
+      expect(await launch(`${LOCAL_BIN};${NPM}`, files, 50)).toEqual({ command: LAUNCHER, args: [] })
+    })
+
+    test('no wait for a new copy older than a minute, which a failed install left behind', async () => {
+      const files = swapping({ ...npmClaude, [newCopy(Date.now() - 120_000)]: NATIVE })
+      expect(await launch(`${LOCAL_BIN};${NPM}`, files)).toEqual({ command: `${CLAUDE_PACKAGE}\\bin\\claude.exe`, args: [] })
+    })
+
+    test('no wait when a claude earlier on PATH would be started anyway', async () => {
+      const files = swapping({ 'C:\\tools\\claude.exe': NATIVE, [newCopy(Date.now())]: NATIVE })
+      expect(await launch(`C:\\tools;${LOCAL_BIN}`, files)).toEqual({ command: 'C:\\tools\\claude.exe', args: [] })
+    })
   })
 
   test('the message names the native installer place', () => {

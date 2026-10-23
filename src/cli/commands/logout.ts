@@ -27,7 +27,7 @@ import { lstatSync } from 'node:fs'
 import { changeConfig, ConfigError, findLogin, loadConfig, removeLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
 import { isLoginId, type LoginRef } from '../../data/login-id.ts'
 import { loginFolder } from '../../data/paths.ts'
-import { findProgram } from '../../platform/programs.ts'
+import { findProgramForLaunch, type ProgramFinder } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { runProgram } from '../../platform/run.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, PLAIN_CLAUDE_LOGIN, usageError, writeLine, type CliContext, type Command } from '../command.ts'
@@ -37,7 +37,7 @@ import { leftBehindText, signOutLogin } from '../sign-out.ts'
 
 export interface LogoutDeps {
   daemon: DaemonClient
-  findProgram: typeof findProgram
+  findProgram: ProgramFinder
   runProgram: typeof runProgram
   platform: NodeJS.Platform
 }
@@ -84,7 +84,7 @@ function errorText(error: unknown): string {
 export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
   const daemon = deps.daemon ?? realDaemonClient
   const signOutDeps = {
-    findProgram: deps.findProgram ?? findProgram,
+    findProgram: deps.findProgram ?? findProgramForLaunch,
     runProgram: deps.runProgram ?? runProgram,
     platform: deps.platform ?? process.platform
   }

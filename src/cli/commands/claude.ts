@@ -30,7 +30,7 @@ import { ConfigError, loadConfig, plainClaudeLogin, resolveLogin, type KurmisCon
 import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data/login-env.ts'
 import type { LoginId } from '../../data/login-id.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
-import { findProgram, ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
+import { findProgramForLaunch, ProgramNotFoundError, type ProgramFinder, type ResolvedProgram } from '../../platform/programs.ts'
 import { EXIT_FAILURE, PLAIN_CLAUDE_LOGIN, writeLine, type CliContext, type Command } from '../command.ts'
 import {
   realChildRunner, realDaemonClient, settleWithin, type ChildRunner, type DaemonClient
@@ -54,7 +54,7 @@ import { notStartedExitCode } from '../wrapper.ts'
 export interface ClaudeDeps {
   daemon: DaemonClient
   child: ChildRunner
-  findProgram: typeof findProgram
+  findProgram: ProgramFinder
   loadConfig: () => KurmisConfig
   platform: NodeJS.Platform
   /** The folder claude starts in, for a relative `--settings` path. */
@@ -107,7 +107,7 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
   const deps: ClaudeDeps = {
     daemon: realDaemonClient,
     child: realChildRunner,
-    findProgram,
+    findProgram: findProgramForLaunch,
     loadConfig: () => loadConfig(),
     platform: process.platform,
     cwd: () => process.cwd(),
@@ -149,7 +149,7 @@ async function runClaude(args: string[], login: string | null, context: CliConte
 
   let program: ResolvedProgram
   try {
-    program = deps.findProgram({ env: context.env, platform: deps.platform })
+    program = await deps.findProgram({ env: context.env, platform: deps.platform })
   } catch (error) {
     // 127, as a shell answers for a program it cannot find (see `notStartedExitCode`).
     if (error instanceof ProgramNotFoundError) return fail(error.message, notStartedExitCode('ENOENT'))

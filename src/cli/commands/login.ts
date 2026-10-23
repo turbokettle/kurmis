@@ -57,7 +57,7 @@ import type { LoginId, LoginRef } from '../../data/login-id.ts'
 import { loginFolder, ownClaudeProbeFolder } from '../../data/paths.ts'
 import { makePrivateDirSync } from '../../platform/files.ts'
 import { holdsStoredRecord } from '../../platform/windows-credentials.ts'
-import { findProgram, ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
+import { findProgramForLaunch, ProgramNotFoundError, type ProgramFinder, type ResolvedProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { runProgram } from '../../platform/run.ts'
 import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, PLAIN_CLAUDE_LOGIN, usageError, writeLine, type CliContext, type Command } from '../command.ts'
@@ -70,7 +70,7 @@ import { hasCredentials } from '../local-credentials.ts'
 export interface LoginDeps {
   daemon: DaemonClient
   runner: ChildRunner
-  findProgram: typeof findProgram
+  findProgram: ProgramFinder
   /**
    * Runs the credential check (`hasCredentials`: `security` or PowerShell for a login without
    * `.credentials.json`), and `claude auth logout` on a new sign-in of an account that is
@@ -341,7 +341,7 @@ export function createLoginCommand(deps: Partial<LoginDeps> = {}): Command {
   const full: LoginDeps = {
     daemon: deps.daemon ?? realDaemonClient,
     runner: deps.runner ?? realChildRunner,
-    findProgram: deps.findProgram ?? findProgram,
+    findProgram: deps.findProgram ?? findProgramForLaunch,
     runProgram: deps.runProgram ?? runProgram,
     home: deps.home ?? homedir,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
@@ -397,7 +397,7 @@ Options:
 
       let program: ResolvedProgram
       try {
-        program = full.findProgram({ env: context.env })
+        program = await full.findProgram({ env: context.env })
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail(context, error.message)
         throw error

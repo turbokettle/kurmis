@@ -19,7 +19,8 @@
 //    instead (`wrapperLoop` in `src/cli/wrapper.ts`).
 // 3. Where Claude Code's native installer puts it: `~/.local/bin/claude` on macOS and Linux,
 //    `%USERPROFILE%\.local\bin\claude.exe` on Windows. The installer does not always put that
-//    folder on PATH.
+//    folder on PATH. On Windows a start can wait for it while the installer replaces it
+//    (`findProgramForLaunch`).
 //
 // What the npm package installs (checked against @anthropic-ai/claude-code 2.1.299):
 // `"bin": { "claude": "bin/claude.exe" }`. The package ships `bin/claude.exe` as a 500-byte
@@ -35,7 +36,7 @@
 //
 // The file checks go through `ProgramFiles`, so the Windows branch is tested with made-up
 // Windows paths on any OS.
-import { accessSync, closeSync, constants, openSync, readSync, realpathSync, statSync } from 'node:fs'
+import { accessSync, closeSync, constants, openSync, readdirSync, readSync, realpathSync, statSync } from 'node:fs'
 import { posix, win32 } from 'node:path'
 import { kurmisEntry } from './detach.ts'
 import { cmdShimInvocation, decodeCmdShim, isAbsoluteWindowsPath, parseCmdShim } from './npm-shim.ts'
@@ -66,6 +67,8 @@ export interface ProgramFiles {
   realPath(path: string): string | null
   /** The first `maxBytes` bytes of the file, or null when it cannot be read. */
   read(path: string, maxBytes: number): Uint8Array | null
+  /** The names in the folder `path`, or none when it cannot be read. */
+  list(path: string): string[]
 }
 
 export interface FindProgramOptions {
@@ -82,6 +85,16 @@ export interface FindProgramOptions {
   ownEntry?: string | null
 }
 
+export interface FindForLaunchOptions extends FindProgramOptions {
+  /** The longest the start waits for the native installer to put `claude.exe` back. */
+  waitMs?: number
+  /** Ends the wait early. */
+  signal?: AbortSignal
+}
+
+/** How a command finds the program: `findProgramForLaunch`, or in a test a fake that answers at once. */
+export type ProgramFinder = (options?: FindProgramOptions) => ResolvedProgram | Promise<ResolvedProgram>
+
 /** The variable that names the program explicitly. */
 const PROGRAM_VARIABLE = 'KURMIS_CLAUDE_BIN'
 
@@ -90,6 +103,15 @@ const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD'
 
 /** A shim is a few hundred bytes; anything much larger is not one. */
 const MAX_SHIM_BYTES = 64 * 1024
+
+/** How long a start waits for the native installer to put `claude.exe` back, and how often it looks. */
+const SWAP_WAIT_MS = 3_000
+const SWAP_POLL_MS = 50
+/**
+ * How old the installer's new copy of `claude.exe` may be and still mean it is replacing the
+ * program. An install that crashed leaves its copy behind, and a start must not wait on that.
+ */
+const SWAP_FRESH_MS = 60_000
 
 /** The Claude Code program to start. Throws `ProgramNotFoundError` with a sentence a person can act on. */
 export function findProgram(options: FindProgramOptions = {}): ResolvedProgram {
@@ -109,6 +131,66 @@ export function findProgram(options: FindProgramOptions = {}): ResolvedProgram {
   return platform === 'win32'
     ? findOnWindows(env, nodePath, files, own)
     : findOnPosix(env, nodePath, files, own)
+}
+
+/**
+ * `findProgram` for a start that comes right after it.
+ *
+ * On Windows Claude Code's native installer, and Claude Code updating itself, replace
+ * `claude.exe` with two renames: the old file is moved aside, then the new copy,
+ * `claude.exe.new.<pid>.<ms>.<hex>`, takes its name. A search between the two renames finds no
+ * `claude.exe` there, and finds nothing or an npm claude later on PATH. So while `claude.exe` is
+ * missing, a new copy written in the last minute is next to it, and it would be the program found
+ * if it were there, this waits up to three seconds for it. It answers with `claude.exe` even when
+ * the wait runs out, so the start fails rather than start another install.
+ *
+ * On macOS and Linux the installer replaces a symlink with one rename, so there is no gap.
+ */
+export async function findProgramForLaunch(options: FindForLaunchOptions = {}): Promise<ResolvedProgram> {
+  const launcher = launcherMidSwap(options)
+  if (launcher === null) return findProgram(options)
+  const files = options.files ?? realFiles
+  const deadline = Date.now() + (options.waitMs ?? SWAP_WAIT_MS)
+  while (!files.isFile(launcher) && Date.now() < deadline && options.signal?.aborted !== true) {
+    await new Promise((resolve) => setTimeout(resolve, SWAP_POLL_MS))
+  }
+  return { command: launcher, args: [] }
+}
+
+/**
+ * The native installer's `claude.exe` while the installer has it out of place and it would
+ * otherwise be the program found; null when that is not so. See `findProgramForLaunch`.
+ */
+function launcherMidSwap(options: FindProgramOptions): string | null {
+  if ((options.platform ?? process.platform) !== 'win32') return null
+  const files = options.files ?? realFiles
+  const launcher = nativeWindowsProgram(options.env ?? process.env)
+  if (launcher === null || files.isFile(launcher) || !swapUnderway(launcher, files)) return null
+  const isLauncher = (path: string): boolean => path.toLowerCase() === launcher.toLowerCase()
+  // The search again, with `claude.exe` counted as there.
+  const assumed: ProgramFiles = { ...files, isFile: (path) => isLauncher(path) || files.isFile(path) }
+  try {
+    return isLauncher(findProgram({ ...options, files: assumed }).command) ? launcher : null
+  } catch {
+    return null
+  }
+}
+
+/** Whether the installer's new copy of `launcher` is next to it, written in the last minute. */
+function swapUnderway(launcher: string, files: ProgramFiles): boolean {
+  const prefix = `${win32.basename(launcher).toLowerCase()}.new.`
+  return files.list(win32.dirname(launcher)).some((name) => {
+    const lower = name.toLowerCase()
+    if (!lower.startsWith(prefix)) return false
+    const written = Number(/^\d+\.(\d+)\./.exec(lower.slice(prefix.length))?.[1])
+    return Number.isFinite(written) && Math.abs(Date.now() - written) < SWAP_FRESH_MS
+  })
+}
+
+/** Where the native installer puts `claude.exe`, or null when `USERPROFILE` is not a full path. */
+function nativeWindowsProgram(env: NodeJS.ProcessEnv): string | null {
+  const home = envValue(env, 'USERPROFILE')
+  return home !== undefined && isAbsoluteWindowsPath(home) ? win32.join(home, '.local', 'bin', 'claude.exe') : null
 }
 
 /**
@@ -170,9 +252,8 @@ function findOnWindows(env: NodeJS.ProcessEnv, nodePath: string, files: ProgramF
     }
   }
   const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => `claude${extension}`).join(', ')})`]
-  const home = envValue(env, 'USERPROFILE')
-  if (home !== undefined && isAbsoluteWindowsPath(home)) {
-    const native = win32.join(home, '.local', 'bin', 'claude.exe')
+  const native = nativeWindowsProgram(env)
+  if (native !== null) {
     if (files.isFile(native)) return { command: native, args: [] }
     looked.push(native)
   }
@@ -283,6 +364,13 @@ const realFiles: ProgramFiles = {
       return realpathSync(path)
     } catch {
       return null
+    }
+  },
+  list(path) {
+    try {
+      return readdirSync(path)
+    } catch {
+      return []
     }
   },
   read(path, maxBytes) {

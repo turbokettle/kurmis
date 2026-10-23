@@ -9,14 +9,14 @@ import { applyEnvPatch } from '../core/routed-env.ts'
 import { claudeLoginEnv } from '../data/login-env.ts'
 import type { LoginRef } from '../data/login-id.ts'
 import { loginFolder } from '../data/paths.ts'
-import { ProgramNotFoundError, type findProgram } from '../platform/programs.ts'
+import { ProgramNotFoundError, type ProgramFinder } from '../platform/programs.ts'
 import type { runProgram } from '../platform/run.ts'
 
 /** How long `claude auth logout` may take. It removes local files and items and revokes the token. */
 const LOGOUT_TIMEOUT_MS = 30_000
 
 export interface SignOutDeps {
-  findProgram: typeof findProgram
+  findProgram: ProgramFinder
   runProgram: typeof runProgram
   platform: NodeJS.Platform
 }
@@ -29,7 +29,7 @@ export interface SignOutDeps {
 export async function signOutLogin(login: LoginRef, env: NodeJS.ProcessEnv, deps: SignOutDeps): Promise<string | null> {
   let problem: string
   try {
-    const program = deps.findProgram({ env })
+    const program = await deps.findProgram({ env })
     // On Windows claude deletes the record in Credential Manager only with the switch on.
     const patch = claudeLoginEnv(login, deps.platform === 'win32')
     const result = await deps.runProgram(program.command, [...program.args, 'auth', 'logout'],

@@ -998,7 +998,12 @@ and `PATHEXT` whatever the case of their names. The current folder and relative 
 skipped on every OS. An `.exe` or `.com` is started directly. A `.cmd` or `.bat` is read as a
 package manager's shim and its target is started. `.ps1` and extensionless shims are never
 used. When nothing is found, Claude Code is looked for where its native installer puts it:
-`%USERPROFILE%\.local\bin\claude.exe` (`~/.local/bin/claude` on macOS and Linux). On macOS and
+`%USERPROFILE%\.local\bin\claude.exe` (`~/.local/bin/claude` on macOS and Linux). On Windows
+that installer, and Claude Code updating itself, replace `claude.exe` with two renames, so for a
+moment it is missing. A start (`findProgramForLaunch`) that finds it missing, with a
+`claude.exe.new.*` copy written in the last minute next to it, waits up to three seconds for it
+when it would have been the program found, rather than start an npm claude later on PATH or
+report none. When the wait runs out it starts `claude.exe` anyway and fails. On macOS and
 Linux a PATH hit that is a symlink to a `.js` file (an npm install of a Claude Code version whose
 bin was `cli.js`) runs that file through Node, so a PATH without `node` on it still works. A
 PATH hit that resolves to kurmis' own bundle (a link to it, or a shim that starts it) is skipped

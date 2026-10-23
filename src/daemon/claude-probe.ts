@@ -45,7 +45,7 @@ import type { LoginRef } from '../data/login-id.ts'
 import { ownClaudeProbeFolder, probeWorkFolder } from '../data/paths.ts'
 import { makePrivateDirSync } from '../platform/files.ts'
 import { startFrameProcess, type FrameProcessExit } from '../platform/frame-process.ts'
-import { findProgram, ProgramNotFoundError, type ResolvedProgram } from '../platform/programs.ts'
+import { findProgramForLaunch, ProgramNotFoundError, type ResolvedProgram } from '../platform/programs.ts'
 import type { LogReason } from '../data/log.ts'
 
 export interface ProbeOptions {
@@ -124,7 +124,7 @@ export async function probeClaudeUsage(login: LoginRef, options: ProbeOptions): 
 
   let program: ResolvedProgram
   try {
-    program = findProgram({ env: options.env })
+    program = await findProgramForLaunch({ env: options.env, signal: options.signal })
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
       return probeFailure(null, 'missing', programMissingText())

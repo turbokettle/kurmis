@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023103828" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023103932" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -2364,6 +2364,9 @@ var ProgramNotFoundError = class extends Error {
 var PROGRAM_VARIABLE = "KURMIS_CLAUDE_BIN";
 var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
 var MAX_SHIM_BYTES = 64 * 1024;
+var SWAP_WAIT_MS = 3e3;
+var SWAP_POLL_MS = 50;
+var SWAP_FRESH_MS = 6e4;
 function findProgram(options = {}) {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
@@ -2378,6 +2381,42 @@ function findProgram(options = {}) {
   const ownEntry = options.ownEntry === void 0 ? kurmisEntry({ env }) : options.ownEntry;
   const own = ownEntry === null ? null : files.realPath(ownEntry) ?? ownEntry;
   return platform === "win32" ? findOnWindows(env, nodePath, files, own) : findOnPosix(env, nodePath, files, own);
+}
+async function findProgramForLaunch(options = {}) {
+  const launcher = launcherMidSwap(options);
+  if (launcher === null) return findProgram(options);
+  const files = options.files ?? realFiles;
+  const deadline = Date.now() + (options.waitMs ?? SWAP_WAIT_MS);
+  while (!files.isFile(launcher) && Date.now() < deadline && options.signal?.aborted !== true) {
+    await new Promise((resolve8) => setTimeout(resolve8, SWAP_POLL_MS));
+  }
+  return { command: launcher, args: [] };
+}
+function launcherMidSwap(options) {
+  if ((options.platform ?? process.platform) !== "win32") return null;
+  const files = options.files ?? realFiles;
+  const launcher = nativeWindowsProgram(options.env ?? process.env);
+  if (launcher === null || files.isFile(launcher) || !swapUnderway(launcher, files)) return null;
+  const isLauncher = (path) => path.toLowerCase() === launcher.toLowerCase();
+  const assumed = { ...files, isFile: (path) => isLauncher(path) || files.isFile(path) };
+  try {
+    return isLauncher(findProgram({ ...options, files: assumed }).command) ? launcher : null;
+  } catch {
+    return null;
+  }
+}
+function swapUnderway(launcher, files) {
+  const prefix = `${import_node_path8.win32.basename(launcher).toLowerCase()}.new.`;
+  return files.list(import_node_path8.win32.dirname(launcher)).some((name) => {
+    const lower = name.toLowerCase();
+    if (!lower.startsWith(prefix)) return false;
+    const written = Number(/^\d+\.(\d+)\./.exec(lower.slice(prefix.length))?.[1]);
+    return Number.isFinite(written) && Math.abs(Date.now() - written) < SWAP_FRESH_MS;
+  });
+}
+function nativeWindowsProgram(env) {
+  const home = envValue(env, "USERPROFILE");
+  return home !== void 0 && isAbsoluteWindowsPath(home) ? import_node_path8.win32.join(home, ".local", "bin", "claude.exe") : null;
 }
 function namedProgram(env, platform) {
   const own = platform === "win32" ? envValue(env, PROGRAM_VARIABLE) : env[PROGRAM_VARIABLE];
@@ -2427,9 +2466,8 @@ function findOnWindows(env, nodePath, files, own) {
     }
   }
   const looked = [`the ${countFolders(folders.length)} on PATH (as ${extensions.map((extension) => `claude${extension}`).join(", ")})`];
-  const home = envValue(env, "USERPROFILE");
-  if (home !== void 0 && isAbsoluteWindowsPath(home)) {
-    const native = import_node_path8.win32.join(home, ".local", "bin", "claude.exe");
+  const native = nativeWindowsProgram(env);
+  if (native !== null) {
     if (files.isFile(native)) return { command: native, args: [] };
     looked.push(native);
   }
@@ -2506,6 +2544,13 @@ var realFiles = {
       return (0, import_node_fs8.realpathSync)(path);
     } catch {
       return null;
+    }
+  },
+  list(path) {
+    try {
+      return (0, import_node_fs8.readdirSync)(path);
+    } catch {
+      return [];
     }
   },
   read(path, maxBytes) {
@@ -3514,7 +3559,7 @@ function createClaudeCommand(overrides = {}) {
   const deps = {
     daemon: realDaemonClient,
     child: realChildRunner,
-    findProgram,
+    findProgram: findProgramForLaunch,
     loadConfig: () => loadConfig(),
     platform: process.platform,
     cwd: () => process.cwd(),
@@ -3542,7 +3587,7 @@ async function runClaude(args, login, context, deps) {
   if ("error" in userSettings) return fail4(userSettings.error);
   let program;
   try {
-    program = deps.findProgram({ env: context.env, platform: deps.platform });
+    program = await deps.findProgram({ env: context.env, platform: deps.platform });
   } catch (error) {
     if (error instanceof ProgramNotFoundError) return fail4(error.message, notStartedExitCode("ENOENT"));
     return fail4(messageOf(error));
@@ -4146,7 +4191,7 @@ async function probeClaudeUsage(login, options) {
   if (options.signal?.aborted === true) return abortedProbe(null);
   let program;
   try {
-    program = findProgram({ env: options.env });
+    program = await findProgramForLaunch({ env: options.env, signal: options.signal });
   } catch (error) {
     if (error instanceof ProgramNotFoundError) {
       return probeFailure(null, "missing", programMissingText());
@@ -7584,7 +7629,7 @@ var LOGOUT_TIMEOUT_MS = 3e4;
 async function signOutLogin(login, env, deps) {
   let problem;
   try {
-    const program = deps.findProgram({ env });
+    const program = await deps.findProgram({ env });
     const patch = claudeLoginEnv(login, deps.platform === "win32");
     const result = await deps.runProgram(
       program.command,
@@ -7824,7 +7869,7 @@ function createLoginCommand(deps = {}) {
   const full = {
     daemon: deps.daemon ?? realDaemonClient,
     runner: deps.runner ?? realChildRunner,
-    findProgram: deps.findProgram ?? findProgram,
+    findProgram: deps.findProgram ?? findProgramForLaunch,
     runProgram: deps.runProgram ?? runProgram,
     home: deps.home ?? import_node_os12.homedir,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
@@ -7876,7 +7921,7 @@ Options:
       }
       let program;
       try {
-        program = full.findProgram({ env: context.env });
+        program = await full.findProgram({ env: context.env });
       } catch (error) {
         if (error instanceof ProgramNotFoundError) return fail2(context, error.message);
         throw error;
@@ -7928,7 +7973,7 @@ function errorText(error) {
 function createLoginLogout(deps = {}) {
   const daemon = deps.daemon ?? realDaemonClient;
   const signOutDeps = {
-    findProgram: deps.findProgram ?? findProgram,
+    findProgram: deps.findProgram ?? findProgramForLaunch,
     runProgram: deps.runProgram ?? runProgram,
     platform: deps.platform ?? process.platform
   };
