@@ -53,8 +53,10 @@ Shows every login with its settings and usage, whether the daemon runs, and whet
 routing is on. It does not start the daemon, and it exits 0 either way. For example:
 
   kurmis daemon 0.1.0, pid 4242, port 28411, running for 2h 5m
-  Global routing is off: only Claude Code started with "kurmis claude" goes
-  through kurmis. "kurmis setup" turns it on.
+
+  Global routing is off: only "kurmis claude" and "kurmis codex" go through
+  kurmis. Plain "claude" does not.
+  Run "kurmis setup" to turn on global routing.
 
   own-example (Claude, id k3v9q2m7xa)           <- alias, provider and id
     the login plain claude uses

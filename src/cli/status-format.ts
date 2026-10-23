@@ -257,10 +257,11 @@ export function formatStatus(report: StatusReport, now: number, options: StatusF
     const block = source === undefined ? null : routeBlockOf(report, source, now)
     if (login.blocked !== null && block !== null) login.blocked.text = blockText(block, now, options, true)
   })
-  const lines = [...daemonLines(json, report, now), ...wrap(GLOBAL_ROUTING_TEXT[json.globalRouting], '', '')]
+  const lines = [...daemonLines(json, report, now), '', ...GLOBAL_ROUTING_TEXT[json.globalRouting].flatMap((line) => wrap(line, '', ''))]
   const labelWidth = Math.min(MAX_LABEL_WIDTH, Math.max(0, ...json.logins.flatMap((login) =>
     (login.usage?.windows ?? []).map((window) => window.label.length))))
   for (const warning of json.warnings) lines.push('', ...wrap(`Warning: ${warning}`, '', '  '))
+  if (report.source === 'files') lines.push('', 'Logins are read from config.json, and the usage is cached by the daemon:')
   for (const login of json.logins) {
     lines.push('', ...loginLines(login, now, labelWidth))
   }
@@ -272,20 +273,20 @@ export function formatStatus(report: StatusReport, now: number, options: StatusF
 }
 
 /** What starts the daemon, for the text that says it is not running or will be replaced. */
-const DAEMON_STARTERS = '"kurmis claude", "kurmis codex" without --login, "kurmis setup" and "kurmis daemon start"'
+const DAEMON_STARTERS = ['"kurmis claude" or "kurmis codex" without --login', '"kurmis setup"', '"kurmis daemon start"']
 
 /** The lines about the daemon at the top of the text. */
 function daemonLines(json: StatusJson, report: StatusReport, now: number): string[] {
   const daemon = report.daemon
   if (daemon === null) {
-    return wrap(`The kurmis daemon is not running. ${DAEMON_STARTERS} each start it. The logins below come from ` +
-      'config.json, with the usage the daemon read last.', '', '')
+    return ['The kurmis daemon is not running. It is started automatically by',
+      ...DAEMON_STARTERS.flatMap((starter) => wrap(starter, '  - ', '    '))]
   }
   const lines = [`kurmis daemon ${daemon.version}, pid ${String(daemon.pid)}, port ${String(daemon.port)}, ` +
     `running for ${spanText(now - daemon.startedAt)}`]
   if (json.daemon?.older === true) {
     lines.push(...wrap(`It runs an older kurmis than this one (${report.version}). The next ` +
-      `${DAEMON_STARTERS.replace(' and ', ' or ')} replaces it.`, '', ''))
+      `${DAEMON_STARTERS.slice(0, -1).join(', ')} or ${DAEMON_STARTERS.at(-1)!} replaces it.`, '', ''))
   }
   if (json.daemon?.newer === true) {
     lines.push(...wrap(report.source === 'daemon'
@@ -294,19 +295,19 @@ function daemonLines(json: StatusJson, report: StatusReport, now: number): strin
         'Update this kurmis, or stop the daemon with "kurmis daemon stop" and run the command again.', '', ''))
   }
   if (report.source === 'files') {
-    lines.push(...wrap('This kurmis cannot read its status, so the logins below come from config.json, with the ' +
-      'usage the daemon read last.', '', ''))
+    lines.push('This kurmis cannot read its status.')
   }
   return lines
 }
 
-const GLOBAL_ROUTING_TEXT: Record<GlobalRoutingState, string> = {
-  on: 'Global routing is on: a plain claude and the Claude Code editor extensions go through kurmis. ' +
-    '"kurmis setup --pause" pauses it.',
-  paused: 'Global routing is paused: only Claude Code started with "kurmis claude" goes through kurmis. ' +
-    '"kurmis setup" turns it on again.',
-  off: 'Global routing is off: only Claude Code started with "kurmis claude" goes through kurmis. ' +
-    '"kurmis setup" turns it on.'
+/** The lines about global routing, each wrapped on its own. */
+const GLOBAL_ROUTING_TEXT: Record<GlobalRoutingState, string[]> = {
+  on: ['Global routing is on: plain "claude" and the Claude Code editor extensions go through kurmis.',
+    'Run "kurmis setup --pause" to pause it.'],
+  paused: ['Global routing is paused: only "kurmis claude" and "kurmis codex" go through kurmis. Plain "claude" does not.',
+    'Run "kurmis setup" to turn it on again.'],
+  off: ['Global routing is off: only "kurmis claude" and "kurmis codex" go through kurmis. Plain "claude" does not.',
+    'Run "kurmis setup" to turn on global routing.']
 }
 
 /** The text output's width. */

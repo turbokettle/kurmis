@@ -66,8 +66,10 @@ function sampleStatus() {
 describe('kurmis status as text', () => {
   test('one block per login, with usage, limits, routing and why a login is passed over', () => {
     expect(formatStatus(sampleStatus(), NOW, { keychain: false, timeZone: 'UTC' })).toBe(`kurmis daemon 0.1.0, pid 4242, port 40123, running for 2h 5m
-Global routing is off: only Claude Code started with "kurmis claude" goes
-through kurmis. "kurmis setup" turns it on.
+
+Global routing is off: only "kurmis claude" and "kurmis codex" go through
+kurmis. Plain "claude" does not.
+Run "kurmis setup" to turn on global routing.
 
 own-example (Claude, id ownclaude1)
   the login plain claude uses
@@ -149,7 +151,7 @@ starting on own-example, whose usage comes back first (in 1h).
   })
 
   test('no Codex line without Codex logins', () => {
-    expect(formatStatus(statusAnswer([loginStatus(OWN_CLAUDE_REF)]), NOW, { keychain: false })).not.toContain('kurmis codex')
+    expect(formatStatus(statusAnswer([loginStatus(OWN_CLAUDE_REF)]), NOW, { keychain: false })).not.toContain('kurmis codex would start')
   })
 })
 
@@ -312,15 +314,20 @@ describe('kurmis status without the daemon, and global routing', () => {
 
   test('says the daemon is not running and what starts it, and shows the last usage with its age', () => {
     const text = formatReport(filesReport(), NOW, { keychain: false, timeZone: 'UTC' })
-    expect(text).toBe(`The kurmis daemon is not running. "kurmis claude", "kurmis codex" without
---login, "kurmis setup" and "kurmis daemon start" each start it. The logins
-below come from config.json, with the usage the daemon read last.
-Global routing is paused: only Claude Code started with "kurmis claude" goes
-through kurmis. "kurmis setup" turns it on again.
+    expect(text).toBe(`The kurmis daemon is not running. It is started automatically by
+  - "kurmis claude" or "kurmis codex" without --login
+  - "kurmis setup"
+  - "kurmis daemon start"
+
+Global routing is paused: only "kurmis claude" and "kurmis codex" go through
+kurmis. Plain "claude" does not.
+Run "kurmis setup" to turn it on again.
 
 Warning: work-example and own-example, the login plain claude uses, are the same
   Claude account (own@example.com), so they use one subscription.
   "kurmis logout work-example" removes work-example.
+
+Logins are read from config.json, and the usage is cached by the daemon:
 
 own-example (Claude, id ownclaude1)  own@example.com
   the login plain claude uses
@@ -360,7 +367,7 @@ own-example (Codex, id owncodex01)
     expect(json.warnings).toContain('Global routing is on, but the daemon is not running, so a plain claude and the Claude Code ' +
       'editor extensions cannot reach Anthropic. "kurmis daemon start" starts it.')
     const text = formatReport(filesReport({ globalRouting: 'on' }), NOW, { keychain: false })
-    expect(text).toContain('Global routing is on: a plain claude and the Claude Code editor extensions go\nthrough kurmis. "kurmis setup --pause" pauses it.\n')
+    expect(text).toContain('Global routing is on: plain "claude" and the Claude Code editor extensions go\nthrough kurmis.\nRun "kurmis setup --pause" to pause it.\n')
     for (const line of text.split('\n')) expect(line.length).toBeLessThanOrEqual(80)
     // While the daemon runs, there is nothing to warn about.
     expect(reportJson(daemonStatus(sampleStatus(), { globalRouting: 'on' }), NOW, { keychain: false }).warnings).toEqual([])
@@ -370,9 +377,10 @@ own-example (Codex, id owncodex01)
     const report = daemonStatus(sampleStatus(), { version: '0.2.0' })
     expect(reportJson(report, NOW, { keychain: false }).daemon?.older).toBe(true)
     expect(formatReport(report, NOW, { keychain: false })).toContain(`kurmis daemon 0.1.0, pid 4242, port 40123, running for 2h 5m
-It runs an older kurmis than this one (0.2.0). The next "kurmis claude",
+It runs an older kurmis than this one (0.2.0). The next "kurmis claude" or
 "kurmis codex" without --login, "kurmis setup" or "kurmis daemon start" replaces
 it.
+
 Global routing is off`)
     // A newer daemon, or one run from the source tree, is not older.
     expect(reportJson(daemonStatus(sampleStatus(), { version: 'dev' }), NOW, { keychain: false }).daemon?.older).toBe(false)
@@ -384,6 +392,7 @@ Global routing is off`)
     expect(formatReport(usable, NOW, { keychain: false })).toContain(`running for 2h 5m
 It runs a newer kurmis than this one (0.0.9), which this kurmis does not
 replace.
+
 Global routing is off`)
     const unusable = filesReport({ daemon: { version: '0.1.0', apiVersion: CONTROL_API_VERSION + 1, pid: 4242, port: 40123, startedAt: NOW - HOUR } })
     expect(reportJson(unusable, NOW, { keychain: false })).toMatchObject({ source: 'files', daemon: { older: false, newer: true } })
@@ -399,6 +408,7 @@ and run the command again.`)
     expect(reportJson(report, NOW, { keychain: false })).toMatchObject({ source: 'files', daemon: { version: '0.0.9', older: true } })
     expect(formatReport(report, NOW, { keychain: false })).toContain(`kurmis daemon 0.0.9, pid 4242, port 40123, running for 1h
 It runs an older kurmis than this one (0.1.0).`)
-    expect(formatReport(report, NOW, { keychain: false })).toContain('This kurmis cannot read its status, so the logins below come from config.json,\n')
+    expect(formatReport(report, NOW, { keychain: false })).toContain('replaces\nit.\nThis kurmis cannot read its status.\n\nGlobal routing is paused')
+    expect(formatReport(report, NOW, { keychain: false })).toContain('Logins are read from config.json, and the usage is cached by the daemon:\n')
   })
 })

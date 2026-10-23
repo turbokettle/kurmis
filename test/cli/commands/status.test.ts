@@ -43,7 +43,7 @@ describe('kurmis status with the daemon running', () => {
     expect(await command({ daemon }).run([], out.context)).toBe(0)
     expect(daemon.calls).toEqual(['findDaemon', 'readStatus'])
     expect(out.stdout()).toContain('kurmis daemon 0.1.0, pid 4242, port 40123')
-    expect(out.stdout()).toContain('Global routing is off: only Claude Code started with "kurmis claude" goes\nthrough kurmis. "kurmis setup" turns it on.\n')
+    expect(out.stdout()).toContain('Global routing is off: only "kurmis claude" and "kurmis codex" go through\nkurmis. Plain "claude" does not.\nRun "kurmis setup" to turn on global routing.\n')
     expect(out.stdout()).toContain('  Codex 5h    7%')
     // The alias is the id, so the id is not repeated.
     expect(out.stdout()).toContain('ownclaude1 (Claude)\n  the login plain claude uses\n  signed in')
@@ -178,7 +178,7 @@ describe('kurmis status with the daemon not running', () => {
     expect(daemon.calls).toEqual(['findDaemon'])
     expect(out.stderr()).toBe('')
     const text = out.stdout()
-    expect(text).toMatch(/^The kurmis daemon is not running\. "kurmis claude", "kurmis codex" without\n--login, "kurmis setup" and "kurmis daemon start" each start it\./)
+    expect(text).toMatch(/^The kurmis daemon is not running\. It is started automatically by\n {2}- "kurmis claude" or "kurmis codex" without --login\n/)
     expect(text).toContain(`${OWN_CLAUDE} (Claude)\n  the login plain claude uses\n  no credentials on this machine, routing on`)
     expect(text).toContain('work-example (Claude, id workclaude)  work@example.com\n' +
       '  credentials on this machine, routing on, limits 90% 5 hour, 100% weekly,\n  use first, 1 session, plan max\n')
