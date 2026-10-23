@@ -157,9 +157,11 @@ export function portAcceptsConnections(port: number, timeoutMs = 1_000): Promise
 /**
  * Compares two kurmis versions numerically, part by part: `0.10.0` is newer than `0.9.1`. A
  * pre-release (`1.0.0-beta.1`) is older than the same version without one, and two
- * pre-releases of one version compare by their text. When both carry a build time after `+`
- * (`0.1.0+20261023120000`, which `scripts/build.mjs` adds), the later build is newer, so an
- * update without a new version number still replaces the running daemon. Answers -1, 0 or 1,
+ * pre-releases of one version compare by their text. A build time after `+`
+ * (`0.1.0+20261023120000`, which `scripts/build.mjs` adds) decides between two of the same
+ * version: the later build is newer, and one with a build time is newer than one without, which
+ * a bundle built before the build time was added has. So an update without a new version
+ * number still replaces the running daemon. Answers -1, 0 or 1,
  * or null when either is not a version (such as `dev`, which code run from the source tree
  * reports), since then neither may replace the other.
  */
@@ -174,7 +176,9 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 | null {
     if (x !== y) return x < y ? -1 : 1
   }
   if (left.pre === right.pre) {
-    if (left.build === null || right.build === null || left.build === right.build) return 0
+    if (left.build === right.build) return 0
+    if (left.build === null) return -1
+    if (right.build === null) return 1
     return left.build < right.build ? -1 : 1
   }
   if (left.pre === null) return 1

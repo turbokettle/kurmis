@@ -469,11 +469,13 @@ open requests in the background while the new one serves. A routed Claude CLI re
 that finds no daemon (`CLAUDE_CODE_MAX_RETRIES=15`), which covers the moment in between.
 
 Versions are compared numerically (`0.10.0` is newer than `0.9.1`). `scripts/build.mjs` adds the
-build time to the version in `package.json` (`0.1.0+20261023120000`), and of two builds of one
-version the later is newer, so an update replaces the daemon although the version number stays
-the same (`compareVersions` in `src/daemon/lifecycle.ts`). An older kurmis never replaces a
-newer daemon, so two builds of one version with different control API versions do not keep
-replacing each other: the one with the higher control API version stays.
+build time to the version in `package.json` (`0.1.0+20261023120000`). Of two builds of one
+version the later is newer, and one with a build time is newer than one without (a bundle built
+before the build time was added), so an update replaces the daemon although the version number
+stays the same (`compareVersions` in `src/daemon/lifecycle.ts`). A newer daemon (a higher
+version, a later build of the same version, or the same build with a higher control API version)
+is never replaced by an older kurmis, so two builds with different control API versions do not
+keep replacing each other: the one with the higher control API version stays.
 
 A daemon on another port than `config.json` names (the port was changed while it ran) is not
 reached by the new daemon's bind, so the CLI asks it to stop with a control `stop` before it

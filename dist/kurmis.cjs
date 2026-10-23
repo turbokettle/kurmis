@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023105131" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023105343" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -1082,7 +1082,9 @@ function compareVersions(a, b) {
     if (x !== y) return x < y ? -1 : 1;
   }
   if (left.pre === right.pre) {
-    if (left.build === null || right.build === null || left.build === right.build) return 0;
+    if (left.build === right.build) return 0;
+    if (left.build === null) return -1;
+    if (right.build === null) return 1;
     return left.build < right.build ? -1 : 1;
   }
   if (left.pre === null) return 1;

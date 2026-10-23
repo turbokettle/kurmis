@@ -19,8 +19,8 @@
 // names is asked to stop by the CLI, unless it is newer than this kurmis, or its version cannot
 // be compared with this kurmis' own and is another.
 //
-// **A newer daemon.** A newer daemon (a higher version, or the same version with a higher
-// control API version) is never replaced. When its control API version is this kurmis' own, it
+// **A newer daemon.** A newer daemon (a higher version, a later build of the same version, or
+// the same build with a higher control API version; `daemonAge`) is never replaced. When its control API version is this kurmis' own, it
 // is used. Otherwise this kurmis cannot read its answers, so `startDaemon` and `ensureDaemon`
 // fail with a `DaemonNotUsableError` that says so and what to do: update this kurmis, or stop the
 // daemon with `kurmis daemon stop` and run the command again. The same goes for a daemon whose
