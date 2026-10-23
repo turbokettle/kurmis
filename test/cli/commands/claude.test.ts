@@ -220,7 +220,7 @@ describe('kurmis claude on Auto', () => {
     expect(h.daemon.calls).toContain(`requestProbe:${OWN_CLAUDE},spareclaude`)
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toContain('x-kurmis-started-on: workclaude')
     expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(WORK_FOLDER())
-    expect(out.stderr()).toContain('is not signed in, so claude starts on work-example\'s credentials')
+    expect(out.stderr()).toBe('')
   })
 
   test('a known sign-in state of the login plain claude uses needs no probe, whatever the extra logins say', async () => {
@@ -273,7 +273,7 @@ describe('kurmis claude on Auto', () => {
     expect(spec?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`, 'x-kurmis-started-on: workclaude'))
     const settings = passedSettings(spec)
     expect(settings.env).not.toHaveProperty('CLAUDE_SECURESTORAGE_CONFIG_DIR')
-    expect(out.stderr()).toContain(`kurmis claude: ${OWN_CLAUDE}, the login plain claude uses, is not signed in, so claude starts on work-example's credentials`)
+    expect(out.stderr()).toBe('')
   })
 
   // A pool with nothing signed in is a sign-in problem with a pool login, so claude is not

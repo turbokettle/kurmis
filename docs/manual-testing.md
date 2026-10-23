@@ -169,12 +169,12 @@ Run this last, since it removes the logins added above.
     edit the JSON with a script, and write it back with
     `security add-generic-password -U -a <same account> -s <name> -w <json>`. Never print it.
 - **Over ssh.** Without setup: ssh in and run `kurmis daemon stop`, then `kurmis daemon start`.
-  The daemon starts, and `kurmis status` shows the logins whose token is in the Keychain
-  without a token. Then run `kurmis setup` at the screen and log out and in again. Over ssh,
+  The daemon starts, and `kurmis status` warns that it cannot read the login Keychain and shows
+  the logins whose token is in the Keychain without a token. Then run `kurmis setup` at the screen and log out and in again. Over ssh,
   `kurmis daemon status` should show the daemon started at that login, and `kurmis claude -p
   --model haiku "Reply ok"` should be routed on a Keychain login.
 - **The login plain claude uses, signed out.** When `claude` itself is signed out, `kurmis claude`
-  says it starts on another login's credentials and still routes. Check it right after
+  starts on another login's credentials and still routes. Check it right after
   `kurmis daemon stop; kurmis daemon start` too: the first `kurmis claude -p "Reply ok"` waits for
   the daemon's first probe and starts on the other login as well.
 

@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023120640" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023121158" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -3622,16 +3622,11 @@ async function runClaude(args, login, context, deps) {
   if (pinned !== null) {
     startedOn = pinned;
   } else {
-    const ownRow = connection.status.logins.find((login2) => login2.usedByPlainClaude);
     if (config === null) {
-      startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true };
+      startedOn = connection.status.logins.find((login2) => login2.usedByPlainClaude) ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true };
     } else {
       const status2 = await withFirstProbe(connection, connection.status, context, deps);
       startedOn = autoStartLogin(status2.logins) ?? plainClaudeLogin(config);
-      if (!startedOn.usedByPlainClaude) {
-        const own = ownRow ?? plainClaudeLogin(config);
-        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${PLAIN_CLAUDE_LOGIN}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
-      }
     }
   }
   let secureStorageDir = null;

@@ -192,19 +192,14 @@ async function runClaude(args: string[], login: string | null, context: CliConte
   if (pinned !== null) {
     startedOn = pinned
   } else {
-    const ownRow = connection.status.logins.find((login) => login.usedByPlainClaude)
     if (config === null) {
       // The daemon's id for the login plain claude uses. Without one, no started-on header is
       // sent, which the daemon reads as that login too.
-      startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true }
+      startedOn = connection.status.logins.find((login) => login.usedByPlainClaude) ??
+        { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true }
     } else {
       const status = await withFirstProbe(connection, connection.status, context, deps)
       startedOn = autoStartLogin(status.logins) ?? plainClaudeLogin(config)
-      if (!startedOn.usedByPlainClaude) {
-        const own = ownRow ?? plainClaudeLogin(config)
-        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${PLAIN_CLAUDE_LOGIN}, is not signed in, so claude starts on ` +
-          `${startedOn.alias}'s credentials; requests are still routed on Auto.`)
-      }
     }
   }
 
