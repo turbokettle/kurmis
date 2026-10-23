@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'vitest'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
 import { usageFromGetUsage, usageFromRateLimitEvent } from '../../src/core/usage.ts'
-import { allUsageWindows, busiestPlanWindow, planUsageWindows, usageExhausted } from '../../src/core/usage-rules.ts'
+import { allUsageWindows, busiestPlanWindow, planUsageWindows } from '../../src/core/usage-rules.ts'
 
 const NOW = Date.parse('2026-09-01T12:00:00Z')
 const RESET = '2026-09-06T12:00:00.000Z'
@@ -41,7 +41,6 @@ function event(previous: AccountUsage | null, percent: number): AccountUsage {
 function expectHidden(usage: AccountUsage): void {
   expect(allUsageWindows(usage).map((window) => window.key)).not.toContain(EXTRA_KEY)
   expect(planUsageWindows(usage).map((window) => window.key)).not.toContain(EXTRA_KEY)
-  expect(usageExhausted(usage)).toBe(false)
 }
 
 describe('the extra-usage window', () => {
@@ -74,7 +73,6 @@ describe('the extra-usage window', () => {
     const usage = event(probe(true), 100)
     expect(planUsageWindows(usage).map((window) => window.key)).toContain(EXTRA_KEY)
     expect(busiestPlanWindow(usage)?.key).toBe(EXTRA_KEY)
-    expect(usageExhausted(usage)).toBe(true)
   })
 
   test('enabled windows with different resets or no plain window are not mirrors', () => {

@@ -1,12 +1,11 @@
 // The rules every reader of a usage snapshot shares: which windows count, which of them are the
-// plan's own, whether the login is out, and when it comes back. One definition each, so the
-// router and `kurmis status` cannot disagree about a login.
+// plan's own, what a snapshot says once a window has reset, and when a used-up login comes back.
+// One definition each, so the router and `kurmis status` cannot disagree about a login.
 import { parseTime } from './countdown.ts'
 import {
   CLAUDE_WINDOWS,
   SEVEN_DAY_MINS,
   type AccountUsage,
-  type AccountUsageMap,
   type ModelUsageWindow,
   type NamedUsageWindow,
   type UsageWindow
@@ -23,23 +22,11 @@ export function allUsageWindows(usage: AccountUsage | null | undefined): NamedUs
   for (const spec of CLAUDE_WINDOWS) {
     const window = spec.field === 'sevenDayOverage' ? extraUsageWindow(usage) : usage[spec.field]
     if (window === null) continue
-    out.push({
-      key: spec.key,
-      label: spec.label,
-      name: spec.label,
-      windowDurationMins: spec.windowDurationMins,
-      ...window
-    })
+    out.push({ key: spec.key, label: spec.label, windowDurationMins: spec.windowDurationMins, ...window })
   }
   for (const entry of usage.modelScoped) {
     if (repeatsModelWindow(usage, entry)) continue
-    out.push({
-      key: entry.displayName,
-      label: entry.displayName,
-      name: `${entry.displayName} 7 day`,
-      windowDurationMins: SEVEN_DAY_MINS,
-      ...entry
-    })
+    out.push({ key: entry.displayName, label: entry.displayName, windowDurationMins: SEVEN_DAY_MINS, ...entry })
   }
   return out
 }
@@ -102,16 +89,6 @@ export function busiestPlanWindow(usage: AccountUsage | null | undefined): Named
 }
 
 /**
- * Whether the plan's own usage is gone: one of the windows that count has reached 100%, or the
- * server said outright that the login was refused.
- */
-export function usageExhausted(usage: AccountUsage | undefined): boolean {
-  if (usage === undefined) return false
-  if (usage.status === 'rejected') return true
-  return planUsageWindows(usage).some((window) => window.utilization >= 100)
-}
-
-/**
  * Whether a window's reset time has gone by. What is on such a window was measured
  * inside the window that ended: the server has started a new one and nothing has
  * read it yet.
@@ -160,21 +137,6 @@ export function usageAsOf<T extends AccountUsage | null | undefined>(usage: T, n
     next.status = null
   }
   return next as T
-}
-
-/**
- * The same over a whole map. The map itself is returned unchanged when no login has a window
- * that has turned over.
- */
-export function usageMapAsOf(usage: AccountUsageMap, now: number): AccountUsageMap {
-  const keys = Object.keys(usage)
-  if (!keys.some((key) => usageResetPassed(usage[key], now))) return usage
-  const next: AccountUsageMap = {}
-  for (const key of keys) {
-    const snapshot = usage[key]
-    if (snapshot !== undefined) next[key] = usageAsOf(snapshot, now)
-  }
-  return next
 }
 
 /** An emptied copy of the window when its reset has passed, and the window itself otherwise. */
@@ -261,6 +223,6 @@ function latest(times: readonly string[]): string | null {
  * Whether a window covers seven days, which is the length of every weekly window. The weekly
  * routing limit is measured against these, the five-hour limit against the rest.
  */
-export function isSevenDayWindow(window: { windowDurationMins?: number | null }): boolean {
+export function isSevenDayWindow(window: { windowDurationMins: number }): boolean {
   return window.windowDurationMins === SEVEN_DAY_MINS
 }

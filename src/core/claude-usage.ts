@@ -1,7 +1,5 @@
-// Plan usage of one subscription login: the shape it is kept in, the table of windows a Claude
-// plan reports, and the rule for choosing between two snapshots.
-//
-// `AccountUsage` is the only shape a login's usage is kept in.
+// Plan usage of one subscription login: the shape it is kept in (`AccountUsage`, the only one),
+// and the table of windows a Claude plan reports.
 //
 // Claude has two sources. A usage probe (a short-lived `claude` that answers the `get_usage`
 // control request) gives every window in percent with ISO reset times. The
@@ -27,9 +25,7 @@ export type ModelUsageWindow = UsageWindow & { displayName: string }
 export type NamedUsageWindow = UsageWindow & {
   key: string
   label: string
-  /** The window's full name, for a display whose label is an abbreviation. */
-  name?: string
-  windowDurationMins?: number | null
+  windowDurationMins: number
 }
 
 /** Extra usage (pay-as-you-go credits beyond the plan), when the account has it. */
@@ -96,9 +92,6 @@ export type AccountUsage = {
   error: string | null
 }
 
-/** Every login's usage, keyed by login id. A missing key means it was never fetched. */
-export type AccountUsageMap = Record<string, AccountUsage>
-
 /** How long Claude's own five-hour window is, in minutes. */
 const FIVE_HOUR_MINS = 5 * 60
 
@@ -120,8 +113,6 @@ interface ClaudeWindowSpec {
   field: ClaudeWindowField
   /** The window's name in a status line, such as `5 hour`. */
   label: string
-  /** A shorter name for a narrow display, such as `5h`. */
-  short: string
   windowDurationMins: number
   /**
    * Whether running out of this window stops every request. A window that meters one model
@@ -140,7 +131,6 @@ export const CLAUDE_WINDOWS: readonly ClaudeWindowSpec[] = [
     key: 'five_hour',
     field: 'fiveHour',
     label: '5 hour',
-    short: '5h',
     windowDurationMins: FIVE_HOUR_MINS,
     plan: true
   },
@@ -148,7 +138,6 @@ export const CLAUDE_WINDOWS: readonly ClaudeWindowSpec[] = [
     key: 'seven_day',
     field: 'sevenDay',
     label: '7 day',
-    short: '7d',
     windowDurationMins: SEVEN_DAY_MINS,
     plan: true
   },
@@ -156,7 +145,6 @@ export const CLAUDE_WINDOWS: readonly ClaudeWindowSpec[] = [
     key: 'seven_day_overage_included',
     field: 'sevenDayOverage',
     label: '7 day (extra usage)',
-    short: '7d+',
     windowDurationMins: SEVEN_DAY_MINS,
     plan: true
   },
@@ -164,7 +152,6 @@ export const CLAUDE_WINDOWS: readonly ClaudeWindowSpec[] = [
     key: 'seven_day_opus',
     field: 'sevenDayOpus',
     label: '7 day Opus',
-    short: '7d Opus',
     windowDurationMins: SEVEN_DAY_MINS,
     plan: false
   },
@@ -172,7 +159,6 @@ export const CLAUDE_WINDOWS: readonly ClaudeWindowSpec[] = [
     key: 'seven_day_sonnet',
     field: 'sevenDaySonnet',
     label: '7 day Sonnet',
-    short: '7d Sonnet',
     windowDurationMins: SEVEN_DAY_MINS,
     plan: false
   }
@@ -183,11 +169,7 @@ export function claudeWindowSpec(key: unknown): ClaudeWindowSpec | null {
   return CLAUDE_WINDOWS.find((window) => window.key === key) ?? null
 }
 
-
-/**
- * One decimal place. Percentages come out of 0-1 fractions and carry float noise, and
- * a window's length in hours or days is written to the same precision.
- */
+/** A percentage to one decimal place. One made from a 0-1 fraction carries float noise. */
 export function roundTenth(value: number): number {
   return Math.round(value * 10) / 10
 }
@@ -199,21 +181,3 @@ export function isoFromSeconds(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString()
 }
 
-
-/**
- * Which of two snapshots of the same login to keep: the newer one. A snapshot with the same
- * timestamp replaces the one held, so a re-read of the same moment still lands.
- */
-export function newerUsage(current: AccountUsage | undefined, incoming: AccountUsage): AccountUsage {
-  return current === undefined || incoming.fetchedAt >= current.fetchedAt ? incoming : current
-}
-
-/** The same, over a whole map: every row of `incoming` folded into `current`. */
-export function mergeUsageMaps(
-  current: AccountUsageMap,
-  incoming: AccountUsageMap
-): AccountUsageMap {
-  const next = { ...current }
-  for (const [key, value] of Object.entries(incoming)) next[key] = newerUsage(next[key], value)
-  return next
-}

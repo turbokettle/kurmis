@@ -128,12 +128,6 @@ export class CapacityCooling {
     this.streaks.delete(sessionId)
   }
 
-  /** The session's count of answers without capacity in a row, or 1 when it has none. */
-  attempt(sessionId: string, now: number): number {
-    this.dropExpired(now)
-    return this.streaks.get(sessionId)?.attempt ?? 1
-  }
-
   /**
    * The session's logins that are still cooling, each with the time it may be tried again, and
    * what the last answer without capacity was. Null when none is cooling, which is when a new
@@ -142,11 +136,6 @@ export class CapacityCooling {
   coolingOf(sessionId: string, now: number): { logins: ReadonlyMap<string, number>; reason: string } | null {
     this.dropExpired(now)
     return this.cooling.get(sessionId) ?? null
-  }
-
-  /** Whether this login is cooling for the session now. */
-  isCooling(sessionId: string, loginId: string, now: number): boolean {
-    return (this.coolingOf(sessionId, now)?.logins.get(loginId) ?? 0) > now
   }
 
   /**
@@ -166,12 +155,6 @@ export class CapacityCooling {
       wakeAt = wakeAt === null ? until : Math.min(wakeAt, until)
     }
     return { cooling, wakeAt }
-  }
-
-  /** Forgets a session, as when the daemon drops its route. */
-  forget(sessionId: string): void {
-    this.streaks.delete(sessionId)
-    this.cooling.delete(sessionId)
   }
 
   private dropExpired(now: number): void {

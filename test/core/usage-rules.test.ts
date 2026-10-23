@@ -1,5 +1,5 @@
 // The shared rules over a usage snapshot: which windows are shown, which are the plan's own,
-// whether the login is out, and when it comes back.
+// and when a used-up login comes back.
 import { describe, expect, test } from 'vitest'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import {
@@ -7,8 +7,7 @@ import {
   busiestPlanWindow,
   isSevenDayWindow,
   planUsageWindows,
-  resetsAtFromUsage,
-  usageExhausted
+  resetsAtFromUsage
 } from '../../src/core/usage-rules.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
 
@@ -17,21 +16,6 @@ const NOW = Date.parse('2026-09-05T12:00:00.000Z')
 function claudeUsage(overrides: Partial<AccountUsage> = {}): AccountUsage {
   return { ...emptyAccountUsage('ownclaude1', NOW), rateLimitsAvailable: true, ...overrides }
 }
-
-describe('whether the plan is used up', () => {
-  test('takes a refused login as used up whatever the windows say', () => {
-    expect(usageExhausted(claudeUsage({ status: 'rejected', fiveHour: { utilization: 3, resetsAt: null } }))).toBe(true)
-  })
-
-  test('reads a Claude login from its five-hour and seven-day windows', () => {
-    expect(usageExhausted(claudeUsage({ fiveHour: { utilization: 100, resetsAt: null } }))).toBe(true)
-    expect(usageExhausted(claudeUsage({ sevenDay: { utilization: 99, resetsAt: null } }))).toBe(false)
-  })
-
-  test('is false for a login nothing has been measured for', () => {
-    expect(usageExhausted(undefined)).toBe(false)
-  })
-})
 
 describe('every window a snapshot carries', () => {
   test('a Claude plan is the table in order, then the windows it meters per model', () => {
@@ -44,12 +28,12 @@ describe('every window a snapshot carries', () => {
       modelScoped: [{ displayName: 'Fable', utilization: 60, resetsAt: null }]
     })
 
-    expect(allUsageWindows(usage).map((window) => [window.key, window.label, window.name])).toEqual([
-      ['five_hour', '5 hour', '5 hour'],
-      ['seven_day', '7 day', '7 day'],
-      ['seven_day_overage_included', '7 day (extra usage)', '7 day (extra usage)'],
-      ['seven_day_sonnet', '7 day Sonnet', '7 day Sonnet'],
-      ['Fable', 'Fable', 'Fable 7 day']
+    expect(allUsageWindows(usage).map((window) => [window.key, window.label])).toEqual([
+      ['five_hour', '5 hour'],
+      ['seven_day', '7 day'],
+      ['seven_day_overage_included', '7 day (extra usage)'],
+      ['seven_day_sonnet', '7 day Sonnet'],
+      ['Fable', 'Fable']
     ])
   })
 
@@ -107,13 +91,11 @@ describe("the windows that are the plan's own", () => {
   test('a window that meters one model does not use the plan up', () => {
     expect(busiestPlanWindow(claudeUsage({ sevenDayOpus: { utilization: 100, resetsAt: null },
       fiveHour: { utilization: 20, resetsAt: null } }))?.key).toBe('five_hour')
-    const usage = claudeUsage({ sevenDayOpus: { utilization: 100, resetsAt: null } })
-
-    expect(usageExhausted(usage)).toBe(false)
-    expect(usageExhausted(claudeUsage({
+    expect(busiestPlanWindow(claudeUsage({ sevenDayOpus: { utilization: 100, resetsAt: null } }))).toBeNull()
+    expect(busiestPlanWindow(claudeUsage({
       extraUsage: { isEnabled: true, monthlyLimit: 100, usedCredits: 5, utilization: 5, currency: null },
       sevenDayOverage: { utilization: 100, resetsAt: null }
-    }))).toBe(true)
+    }))?.key).toBe('seven_day_overage_included')
   })
 })
 

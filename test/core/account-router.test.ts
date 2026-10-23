@@ -2,12 +2,13 @@
 // what order, what a refusal means, and when the pool is back.
 import { describe, expect, test } from 'vitest'
 import {
-  accountsInScope, chooseAccount, effectivePin, eligible, explainRouting,
+  accountsInScope, chooseAccount, effectivePin, eligible,
   isDefinitiveQuotaRejection, parseUnifiedHeaders, poolReadyAt, quotaCooldownUntil, replayDecision, routeBlock,
   TOKEN_MARGIN_MS, tokenIsFresh, usageFromUnifiedHeaders, worstUtilisation,
   type HeaderGetter, type ReplayInput, type RouteAccount, type RouteSession
 } from '../../src/core/account-router.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
+import { usageAsOf } from '../../src/core/usage-rules.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
 import { OWN_CLAUDE } from '../logins.ts'
 
@@ -238,11 +239,6 @@ describe('Auto eligibility and choice', () => {
 
     test('on a login marked use first, though another marked one resets its week sooner', () => {
       expect(choose([sooner({ useFirst: true }), serving({ useFirst: true })], onServing)).toBe('servingclaude')
-    })
-
-    test('and the explanation names it as serving next', () => {
-      expect(explainRouting(onServing, [sooner(), serving()], NOW).map((row) => [row.accountId, row.next]))
-        .toEqual([['servingclaude', true], ['soonerclaude', false]])
     })
   })
 
@@ -541,11 +537,9 @@ describe('a window whose reset time has passed', () => {
     expect(poolReadyAt(own, at, null, OWN_CLAUDE)).toBe(Date.parse('2030-03-12T23:30:00.000+00:00'))
   })
 
-  test('is reported as able to serve, so the explanation matches the choice', () => {
-    const rows = explainRouting(auto, pool(), at)
-    expect(rows.find((row) => row.next)?.accountId).toBe(chooseAccount(auto, pool(), at, new Set())?.id)
-    expect(rows.filter((row) => row.block === null).map((row) => row.accountId).sort()).toEqual(['teamclaude', 'workclaude'])
-    expect(rows.find((row) => row.accountId === 'teamclaude')?.busiest?.utilization).toBe(0)
+  test('is reported as able to serve, as the choice treats it', () => {
+    expect(pool().filter((row) => routeBlock(row, at) === null).map((row) => row.id).sort()).toEqual(['teamclaude', 'workclaude'])
+    expect(worstUtilisation(usageAsOf(pool().find((row) => row.id === 'teamclaude')!.usage, at))).toBe(0)
   })
 
   test('a reset exactly now has passed', () => {
@@ -582,39 +576,33 @@ describe('why a login was or was not chosen', () => {
     })
   })
 
-  test('explains the pool in the order it would be taken, skipped logins last', () => {
+  /** The logins the router would take for this session, in order, by excluding each one chosen. */
+  function order(route: RouteSession, rows: RouteAccount[]): string[] {
+    const taken: string[] = []
+    for (let next = chooseAccount(route, rows, NOW, new Set()); next !== null;
+      next = chooseAccount(route, rows, NOW, new Set(taken))) taken.push(next.id)
+    return taken
+  }
+
+  test('takes the pool in the order of the weekly reset, and skips the logins that cannot serve', () => {
     const rows = [
       account('fullclaude', { usage: usage(99) }),
       account('laterclaude', { usage: windows([10, iso(RESET)], [20, iso(LATER)]) }),
       account('soonerclaude', { usage: windows([10, iso(LATER)], [30, iso(RESET)]) }),
       account('offclaude', { autoRoute: false })
     ]
-    const explained = explainRouting({ homeAccountId: 'laterclaude', currentAccountId: null }, rows, NOW)
-    expect(explained.map((row) => [row.accountId, row.next, row.block?.kind ?? null])).toEqual([
-      ['soonerclaude', true, null],
-      ['laterclaude', false, null],
-      ['fullclaude', false, 'over-limit'],
-      ['offclaude', false, 'auto-route-off']
-    ])
-    expect(explained[0]).toMatchObject({
-      useFirst: false,
-      busiest: { label: '7 day', utilization: 30, resetsAt: iso(RESET) },
-      sevenDayResetsAt: iso(RESET)
-    })
+    expect(order({ homeAccountId: 'laterclaude', currentAccountId: null }, rows)).toEqual(['soonerclaude', 'laterclaude'])
+    expect(rows.map((row) => routeBlock(row, NOW)?.kind ?? null)).toEqual(['over-limit', null, null, 'auto-route-off'])
   })
 
-  test('the explanation says which login is marked use first and when its week is back', () => {
+  test('takes a login marked use first ahead, and a login with no reading after the known resets', () => {
     const rows = [
       account('soonerclaude', { usage: windows([10, iso(RESET)], [30, iso(RESET)]) }),
       account('markedclaude', { useFirst: true, usage: windows([10, iso(RESET)], [20, iso(LATER)]) }),
       account('freshclaude', { usage: null })
     ]
-    const explained = explainRouting({ homeAccountId: 'soonerclaude', currentAccountId: 'soonerclaude' }, rows, NOW)
-    expect(explained.map((row) => [row.accountId, row.useFirst, row.sevenDayResetsAt])).toEqual([
-      ['markedclaude', true, iso(LATER)],
-      ['soonerclaude', false, iso(RESET)],
-      ['freshclaude', false, null]
-    ])
+    expect(order({ homeAccountId: 'freshclaude', currentAccountId: null }, rows))
+      .toEqual(['markedclaude', 'soonerclaude', 'freshclaude'])
   })
 
   test('each limit is measured only against its own window', () => {
@@ -640,11 +628,10 @@ describe('why a login was or was not chosen', () => {
     expect(poolReadyAt([busyWeek], NOW, null, OWN_CLAUDE)).toBe(LATER)
   })
 
-  test('a pinned session has one login and no choice to explain', () => {
+  test('a pinned session has one login and no choice', () => {
     const rows = [account('homeclaude'), account('otherclaude', { usage: usage(10, iso(RESET)) })]
-    const explained = explainRouting({ homeAccountId: 'homeclaude', currentAccountId: 'homeclaude', pinnedAccountId: 'homeclaude' }, rows, NOW)
-    expect(explained).toHaveLength(1)
-    expect(explained[0]).toMatchObject({ accountId: 'homeclaude', next: true, block: null })
+    expect(order({ homeAccountId: 'homeclaude', currentAccountId: 'homeclaude', pinnedAccountId: 'homeclaude' }, rows))
+      .toEqual(['homeclaude'])
   })
 })
 
@@ -682,11 +669,11 @@ describe('a five-login pool', () => {
   })
 
   test('names a reason for each login that was passed over', () => {
-    expect(explainRouting(session, pool, at).map((row) => [row.accountId, row.block?.kind ?? 'can serve'])).toEqual([
-      ['bravoclaude', 'can serve'],
+    expect(pool.map((row) => [row.id, routeBlock(row, at)?.kind ?? 'can serve'])).toEqual([
       ['alphaclaude', 'can serve'],
       ['workclaude', 'over-limit'],
       ['teamclaude', 'over-limit'],
+      ['bravoclaude', 'can serve'],
       ['charlieclaude', 'auto-route-off']
     ])
   })

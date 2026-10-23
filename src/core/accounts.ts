@@ -30,20 +30,3 @@ const RESERVED_IDS = /^(con|prn|aux|nul|com[0-9]|lpt[0-9]|none|invalid)$/
 export function isLoginIdText(text: string): boolean {
   return LOGIN_ID.test(text) && !RESERVED_IDS.test(text)
 }
-
-/** A stored routing limit held to the whole 1..100 it may be, or null when it is not a number. */
-export function asRoutingLimit(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null
-  return Math.min(100, Math.max(1, Math.round(value)))
-}
-
-/** A login's two routing limits as stored, with a missing or broken one at its default. */
-export function routingLimitsOf(row: { fiveHourLimitPercent?: unknown; weeklyLimitPercent?: unknown }): {
-  fiveHourLimitPercent: number
-  weeklyLimitPercent: number
-} {
-  return {
-    fiveHourLimitPercent: asRoutingLimit(row.fiveHourLimitPercent) ?? DEFAULT_FIVE_HOUR_LIMIT_PERCENT,
-    weeklyLimitPercent: asRoutingLimit(row.weeklyLimitPercent) ?? DEFAULT_WEEKLY_LIMIT_PERCENT
-  }
-}

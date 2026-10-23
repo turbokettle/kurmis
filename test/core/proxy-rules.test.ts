@@ -1,11 +1,11 @@
 // The proxy's decisions that are not I/O.
 import { describe, expect, test } from 'vitest'
-import type { RouteAccount, RouteSession } from '../../src/core/account-router.ts'
+import { routeBlock, type RouteAccount, type RouteSession } from '../../src/core/account-router.ts'
 import type { AccountUsage } from '../../src/core/claude-usage.ts'
 import {
   cooldownAfterProbe, downstreamResponseHeaders, noSignerAnswer, outgoingBody, poolLimitAnswer, refusalAnswer,
   requestKind, rewriteUserId, ROUTE_PATHS, ROUTER_REFUSAL_STATUS, routeBlockText, staleUsageLogins, upstreamRequest,
-  whyPassedOver, withoutExpiringTokens
+  withoutExpiringTokens
 } from '../../src/core/proxy-rules.ts'
 import { emptyAccountUsage } from '../../src/core/usage.ts'
 import { OWN_CLAUDE } from '../logins.ts'
@@ -237,32 +237,24 @@ describe('the logins to probe again before choosing', () => {
   })
 })
 
-describe('why a login was passed over, for the log', () => {
-  const context = { pinned: false, attempted: new Set<string>(), keychain: false, startedOn: OWN_CLAUDE }
+describe('why a login cannot serve, in words', () => {
+  const textOf = (row: RouteAccount): string | null => {
+    const block = routeBlock(row, NOW)
+    return block === null ? null : routeBlockText(block)
+  }
 
   test('names each block in plain words', () => {
-    expect(whyPassedOver(account('workclaude', { autoRoute: false }), context, NOW)).toBe('not opted in to routing')
-    expect(whyPassedOver(account('workclaude', { cooldownUntil: Infinity }), context, NOW))
-      .toBe('cooling down until a usage probe says it is back')
-    expect(whyPassedOver(account('workclaude', { cooldownUntil: RESET }), context, NOW)).toBe(`cooling down until ${iso(RESET)}`)
-    expect(whyPassedOver(account('workclaude', { usage: usage('workclaude', { fiveHour: { utilization: 95.4, resetsAt: null } }) }),
-      context, NOW)).toBe('at its limit, the 5 hour window is at 95% of 90%')
-    expect(whyPassedOver(account('workclaude'), { ...context, attempted: new Set(['workclaude']) }, NOW))
-      .toBe('already tried for this request')
-  })
-
-  test('a pinned session ignores the opt-in and is measured to 100%', () => {
-    const row = account('workclaude', { autoRoute: false, usage: usage('workclaude', { fiveHour: { utilization: 95, resetsAt: null } }) })
-    expect(whyPassedOver(row, { ...context, pinned: true }, NOW)).toBe('usable now, so it had room only after the choice was made')
+    expect(textOf(account('workclaude', { autoRoute: false }))).toBe('not opted in to routing')
+    expect(textOf(account('workclaude', { cooldownUntil: Infinity }))).toBe('cooling down until a usage probe says it is back')
+    expect(textOf(account('workclaude', { cooldownUntil: RESET }))).toBe(`cooling down until ${iso(RESET)}`)
+    expect(textOf(account('workclaude', { usage: usage('workclaude', { fiveHour: { utilization: 95.4, resetsAt: null } }) })))
+      .toBe('at its limit, the 5 hour window is at 95% of 90%')
   })
 
   test('says which token source did not read', () => {
-    expect(routeBlockText({ kind: 'no-credentials' }, false, false, 'linux')).toBe('no token, its .credentials.json did not read')
-    expect(routeBlockText({ kind: 'no-credentials' }, false, false, 'win32'))
+    expect(routeBlockText({ kind: 'no-credentials' }, false, 'linux')).toBe('no token, its .credentials.json did not read')
+    expect(routeBlockText({ kind: 'no-credentials' }, false, 'win32'))
       .toBe('no token, neither Windows Credential Manager nor its .credentials.json gave one')
-    expect(whyPassedOver(account(OWN_CLAUDE, { credentialsReadable: false }), { ...context, keychain: true }, NOW))
-      .toContain('carried no authorization header of its own')
-    expect(whyPassedOver(account('workclaude', { credentialsReadable: false }), { ...context, keychain: true }, NOW))
-      .toContain('signs only for the login it was started on')
+    expect(routeBlockText({ kind: 'no-credentials' }, true)).toContain('signs only for the login it was started on')
   })
 })

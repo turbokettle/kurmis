@@ -1,18 +1,11 @@
-// The usage snapshot: the window table and the rule for choosing between two snapshots.
+// The usage snapshot's window table and number helpers.
 import { describe, expect, test } from 'vitest'
-import {
-  claudeWindowSpec,
-  isoFromSeconds,
-  mergeUsageMaps,
-  newerUsage,
-  roundTenth
-} from '../../src/core/claude-usage.ts'
-import { accountUsage as usage } from './usage-fixtures.ts'
+import { claudeWindowSpec, isoFromSeconds, roundTenth } from '../../src/core/claude-usage.ts'
 
 describe('the window table', () => {
   test('a window this build has never heard of is not in the table', () => {
     expect(claudeWindowSpec('thirty_day_something')).toBeNull()
-    expect(claudeWindowSpec('five_hour')?.short).toBe('5h')
+    expect(claudeWindowSpec('five_hour')?.label).toBe('5 hour')
   })
 
   test('the five-hour window is a plan window of five hours, and the per-model ones are not plan windows', () => {
@@ -32,26 +25,5 @@ describe('the number helpers', () => {
   test('a percentage is rounded to one decimal place', () => {
     expect(roundTenth(0.13 * 100)).toBe(13)
     expect(roundTenth(42.25)).toBe(42.3)
-  })
-})
-
-describe('folding a fresh snapshot into the map', () => {
-  test('the newer one wins, and a sample of the same moment replaces what is held', () => {
-    const held = usage({ fetchedAt: 200 })
-
-    expect(newerUsage(held, usage({ fetchedAt: 100 })).fetchedAt).toBe(200)
-    expect(newerUsage(held, usage({ fetchedAt: 200, source: 'session' })).source).toBe('session')
-    expect(newerUsage(undefined, usage({ fetchedAt: 1 })).fetchedAt).toBe(1)
-  })
-
-  test('a map merge applies that rule per row and leaves the rest alone', () => {
-    const merged = mergeUsageMaps(
-      { 'ownclaude1': usage({ fetchedAt: 200 }), 'oldclaude': usage({ accountId: 'oldclaude', fetchedAt: 5 }) },
-      { 'ownclaude1': usage({ fetchedAt: 100 }), 'workclaude': usage({ accountId: 'workclaude', fetchedAt: 7 }) }
-    )
-
-    expect(merged['ownclaude1']?.fetchedAt).toBe(200)
-    expect(merged['oldclaude']?.fetchedAt).toBe(5)
-    expect(merged['workclaude']?.fetchedAt).toBe(7)
   })
 })

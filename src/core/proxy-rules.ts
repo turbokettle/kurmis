@@ -18,7 +18,7 @@
 // 5. Forward the answer with `downstreamResponseHeaders` and the body byte for byte, and only
 //    then record the login as the session's current one.
 import {
-  accountsInScope, effectivePin, limitForWindow, poolReadyAt, routeBlock, tokenIsFresh,
+  accountsInScope, effectivePin, limitForWindow, poolReadyAt, tokenIsFresh,
   type RouteAccount, type RouteBlock, type RouteSession
 } from './account-router.ts'
 import type { AccountUsage } from './claude-usage.ts'
@@ -378,35 +378,11 @@ export function cooldownAfterProbe(cooldownUntil: number | null, snapshot: Accou
   return snapshot.status === 'rejected' ? cooldownUntil : null
 }
 
-/** What `whyPassedOver` needs to know beyond the row. */
-export interface PassedOverContext {
-  /** The session is pinned, which measures the login to 100% and ignores its opt-in. */
-  pinned: boolean
-  /** The logins this request was already sent on. */
-  attempted: ReadonlySet<string>
-  /** The daemon reads tokens from the macOS Keychain rather than from `.credentials.json`. */
-  keychain: boolean
-  /** The login the CLI was started on, whose own `authorization` header the proxy may forward. */
-  startedOn: string
-}
-
 /**
- * Why the proxy did not send a request on this login, as a phrase for the daemon's log line
- * about a refused request. Names no token, email or body.
+ * A `RouteBlock` as a phrase, for `kurmis status`. Without the Keychain, a login on Windows has
+ * its token in Credential Manager or in `.credentials.json`, elsewhere only in the file.
  */
-export function whyPassedOver(row: RouteAccount, context: PassedOverContext, now: number): string {
-  if (context.attempted.has(row.id)) return 'already tried for this request'
-  const block = routeBlock(context.pinned ? { ...row, autoRoute: true, fiveHourLimitPercent: 100, weeklyLimitPercent: 100 } : row, now)
-  if (block === null) return 'usable now, so it had room only after the choice was made'
-  return routeBlockText(block, context.keychain, row.id === context.startedOn)
-}
-
-/**
- * A `RouteBlock` as a phrase, for the log and for `kurmis status`. Without the Keychain, a login
- * on Windows has its token in Credential Manager or in `.credentials.json`, elsewhere only in
- * the file.
- */
-export function routeBlockText(block: RouteBlock, keychain = false, startedOn = false, platform: NodeJS.Platform = process.platform): string {
+export function routeBlockText(block: RouteBlock, keychain = false, platform: NodeJS.Platform = process.platform): string {
   switch (block.kind) {
     case 'auto-route-off': return 'not opted in to routing'
     case 'signed-out': return 'signed out'
@@ -416,9 +392,7 @@ export function routeBlockText(block: RouteBlock, keychain = false, startedOn = 
           ? 'no token, neither Windows Credential Manager nor its .credentials.json gave one'
           : 'no token, its .credentials.json did not read'
       }
-      return startedOn
-        ? 'no token, its Keychain item did not read and the request carried no authorization header of its own'
-        : 'no token, its Keychain item did not read and the CLI signs only for the login it was started on'
+      return 'no token, its Keychain item did not read and the CLI signs only for the login it was started on'
     case 'token-expiring': return 'its token expires within 5 minutes'
     case 'cooldown':
       return block.until === null ? 'cooling down until a usage probe says it is back' : `cooling down until ${new Date(block.until).toISOString()}`

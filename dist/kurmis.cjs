@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101954" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023102026" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -187,7 +187,6 @@ var CLAUDE_WINDOWS = [
     key: "five_hour",
     field: "fiveHour",
     label: "5 hour",
-    short: "5h",
     windowDurationMins: FIVE_HOUR_MINS,
     plan: true
   },
@@ -195,7 +194,6 @@ var CLAUDE_WINDOWS = [
     key: "seven_day",
     field: "sevenDay",
     label: "7 day",
-    short: "7d",
     windowDurationMins: SEVEN_DAY_MINS,
     plan: true
   },
@@ -203,7 +201,6 @@ var CLAUDE_WINDOWS = [
     key: "seven_day_overage_included",
     field: "sevenDayOverage",
     label: "7 day (extra usage)",
-    short: "7d+",
     windowDurationMins: SEVEN_DAY_MINS,
     plan: true
   },
@@ -211,7 +208,6 @@ var CLAUDE_WINDOWS = [
     key: "seven_day_opus",
     field: "sevenDayOpus",
     label: "7 day Opus",
-    short: "7d Opus",
     windowDurationMins: SEVEN_DAY_MINS,
     plan: false
   },
@@ -219,7 +215,6 @@ var CLAUDE_WINDOWS = [
     key: "seven_day_sonnet",
     field: "sevenDaySonnet",
     label: "7 day Sonnet",
-    short: "7d Sonnet",
     windowDurationMins: SEVEN_DAY_MINS,
     plan: false
   }
@@ -429,23 +424,11 @@ function allUsageWindows(usage) {
   for (const spec of CLAUDE_WINDOWS) {
     const window = spec.field === "sevenDayOverage" ? extraUsageWindow(usage) : usage[spec.field];
     if (window === null) continue;
-    out.push({
-      key: spec.key,
-      label: spec.label,
-      name: spec.label,
-      windowDurationMins: spec.windowDurationMins,
-      ...window
-    });
+    out.push({ key: spec.key, label: spec.label, windowDurationMins: spec.windowDurationMins, ...window });
   }
   for (const entry of usage.modelScoped) {
     if (repeatsModelWindow(usage, entry)) continue;
-    out.push({
-      key: entry.displayName,
-      label: entry.displayName,
-      name: `${entry.displayName} 7 day`,
-      windowDurationMins: SEVEN_DAY_MINS,
-      ...entry
-    });
+    out.push({ key: entry.displayName, label: entry.displayName, windowDurationMins: SEVEN_DAY_MINS, ...entry });
   }
   return out;
 }
@@ -665,16 +648,13 @@ function routeBlock(account, now) {
 function eligible(account, now) {
   return routeBlock(account, now) === null;
 }
-function sevenDayResetOf(account) {
+function sevenDayResetTime(account) {
   for (const window of planUsageWindows(account.usage)) {
     if (!isSevenDayWindow(window) || window.resetsAt === null) continue;
-    if (Number.isFinite(Date.parse(window.resetsAt))) return window.resetsAt;
+    const at = Date.parse(window.resetsAt);
+    if (Number.isFinite(at)) return at;
   }
-  return null;
-}
-function sevenDayResetTime(account) {
-  const resetsAt = sevenDayResetOf(account);
-  return resetsAt === null ? Infinity : Date.parse(resetsAt);
+  return Infinity;
 }
 function effectivePin(session, accounts) {
   if (session.pinnedAccountId != null) return session.pinnedAccountId;
@@ -965,7 +945,7 @@ function cooldownAfterProbe(cooldownUntil, snapshot) {
   if (reset !== null && Number.isFinite(Date.parse(reset))) return Date.parse(reset);
   return snapshot.status === "rejected" ? cooldownUntil : null;
 }
-function routeBlockText(block, keychain = false, startedOn = false, platform = process.platform) {
+function routeBlockText(block, keychain = false, platform = process.platform) {
   switch (block.kind) {
     case "auto-route-off":
       return "not opted in to routing";
@@ -975,7 +955,7 @@ function routeBlockText(block, keychain = false, startedOn = false, platform = p
       if (!keychain) {
         return platform === "win32" ? "no token, neither Windows Credential Manager nor its .credentials.json gave one" : "no token, its .credentials.json did not read";
       }
-      return startedOn ? "no token, its Keychain item did not read and the request carried no authorization header of its own" : "no token, its Keychain item did not read and the CLI signs only for the login it was started on";
+      return "no token, its Keychain item did not read and the CLI signs only for the login it was started on";
     case "token-expiring":
       return "its token expires within 5 minutes";
     case "cooldown":
@@ -5160,11 +5140,6 @@ var CapacityCooling = class {
   noteAnswered(sessionId) {
     this.streaks.delete(sessionId);
   }
-  /** The session's count of answers without capacity in a row, or 1 when it has none. */
-  attempt(sessionId, now) {
-    this.dropExpired(now);
-    return this.streaks.get(sessionId)?.attempt ?? 1;
-  }
   /**
    * The session's logins that are still cooling, each with the time it may be tried again, and
    * what the last answer without capacity was. Null when none is cooling, which is when a new
@@ -5173,10 +5148,6 @@ var CapacityCooling = class {
   coolingOf(sessionId, now) {
     this.dropExpired(now);
     return this.cooling.get(sessionId) ?? null;
-  }
-  /** Whether this login is cooling for the session now. */
-  isCooling(sessionId, loginId, now) {
-    return (this.coolingOf(sessionId, now)?.logins.get(loginId) ?? 0) > now;
   }
   /**
    * What a held request of the session waits for. `usable` is the logins the session may use
@@ -5195,11 +5166,6 @@ var CapacityCooling = class {
       wakeAt = wakeAt === null ? until : Math.min(wakeAt, until);
     }
     return { cooling, wakeAt };
-  }
-  /** Forgets a session, as when the daemon drops its route. */
-  forget(sessionId) {
-    this.streaks.delete(sessionId);
-    this.cooling.delete(sessionId);
   }
   dropExpired(now) {
     for (const [id, streak] of this.streaks) {

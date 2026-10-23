@@ -23,30 +23,9 @@ export function spanText(milliseconds: number): string {
   return `${minutes}m`
 }
 
-/** What a countdown says once the moment has passed or is under a minute away. */
-export const COUNTDOWN_NOW = 'now'
-
-/**
- * How long until a reset: `1h 30m`, `4d 3h`, `45m`, `2d`. `now` once it has passed or is
- * under a minute away. Null when there is no reset time.
- */
-export function resetIn(resetsAt: string | number | Date | null | undefined, now: number): string | null {
-  const at = parseTime(resetsAt)
-  if (at === null) return null
-  const left = at - now
-  return left < 60_000 ? COUNTDOWN_NOW : spanText(left)
-}
-
 /** "resets in 1h 30m"; null when there is no reset time or it has already passed. */
 export function resetsInText(resetsAt: string | number | Date | null | undefined, now: number = Date.now()): string | null {
   const at = parseTime(resetsAt)
   if (at === null || at <= now) return null
   return `resets in ${spanText(at - now)}`
-}
-
-/** "in 1h 30m", or `now` once the moment has arrived. Null when there is no moment. */
-export function countdownIn(value: string | number | Date | null | undefined, now: number = Date.now()): string | null {
-  const until = resetIn(value, now)
-  if (until === null) return null
-  return until === COUNTDOWN_NOW ? COUNTDOWN_NOW : `in ${until}`
 }

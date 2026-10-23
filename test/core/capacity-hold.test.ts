@@ -73,9 +73,8 @@ describe('the cooling of one session', () => {
     expect(cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW))
       .toEqual({ attempt: 1, delayMs: CAPACITY_HOLD_BASE_MS, until: NOW + CAPACITY_HOLD_BASE_MS })
     expect(cooling.noteNoCapacity('s1', 'bclaude', '529 Overloaded', null, 0, NOW + 1000).attempt).toBe(2)
-    expect(cooling.attempt('s1', NOW + 1000)).toBe(2)
     expect(cooling.coolingOf('s2', NOW)).toBeNull()
-    expect(cooling.attempt('s2', NOW)).toBe(1)
+    expect(cooling.noteNoCapacity('s2', 'aclaude', '529 Overloaded', null, 0, NOW + 1000).attempt).toBe(1)
   })
 
   test('a retry-after longer than the backoff is waited, and a shorter later backoff does not cut it short', () => {
@@ -89,8 +88,7 @@ describe('the cooling of one session', () => {
   test('a login stops cooling once its backoff is over, and the session with it', () => {
     const cooling = new CapacityCooling()
     cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW)
-    expect(cooling.isCooling('s1', 'aclaude', NOW + CAPACITY_HOLD_BASE_MS - 1)).toBe(true)
-    expect(cooling.isCooling('s1', 'aclaude', NOW + CAPACITY_HOLD_BASE_MS)).toBe(false)
+    expect(cooling.coolingOf('s1', NOW + CAPACITY_HOLD_BASE_MS - 1)?.logins.get('aclaude')).toBe(NOW + CAPACITY_HOLD_BASE_MS)
     expect(cooling.coolingOf('s1', NOW + CAPACITY_HOLD_BASE_MS)).toBeNull()
   })
 
@@ -112,13 +110,5 @@ describe('the cooling of one session', () => {
     expect(cooling.waitFor('s1', new Set(['aclaude']), NOW))
       .toEqual({ cooling: new Set(['aclaude']), wakeAt: NOW + 20_000 })
     expect(cooling.waitFor('s1', new Set(), NOW)).toEqual({ cooling: new Set(), wakeAt: null })
-  })
-
-  test('forgetting a session drops its cooling and its count', () => {
-    const cooling = new CapacityCooling()
-    cooling.noteNoCapacity('s1', 'aclaude', '529 Overloaded', null, 0, NOW)
-    cooling.forget('s1')
-    expect(cooling.coolingOf('s1', NOW)).toBeNull()
-    expect(cooling.attempt('s1', NOW)).toBe(1)
   })
 })

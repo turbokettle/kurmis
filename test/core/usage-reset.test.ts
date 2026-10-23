@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 import {
   planUsageWindows,
   usageAsOf,
-  usageMapAsOf,
   usageResetPassed,
   windowHasReset
 } from '../../src/core/usage-rules.ts'
@@ -108,22 +107,5 @@ describe('usageAsOf', () => {
     )
     const read = planUsageWindows(usage).map((window) => [window.key, window.utilization])
     expect(read).toEqual([['five_hour', 0], ['seven_day', 61]])
-  })
-})
-
-describe('usageMapAsOf', () => {
-  it('reads every login at the moment given', () => {
-    const map = {
-      'aclaude': accountUsage({ accountId: 'aclaude', fiveHour: usageWindow(94, PAST) }),
-      'bclaude': accountUsage({ accountId: 'bclaude', fiveHour: usageWindow(20, LATER) })
-    }
-    const after = usageMapAsOf(map, NOW)
-    expect(after['aclaude']?.fiveHour?.utilization).toBe(0)
-    expect(after['bclaude']).toBe(map['bclaude'])
-  })
-
-  it('returns the same map when no login has a window that turned over', () => {
-    const map = { a: accountUsage({ fiveHour: usageWindow(94, SOON) }) }
-    expect(usageMapAsOf(map, NOW)).toBe(map)
   })
 })

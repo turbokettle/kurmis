@@ -257,22 +257,18 @@ export function eligible(account: RouteAccount, now: number): boolean {
 }
 
 /**
- * When this login's seven-day window comes back, or null when nothing has measured it. The
- * two weekly windows a Claude plan reports share one reset, so the first of them carrying a
- * usable time answers for both.
+ * When this login's seven-day window comes back, in ms since the epoch, or Infinity when nothing
+ * has measured it, so an unknown reset sorts after every known one. The two weekly windows a
+ * Claude plan reports share one reset, so the first of them carrying a usable time answers for
+ * both.
  */
-function sevenDayResetOf(account: RouteAccount): string | null {
+function sevenDayResetTime(account: RouteAccount): number {
   for (const window of planUsageWindows(account.usage)) {
     if (!isSevenDayWindow(window) || window.resetsAt === null) continue
-    if (Number.isFinite(Date.parse(window.resetsAt))) return window.resetsAt
+    const at = Date.parse(window.resetsAt)
+    if (Number.isFinite(at)) return at
   }
-  return null
-}
-
-/** The same as a number, with an unknown reset sorting after every known one. */
-function sevenDayResetTime(account: RouteAccount): number {
-  const resetsAt = sevenDayResetOf(account)
-  return resetsAt === null ? Infinity : Date.parse(resetsAt)
+  return Infinity
 }
 
 /**
@@ -345,64 +341,6 @@ export function chooseAccount(
       !exclude.has(account.id) && account.loggedIn && account.credentialsReadable) ?? null
   }
   return rankAccounts(session, accounts, now, exclude)[0] ?? null
-}
-
-/** One login's place in the choice, for `kurmis status` to explain it. */
-export interface RouteExplanation {
-  accountId: string
-  /** Why it cannot serve the next request; null when it can. */
-  block: RouteBlock | null
-  /** The login the router would choose for the next request. At most one row has it. */
-  next: boolean
-  /** Whether this login is marked to be taken ahead of the others. */
-  useFirst: boolean
-  /** The plan window with the least left, which says how full the login is. Null with no reading. */
-  busiest: { label: string; utilization: number; resetsAt: string | null } | null
-  /** When the seven-day window comes back, which is what the ranking compares. */
-  sevenDayResetsAt: string | null
-  /**
-   * The routing limit `busiest` is measured against, in percent: the login's five-hour or
-   * weekly one depending on how long that window is. A login with no usage reading reports its
-   * five-hour limit.
-   */
-  limitPercent: number
-}
-
-/**
- * Every login the router would look at for this session, and what it makes of each: the ones
- * that can serve in the order it would take them, then the ones it skipped. A pinned session
- * has no choice to explain, so it reports its one login alone.
- */
-export function explainRouting(
-  session: RouteSession,
-  accounts: readonly RouteAccount[],
-  now: number
-): RouteExplanation[] {
-  const pinned = effectivePin(session, accounts)
-  const describe = (account: RouteAccount, next: boolean): RouteExplanation => {
-    const busiest = busiestPlanWindow(usageAsOf(account.usage, now))
-    return {
-      accountId: account.id,
-      block: routeBlock(account, now),
-      next,
-      useFirst: account.useFirst,
-      busiest: busiest === null
-        ? null
-        : { label: busiest.label, utilization: busiest.utilization, resetsAt: busiest.resetsAt },
-      sevenDayResetsAt: sevenDayResetOf(account),
-      limitPercent: busiest === null ? account.fiveHourLimitPercent : limitForWindow(account, busiest)
-    }
-  }
-  if (pinned !== null) {
-    const account = accounts.find((row) => row.id === pinned)
-    return account === undefined ? [] : [{ ...describe(account, true), block: null }]
-  }
-  const ranked = rankAccounts(session, accounts, now, new Set())
-  const rest = accounts.filter((account) => !ranked.includes(account))
-  return [
-    ...ranked.map((account, index) => describe(account, index === 0)),
-    ...rest.map((account) => describe(account, false))
-  ]
 }
 
 export interface ReplayInput {
