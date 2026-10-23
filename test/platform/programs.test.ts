@@ -206,6 +206,16 @@ describe('PATH on Windows', () => {
       ownEntry: CLAUDE_CLI_JS.toUpperCase() })).toEqual({ command: 'C:\\tools\\claude.exe', args: [], source: 'path' })
   })
 
+  test('a shim that starts kurmis\' own bundle with Node options before it is skipped too', () => {
+    const files = {
+      'C:\\bin\\claude.cmd': '@node --preserve-symlinks "C:\\bundle\\kurmis.cjs" %*\r\n',
+      'C:\\bundle\\kurmis.cjs': '',
+      'C:\\tools\\claude.exe': NATIVE
+    }
+    expect(search('claude', { env: { PATH: 'C:\\bin;C:\\tools' }, platform: 'win32', nodePath: NODE, files: windowsFiles(files),
+      ownEntry: 'C:\\bundle\\kurmis.cjs' })).toEqual({ command: 'C:\\tools\\claude.exe', args: [], source: 'path' })
+  })
+
   test('npm shim for an older Claude Code with a node.exe next to it, as with nvm-windows', () => {
     const files = { [`${NPM}\\claude.cmd`]: fixture('npm-global-claude-cli-js.cmd'), [CLAUDE_CLI_JS]: '', [`${NPM}\\node.exe`]: NATIVE }
     expect(find('claude', { PATH: NPM }, files)).toEqual({ command: `${NPM}\\node.exe`, args: [CLAUDE_CLI_JS], source: 'npm-shim' })

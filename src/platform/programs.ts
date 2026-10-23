@@ -160,16 +160,15 @@ function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string,
   const folders = windowsPathFolders(windowsEnv(env, 'PATH'))
   const extensions = pathExtensions(windowsEnv(env, 'PATHEXT'))
   const skipped: string[] = []
-  const isOwn = (path: string | undefined): boolean => own !== null && path !== undefined &&
+  const isOwn = (path: string): boolean => own !== null &&
     (files.realPath(path) ?? path).toLowerCase() === own.toLowerCase()
   for (const folder of folders) {
     for (const extension of extensions) {
       const candidate = win32.join(folder, tool + extension)
       if (!files.isFile(candidate)) continue
       if (extension === '.exe' || extension === '.com') return { command: candidate, args: [], source: 'path' }
-      const resolved = resolveShim(candidate, nodePath, files)
+      const resolved = resolveShim(candidate, nodePath, files, isOwn)
       if ('refused' in resolved) skipped.push(`${candidate}: ${resolved.refused}`)
-      else if (isOwn(resolved.args[0])) skipped.push(`${candidate}: ${OWN_BUNDLE}`)
       else return resolved
     }
   }
@@ -183,8 +182,11 @@ function findOnWindows(tool: ToolName, env: NodeJS.ProcessEnv, nodePath: string,
   throw notFound(tool, looked, skipped)
 }
 
-/** What a `.cmd`/`.bat` shim on PATH starts, or why kurmis will not start it. */
-function resolveShim(shimPath: string, nodePath: string, files: ProgramFiles): ResolvedProgram | { refused: string } {
+/**
+ * What a `.cmd`/`.bat` shim on PATH starts, or why kurmis will not start it. `isOwn` is checked
+ * on the shim's target, not on the arguments, where Node options can come before the target.
+ */
+function resolveShim(shimPath: string, nodePath: string, files: ProgramFiles, isOwn: (path: string) => boolean): ResolvedProgram | { refused: string } {
   const bytes = files.read(shimPath, MAX_SHIM_BYTES)
   if (bytes === null) return { refused: 'it could not be read' }
   const text = decodeCmdShim(bytes)
@@ -192,6 +194,7 @@ function resolveShim(shimPath: string, nodePath: string, files: ProgramFiles): R
   const shim = parseCmdShim(text, shimPath)
   if ('unreadable' in shim) return { refused: `it is not a package manager shim kurmis can read (${shim.unreadable})` }
   if (!files.isFile(shim.target)) return { refused: `it starts ${shim.target}, which does not exist` }
+  if (isOwn(shim.target)) return { refused: OWN_BUNDLE }
   const invocation = cmdShimInvocation(shim, { nodePath, isFile: (path) => files.isFile(path) })
   if ('refused' in invocation) return invocation
   if (invocation.command === shim.target && !startsLikeWindowsProgram(files, shim.target)) {
