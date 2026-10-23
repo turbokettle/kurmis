@@ -9,9 +9,9 @@
 //   `WScript.Shell.Run(<command>, 0, false)`: window style 0 is hidden, and false means it does
 //   not wait. `//B` keeps wscript from showing a dialog when something fails at logon; the next
 //   kurmis command starts the daemon anyway.
-// - **Why JScript and the Run value.** The script used to be VBScript. Microsoft has deprecated
-//   VBScript: since Windows 11 24H2 it is an optional feature, which is to be turned off by
-//   default and later removed. JScript runs in the same Windows Script Host (`wscript.exe`) and
+// - **Why JScript and the Run value.** The script is JScript rather than VBScript, which
+//   Microsoft has deprecated: since Windows 11 24H2 VBScript is an optional feature, which is to
+//   be turned off by default and later removed. JScript runs in the same Windows Script Host (`wscript.exe`) and
 //   is not part of that deprecation, so the start stays hidden and needs no admin rights. The
 //   other ways were weighed and are worse without admin rights: a shortcut in the Startup folder
 //   needs COM to write and still opens node's console window (at best minimized); a Task
@@ -58,7 +58,7 @@
 // `KURMIS_REG_PROGRAM` and `KURMIS_WSCRIPT_PROGRAM` (test hooks) name stand-ins for reg.exe and
 // wscript.exe; tests use `test/platform/fake-reg/reg.mjs` and `test/platform/fake-windows/`.
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, win32 } from 'node:path'
+import { dirname, win32 } from 'node:path'
 import { windowsAutostartScriptPath } from '../data/paths.ts'
 import { makePrivateDirSync } from './files.ts'
 import { windowsCommandLine } from './detach.ts'
@@ -278,14 +278,6 @@ async function scriptHostProblem(wscript: string, reg: Reg): Promise<string | nu
   return null
 }
 
-/** The VBScript logon script an older kurmis wrote next to `scriptPath`, removed. Answers whether there was one. */
-function removeOldVbsScript(scriptPath: string): boolean {
-  const old = join(dirname(scriptPath), 'autostart.vbs')
-  if (old === scriptPath || !existsSync(old)) return false
-  rmSync(old, { force: true })
-  return true
-}
-
 /**
  * The advice setup gives when the Run value `data` has a `%`: Explorer may replace `%NAME%` in
  * it with the variable NAME, and then wscript gets another path. Null when it has none.
@@ -311,9 +303,8 @@ function withPercentWarning(result: AutostartResult, wscript: string, scriptPath
 
 /**
  * Writes the logon script and the Run value, each only when it differs from what is there.
- * The VBScript an older kurmis wrote is removed only once the Run value names the new script
- * (it already did, or `reg add` succeeded). A reg.exe failure is answered as a warning, and so is
- * a written value with a `%` in it (`percentWarning`).
+ * A reg.exe failure is answered as a warning, and so is a written value with a `%` in it
+ * (`percentWarning`).
  */
 export async function registerWindowsAutostart(options: WindowsAutostartOptions): Promise<AutostartResult> {
   const reg = options.reg ?? regFor(options.env)
@@ -349,17 +340,12 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
   const query = await reg(regQueryArgs())
   const current = ok(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null
   if (current !== null && current.type === 'REG_SZ' && sameRunData(current.data, data)) {
-    // The Run value names the new script, so the old VBScript is no longer needed.
-    if (removeOldVbsScript(scriptPath)) changed = true
     return withPercentWarning({ changed, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath)
   }
   const added = await reg(regAddArgs(data))
   if (!ok(added)) {
-    // The Run value may still name the old VBScript, which is kept so that logon still starts
-    // the daemon.
     return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(added)}).` }
   }
-  removeOldVbsScript(scriptPath)
   return withPercentWarning({ changed: true, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath)
 }
 
@@ -369,8 +355,7 @@ export async function registerWindowsAutostart(options: WindowsAutostartOptions)
  * the system's language and its exit code is 1 for every failure. That query also fails when the
  * value is missing, so a failed query is followed by `reg query` of the whole Run key: when that
  * lists the values without kurmis', there is none. When the key cannot be read either, or
- * `reg delete` fails, the answer is a warning, and `autostart.js` (and an old `autostart.vbs`)
- * are kept: a Run value that names a deleted script makes wscript show an error at every logon.
+ * `reg delete` fails, the answer is a warning, and `autostart.js` is kept: a Run value that names a deleted script makes wscript show an error at every logon.
  */
 export async function unregisterWindowsAutostart(options: WindowsAutostartOptions): Promise<AutostartResult> {
   const reg = options.reg ?? regFor(options.env)
@@ -404,11 +389,10 @@ export async function unregisterWindowsAutostart(options: WindowsAutostartOption
     }
     changed = true
   }
-  // The Run value is gone, so nothing runs the scripts any more.
+  // The Run value is gone, so nothing runs the script any more.
   if (readScript(scriptPath) !== null) {
     rmSync(scriptPath, { force: true })
     changed = true
   }
-  if (removeOldVbsScript(scriptPath)) changed = true
   return { changed, where: RUN_ENTRY_DESCRIPTION }
 }

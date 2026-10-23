@@ -345,32 +345,6 @@ describe('registering through reg.exe', () => {
     expect(existsSync(scriptPath())).toBe(false)
   })
 
-  it('removes the VBScript an older kurmis wrote once the Run value names the new script', async () => {
-    const old = join(join(process.env.HOME ?? '', 'win', 'Zoë Example'), 'autostart.vbs')
-    mkdirSync(join(process.env.HOME ?? '', 'win', 'Zoë Example'), { recursive: true })
-    writeFileSync(old, 'old')
-    expect((await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() })).changed).toBe(true)
-    expect(existsSync(old)).toBe(false)
-    // The value already names the new script: only the VBScript changes.
-    writeFileSync(old, 'old')
-    expect(await registerWindowsAutostart({ env: env(), programArguments: PROGRAM, scriptPath: scriptPath() }))
-      .toEqual({ changed: true, where: RUN_ENTRY_DESCRIPTION })
-    expect(existsSync(old)).toBe(false)
-    writeFileSync(old, 'old')
-    await unregisterWindowsAutostart({ env: env(), scriptPath: scriptPath() })
-    expect(existsSync(old)).toBe(false)
-  })
-
-  it('keeps the VBScript an older kurmis wrote when the Run value could not be changed to the new script', async () => {
-    const old = join(join(process.env.HOME ?? '', 'win', 'Zoë Example'), 'autostart.vbs')
-    mkdirSync(join(process.env.HOME ?? '', 'win', 'Zoë Example'), { recursive: true })
-    writeFileSync(old, 'old')
-    const result = await registerWindowsAutostart({ env: { ...env(), FAKE_REG_FAIL: '1' }, programArguments: PROGRAM, scriptPath: scriptPath() })
-    expect(result.where).toBeNull()
-    expect(result.warning).toMatch(/reg\.exe could not write the logon entry/)
-    expect(readFileSync(old, 'utf8')).toBe('old')
-  })
-
   it('answers a warning when reg.exe refuses', async () => {
     const failing = { ...env(), FAKE_REG_FAIL: '1' }
     const result = await registerWindowsAutostart({ env: failing, programArguments: PROGRAM, scriptPath: scriptPath() })

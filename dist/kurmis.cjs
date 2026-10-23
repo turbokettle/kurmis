@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101458" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101526" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -2132,11 +2132,11 @@ function isTemporaryPath(path, folders, platform) {
   const separators = platform === "win32" ? /[\\/]+/ : /\/+/;
   const fold = (text) => platform === "win32" ? text.toLowerCase() : text;
   if (path.split(separators).some((part) => fold(part) === "fnm_multishells")) return true;
-  const join16 = platform === "win32" ? "\\" : "/";
-  const plain = fold(path.split(separators).join(join16));
+  const join15 = platform === "win32" ? "\\" : "/";
+  const plain = fold(path.split(separators).join(join15));
   return folders.some((folder) => {
-    const root = fold(folder.split(separators).join(join16)).replace(/[\\/]+$/, "");
-    return root !== "" && (plain === root || plain.startsWith(root + join16));
+    const root = fold(folder.split(separators).join(join15)).replace(/[\\/]+$/, "");
+    return root !== "" && (plain === root || plain.startsWith(root + join15));
   });
 }
 function nodeForJobs(options = {}) {
@@ -8350,7 +8350,6 @@ var import_node_path20 = require("node:path");
 var FOLDERS = ["claude", "locks", "probe", "settings"];
 var FILES = [
   "autostart.js",
-  "autostart.vbs",
   "config.json",
   "daemon.json",
   "daemon.log",
@@ -8518,12 +8517,6 @@ async function scriptHostProblem(wscript, reg) {
   }
   return null;
 }
-function removeOldVbsScript(scriptPath) {
-  const old = (0, import_node_path21.join)((0, import_node_path21.dirname)(scriptPath), "autostart.vbs");
-  if (old === scriptPath || !(0, import_node_fs21.existsSync)(old)) return false;
-  (0, import_node_fs21.rmSync)(old, { force: true });
-  return true;
-}
 function percentWarning(wscript, scriptPath) {
   const named = [wscript, scriptPath].filter((path) => path.includes("%"));
   if (named.length === 0) return null;
@@ -8568,14 +8561,12 @@ async function registerWindowsAutostart(options) {
   const query = await reg(regQueryArgs());
   const current = ok2(query) ? parseRegQuery(query.stdout, RUN_VALUE_NAME) : null;
   if (current !== null && current.type === "REG_SZ" && sameRunData(current.data, data)) {
-    if (removeOldVbsScript(scriptPath)) changed = true;
     return withPercentWarning({ changed, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath);
   }
   const added = await reg(regAddArgs(data));
   if (!ok2(added)) {
     return { changed, where: null, warning: `reg.exe could not write the logon entry ${RUN_ENTRY_DESCRIPTION} (${runResultText(added)}).` };
   }
-  removeOldVbsScript(scriptPath);
   return withPercentWarning({ changed: true, where: RUN_ENTRY_DESCRIPTION }, wscript, scriptPath);
 }
 async function unregisterWindowsAutostart(options) {
@@ -8612,7 +8603,6 @@ async function unregisterWindowsAutostart(options) {
     (0, import_node_fs21.rmSync)(scriptPath, { force: true });
     changed = true;
   }
-  if (removeOldVbsScript(scriptPath)) changed = true;
   return { changed, where: RUN_ENTRY_DESCRIPTION };
 }
 

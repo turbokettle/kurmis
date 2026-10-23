@@ -30,7 +30,7 @@ const FOLDERS: readonly string[] = ['claude', 'locks', 'probe', 'settings']
  * being removed.
  */
 const FILES: readonly string[] = [
-  'autostart.js', 'autostart.vbs', 'config.json', 'daemon.json', 'daemon.log', 'key', 'paused.json', 'settings-files.json', 'state.json'
+  'autostart.js', 'config.json', 'daemon.json', 'daemon.log', 'key', 'paused.json', 'settings-files.json', 'state.json'
 ]
 
 /** The files macOS Finder and Windows Explorer write into a folder they showed, in lowercase. */
