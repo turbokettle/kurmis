@@ -1,19 +1,20 @@
 // `kurmis claude …`: starts Claude Code with its requests going through the daemon
 // (docs/architecture.md, "How a Claude CLI reaches the daemon").
 //
-// The CLI is started on one login's credentials: the pinned one with `--login`, otherwise the
+// claude is started on one login's credentials: the pinned one with `--login`, otherwise the
 // one `autoStartLogin` picks from the daemon's status (normally plain claude's login). While the
 // daemon has neither a token nor a probe answer for plain claude's login, as right after it
 // starts, the wrapper first waits up to `START_PROBE_WAIT_MS` for the probes of the logins the
-// daemon knows nothing about (`withFirstProbe`), so the first start after a daemon start
-// picks the same login as the later ones. When
-// config.json cannot be read, a CLI without `--login` starts on plain claude's login, with the id
-// the daemon's status gives it, and a warning. The proxy signs each request with the login it
-// picks, so on Auto this only has to be a login the CLI can send with at all. The routing
-// variables go into the process environment and, because a `settings.json` in global mode would
-// beat that, into a `--settings` argument too (`settings-arg.ts`).
-// `CLAUDE_SECURESTORAGE_CONFIG_DIR` stays in the process environment only: the settings layers
-// are about the requests, while that variable says where the CLI's own credentials are.
+// daemon knows nothing about (`withFirstProbe`), so the first start after a daemon start picks
+// the same login as the later ones. When config.json cannot be read, a claude without `--login`
+// starts on plain claude's login, with the id the daemon's status gives it, and a warning; that
+// needs a daemon that runs, or one `ensureDaemon` can start after reading config.json again. The
+// proxy signs each request with the login it picks, so on Auto this only has to be a login
+// claude can send with at all. The routing variables go into the process environment and,
+// because a `settings.json` in global mode would beat that, into a `--settings` argument too
+// (`settings-arg.ts`). `CLAUDE_SECURESTORAGE_CONFIG_DIR` stays in the process environment only:
+// the settings layers are about the requests, while that variable says where claude's own
+// credentials are.
 import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { LoginStatus, StatusAnswer } from '../../core/control-api.ts'
@@ -128,7 +129,7 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
 export const claudeCommand: Command = createClaudeCommand()
 
 /**
- * The login a CLI is started on, as the config or the daemon's status has it. `id` is null only
+ * The login claude is started on, as the config or the daemon's status has it. `id` is null only
  * for the login plain claude uses when neither the config nor the daemon names its id.
  */
 interface StartedOn {
@@ -163,7 +164,7 @@ async function runClaude(args: string[], login: string | null, context: CliConte
     if (!(error instanceof ConfigError)) throw error
     // A pinned login cannot be looked up without the config.
     if (login !== null) return fail(error.message)
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${PLAIN_CLAUDE_LOGIN}.`)
+    writeLine(context.stderr, `kurmis claude: ${error.message} Trying to start claude on ${PLAIN_CLAUDE_LOGIN}.`)
     config = null
   }
   let pinned: StartedOn | null = null
@@ -319,8 +320,8 @@ function settingsLayers(userSettings: UserSettingsArg, env: NodeJS.ProcessEnv,
 }
 
 /**
- * The note for a CLI started on plain claude's login while `CLAUDE_CONFIG_DIR` is set, on a platform
- * where that gives the CLI credentials of its own (`configDirHasOwnCredentials`).
+ * The note for a claude started on plain claude's login while `CLAUDE_CONFIG_DIR` is set, on a
+ * platform where that gives claude credentials of its own (`configDirHasOwnCredentials`).
  */
 function configDirNote(value: string, deps: ClaudeDeps): string {
   if (namesDefaultClaudeFolder(value, deps.platform, deps.homeDir())) {

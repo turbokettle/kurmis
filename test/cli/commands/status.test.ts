@@ -165,7 +165,7 @@ describe('kurmis status with the daemon not running', () => {
     expect(text).toMatch(/^The kurmis daemon is not running\. It is started automatically by\n {2}- "kurmis claude"\n/)
     expect(text).toContain(`\n${OWN_CLAUDE}\n  the login plain claude uses\n  no credentials on this machine, routing on`)
     expect(text).toContain('work-example (id workclaude)  work@example.com\n' +
-      '  credentials on this machine, routing on, limits 90% 5 hour, 100% weekly,\n  use first, 1 session, plan max\n')
+      '  credentials on this machine, routing on, limits 90% 5 hour, 100% weekly,\n  use first, 1 session in the last 7 days, plan max\n')
     expect(text).toContain('  usage read 3h ago\n')
     expect(text).toContain('\nsideclaude\n  no credentials on this machine, routing off')
     expect(text).not.toContain('passed over')

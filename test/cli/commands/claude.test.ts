@@ -397,7 +397,7 @@ describe('kurmis claude --login', () => {
     const out = collect()
     expect(await createClaudeCommand(h.deps).run(['-p', 'hi'], out.context)).toBe(3)
     expect(out.stderr()).toBe('kurmis claude: Another kurmis command (pid 4321) holds the lock of config.json. ' +
-      'Starting claude on the login plain claude uses.\n')
+      'Trying to start claude on the login plain claude uses.\n')
     expect(h.daemon.calls).toEqual(['findDaemon'])
     expect(h.specs[0]?.env.ANTHROPIC_CUSTOM_HEADERS).toBe(routedHeaders(`x-kurmis-key: ${KEY}`, `x-kurmis-started-on: ${OWN_CLAUDE}`))
     expect(h.specs[0]?.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe('')

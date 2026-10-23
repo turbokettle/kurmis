@@ -37,6 +37,6 @@ describe('daemon stop --now', () => {
     const context = { stdout: { write: (text: string) => (stdout += text) }, stderr: { write: () => true }, env: {} }
     expect(await runCli(['daemon', '--help'], context)).toBe(0)
     expect(stdout).toContain('stop [--now]')
-    expect(stdout).toContain('open Claude sessions\n                          retry the requests it cut.')
+    expect(stdout).toContain('open Claude sessions retry the requests it cut.')
   })
 })

@@ -75,15 +75,16 @@ Run "kurmis setup" to turn on global routing.
 
 own-example (id ownclaude1)
   the login plain claude uses
-  signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
+  signed in, routing on, limits 100% 5 hour, 100% weekly,
+  2 sessions in the last 7 days, plan max
   5 hour       42%  resets in 2h 10m      limit 100%
   7 day        63%  resets in 3d 4h       limit 100%
   7 day Opus   12%  resets in 3d 4h
   usage read 3m ago
 
 work-example (id workclaude)  work@example.com
-  signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session,
-  plan max, reading usage now
+  signed in, routing on, limits 90% 5 hour, 100% weekly, use first,
+  1 session in the last 7 days, plan max, reading usage now
   5 hour       92%  resets in 45m         limit 90%
   7 day         0%  reset since read      limit 100%
   usage read just now from a forwarded answer
@@ -92,16 +93,18 @@ work-example (id workclaude)  work@example.com
 
 spareclaude
   sign-in not checked yet, routing off, limits 100% 5 hour, 100% weekly,
-  0 sessions
+  0 sessions in the last 7 days
   usage not read yet
 
 coolclaude
-  signed in, routing on, limits 100% 5 hour, 100% weekly, 0 sessions
+  signed in, routing on, limits 100% 5 hour, 100% weekly,
+  0 sessions in the last 7 days
   usage not read yet
   passed over: cooling down until 02:10 (in 1h)
 
 goneclaude
-  signed out, routing on, limits 100% 5 hour, 100% weekly, 0 sessions, plan pro
+  signed out, routing on, limits 100% 5 hour, 100% weekly,
+  0 sessions in the last 7 days, plan pro
   5 hour        0%                        limit 100%
   7 day         0%                        limit 100%
   usage read 2h ago
@@ -312,14 +315,14 @@ Logins are read from config.json, and the usage is cached by the daemon:
 own-example (id ownclaude1)  own@example.com
   the login plain claude uses
   credentials on this machine, routing on, limits 100% 5 hour, 100% weekly,
-  1 session, plan max
+  1 session in the last 7 days, plan max
   5 hour    0%  reset since read      limit 100%
   7 day    63%  resets in 2d          limit 100%
   usage read 3h ago
 
 work-example (id workclaude)  own@example.com
   no credentials on this machine, routing on, limits 100% 5 hour, 100% weekly,
-  0 sessions
+  0 sessions in the last 7 days
   usage not read yet
 `)
   })

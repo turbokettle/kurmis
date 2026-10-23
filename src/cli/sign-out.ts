@@ -1,5 +1,5 @@
 // Signing an extra login out with `claude auth logout`, run on the login's folder the way
-// `kurmis login` ran the sign-in, before the folder is deleted. The CLI removes what it keeps
+// `kurmis login` ran the sign-in, before the folder is deleted. claude removes what it keeps
 // outside the folder: on macOS the Keychain item, on Windows the Credential Manager record,
 // which Claude Code deletes only with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`, so that is set
 // there. `kurmis logout` uses it, and so does `kurmis login` when the account it signed in is
@@ -30,7 +30,7 @@ export async function signOutLogin(login: LoginRef, env: NodeJS.ProcessEnv, deps
   let problem: string
   try {
     const program = deps.findProgram({ env })
-    // On Windows the CLI deletes the record in Credential Manager only with the switch on.
+    // On Windows claude deletes the record in Credential Manager only with the switch on.
     const patch = claudeLoginEnv(login, deps.platform === 'win32')
     const result = await deps.runProgram(program.command, [...program.args, 'auth', 'logout'],
       { timeoutMs: LOGOUT_TIMEOUT_MS, env: applyEnvPatch(env, patch) })

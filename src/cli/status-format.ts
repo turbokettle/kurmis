@@ -19,14 +19,7 @@ import { PLAIN_CLAUDE_LOGIN } from './command.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
 import type { CredentialCheck } from './local-credentials.ts'
 
-/**
- * Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added.
- * Format 4: a login's `id` and `alias` may be null. Format 5: a login's `machineOwn` is called
- * `usedByPlainCli`. Format 6: a login's `credentials` may be `"unknown"`, and counts only the
- * token, not a `.claude.json` that names an account. Format 7: a login has no `provider`, its
- * `usedByPlainCli` is called `usedByPlainClaude`, its `sessions` is never null, and the
- * top-level field that named the login another CLI would start on is gone.
- */
+/** Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added. */
 export const STATUS_JSON_FORMAT = 7
 
 export interface StatusJsonWindow {
@@ -76,7 +69,7 @@ export interface StatusJsonLogin {
   alias: string
   /** Whether this is the login a plain `claude` uses. */
   usedByPlainClaude: boolean
-  /** The login's email as its own CLI cached it; null when unknown. Shown, never stored. */
+  /** The login's email as claude cached it for the login; null when unknown. Shown, never stored. */
   email: string | null
   /** Whether the daemon found the login signed in; null when no daemon reported it or it has not looked yet. */
   signedIn: boolean | null
@@ -96,7 +89,10 @@ export interface StatusJsonLogin {
   usage: StatusJsonUsage | null
   /** Why the daemon's Auto would pass the login over now, or null when it could use it. */
   blocked: StatusJsonBlock | null
-  /** Sessions whose last request this login served. */
+  /**
+   * Sessions whose last request in the last 7 days this login served. The daemon remembers the
+   * 2000 sessions that sent a request most recently.
+   */
   sessions: number
 }
 
@@ -320,7 +316,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
     `limits ${String(login.fiveHourLimit)}% 5 hour, ${String(login.weeklyLimit)}% weekly`
   ]
   if (login.useFirst) facts.push('use first')
-  facts.push(login.sessions === 1 ? '1 session' : `${String(login.sessions)} sessions`)
+  facts.push(`${login.sessions === 1 ? '1 session' : `${String(login.sessions)} sessions`} in the last 7 days`)
   if (login.usage?.plan) facts.push(`plan ${login.usage.plan}`)
   if (login.probing) facts.push('reading usage now')
   lines.push(...wrapList(facts, '  '))

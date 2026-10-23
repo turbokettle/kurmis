@@ -8,13 +8,13 @@
 // so the folder is never renamed after the sign-in.
 //
 // The command runs `claude auth login --claudeai` with the login's folder as `CLAUDE_CONFIG_DIR`
-// (`claudeLoginEnv`). The CLI gets the terminal, as in `kurmis claude`. A new login is added to
-// config.json only after the CLI has exited 0 and the login's credentials are there
+// (`claudeLoginEnv`). claude gets the terminal, as in `kurmis claude`. A new login is added to
+// config.json only after claude has exited 0 and the login's credentials are there
 // (`hasCredentials`); otherwise the folder this command created is removed again. On Windows a
 // login whose record is in Credential Manager signs in with `CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1`,
 // so the new token replaces it.
 //
-// After the sign-in the command reads the account's email from the `.claude.json` the CLI wrote
+// After the sign-in the command reads the account's email from the `.claude.json` claude wrote
 // (`readClaudeIdentity`; `~/.claude.json` for plain claude's login). The email is shown on the
 // terminal and written nowhere. It gives the login's automatic alias (`followEmail`) unless
 // `--alias` sets one. An account is its email and its organization (`isSameClaudeAccount`): a
@@ -193,7 +193,7 @@ async function tellDaemon(daemon: DaemonClient, login: LoginSettings, probeWaitM
     const why = probed.kind === 'timeout'
       ? `did not finish within ${String(probeWaitMs / 1000)} s`
       : `failed (${probed.error instanceof Error ? probed.error.message : String(probed.error)})`
-    lines.push(`The daemon's check of ${login.alias} ${why}; it checks the login again within 15 minutes.`)
+    lines.push(`The daemon's check of ${login.alias} ${why}; "kurmis status" shows what the daemon knows about it.`)
   }
   return lines
 }
@@ -228,9 +228,9 @@ async function signIn(run: SignInRun): Promise<number> {
   }
   const notAdded = isNew ? ' No login was added.' : ''
 
-  const cliName = 'claude auth login'
+  const signInCommand = 'claude auth login'
   const what = isNew ? `a new login (id ${ref.id})` : name
-  writeLine(context.stdout, `Signing in ${what} with "${cliName}". Follow its steps.`)
+  writeLine(context.stdout, `Signing in ${what} with "${signInCommand}". Follow its steps.`)
   const credentialManager = await deps.inCredentialManager(folder, context.env)
   const env = applyEnvPatch(context.env, claudeLoginEnv(ref, credentialManager))
   const end = await deps.runner.runInteractive({ command: program.command, args: [...program.args, 'auth', 'login', '--claudeai'], env })
@@ -244,7 +244,7 @@ async function signIn(run: SignInRun): Promise<number> {
   }
   if (end.code !== 0) {
     cleanUp()
-    return fail(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`)
+    return fail(context, `"${signInCommand}" failed (exit code ${String(end.code)}).${notAdded}`)
   }
 
   if (ref.usedByPlainClaude) {
@@ -254,10 +254,10 @@ async function signIn(run: SignInRun): Promise<number> {
     rmSync(join(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true })
   }
   const identity = ref.usedByPlainClaude ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home())
-  // A check that could not run (`unknown`) does not undo a sign-in the CLI reported as done.
+  // A check that could not run (`unknown`) does not undo a sign-in claude reported as done.
   if (identity === null && (await hasCredentials(ref, context.env, deps.home(), deps)) === false) {
     cleanUp()
-    return fail(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`)
+    return fail(context, `"${signInCommand}" ended, but ${name} has no credentials.${notAdded}`)
   }
   const email = identity?.email ?? null
   const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null }

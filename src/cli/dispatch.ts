@@ -1,6 +1,6 @@
 // Picks the command from the first argument and runs it. `--version`, `--help` and
-// `help <command>` are handled here, since they are about kurmis itself. `--login` is kurmis'
-// only option that goes before the command, and only before `claude`: everything after the word
+// `help <command>` are handled here, since they are about kurmis itself. `--login` is the only
+// option that goes before a command, and only before `claude`: everything after the word
 // `claude` belongs to claude, so it needs no `--`, which PowerShell drops when it runs npm's
 // `kurmis.ps1`.
 import { kurmisVersion } from '../version.ts'

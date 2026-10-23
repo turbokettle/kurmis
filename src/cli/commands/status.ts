@@ -24,7 +24,7 @@ import { daemonOf, daemonReport, formatStatus, statusJson, type StatusReport } f
 
 /**
  * How long `kurmis status` waits for the first usage probe of a daemon that has read no usage
- * yet. Claude probes start one short-lived `claude` per login, and they run side by side.
+ * yet. Each probe starts one short-lived `claude`, and the probes run side by side.
  */
 const STATUS_PROBE_WAIT_MS = 15_000
 
@@ -55,13 +55,15 @@ routing is on. It does not start the daemon, and it exits 0 either way. For exam
 
   own-example (id k3v9q2m7xa)                   <- alias and id
     the login plain claude uses
-    signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
+    signed in, routing on, limits 100% 5 hour, 100% weekly,
+    2 sessions in the last 7 days, plan max
     5 hour       42%  resets in 2h 10m      limit 100%
     7 day        63%  resets in 3d 4h       limit 100%
     usage read 3m ago
 
   work-example (id p8x2n4c6ve)  work@example.com
-    signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session
+    signed in, routing on, limits 90% 5 hour, 100% weekly, use first,
+    1 session in the last 7 days
     5 hour       92%  resets in 45m         limit 90%
     7 day         0%  reset since read      limit 100%
     passed over: at its limit, the 5 hour window is at 92% of 90%; it resets in
@@ -70,8 +72,9 @@ routing is on. It does not start the daemon, and it exits 0 either way. For exam
 A warning at the top says when two logins are the same account, so they use one subscription.
 
 While the daemon is not running, the logins come from config.json with the last usage the
-daemon read, and "credentials on this machine" takes the place of "signed in": kurmis checks
-that the token is there without reading it. The README describes every line.
+daemon read, and "credentials on this machine" takes the place of "signed in": a token for the
+login is stored on this machine, which does not show that it still works. The README describes
+the lines in more detail.
 
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and

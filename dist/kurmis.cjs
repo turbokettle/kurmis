@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101848" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101928" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -3629,7 +3629,7 @@ async function runClaude(args, login, context, deps) {
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
     if (login !== null) return fail4(error.message);
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${PLAIN_CLAUDE_LOGIN}.`);
+    writeLine(context.stderr, `kurmis claude: ${error.message} Trying to start claude on ${PLAIN_CLAUDE_LOGIN}.`);
     config = null;
   }
   let pinned = null;
@@ -7527,8 +7527,8 @@ needed.
   start                   Start it in the background. An older daemon is replaced, a newer
                           one is kept.
   stop [--now]            Stop it after it finishes its open requests, waiting at most 30
-                          seconds. With --now it stops at once, and open Claude sessions
-                          retry the requests it cut.
+                          seconds. With --now it cuts its open requests and stops, and
+                          open Claude sessions retry the requests it cut.
   restart                 Start a new one now; the old one finishes its open requests in
                           the background.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it
@@ -7804,7 +7804,7 @@ async function tellDaemon(daemon, login, probeWaitMs) {
     if (row?.signedIn === false) lines.push(`The daemon still finds ${login.alias} signed out; "kurmis status" shows what it knows.`);
   } else {
     const why = probed.kind === "timeout" ? `did not finish within ${String(probeWaitMs / 1e3)} s` : `failed (${probed.error instanceof Error ? probed.error.message : String(probed.error)})`;
-    lines.push(`The daemon's check of ${login.alias} ${why}; it checks the login again within 15 minutes.`);
+    lines.push(`The daemon's check of ${login.alias} ${why}; "kurmis status" shows what the daemon knows about it.`);
   }
   return lines;
 }
@@ -7820,9 +7820,9 @@ async function signIn(run2) {
     if (created && folder !== null) removeTreeSync(folder);
   };
   const notAdded = isNew ? " No login was added." : "";
-  const cliName = "claude auth login";
+  const signInCommand = "claude auth login";
   const what = isNew ? `a new login (id ${ref.id})` : name;
-  writeLine(context.stdout, `Signing in ${what} with "${cliName}". Follow its steps.`);
+  writeLine(context.stdout, `Signing in ${what} with "${signInCommand}". Follow its steps.`);
   const credentialManager = await deps.inCredentialManager(folder, context.env);
   const env = applyEnvPatch(context.env, claudeLoginEnv(ref, credentialManager));
   const end = await deps.runner.runInteractive({ command: program.command, args: [...program.args, "auth", "login", "--claudeai"], env });
@@ -7834,7 +7834,7 @@ async function signIn(run2) {
   }
   if (end.code !== 0) {
     cleanUp();
-    return fail2(context, `"${cliName}" failed (exit code ${String(end.code)}).${notAdded}`);
+    return fail2(context, `"${signInCommand}" failed (exit code ${String(end.code)}).${notAdded}`);
   }
   if (ref.usedByPlainClaude) {
     (0, import_node_fs18.rmSync)((0, import_node_path19.join)(ownClaudeProbeFolder(), CLAUDE_PROFILE_FILE), { force: true });
@@ -7842,7 +7842,7 @@ async function signIn(run2) {
   const identity = ref.usedByPlainClaude ? homeIdentity(deps.home()) : readClaudeIdentity(ref, deps.home());
   if (identity === null && await hasCredentials(ref, context.env, deps.home(), deps) === false) {
     cleanUp();
-    return fail2(context, `"${cliName}" ended, but ${name} has no credentials.${notAdded}`);
+    return fail2(context, `"${signInCommand}" ended, but ${name} has no credentials.${notAdded}`);
   }
   const email = identity?.email ?? null;
   const account = email === null ? null : { email, organizationUuid: identity?.organizationUuid ?? null };
@@ -8862,7 +8862,7 @@ function displayValue(value) {
 }
 function keyVariableWarnings(env) {
   if (env === void 0) return [];
-  return KEY_VARIABLES.filter((name) => env[name] !== void 0 && env[name] !== "").map((name) => OAUTH_TOKEN_VARIABLES.includes(name) ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of the credentials of the login plain claude uses, and a request kurmis sends on that login may be billed to the token's account. Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.` : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`);
+  return KEY_VARIABLES.filter((name) => env[name] !== void 0 && env[name] !== "").map((name) => OAUTH_TOKEN_VARIABLES.includes(name) ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of the credentials of the login plain claude uses, and a request kurmis sends on that login may be billed to the token's account. Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.` : `The "env" also sets ${name}, which kurmis leaves as it is. Claude Code sends it with its requests; kurmis replaces it with the token of the login it picks when it has one.`);
 }
 function backupBefore(backupText) {
   if (backupText === null || backupText === void 0) return null;
@@ -9284,15 +9284,15 @@ function errorCode2(error) {
 var NPM_UNINSTALL = "npm uninstall -g kurmis";
 var USAGE2 = `Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]
 
-Turns global routing on: every Claude Code on this machine goes through kurmis, including a
-plain "claude" and the IDE extensions, not only "kurmis claude". Setup starts the daemon, makes
-it start when you log in (macOS and Windows), and adds kurmis' address to the "env" block of
-~/.claude/settings.json (or the one in CLAUDE_CONFIG_DIR), after saving a copy as
-settings.json.kurmis-backup. Claude Code sessions that are already open need a restart.
+Turns global routing on: Claude Code that reads your user settings file goes through kurmis,
+including a plain "claude" and the IDE extensions, not only "kurmis claude". Setup starts the
+daemon, makes it start when you log in (macOS and Windows), and adds kurmis' address to the
+"env" block of ~/.claude/settings.json (or the one in CLAUDE_CONFIG_DIR), after saving a copy
+as settings.json.kurmis-backup. Claude Code sessions that are already open need a restart.
 
 Options:
-  --pause                 Turn global routing off again: plain "claude" and the IDE
-                          extensions talk to Anthropic directly. Everything else stays, and
+  --pause                 Pause global routing: plain "claude" and the IDE extensions talk
+                          to Anthropic directly. Everything else stays, and
                           "kurmis setup" turns it back on.
   --uninstall-and-logout  Remove everything kurmis set up, and sign out and remove every login
                           you added. The login plain claude uses stays signed in. It lists
@@ -9923,7 +9923,7 @@ function loginLines(login, now, labelWidth) {
     `limits ${String(login.fiveHourLimit)}% 5 hour, ${String(login.weeklyLimit)}% weekly`
   ];
   if (login.useFirst) facts.push("use first");
-  facts.push(login.sessions === 1 ? "1 session" : `${String(login.sessions)} sessions`);
+  facts.push(`${login.sessions === 1 ? "1 session" : `${String(login.sessions)} sessions`} in the last 7 days`);
   if (login.usage?.plan) facts.push(`plan ${login.usage.plan}`);
   if (login.probing) facts.push("reading usage now");
   lines.push(...wrapList(facts, "  "));
@@ -10058,13 +10058,15 @@ routing is on. It does not start the daemon, and it exits 0 either way. For exam
 
   own-example (id k3v9q2m7xa)                   <- alias and id
     the login plain claude uses
-    signed in, routing on, limits 100% 5 hour, 100% weekly, 2 sessions, plan max
+    signed in, routing on, limits 100% 5 hour, 100% weekly,
+    2 sessions in the last 7 days, plan max
     5 hour       42%  resets in 2h 10m      limit 100%
     7 day        63%  resets in 3d 4h       limit 100%
     usage read 3m ago
 
   work-example (id p8x2n4c6ve)  work@example.com
-    signed in, routing on, limits 90% 5 hour, 100% weekly, use first, 1 session
+    signed in, routing on, limits 90% 5 hour, 100% weekly, use first,
+    1 session in the last 7 days
     5 hour       92%  resets in 45m         limit 90%
     7 day         0%  reset since read      limit 100%
     passed over: at its limit, the 5 hour window is at 92% of 90%; it resets in
@@ -10073,8 +10075,9 @@ routing is on. It does not start the daemon, and it exits 0 either way. For exam
 A warning at the top says when two logins are the same account, so they use one subscription.
 
 While the daemon is not running, the logins come from config.json with the last usage the
-daemon read, and "credentials on this machine" takes the place of "signed in": kurmis checks
-that the token is there without reading it. The README describes every line.
+daemon read, and "credentials on this machine" takes the place of "signed in": a token for the
+login is stored on this machine, which does not show that it still works. The README describes
+the lines in more detail.
 
 Options:
   --json       Print the same as JSON. "daemon" is null while the daemon is not running, and

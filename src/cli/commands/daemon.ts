@@ -212,8 +212,8 @@ needed.
   start                   Start it in the background. An older daemon is replaced, a newer
                           one is kept.
   stop [--now]            Stop it after it finishes its open requests, waiting at most 30
-                          seconds. With --now it stops at once, and open Claude sessions
-                          retry the requests it cut.
+                          seconds. With --now it cuts its open requests and stops, and
+                          open Claude sessions retry the requests it cut.
   restart                 Start a new one now; the old one finishes its open requests in
                           the background.
   status [--json]         Show whether it runs, its pid, port and version. Exits 1 when it

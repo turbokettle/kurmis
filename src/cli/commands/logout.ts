@@ -3,7 +3,7 @@
 //
 // 1. The login is removed from config.json (under the config lock) and a running daemon is told,
 //    so it stops routing to the login and probing it before its folder goes.
-// 2. `claude auth logout` runs on the login (`signOutLogin` in `sign-out.ts`), so the CLI removes
+// 2. `claude auth logout` runs on the login (`signOutLogin` in `sign-out.ts`), so claude removes
 //    what it keeps outside the folder (on macOS the Keychain item, on Windows the Credential
 //    Manager record). It runs even when the folder is gone, since the item outside it may not be.
 //    A logout that fails or a `claude` that is missing is reported and the removal goes on: the

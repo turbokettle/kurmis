@@ -14,12 +14,13 @@
 // Every Claude Code session that was started while global routing was on keeps the settings it
 // read at its start, and so keeps sending its requests to the daemon until it ends.
 //
-// The daemon comes first: once `settings.json` names it, every Claude Code on the machine sends
-// its requests there, so the file is written only when a daemon answers on the port it names.
-// The file is checked before the daemon is started, so a file setup would refuse starts nothing.
-// When the daemon cannot be started, the settings file is not written (its path is already in
-// `settings-files.json`, which does no harm). When autostart then fails, the command says so and
-// exits with 1; running it again is safe, since every step does nothing when it is already done. An autostart entry that loads only at the next login (macOS with nobody at the
+// The daemon comes first: once `settings.json` names it, every Claude Code that reads the file
+// sends its requests there, so the file is written only when a daemon answers on the port it
+// names. The file is checked before the daemon is started, so a file setup would refuse starts
+// nothing. When the daemon cannot be started, the settings file is not written (its path is
+// already in `settings-files.json`, which does no harm). When autostart then fails, the command
+// says so and exits with 1; running it again is safe, since every step does nothing when it is
+// already done. An autostart entry that loads only at the next login (macOS with nobody at the
 // screen), a machine where no entry can be written (Windows without Windows Script Host), an
 // entry that starts a Node in a temporary folder and a platform without autostart are warnings:
 // the daemon runs, and after a restart the entry or the next `kurmis claude` starts it again.
@@ -83,15 +84,15 @@ const NPM_UNINSTALL = 'npm uninstall -g kurmis'
 
 const USAGE = `Usage: kurmis setup [--pause | --uninstall-and-logout [--yes]]
 
-Turns global routing on: every Claude Code on this machine goes through kurmis, including a
-plain "claude" and the IDE extensions, not only "kurmis claude". Setup starts the daemon, makes
-it start when you log in (macOS and Windows), and adds kurmis' address to the "env" block of
-~/.claude/settings.json (or the one in CLAUDE_CONFIG_DIR), after saving a copy as
-settings.json.kurmis-backup. Claude Code sessions that are already open need a restart.
+Turns global routing on: Claude Code that reads your user settings file goes through kurmis,
+including a plain "claude" and the IDE extensions, not only "kurmis claude". Setup starts the
+daemon, makes it start when you log in (macOS and Windows), and adds kurmis' address to the
+"env" block of ~/.claude/settings.json (or the one in CLAUDE_CONFIG_DIR), after saving a copy
+as settings.json.kurmis-backup. Claude Code sessions that are already open need a restart.
 
 Options:
-  --pause                 Turn global routing off again: plain "claude" and the IDE
-                          extensions talk to Anthropic directly. Everything else stays, and
+  --pause                 Pause global routing: plain "claude" and the IDE extensions talk
+                          to Anthropic directly. Everything else stays, and
                           "kurmis setup" turns it back on.
   --uninstall-and-logout  Remove everything kurmis set up, and sign out and remove every login
                           you added. The login plain claude uses stays signed in. It lists
@@ -237,7 +238,7 @@ async function runningDaemonPid(deps: SetupDeps): Promise<number | null> {
 
 /**
  * Why setup refuses to run with this `CLAUDE_CONFIG_DIR`, or null. A value that names
- * `~/.claude` itself makes the CLI keep credentials apart from the default ones on macOS and
+ * `~/.claude` itself makes claude keep credentials apart from the default ones on macOS and
  * Windows (`configDirHasOwnCredentials`), while `~/.claude/settings.json` is the file every
  * plain `claude` reads. Setup cannot write one file that is right for both, so it asks for the
  * variable to be unset. The same holds, on every platform, for another folder whose
@@ -439,8 +440,9 @@ async function runPause(deps: SetupDeps, context: CliContext): Promise<number> {
 // 2. The daemon's start at login is removed.
 // 3. The daemon is stopped, so it uses no login and probes none while they are signed out.
 // 4. Each login kurmis added is removed through `kurmis logout`'s code (`createLoginLogout`),
-//    which keeps a login whose logout CLI fails. The logins are the extra ones in config.json
-//    and every login folder in the data folder, so a run that stopped half-way finds the rest.
+//    which keeps a login whose `claude auth logout` fails. The logins are the extra ones in
+//    config.json and every login folder in the data folder, so a run that stopped half-way finds
+//    the rest.
 // 5. The data folder is deleted (`removeDataFolder`).
 //
 // A failed step is reported and the steps after it still run, except that the data folder is

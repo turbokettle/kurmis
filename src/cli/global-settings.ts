@@ -106,10 +106,10 @@ export interface SetupValues {
   /** The daemon's secret, from the `key` file. */
   key: string
   /**
-   * The file is `$CLAUDE_CONFIG_DIR/settings.json`, read only by CLIs that sign in with the
+   * The file is `$CLAUDE_CONFIG_DIR/settings.json`, read only by a claude that signs in with the
    * credentials in that folder, which are not those of plain claude's login
    * (`configDirHasOwnCredentials`). The custom headers then say so (`STARTED_ON_NONE`), and the
-   * proxy never signs those CLIs' requests as plain claude's login.
+   * proxy never signs the requests of such a claude as plain claude's login.
    */
   credentialsOfItsOwn?: boolean
 }
@@ -434,7 +434,8 @@ function keyVariableWarnings(env: Record<string, unknown> | undefined): string[]
     ? `The "env" also sets ${name}, so a plain claude signs in with that subscription token instead of ` +
       'the credentials of the login plain claude uses, and a request kurmis sends on that login may be billed to the token\'s account. ' +
       'Kurmis leaves it; remove it if you want your logins used. "kurmis claude" does not use it.'
-    : `The "env" also sets ${name}, so Claude Code signs its requests with that key instead of a subscription login. Kurmis leaves it; remove it if you want your logins used.`)
+    : `The "env" also sets ${name}, which kurmis leaves as it is. Claude Code sends it with its requests; kurmis replaces ` +
+      'it with the token of the login it picks when it has one.')
 }
 
 /**
@@ -635,7 +636,7 @@ function sameLines(a: readonly string[], b: readonly string[]): boolean {
 
 /**
  * The user settings file Claude Code reads: `$CLAUDE_CONFIG_DIR/settings.json` when
- * `CLAUDE_CONFIG_DIR` is set and not empty, as the CLI itself does, otherwise
+ * `CLAUDE_CONFIG_DIR` is set and not empty, as claude itself does, otherwise
  * `~/.claude/settings.json`. Throws a `SettingsFileError` when `CLAUDE_CONFIG_DIR` points into
  * kurmis' data folder: that is a login's or a probe's folder, never the user's own settings.
  */

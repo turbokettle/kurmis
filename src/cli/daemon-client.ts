@@ -15,7 +15,8 @@
 // other exits at once, and both CLIs connect to the one that stayed. A daemon of an
 // older version is replaced by the new process itself (`main.ts` asks it to stop, which frees the
 // port at once while it finishes its open requests). A daemon on another port than `config.json`
-// names is asked to stop by the CLI, unless it is newer than the CLI.
+// names is asked to stop by the CLI, unless it is newer than this kurmis, or its version cannot
+// be compared with this kurmis' own and is another.
 //
 // **A newer daemon.** A newer daemon (a higher version, or the same version with a higher
 // control API version) is never replaced. When its control API version is this kurmis' own, it

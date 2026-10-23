@@ -11,7 +11,7 @@
 //   script, a pipe, a program that runs `kurmis claude -p`), a SIGINT or SIGQUIT is most likely
 //   sent to the wrapper's pid alone, so the wrapper sends them on to the child like SIGTERM. A
 //   child in a terminal's process group whose input is piped then gets Ctrl-C twice, once from
-//   the terminal and once from the wrapper; a CLI that is not interactive ends at the first.
+//   the terminal and once from the wrapper; a claude that is not interactive ends at the first.
 // - SIGTERM and SIGHUP on macOS and Linux: these are usually sent to the wrapper alone (`kill
 //   <pid>`, a closed terminal reaching the shell's jobs), so the wrapper sends them on to the
 //   child and keeps waiting for it to end.
@@ -27,7 +27,7 @@
 // refuses to start a child (`wrapperLoop`) when its own parent is one of those pids, which is
 // what a script that `exec`s kurmis gives, or when the list is already `MAX_WRAPPER_DEPTH` long,
 // which catches a script that starts kurmis without `exec` a few rounds later. A `kurmis claude`
-// run inside a session, from the CLI's shell, has the CLI or a shell as its parent, never the
+// run inside a session, from claude's shell, has claude or a shell as its parent, never the
 // wrapper, so it is not refused.
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { constants } from 'node:os'

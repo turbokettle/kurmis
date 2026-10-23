@@ -7,7 +7,7 @@
 // looked up with `security find-generic-password -s <service>` without `-w`, which prints the
 // item's attributes and not its secret. On Windows it is a Credential Manager record, found by
 // listing the credentials' names (`storedRecordsExist`). A `.claude.json` that names an account
-// does not count: the CLI keeps it after the token is gone.
+// does not count: claude keeps it after the token is gone.
 //
 // A check that could not run (`security` or PowerShell missing, failing or too slow, a
 // credentials file that could not be read) answers `unknown`, never yes.

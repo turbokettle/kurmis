@@ -161,7 +161,7 @@ describe('kurmis status, end to end', () => {
     expect(text.stdout).toContain(`kurmis daemon ${PACKAGE_VERSION}, pid ${String(daemon?.pid)}, port ${String(world.port)}`)
     expect(text.stdout).toContain(`default-example (id ${OWN_CLAUDE})  default@example.com\n${OWN_LINE}  signed in, routing on`)
     expect(text.stdout).toContain(`work-example (id ${work.id})  work@example.com\n` +
-      '  signed in, routing on, limits 80% 5 hour, 90% weekly, 0 sessions, plan team\n')
+      '  signed in, routing on, limits 80% 5 hour, 90% weekly,\n  0 sessions in the last 7 days, plan team\n')
     expect(text.stdout).toMatch(/\n {2}7 day +95% {2}resets in [^\n]+limit 90%\n/)
     expect(text.stdout).toContain(`spare-example (id ${spare.id})  spare@example.com\n  signed in`)
     expect(text.stdout).toMatch(/\n {2}5 hour +99% {2}resets in [^\n]+limit 90%\n/)
@@ -216,7 +216,7 @@ describe('kurmis status, end to end', () => {
 
     const text = await world.kurmis(['status'])
     expect(text.stdout).toContain(`${OWN_CLAUDE}\n${OWN_LINE}  signed out, routing on`)
-    expect(text.stdout).toMatch(new RegExp(`work-example \\(id ${work.id}\\) {2}work@example\\.com\\n[^\\n]*1 session[^\\n]*\\n` +
+    expect(text.stdout).toMatch(new RegExp(`work-example \\(id ${work.id}\\) {2}work@example\\.com\\n(?:[^\\n]*\\n)?[^\\n]*1 session in the last 7 days[^\\n]*\\n` +
       '(?: {2}[^\\n]*\\n)*? {2}usage read just now from a forwarded answer\\n {2}passed over: '))
     // The text gives the cooldown's end in local time; the JSON above keeps it as ISO.
     expect(text.stdout).toMatch(/passed over: cooling down until (?:\d{4}-\d{2}-\d{2} )?\d{2}:\d{2} \(in [^)]+\)\n/)
