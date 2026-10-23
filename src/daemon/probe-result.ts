@@ -82,7 +82,6 @@ export function failureForExit(
         ? 'claude could not be started.'
         : `claude could not be started (${safeCode(exit.errorCode)}).`)
     case 'close_timeout':
-    case 'killed':
     case 'exited':
       if (exit.code !== null) {
         return probeFailure(signedIn, 'exited', `claude exited with code ${String(exit.code)} before it answered.`)

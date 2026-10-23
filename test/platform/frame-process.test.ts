@@ -99,12 +99,6 @@ test('a signal that is already aborted means the program is not started', async 
   expect(await proc.exited).toEqual({ end: 'aborted', code: null, signal: null, errorCode: null })
 })
 
-test('kill ends the program', async () => {
-  const { proc } = start(['hang'])
-  proc.kill()
-  expect(await proc.exited).toMatchObject({ end: 'killed' })
-})
-
 test('a line longer than the cap kills the program', async () => {
   const { proc, frames } = start(['longline', String(64 * 1024)], { maxFrameBytes: 1024 })
   expect(await proc.exited).toMatchObject({ end: 'output_too_large' })
@@ -134,11 +128,12 @@ test('a batch file is refused on every platform', async () => {
 // the stand-in of test/setup.ts does not do (it ends only the one pid), so there the next test
 // checks only that taskkill is asked to end the tree.
 test.skipIf(process.platform === 'win32')('a kill takes the processes the program started with it', async () => {
-  const { proc, frames } = start(['grandchild'])
+  const controller = new AbortController()
+  const { proc, frames } = start(['grandchild'], { signal: controller.signal })
   await waitFor(() => frames.length === 1)
   const grandchild = (frames[0] as { grandchild: number }).grandchild
   expect(isRunning(grandchild)).toBe(true)
-  proc.kill()
+  controller.abort()
   await proc.exited
   await waitFor(() => !isRunning(grandchild))
 })
@@ -146,11 +141,12 @@ test.skipIf(process.platform === 'win32')('a kill takes the processes the progra
 test('on Windows a kill asks taskkill to end the program\'s tree, and the program ends', async () => {
   const calls = join(process.env.FAKE_TASKKILL_DIR ?? '', 'calls.jsonl')
   rmSync(calls, { force: true })
-  const { proc } = start(['hang'], { platform: 'win32' })
+  const controller = new AbortController()
+  const { proc } = start(['hang'], { platform: 'win32', signal: controller.signal })
   const pid = proc.pid ?? 0
   await sleep(100)
-  proc.kill()
-  expect(await proc.exited).toMatchObject({ end: 'killed' })
+  controller.abort()
+  expect(await proc.exited).toMatchObject({ end: 'aborted' })
   // On Windows the earlier tests' kills also run the stand-in, which can write its call after this
   // test emptied the file, so only the calls for this program count.
   const lines = readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as string[])
@@ -160,9 +156,9 @@ test('on Windows a kill asks taskkill to end the program\'s tree, and the progra
 
 test('sending after the input is closed does nothing', async () => {
   const { proc, frames } = start(['echo'])
-  proc.endInput()
+  const closed = proc.close(5_000)
   proc.send({ late: true })
-  await proc.exited
+  await closed
   expect(frames).toEqual([])
 })
 

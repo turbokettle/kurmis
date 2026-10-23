@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101526" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101549" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
@@ -4185,11 +4185,6 @@ function startFrameProcess(program, args, options) {
       errorCode: null
     });
   });
-  const endInput = () => {
-    if (!inputOpen) return;
-    inputOpen = false;
-    stdin.end();
-  };
   return {
     pid: child2.pid,
     exited,
@@ -4198,14 +4193,13 @@ function startFrameProcess(program, args, options) {
       stdin.write(`${JSON.stringify(frame)}
 `);
     },
-    endInput,
     close(graceMs) {
-      endInput();
+      if (inputOpen) {
+        inputOpen = false;
+        stdin.end();
+      }
       if (!settled && graceTimer === void 0) graceTimer = (0, import_node_timers2.setTimeout)(() => kill("close_timeout"), graceMs);
       return exited;
-    },
-    kill() {
-      kill("killed");
     }
   };
 }
@@ -4216,9 +4210,7 @@ function endedBeforeStart(end, code) {
     pid: void 0,
     exited,
     send: () => void 0,
-    endInput: () => void 0,
-    close: () => exited,
-    kill: () => void 0
+    close: () => exited
   };
 }
 function killTree(child2, platform, env) {
@@ -4282,7 +4274,6 @@ function failureForExit(exit, timeoutMs, signedIn) {
     case "start_failed":
       return probeFailure(signedIn, "missing", exit.errorCode === null ? "claude could not be started." : `claude could not be started (${safeCode(exit.errorCode)}).`);
     case "close_timeout":
-    case "killed":
     case "exited":
       if (exit.code !== null) {
         return probeFailure(signedIn, "exited", `claude exited with code ${String(exit.code)} before it answered.`);

@@ -48,8 +48,6 @@ export type FrameProcessEnd =
   | 'output_too_large'
   /** `close` ended its input and the program did not exit within the grace time. */
   | 'close_timeout'
-  /** `kill` was called. */
-  | 'killed'
   /** The program could not be started, for example because the file does not exist. */
   | 'start_failed'
   /** The program is a `.cmd` or `.bat` file, which kurmis never starts. */
@@ -86,15 +84,12 @@ export interface FrameProcess {
   readonly exited: Promise<FrameProcessExit>
   /** Writes one value as a line of JSON. Does nothing once the input is closed. */
   send(frame: unknown): void
-  /** Closes the program's stdin, which tells both CLIs to finish and exit. */
-  endInput(): void
   /**
-   * Closes stdin and waits for the program to exit, killing it when it has not exited after
-   * `graceMs`. The deadline still applies. Answers the same as `exited`.
+   * Closes stdin, which tells claude to finish and exit, and waits for the program to exit,
+   * killing it when it has not exited after `graceMs`. The deadline still applies. Answers the
+   * same as `exited`.
    */
   close(graceMs: number): Promise<FrameProcessExit>
-  /** Kills the program now. */
-  kill(): void
 }
 
 /** How to end a whole process tree on this platform, or null to signal the process group. */
@@ -248,12 +243,6 @@ export function startFrameProcess(program: string, args: readonly string[], opti
     })
   })
 
-  const endInput = (): void => {
-    if (!inputOpen) return
-    inputOpen = false
-    stdin.end()
-  }
-
   return {
     pid: child.pid,
     exited,
@@ -261,14 +250,13 @@ export function startFrameProcess(program: string, args: readonly string[], opti
       if (!inputOpen || settled) return
       stdin.write(`${JSON.stringify(frame)}\n`)
     },
-    endInput,
     close(graceMs) {
-      endInput()
+      if (inputOpen) {
+        inputOpen = false
+        stdin.end()
+      }
       if (!settled && graceTimer === undefined) graceTimer = setTimeout(() => kill('close_timeout'), graceMs)
       return exited
-    },
-    kill() {
-      kill('killed')
     }
   }
 }
@@ -281,9 +269,7 @@ function endedBeforeStart(end: FrameProcessEnd, code: string | null): FrameProce
     pid: undefined,
     exited,
     send: () => undefined,
-    endInput: () => undefined,
-    close: () => exited,
-    kill: () => undefined
+    close: () => exited
   }
 }
 
