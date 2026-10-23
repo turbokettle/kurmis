@@ -50,7 +50,7 @@ export const KEYCHAIN_LOOKUP_TIMEOUT_MS = 3_000
  * token is parsed in memory and nothing of it is kept. A missing file is no; a file that cannot
  * be read for another reason is `unknown`.
  */
-export function credentialsFileHasToken(dir: string): CredentialCheck {
+function credentialsFileHasToken(dir: string): CredentialCheck {
   let text: string
   try {
     text = readFileSync(join(dir, CREDENTIALS_FILE_NAME), 'utf8')
@@ -71,7 +71,7 @@ export function credentialsFileHasToken(dir: string): CredentialCheck {
  * In an ssh login the search list holds only the System keychain, so a no is asked again of the
  * user's own keychains (`security list-keychains -d user`), named one by one.
  */
-export async function keychainItemExists(service: string, env: NodeJS.ProcessEnv, run: typeof runProgram): Promise<CredentialCheck> {
+async function keychainItemExists(service: string, env: NodeJS.ProcessEnv, run: typeof runProgram): Promise<CredentialCheck> {
   // `security` runs in this process's environment, as the daemon's Keychain reader runs it.
   const security = (args: string[]): ReturnType<typeof runProgram> =>
     run(systemProgram('security', env), args, { timeoutMs: KEYCHAIN_LOOKUP_TIMEOUT_MS, maxOutputBytes: 64 * 1024 })

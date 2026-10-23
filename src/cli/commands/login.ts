@@ -57,14 +57,13 @@ import type { LoginId, LoginRef } from '../../data/login-id.ts'
 import { loginFolder, ownClaudeProbeFolder } from '../../data/paths.ts'
 import { makePrivateDirSync } from '../../platform/files.ts'
 import { holdsStoredRecord } from '../../platform/windows-credentials.ts'
-import { ProgramNotFoundError, type findProgram, type ResolvedProgram } from '../../platform/programs.ts'
+import { findProgram, ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { runProgram } from '../../platform/run.ts'
-import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
-import { realChildRunner, realDaemonClient, realFindProgram, reloadText, settleWithin, type ChildRunner, type DaemonClient } from '../command-deps.ts'
+import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, PLAIN_CLAUDE_LOGIN, usageError, writeLine, type CliContext, type Command } from '../command.ts'
+import { realChildRunner, realDaemonClient, reloadText, settleWithin, type ChildRunner, type DaemonClient } from '../command-deps.ts'
 import type { FileLock } from '../../data/lock.ts'
 import { LoginBusyError, lockLogin } from '../login-lock.ts'
-import { plainClaudeLoginText } from '../login-names.ts'
 import { leftBehindText, signOutLogin } from '../sign-out.ts'
 import { hasCredentials } from '../local-credentials.ts'
 
@@ -94,10 +93,10 @@ export interface LoginDeps {
 }
 
 /** How long a login waits for the daemon's probe of the login it signed in. */
-export const LOGIN_PROBE_WAIT_MS = 15_000
+const LOGIN_PROBE_WAIT_MS = 15_000
 
 /** What the command line asks for: a new login, or an existing one. */
-export type LoginTarget = { kind: 'new' } | { kind: 'existing'; login: LoginSettings } | { error: string }
+type LoginTarget = { kind: 'new' } | { kind: 'existing'; login: LoginSettings } | { error: string }
 
 /**
  * Reads the argument of `kurmis login [<login>]` against the current config: none asks for a new
@@ -314,7 +313,7 @@ async function signIn(run: SignInRun): Promise<number> {
     // Nothing is signed out: the person may have meant either login, and both still work.
     const other = sameAccount(saved, ref, account, deps.home())
     if (other !== null) {
-      const which = other.usedByPlainClaude ? `${other.alias}, ${plainClaudeLoginText()},` : other.alias
+      const which = other.usedByPlainClaude ? `${other.alias}, ${PLAIN_CLAUDE_LOGIN},` : other.alias
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ` +
         `${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. ` +
         `"kurmis login ${login.alias}" signs ${login.alias} in to another account.`)
@@ -340,7 +339,7 @@ async function dropDuplicate(run: SignInRun, existing: LoginSettings, email: str
     return fail(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted ` +
       `(${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`)
   }
-  const which = existing.usedByPlainClaude ? `${existing.alias}, ${plainClaudeLoginText()}` : existing.alias
+  const which = existing.usedByPlainClaude ? `${existing.alias}, ${PLAIN_CLAUDE_LOGIN}` : existing.alias
   writeLine(context.stdout, `${email} is already a kurmis login: ${which} (id ${existing.id}). ` +
     (problem === null ? 'No login was added, and the new sign-in was signed out again.' : 'No login was added, and the new sign-in was deleted.'))
   writeLine(context.stdout, `"kurmis login ${existing.alias}" signs ${existing.alias} in again.`)
@@ -355,7 +354,7 @@ export function createLoginCommand(deps: Partial<LoginDeps> = {}): Command {
   const full: LoginDeps = {
     daemon: deps.daemon ?? realDaemonClient,
     runner: deps.runner ?? realChildRunner,
-    findProgram: deps.findProgram ?? realFindProgram,
+    findProgram: deps.findProgram ?? findProgram,
     runProgram: deps.runProgram ?? runProgram,
     home: deps.home ?? homedir,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,

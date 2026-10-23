@@ -7,7 +7,7 @@ import { kurmisVersion } from '../version.ts'
 import { EXIT_OK, EXIT_USAGE, isHelpFlag, writeLine, type CliContext } from './command.ts'
 import { COMMANDS, findCommand } from './commands/index.ts'
 
-export function mainHelp(): string {
+function mainHelp(): string {
   const width = Math.max(...COMMANDS.map((command) => command.name.length))
   const lines = COMMANDS.map((command) => `  ${command.name.padEnd(width)}  ${command.summary}`)
   return `kurmis ${kurmisVersion}: use several Claude Code logins on one machine.

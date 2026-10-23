@@ -9,7 +9,7 @@
 // entry for the login plain claude uses (or there is no file), it adds one with a new id and
 // saves the file. It writes no other file.
 import { homedir } from 'node:os'
-import { CONTROL_API_VERSION, type StatusAnswer } from '../../core/control-api.ts'
+import { CONTROL_API_VERSION, type LoginStatus, type StatusAnswer } from '../../core/control-api.ts'
 import { ConfigError, loadConfig, type KurmisConfig } from '../../data/config.ts'
 import { readClaudeIdentity } from '../../data/identity.ts'
 import { loadState } from '../../data/state.ts'
@@ -20,13 +20,13 @@ import { realDaemonClient, settleWithin, type DaemonClient } from '../command-de
 import type { DaemonConnection } from '../daemon-client.ts'
 import { globalRoutingState, type GlobalRoutingState } from '../global-routing.ts'
 import { checkCredentials } from '../local-credentials.ts'
-import { daemonOf, daemonReport, formatStatus, statusJson, type ReportLogin, type StatusReport } from '../status-format.ts'
+import { daemonOf, daemonReport, formatStatus, statusJson, type StatusReport } from '../status-format.ts'
 
 /**
  * How long `kurmis status` waits for the first usage probe of a daemon that has read no usage
  * yet. Claude probes start one short-lived `claude` per login, and they run side by side.
  */
-export const STATUS_PROBE_WAIT_MS = 15_000
+const STATUS_PROBE_WAIT_MS = 15_000
 
 export interface StatusDeps {
   daemon: DaemonClient
@@ -194,7 +194,7 @@ async function reportFromFiles(config: KurmisConfig | ConfigError, daemon: Statu
   const now = deps.now()
   const state = loadState(now).state
   const home = deps.home()
-  const logins: ReportLogin[] = config.logins.map((login) => {
+  const logins: LoginStatus[] = config.logins.map((login) => {
     const cooldown = state.cooldowns.get(login.id)
     const identity = readClaudeIdentity(login, home)
     let sessions = 0

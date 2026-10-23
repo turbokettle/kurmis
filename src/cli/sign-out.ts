@@ -13,7 +13,7 @@ import { ProgramNotFoundError, type findProgram } from '../platform/programs.ts'
 import type { runProgram } from '../platform/run.ts'
 
 /** How long `claude auth logout` may take. It removes local files and items and revokes the token. */
-export const LOGOUT_TIMEOUT_MS = 30_000
+const LOGOUT_TIMEOUT_MS = 30_000
 
 export interface SignOutDeps {
   findProgram: typeof findProgram

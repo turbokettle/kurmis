@@ -69,7 +69,7 @@ export interface SettingsFiles {
  * The settings files `kurmis setup` recorded. A missing record names none. A record that is not
  * JSON or not in the shape `recordSettingsFile` writes names none and says so in `problem`.
  */
-export function recordedSettingsFiles(): SettingsFiles {
+function recordedSettingsFiles(): SettingsFiles {
   const path = setupSettingsRecordPath()
   let read
   try {

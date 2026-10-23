@@ -24,13 +24,14 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/version.ts
-var kurmisVersion = true ? "0.1.0+20261023101652" : "dev";
+var kurmisVersion = true ? "0.1.0+20261023101743" : "dev";
 
 // src/cli/command.ts
 var import_node_util = require("node:util");
 var EXIT_OK = 0;
 var EXIT_FAILURE = 1;
 var EXIT_USAGE = 2;
+var PLAIN_CLAUDE_LOGIN = "the login plain claude uses";
 function writeLine(output, text = "") {
   output.write(`${text}
 `);
@@ -3194,7 +3195,6 @@ function finishLikeChild(end, options) {
 // src/cli/command-deps.ts
 var realDaemonClient = { findDaemon, ensureDaemon, readStatus: readStatus3, requestProbe, requestReload };
 var realChildRunner = { runInteractive, finishLikeChild };
-var realFindProgram = findProgram;
 async function reloadIfRunning(client, env) {
   try {
     const connection = await client.findDaemon({ env });
@@ -3469,7 +3469,7 @@ function mergeRoutingSettings(user, routing) {
   const userEnv = user !== null && isPlainObject2(user.env) ? user.env : {};
   return { ...user ?? {}, env: { ...userEnv, ...routing } };
 }
-function claudeArgsWithSettings(user, routing, store = storeSettings) {
+function claudeArgsWithSettings(user, routing, store) {
   const stored = store(JSON.stringify(mergeRoutingSettings(user.settings, routing)), user.settings !== null);
   return { args: [FLAG, stored.path, ...user.rest], remove: () => stored.remove() };
 }
@@ -3575,11 +3575,6 @@ function userOwnedRoutingVariables(layers) {
   });
 }
 
-// src/cli/login-names.ts
-function plainClaudeLoginText() {
-  return "the login plain claude uses";
-}
-
 // src/cli/commands/claude.ts
 var START_PROBE_WAIT_MS = 15e3;
 var USAGE = `Usage: kurmis [--login <login>] claude [<claude arguments...>]
@@ -3610,7 +3605,7 @@ function createClaudeCommand(overrides = {}) {
   const deps = {
     daemon: realDaemonClient,
     child: realChildRunner,
-    findProgram: realFindProgram,
+    findProgram,
     loadConfig: () => loadConfig(),
     platform: process.platform,
     cwd: () => process.cwd(),
@@ -3649,7 +3644,7 @@ async function runClaude(args, login, context, deps) {
   } catch (error) {
     if (!(error instanceof ConfigError)) throw error;
     if (login !== null) return fail4(error.message);
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainClaudeLoginText()}.`);
+    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${PLAIN_CLAUDE_LOGIN}.`);
     config = null;
   }
   let pinned = null;
@@ -3679,14 +3674,14 @@ async function runClaude(args, login, context, deps) {
     }
     const ownRow = status2.logins.find((login2) => login2.usedByPlainClaude);
     if (config === null) {
-      startedOn = ownRow ?? { id: null, alias: plainClaudeLoginText(), usedByPlainClaude: true };
+      startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true };
     } else {
       status2 = await withFirstProbe(connection, status2, context, deps);
       const startId = autoStartLogin(startableLogins(status2));
       startedOn = status2.logins.find((login2) => login2.id === startId) ?? plainClaudeLogin(config);
       if (!startedOn.usedByPlainClaude) {
         const own = ownRow ?? plainClaudeLogin(config);
-        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${plainClaudeLoginText()}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
+        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${PLAIN_CLAUDE_LOGIN}, is not signed in, so claude starts on ${startedOn.alias}'s credentials; requests are still routed on Auto.`);
       }
     }
   }
@@ -3737,7 +3732,7 @@ async function withFirstProbe(connection, status2, context, deps) {
   const ids = unknown.map((login) => login.id);
   const probed = await settleWithin((signal) => deps.daemon.requestProbe(connection, ids, signal), deps.probeWaitMs);
   if (probed.kind === "done") return probed.value;
-  writeLine(context.stderr, probed.kind === "timeout" ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1e3)} s, so it is not known yet whether ${plainClaudeLoginText()} is signed in; claude starts on it.` : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ${plainClaudeLoginText()} is signed in; claude starts on it.`);
+  writeLine(context.stderr, probed.kind === "timeout" ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1e3)} s, so it is not known yet whether ${PLAIN_CLAUDE_LOGIN} is signed in; claude starts on it.` : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ${PLAIN_CLAUDE_LOGIN} is signed in; claude starts on it.`);
   return status2;
 }
 function startableLogins(status2) {
@@ -7918,7 +7913,7 @@ async function signIn(run2) {
   if (!isNew && account !== null) {
     const other = sameAccount(saved, ref, account, deps.home());
     if (other !== null) {
-      const which = other.usedByPlainClaude ? `${other.alias}, ${plainClaudeLoginText()},` : other.alias;
+      const which = other.usedByPlainClaude ? `${other.alias}, ${PLAIN_CLAUDE_LOGIN},` : other.alias;
       writeLine(context.stderr, `kurmis login: warning: ${email} is also the account of ${which} (id ${other.id}). ${login.alias} and ${other.alias} are now the same account and share its limits. Neither was signed out. "kurmis login ${login.alias}" signs ${login.alias} in to another account.`);
     }
   }
@@ -7936,7 +7931,7 @@ async function dropDuplicate(run2, existing, email) {
   } catch (error) {
     return fail2(context, `${email} is already ${existing.alias}, but the folder of the new sign-in could not be deleted (${error instanceof Error ? error.message : String(error)}). "kurmis logout ${ref.id}" deletes it.`);
   }
-  const which = existing.usedByPlainClaude ? `${existing.alias}, ${plainClaudeLoginText()}` : existing.alias;
+  const which = existing.usedByPlainClaude ? `${existing.alias}, ${PLAIN_CLAUDE_LOGIN}` : existing.alias;
   writeLine(context.stdout, `${email} is already a kurmis login: ${which} (id ${existing.id}). ` + (problem === null ? "No login was added, and the new sign-in was signed out again." : "No login was added, and the new sign-in was deleted."));
   writeLine(context.stdout, `"kurmis login ${existing.alias}" signs ${existing.alias} in again.`);
   if (run2.alias !== void 0) {
@@ -7948,7 +7943,7 @@ function createLoginCommand(deps = {}) {
   const full = {
     daemon: deps.daemon ?? realDaemonClient,
     runner: deps.runner ?? realChildRunner,
-    findProgram: deps.findProgram ?? realFindProgram,
+    findProgram: deps.findProgram ?? findProgram,
     runProgram: deps.runProgram ?? runProgram,
     home: deps.home ?? import_node_os12.homedir,
     probeWaitMs: deps.probeWaitMs ?? LOGIN_PROBE_WAIT_MS,
@@ -8052,7 +8047,7 @@ function errorText(error) {
 function createLoginLogout(deps = {}) {
   const daemon = deps.daemon ?? realDaemonClient;
   const signOutDeps = {
-    findProgram: deps.findProgram ?? realFindProgram,
+    findProgram: deps.findProgram ?? findProgram,
     runProgram: deps.runProgram ?? runProgram,
     platform: deps.platform ?? process.platform
   };
@@ -8066,7 +8061,7 @@ function createLoginLogout(deps = {}) {
     let listed = false;
     try {
       const found = findLogin(loadConfig(), id);
-      if (found?.usedByPlainClaude === true) return fail3(context, `${found.alias} is ${plainClaudeLoginText()} and cannot be removed.`, prefix);
+      if (found?.usedByPlainClaude === true) return fail3(context, `${found.alias} is ${PLAIN_CLAUDE_LOGIN} and cannot be removed.`, prefix);
       if (found !== void 0) {
         listed = true;
         name = found.alias;
@@ -8119,7 +8114,7 @@ function createLoginLogout(deps = {}) {
   }
   return async (login, context, options = {}) => {
     const prefix = options.prefix ?? "kurmis logout";
-    if (login.usedByPlainClaude) return fail3(context, `${login.id} is ${plainClaudeLoginText()} and cannot be removed.`, prefix);
+    if (login.usedByPlainClaude) return fail3(context, `${login.id} is ${PLAIN_CLAUDE_LOGIN} and cannot be removed.`, prefix);
     let name;
     try {
       name = findLogin(loadConfig(), login.id)?.alias ?? login.id;
@@ -8149,7 +8144,7 @@ function logoutTarget(config, text) {
       return {
         kind: "error",
         usage: true,
-        message: `${login.alias} is ${plainClaudeLoginText()} and cannot be removed. To sign it out, run "claude auth logout" yourself.`
+        message: `${login.alias} is ${PLAIN_CLAUDE_LOGIN} and cannot be removed. To sign it out, run "claude auth logout" yourself.`
       };
     }
     return { kind: "login", login: { id: login.id, usedByPlainClaude: false } };
@@ -8232,7 +8227,7 @@ function aliasSource(login) {
 }
 function formatLoginSettings(login) {
   const lines = [`${login.alias} (id ${login.id})`];
-  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`);
+  if (login.usedByPlainClaude) lines.push(`  ${PLAIN_CLAUDE_LOGIN}`);
   lines.push(
     `  alias       ${login.alias} (${aliasSource(login)})`,
     `  auto        ${login.routing ? "on" : "off"}`,
@@ -9890,7 +9885,7 @@ function sameAccountWarnings(answer2) {
       firsts.push(login);
       continue;
     }
-    const keptName = kept.usedByPlainClaude ? `${kept.alias}, ${plainClaudeLoginText()},` : kept.alias;
+    const keptName = kept.usedByPlainClaude ? `${kept.alias}, ${PLAIN_CLAUDE_LOGIN},` : kept.alias;
     warnings.push(`${login.alias} and ${keptName} are the same account (${kept.email}), so they use one subscription. "kurmis logout ${login.alias}" removes ${login.alias}.`);
   }
   return warnings;
@@ -9959,7 +9954,7 @@ function credentialsText(check) {
 function loginLines(login, now, labelWidth) {
   const title = loginTitle(login);
   const lines = login.email === null ? [title] : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`] : [title, `  ${login.email}`];
-  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`);
+  if (login.usedByPlainClaude) lines.push(`  ${PLAIN_CLAUDE_LOGIN}`);
   const facts = [
     login.credentials !== null ? credentialsText(login.credentials) : login.signedIn === null ? "sign-in not checked yet" : login.signedIn ? "signed in" : "signed out",
     login.routing ? "routing on" : "routing off",

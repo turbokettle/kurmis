@@ -2,9 +2,8 @@
 // [--alias <alias>]`: changes a login's settings in config.json, under the config lock, and tells a
 // running daemon to read them. The login is named by its alias or id (`resolveLogin`).
 import { aliasProblem, changeConfig, ConfigError, findLogin, loadConfig, resolveLogin, updateLogin, type KurmisConfig, type LoginSettings, type LoginSettingsPatch } from '../../data/config.ts'
-import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
+import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, PLAIN_CLAUDE_LOGIN, usageError, writeLine, type CliContext, type Command } from '../command.ts'
 import { realDaemonClient, reloadIfRunning, reloadText, type DaemonClient } from '../command-deps.ts'
-import { plainClaudeLoginText } from '../login-names.ts'
 
 export interface SetDeps {
   daemon: DaemonClient
@@ -62,7 +61,7 @@ function aliasSource(login: LoginSettings): string {
 /** A login's settings, one per line, under the option names `set` takes. */
 export function formatLoginSettings(login: LoginSettings): string {
   const lines = [`${login.alias} (id ${login.id})`]
-  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`)
+  if (login.usedByPlainClaude) lines.push(`  ${PLAIN_CLAUDE_LOGIN}`)
   lines.push(
     `  alias       ${login.alias} (${aliasSource(login)})`,
     `  auto        ${login.routing ? 'on' : 'off'}`,

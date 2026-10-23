@@ -15,9 +15,9 @@ import { routeBlockText } from '../core/proxy-rules.ts'
 import { allUsageWindows, planUsageWindows, usageAsOf, windowHasReset } from '../core/usage-rules.ts'
 import { daemonAge } from '../daemon/lifecycle.ts'
 import { isSameClaudeAccount } from '../data/identity.ts'
+import { PLAIN_CLAUDE_LOGIN } from './command.ts'
 import type { GlobalRoutingState } from './global-routing.ts'
 import type { CredentialCheck } from './local-credentials.ts'
-import { plainClaudeLoginText } from './login-names.ts'
 
 /**
  * Raised when a field of `StatusJson` is removed or changes meaning. Fields may be added.
@@ -128,16 +128,13 @@ export interface StatusJson {
 
 export type StatusSource = 'daemon' | 'files'
 
-/** A login of a `StatusReport`: the daemon's status of it, or the same built from the files. */
-export type ReportLogin = LoginStatus
-
 /** What `kurmis status` shows, put together from the daemon or from the files. */
 export interface StatusReport {
   /** The daemon that answered, or null when none runs. `apiVersion` is absent when its answer had none. */
   daemon: { version: string; apiVersion?: number; pid: number; port: number; startedAt: number } | null
   /** Where `logins` come from (`StatusJson.source`). */
   source: StatusSource
-  logins: ReportLogin[]
+  logins: LoginStatus[]
   /** With `source` `files`: whether each login's credentials are on this machine, by login id. */
   credentials: ReadonlyMap<string, CredentialCheck>
   globalRouting: GlobalRoutingState
@@ -218,10 +215,10 @@ const NO_DAEMON_WARNING = 'Global routing is on, but the daemon is not running, 
  * claude uses first: each is compared with the first login of every account found so far, and
  * the warning says how to remove the later one.
  */
-export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }): string[] {
+function sameAccountWarnings(answer: { logins: readonly LoginStatus[] }): string[] {
   const warnings: string[] = []
   const ordered = [...answer.logins.filter((login) => login.usedByPlainClaude), ...answer.logins.filter((login) => !login.usedByPlainClaude)]
-  const firsts: ReportLogin[] = []
+  const firsts: LoginStatus[] = []
   for (const login of ordered) {
     if (login.email === null || login.email.trim() === '') continue
     const kept = firsts.find((first) => isSameClaudeAccount(first, login))
@@ -229,7 +226,7 @@ export function sameAccountWarnings(answer: { logins: readonly ReportLogin[] }):
       firsts.push(login)
       continue
     }
-    const keptName = kept.usedByPlainClaude ? `${kept.alias}, ${plainClaudeLoginText()},` : kept.alias
+    const keptName = kept.usedByPlainClaude ? `${kept.alias}, ${PLAIN_CLAUDE_LOGIN},` : kept.alias
     warnings.push(`${login.alias} and ${keptName} are the same account (${kept.email!}), ` +
       `so they use one subscription. "kurmis logout ${login.alias}" removes ${login.alias}.`)
   }
@@ -314,7 +311,7 @@ function loginLines(login: StatusJsonLogin, now: number, labelWidth: number): st
   const lines = login.email === null ? [title]
     : title.length + 2 + login.email.length <= WIDTH ? [`${title}  ${login.email}`]
       : [title, `  ${login.email}`]
-  if (login.usedByPlainClaude) lines.push(`  ${plainClaudeLoginText()}`)
+  if (login.usedByPlainClaude) lines.push(`  ${PLAIN_CLAUDE_LOGIN}`)
   const facts = [
     login.credentials !== null
       ? credentialsText(login.credentials)
@@ -406,7 +403,7 @@ function blockText(block: RouteBlock, now: number, options: StatusFormatOptions,
  * A time as a 24-hour clock in `timeZone` (the machine's time zone when absent) shows it: `03:10`,
  * with the date in front (`2026-09-14 03:10`) when it falls on another day than `now`.
  */
-export function localTimeText(at: number, now: number, timeZone?: string): string {
+function localTimeText(at: number, now: number, timeZone?: string): string {
   const format = new Intl.DateTimeFormat('en-US', {
     timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
   })

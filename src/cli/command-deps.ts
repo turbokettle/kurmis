@@ -2,7 +2,6 @@
 // instead of a daemon, a real `claude`, or autostart. Every command module exports a
 // `create<Name>Command(deps)` that takes a `Partial` of what it needs and fills the rest with the
 // real functions here.
-import { findProgram } from '../platform/programs.ts'
 import {
   DaemonError,
   ensureDaemon,
@@ -34,8 +33,6 @@ export interface ChildRunner {
 }
 
 export const realChildRunner: ChildRunner = { runInteractive, finishLikeChild }
-
-export const realFindProgram: typeof findProgram = findProgram
 
 /** What `reloadIfRunning` did. */
 export type ReloadResult =

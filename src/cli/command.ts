@@ -36,6 +36,9 @@ export const EXIT_FAILURE = 1
 /** The command line was wrong: an unknown command, option or argument. */
 export const EXIT_USAGE = 2
 
+/** The words that mark the login plain claude uses, in what the commands print. */
+export const PLAIN_CLAUDE_LOGIN = 'the login plain claude uses'
+
 export function writeLine(output: Output, text = ''): void {
   output.write(`${text}\n`)
 }
@@ -45,12 +48,6 @@ export function usageError(command: string, message: string, context: CliContext
   writeLine(context.stderr, `kurmis ${command}: ${message}`)
   writeLine(context.stderr, `Run "kurmis help ${command}" for its options.`)
   return EXIT_USAGE
-}
-
-/** For a command a later change implements. */
-export function notImplemented(command: string, context: CliContext): number {
-  writeLine(context.stderr, `kurmis ${command}: not implemented yet`)
-  return EXIT_FAILURE
 }
 
 export function isHelpFlag(arg: string): boolean {

@@ -193,7 +193,7 @@ export type SettingsStore = (text: string, holdsUserSettings: boolean) => Stored
  * when it holds a copy of the person's settings, and is to be called once claude has ended.
  */
 export function claudeArgsWithSettings(user: UserSettingsArg, routing: Record<string, string>,
-  store: SettingsStore = storeSettings): { args: string[]; remove: () => void } {
+  store: SettingsStore): { args: string[]; remove: () => void } {
   const stored = store(JSON.stringify(mergeRoutingSettings(user.settings, routing)), user.settings !== null)
   return { args: [FLAG, stored.path, ...user.rest], remove: () => stored.remove() }
 }
@@ -337,7 +337,7 @@ const CUSTOM_HEADERS = 'ANTHROPIC_CUSTOM_HEADERS'
  * sets it to a string (`--settings` beats the user settings file, which beats the process
  * environment). Null when no layer sets it.
  */
-export function inheritedVariable(layers: CustomHeaderLayers, variable: string): string | null {
+function inheritedVariable(layers: CustomHeaderLayers, variable: string): string | null {
   for (const env of [layers.flagEnv, layers.userSettingsEnv]) {
     if (env === null || !(variable in env)) continue
     const value = env[variable]

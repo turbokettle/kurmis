@@ -124,7 +124,7 @@ const START_TIMEOUT_MS = 15_000
  * How long `requestProbe` waits. The daemon runs each probe's `claude` with a deadline of its
  * own, and the probes of several logins run side by side, so this is that deadline with room.
  */
-export const PROBE_TIMEOUT_MS = 90_000
+const PROBE_TIMEOUT_MS = 90_000
 /** `stopDaemon` waits this long for the daemon to finish its open requests and exit. */
 const STOP_TIMEOUT_MS = 30_000
 /**
@@ -261,7 +261,7 @@ export interface StartResult {
  * Why this kurmis (`version`, `apiVersion`) cannot use the running daemon `daemon`, which it does
  * not replace either, or null when it can use it (`canUseDaemon`).
  */
-export function unusableDaemonText(daemon: DaemonConnection, version: string = kurmisVersion,
+function unusableDaemonText(daemon: DaemonConnection, version: string = kurmisVersion,
   apiVersion: number = CONTROL_API_VERSION): string | null {
   if (canUseDaemon(daemon, apiVersion)) return null
   const age = daemonAge(daemon, version, apiVersion)

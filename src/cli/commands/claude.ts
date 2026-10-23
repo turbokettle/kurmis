@@ -30,10 +30,10 @@ import { ConfigError, loadConfig, plainClaudeLogin, resolveLogin, type KurmisCon
 import { configDirHasOwnCredentials, namesDefaultClaudeFolder } from '../../data/login-env.ts'
 import type { LoginId } from '../../data/login-id.ts'
 import { loginFolder, logPath } from '../../data/paths.ts'
-import { ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
-import { EXIT_FAILURE, writeLine, type CliContext, type Command } from '../command.ts'
+import { findProgram, ProgramNotFoundError, type ResolvedProgram } from '../../platform/programs.ts'
+import { EXIT_FAILURE, PLAIN_CLAUDE_LOGIN, writeLine, type CliContext, type Command } from '../command.ts'
 import {
-  realChildRunner, realDaemonClient, realFindProgram, settleWithin, type ChildRunner, type DaemonClient
+  realChildRunner, realDaemonClient, settleWithin, type ChildRunner, type DaemonClient
 } from '../command-deps.ts'
 import { DaemonNotUsableError, type DaemonConnection } from '../daemon-client.ts'
 import {
@@ -49,13 +49,12 @@ import {
   type SettingsStore,
   type UserSettingsArg
 } from '../settings-arg.ts'
-import { plainClaudeLoginText } from '../login-names.ts'
 import { notStartedExitCode } from '../wrapper.ts'
 
 export interface ClaudeDeps {
   daemon: DaemonClient
   child: ChildRunner
-  findProgram: typeof realFindProgram
+  findProgram: typeof findProgram
   loadConfig: () => KurmisConfig
   platform: NodeJS.Platform
   /** The folder claude starts in, for a relative `--settings` path. */
@@ -77,7 +76,7 @@ export interface ClaudeDeps {
  * about yet, when one of them is plain claude's login. A probe starts one short-lived `claude`,
  * and the probes run side by side.
  */
-export const START_PROBE_WAIT_MS = 15_000
+const START_PROBE_WAIT_MS = 15_000
 
 const USAGE = `Usage: kurmis [--login <login>] claude [<claude arguments...>]
 
@@ -108,7 +107,7 @@ export function createClaudeCommand(overrides: Partial<ClaudeDeps> = {}): Comman
   const deps: ClaudeDeps = {
     daemon: realDaemonClient,
     child: realChildRunner,
-    findProgram: realFindProgram,
+    findProgram,
     loadConfig: () => loadConfig(),
     platform: process.platform,
     cwd: () => process.cwd(),
@@ -165,7 +164,7 @@ async function runClaude(args: string[], login: string | null, context: CliConte
     if (!(error instanceof ConfigError)) throw error
     // A pinned login cannot be looked up without the config.
     if (login !== null) return fail(error.message)
-    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${plainClaudeLoginText()}.`)
+    writeLine(context.stderr, `kurmis claude: ${error.message} Starting claude on ${PLAIN_CLAUDE_LOGIN}.`)
     config = null
   }
   let pinned: StartedOn | null = null
@@ -203,14 +202,14 @@ async function runClaude(args: string[], login: string | null, context: CliConte
     if (config === null) {
       // The daemon's id for the login plain claude uses. Without one, no started-on header is
       // sent, which the daemon reads as that login too.
-      startedOn = ownRow ?? { id: null, alias: plainClaudeLoginText(), usedByPlainClaude: true }
+      startedOn = ownRow ?? { id: null, alias: PLAIN_CLAUDE_LOGIN, usedByPlainClaude: true }
     } else {
       status = await withFirstProbe(connection, status, context, deps)
       const startId = autoStartLogin(startableLogins(status))
       startedOn = status.logins.find((login) => login.id === startId) ?? plainClaudeLogin(config)
       if (!startedOn.usedByPlainClaude) {
         const own = ownRow ?? plainClaudeLogin(config)
-        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${plainClaudeLoginText()}, is not signed in, so claude starts on ` +
+        writeLine(context.stderr, `kurmis claude: ${own.alias}, ${PLAIN_CLAUDE_LOGIN}, is not signed in, so claude starts on ` +
           `${startedOn.alias}'s credentials; requests are still routed on Auto.`)
       }
     }
@@ -280,9 +279,9 @@ async function withFirstProbe(connection: DaemonConnection, status: StatusAnswer
   if (probed.kind === 'done') return probed.value
   writeLine(context.stderr, probed.kind === 'timeout'
     ? `kurmis claude: the daemon did not finish its first usage probe within ${String(deps.probeWaitMs / 1000)} s, so it is not ` +
-      `known yet whether ${plainClaudeLoginText()} is signed in; claude starts on it.`
+      `known yet whether ${PLAIN_CLAUDE_LOGIN} is signed in; claude starts on it.`
     : `kurmis claude: the usage probe failed (${messageOf(probed.error)}), so it is not known whether ` +
-      `${plainClaudeLoginText()} is signed in; claude starts on it.`)
+      `${PLAIN_CLAUDE_LOGIN} is signed in; claude starts on it.`)
   return status
 }
 

@@ -27,16 +27,13 @@ import { lstatSync } from 'node:fs'
 import { changeConfig, ConfigError, findLogin, loadConfig, removeLogin, resolveLogin, type KurmisConfig } from '../../data/config.ts'
 import { isLoginId, type LoginRef } from '../../data/login-id.ts'
 import { loginFolder } from '../../data/paths.ts'
-import { type findProgram } from '../../platform/programs.ts'
+import { findProgram } from '../../platform/programs.ts'
 import { removeTreeSync } from '../../platform/remove-tree.ts'
 import { runProgram } from '../../platform/run.ts'
-import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, usageError, writeLine, type CliContext, type Command } from '../command.ts'
-import { realDaemonClient, realFindProgram, reloadIfRunning, reloadText, type DaemonClient } from '../command-deps.ts'
+import { EXIT_FAILURE, EXIT_OK, parseCommandArgs, PLAIN_CLAUDE_LOGIN, usageError, writeLine, type CliContext, type Command } from '../command.ts'
+import { realDaemonClient, reloadIfRunning, reloadText, type DaemonClient } from '../command-deps.ts'
 import { LoginBusyError, lockLogin } from '../login-lock.ts'
-import { plainClaudeLoginText } from '../login-names.ts'
 import { leftBehindText, signOutLogin } from '../sign-out.ts'
-
-export { LOGOUT_TIMEOUT_MS } from '../sign-out.ts'
 
 export interface LogoutDeps {
   daemon: DaemonClient
@@ -87,7 +84,7 @@ function errorText(error: unknown): string {
 export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
   const daemon = deps.daemon ?? realDaemonClient
   const signOutDeps = {
-    findProgram: deps.findProgram ?? realFindProgram,
+    findProgram: deps.findProgram ?? findProgram,
     runProgram: deps.runProgram ?? runProgram,
     platform: deps.platform ?? process.platform
   }
@@ -103,7 +100,7 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
     try {
       // Read again under the login's lock: another run may have removed it in the meantime.
       const found = findLogin(loadConfig(), id)
-      if (found?.usedByPlainClaude === true) return fail(context, `${found.alias} is ${plainClaudeLoginText()} and cannot be removed.`, prefix)
+      if (found?.usedByPlainClaude === true) return fail(context, `${found.alias} is ${PLAIN_CLAUDE_LOGIN} and cannot be removed.`, prefix)
       if (found !== undefined) {
         listed = true
         name = found.alias
@@ -168,7 +165,7 @@ export function createLoginLogout(deps: Partial<LogoutDeps> = {}): LoginLogout {
 
   return async (login, context, options = {}) => {
     const prefix = options.prefix ?? 'kurmis logout'
-    if (login.usedByPlainClaude) return fail(context, `${login.id} is ${plainClaudeLoginText()} and cannot be removed.`, prefix)
+    if (login.usedByPlainClaude) return fail(context, `${login.id} is ${PLAIN_CLAUDE_LOGIN} and cannot be removed.`, prefix)
     let name: string
     try {
       name = findLogin(loadConfig(), login.id)?.alias ?? login.id
@@ -206,7 +203,7 @@ function logoutTarget(config: KurmisConfig, text: string): LogoutTarget {
       return {
         kind: 'error',
         usage: true,
-        message: `${login.alias} is ${plainClaudeLoginText()} and cannot be removed. To sign it out, run "claude auth logout" yourself.`
+        message: `${login.alias} is ${PLAIN_CLAUDE_LOGIN} and cannot be removed. To sign it out, run "claude auth logout" yourself.`
       }
     }
     return { kind: 'login', login: { id: login.id, usedByPlainClaude: false } }
